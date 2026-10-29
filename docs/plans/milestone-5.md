@@ -2,7 +2,7 @@
 
 Status: scope approved 2026-10-29. File-level phases are written and reviewed after milestone 4 merges. Branch `feat/milestone-5`, cut from `feat/milestone-4` at `5d4d385`.
 
-Inputs: the owner's screenshots of Mimestream 1.10.8 (Inbox, Sent, Spam and every Settings pane), `docs/research/mimestream-behavior.md`, the milestone 1 to 3 plans, and milestone 4's plan (approved 2026-10-29, `621772c` on `feat/milestone-4`). The screenshots are a feature checklist only. Layout, wording, icons and sounds stay Tern's own (project rule).
+Inputs: the owner's screenshots of Mimestream 1.10.8 (Inbox, Sent, Spam and every Settings pane), `docs/research/mimestream-behavior.md`, the milestone 1 to 3 plans, and milestone 4's plan (approved 2026-10-29 at `621772c` and amended at `36c6455`, on `feat/milestone-4`). The screenshots are a feature checklist only. Layout, wording, icons and sounds stay Tern's own (project rule).
 
 ## How the list was built
 
@@ -20,7 +20,7 @@ Every feature visible in the screenshots or named in the research notes was chec
 6. Mark as read: immediately (today), after a delay, or by hand only. The delayed form queues mark-read only if the conversation is still open when the delay ends.
 7. Text size: one scale for list and message text.
 8. Conversation header: label chips with a remove button, and per message a star, Reply and a menu (Reply All, Forward, Forward as Attachment, Show Original, Print, Copy Link).
-9. Avatars: the contact photo when there is one (J3), else initials on a color derived from the address.
+9. Avatars: the contact photo when there is one (J1), else initials on a color derived from the address.
 10. Address menu: Copy Address, New Message, Search Messages From and To, Create Filter (milestone 4 filters).
 11. Link destinations: hovering a link shows its URL under the message.
 12. Show Original: the raw message (`messages.get format=raw`) with Copy and Save as `.eml`.
@@ -108,13 +108,11 @@ Every feature visible in the screenshots or named in the research notes was chec
 
 ### J. Beyond milestone 4
 
-Milestone 4's plan lists these as out of scope or doesn't mention them.
+Milestone 4's plan leaves these to milestone 5. This list first also held filters that forward and a vacation message with formatting. The owner moved both into milestone 4 on 2026-10-29 (its answered question 3), and that amendment still waits for the owner's approval.
 
-1. Filters that forward: the forward action in the filter editor, limited to the account's verified forwarding addresses, and editing existing forwarding filters. Adding and verifying a forwarding address stays in Gmail. The phase plan checks which scope listing forwarding addresses needs.
-2. Vacation message with formatting: the vacation editor uses the compose editor and saves `responseBodyHtml`, so formatted replies stay editable.
-3. Contact photos: People API photos for saved and other contacts, cached with the contact rows, used by A9.
-4. Contact groups: a group name typed in a recipient field expands to its members' addresses.
-5. Invitation agenda: the invitation banner shows the day's other events from the Mac's calendars through EventKit, read-only. This needs Calendars full access, since write-only access can't read events.
+1. Contact photos: People API photos for saved and other contacts, cached with the contact rows, used by A9.
+2. Contact groups: a group name typed in a recipient field expands to its members' addresses.
+3. Invitation agenda: the invitation banner shows the day's other events from the Mac's calendars through EventKit, read-only. This needs Calendars full access, since write-only access can't read events.
 
 ## Not included
 
@@ -126,25 +124,29 @@ Milestone 4's plan lists these as out of scope or doesn't mention them.
 
 ## Check against milestone 4
 
-Milestone 4's plan (`docs/plans/milestone-4.md` on `feat/milestone-4`, approved 2026-10-29) covers vacation dates and the contacts-only and domain-only options, Gmail signatures per address, replying from the address a message was sent to, other contacts, RSVP, and Google permissions per feature. Those are left out here.
+Milestone 4's plan (`docs/plans/milestone-4.md` on `feat/milestone-4`, approved 2026-10-29 and amended at `36c6455`) covers these, so they're left out here:
+
+- Vacation dates, the contacts-only and domain-only options, and a formatted message edited in the compose editor.
+- Gmail signatures per address, and replying from the address a message was sent to.
+- Other contacts, RSVP, and Google permissions per feature.
+- A filter editor with each action in Gmail's filter guide: skip the Inbox, mark as read, star, one user label, never send to Spam, always or never mark important, delete, and forward to a verified forwarding address. Categorize appears once live testing shows `filters.create` takes a `CATEGORY_*` label.
 
 What milestone 5 builds on, as the milestone 4 session confirmed on 2026-10-29:
 
 - Inbox updates use IMAP IDLE behind `https://mail.google.com/`, asked for per account when the user turns on Inbox Updates. Accounts without it pick up new mail at the 60-second poll.
 - Per-feature authorization (its phase B3) keeps a set of features per account, each with its scopes, and counts a broader granted scope. D4 adds a Permanent Deletion feature to it.
-- The filter action model (its phase A1) takes any label adds and removes plus a forward address. So every label-based action in Gmail's filter form fits: skip the Inbox, mark as read, star, apply a label, never send to Spam, mark important or not, categorize, and delete. Its phase B10b sets the editor's action list, and the milestone 4 session has recommended all of them to the owner.
+- Block Sender and Filter Messages Like These use its `createFilter(criteria:action:)` call and the filter editor sheet from its phase B10b.
 
 Still open:
 
-- Whether milestone 4 takes on any J item. The owner decides.
-- Which system labels `filters.create` accepts. Nobody has checked this live.
+- The owner's approval of milestone 4's amendment. Without it, filters that forward and the formatted vacation message return to workstream J.
 - Gmail's web option to also apply a new filter to existing mail has no API equivalent, since filters act only on mail that arrives after they exist. It isn't planned here.
 
 ## Decisions
 
 | Area | Choice | Why |
 |---|---|---|
-| Scopes | No new scope apart from `https://mail.google.com/` for permanent deletion, asked for as a Permanent Deletion feature through milestone 4's per-feature authorization. Accounts with Inbox Updates on already hold it. J3 and J4 use milestone 4's contacts scopes | `messages.batchDelete` accepts only that scope. `batchModify` and everything else here accept `gmail.modify` |
+| Scopes | No new scope apart from `https://mail.google.com/` for permanent deletion, asked for as a Permanent Deletion feature through milestone 4's per-feature authorization. Accounts with Inbox Updates on already hold it. J1 and J2 use milestone 4's contacts scopes | `messages.batchDelete` accepts only that scope. `batchModify` and everything else here accept `gmail.modify` |
 | Gmail changes | Spam, importance, mark all read, permanent deletion, label visibility and block filters are new queue kinds | Every change to Gmail state goes through the action queue (project rule) |
 | Where settings live | Display preferences (text size, density, order, sounds) in `UserDefaults`. Anything that must survive a cache reset (account details, profiles, favorites, saved searches, templates, Tern signatures, suggestion blocklist, allowed image senders, category switches, alert watermarks) in `config.sqlite` | Reset Cache must not lose user setup |
 | Page scripts | Page JavaScript stays off. Link hover and quote selection use scripts in an isolated `WKContentWorld`, which `allowsContentJavaScript = false` doesn't disable. The first rendering phase confirms this | Keeps the milestone 1 security posture |
@@ -201,13 +203,13 @@ No UI snapshot tests.
 
 ## Risks
 
-- Size: 74 items. The phase plan may split the milestone into 5a and 5b.
+- Size: 72 items. The phase plan may split the milestone into 5a and 5b.
 - The full mail scope is Gmail's broadest restricted scope, and a leaked token could delete mail for good. It works for personal use in testing mode. Public release needs Google's verification and possibly a security assessment.
 - Color adaptation will misjudge some designs. The per-message light background is the fallback.
 - Message mode changes queue targeting across many actions.
 - Alerts need Tern running.
 - The tracker list's license must allow bundling.
-- Workstream J shrinks if milestone 4 takes on any of its items.
+- If the owner doesn't approve milestone 4's amendment, two items return to workstream J.
 
 ## Answered questions
 
