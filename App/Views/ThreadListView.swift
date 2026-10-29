@@ -19,6 +19,7 @@ struct ThreadListView: View {
                 }
             }
             .navigationTitle(mailbox.selectedLabelTitle)
+            .navigationSubtitle(mailbox.selectedMailboxSubtitle)
             .toolbar { ThreadToolbar(mailbox: mailbox) }
             .onChange(of: mailbox.search.listFocusRequest) { listFocused = true }
             .sheet(isPresented: isChoosingSnoozeDate) {
@@ -116,10 +117,16 @@ struct ThreadListView: View {
         _ threads: [ThreadRecord], onEnd: @escaping () -> Void, @ViewBuilder footer: () -> some View
     ) -> some View {
         let wakeTimes = mailbox.showsSnoozed ? mailbox.wakeTimes : [:]
+        let namesAccounts = mailbox.listMixesAccounts
         return List(selection: $mailbox.selectedThreadIDs) {
             // Keyed by account too, since thread IDs repeat across accounts.
             ForEach(threads, id: \.key) { thread in
-                ThreadRow(thread: thread, wakeAt: wakeTimes[thread.key], isWoken: mailbox.isWoken(thread))
+                ThreadRow(
+                    thread: thread,
+                    wakeAt: wakeTimes[thread.key],
+                    isWoken: mailbox.isWoken(thread),
+                    accountName: namesAccounts ? mailbox.account(id: thread.accountID)?.account.email : nil
+                )
                     .onAppear {
                         if thread.key == threads.last?.key { onEnd() }
                     }
@@ -203,6 +210,8 @@ struct ThreadRow: View {
     var wakeAt: Date?
     /// A snooze brought the conversation back to the Inbox.
     var isWoken = false
+    /// Set where the list mixes accounts.
+    var accountName: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
@@ -244,9 +253,20 @@ struct ThreadRow: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
-                    .fontWeight(thread.isUnread ? .medium : .regular)
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                    Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
+                        .fontWeight(thread.isUnread ? .medium : .regular)
+                        .lineLimit(1)
+                    if let accountName {
+                        Spacer(minLength: Tokens.Space.s2)
+                        Text(accountName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .layoutPriority(-1)
+                    }
+                }
                 Text(thread.snippet)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -270,6 +290,7 @@ struct ThreadRow: View {
         } else {
             parts.append(ThreadDate.short(thread.lastDate))
         }
+        if let accountName { parts.append("in \(accountName)") }
         return parts.joined(separator: ", ")
     }
 }
