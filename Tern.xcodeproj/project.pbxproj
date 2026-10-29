@@ -26,6 +26,7 @@
 		89DA04EFCFC5C677096729A7 /* NoticeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07C7F388D831253FD5749C5 /* NoticeView.swift */; };
 		8A7FEC940FEFE0241F30C670 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BB9B46E342248DBF893DA9 /* ThreadView.swift */; };
 		8CAFA56EDF8661042094300E /* GmailAPI in Frameworks */ = {isa = PBXBuildFile; productRef = DADFA2A14CD8FDA35DA120E3 /* GmailAPI */; };
+		9EAA024E551B7BF6C214D189 /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57378F029EEBF791E78C1170 /* ComposeView.swift */; };
 		A2DFB3214AD23A2BE8631B27 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5497ADD358BEE4C53246A55C /* SignInView.swift */; };
 		BE8034EF718B842D206C9BF6 /* MailStore in Frameworks */ = {isa = PBXBuildFile; productRef = A29455DD1AA22ACDFD6E9A85 /* MailStore */; };
 		C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */; };
@@ -57,6 +58,7 @@
 		4F78C5270B0AE64BD13220AD /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		50BC5CC58387671AC6A5DD09 /* MailCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailCommands.swift; sourceTree = "<group>"; };
 		5497ADD358BEE4C53246A55C /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		57378F029EEBF791E78C1170 /* ComposeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeView.swift; sourceTree = "<group>"; };
 		59D9ED8DE6505A59716158D2 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		5E9ECAA922136B06A807EEDB /* MailboxModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxModel.swift; sourceTree = "<group>"; };
 		75208BBDBE50C9B3B595EAB3 /* AttributedDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributedDocumentTests.swift; sourceTree = "<group>"; };
@@ -104,6 +106,7 @@
 			isa = PBXGroup;
 			children = (
 				028FE485D145D5610D43A3DB /* ComposeModel.swift */,
+				57378F029EEBF791E78C1170 /* ComposeView.swift */,
 				FF0C93981EA52DD5F7C918F3 /* RichTextEditor.swift */,
 			);
 			path = Compose;
@@ -340,6 +343,7 @@
 				71B4075ADE8ADA6F30496EC0 /* AppModel.swift in Sources */,
 				CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */,
 				7F67F161B94D1978497051AE /* ComposeModel.swift in Sources */,
+				9EAA024E551B7BF6C214D189 /* ComposeView.swift in Sources */,
 				0804BB24C1D8EE0EADDB9FF2 /* GoogleAuth.swift in Sources */,
 				07073AF8859012972375BDA0 /* KeychainStore.swift in Sources */,
 				7687C3F0FC62813AF8BCE982 /* MailCommands.swift in Sources */,

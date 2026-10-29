@@ -6,8 +6,14 @@ struct MailCommands: Commands {
     // Tern has one mailbox window. Its commands remain available when focus
     // moves between a list, WebKit and the menu bar.
     var mailbox: MailboxModel? { app.mailbox }
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Message") { compose(.newMessage) }
+                .keyboardShortcut("n")
+                .disabled(mailbox == nil)
+        }
         CommandMenu("Message") {
             Button("Archive") { mailbox?.perform(.archive) }
                 .keyboardShortcut("a", modifiers: [.control, .command])
@@ -30,6 +36,15 @@ struct MailCommands: Commands {
             Divider()
             Button("Sign Out…") { app.isConfirmingSignOut = true }
                 .disabled(mailbox == nil)
+        }
+    }
+
+    /// Opens a compose window once its draft exists. A failure shows in the mailbox window.
+    private func compose(_ start: MailboxModel.ComposeStart) {
+        guard let mailbox else { return }
+        Task {
+            guard let id = await mailbox.startCompose(start) else { return }
+            openWindow(id: ComposeWindow.sceneID, value: id)
         }
     }
 

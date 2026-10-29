@@ -5,7 +5,7 @@ struct TernApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        // One window: selection and undo live in the shared mailbox model.
+        // One mailbox window: selection and undo live in the shared mailbox model.
         Window("Tern", id: "main") {
             RootView()
                 .environment(model)
@@ -13,6 +13,15 @@ struct TernApp: App {
         }
         .defaultSize(width: 1200, height: 760)
         .commands { MailCommands(app: model) }
+
+        // One window per local draft. Opening a draft that has a window brings it forward.
+        WindowGroup("New Message", id: ComposeWindow.sceneID, for: String.self) { $localDraftID in
+            ComposeWindow(localDraftID: localDraftID)
+                .environment(model)
+        }
+        .defaultSize(width: 720, height: 600)
+        // File > New Message replaces the New Window item this scene would add.
+        .commandsRemoved()
     }
 }
 
