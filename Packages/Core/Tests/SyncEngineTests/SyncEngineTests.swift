@@ -927,6 +927,34 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await cache.read { tx in try tx.localDrafts(accountID: account) }.map(\.id) == [draft.id])
         #expect(await gmail.draftCalls == ["create", "update D1", "update D1"])
     }
+
+    @Test func reopeningADraftWhileItsSaveUploadsKeepsTheOpenCopy() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.addDraft("D7", messageID: "m7", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m7", subject: "Plans", html: "<p>Hi</p>"))
+        let draft = try await engine.openDraft(messageID: "m7").draft
+        var content = draft.content
+        content.subject = "Plans, mine"
+        try await engine.saveDraft(draft.id, content: content)
+        await gmail.holdNextChange()
+        let saving = Task { await engine.sendDueDrafts() }
+        while await !gmail.isHolding { await Task.yield() }
+        // Another app changes the draft while Tern's update is on its way.
+        await gmail.addDraft("D7", messageID: "m8", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m8", subject: "Plans for Friday", html: "<p>Hi all</p>"))
+        let reopened = try await engine.openDraft(id: "D7")
+        await gmail.release()
+        _ = await saving.value
+
+        #expect(reopened.draft.id == draft.id)
+        #expect(!reopened.droppedFormatting)
+        let drafts = try await cache.read { tx in try tx.localDrafts(accountID: account) }
+        #expect(drafts.map(\.id) == [draft.id])
+        #expect(drafts.first?.gmailDraftID == "D7")
+        #expect(drafts.first?.hasUnsavedChanges == false)
+        #expect(await gmail.draftCalls == ["update D7"])
+        #expect(try await pendingActions(cache).isEmpty)
+    }
 }
 
 /// A `drafts.get` response in full format with an HTML body.
