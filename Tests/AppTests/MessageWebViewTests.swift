@@ -5,6 +5,20 @@ import WebKit
 @testable import Tern
 
 @Suite @MainActor struct MessageWebViewTests {
+    @Test func zeroDeltaGestureWaitsForMovementAndKeepsItsAxisThroughMomentum() {
+        var direction = ScrollDirection()
+        let directions = [
+            direction.isHorizontal(x: 0, y: 0, startsGesture: true),
+            direction.isHorizontal(x: 12, y: 1),
+            direction.isHorizontal(x: 0, y: 4),
+            direction.isHorizontal(x: 0, y: 0, startsGesture: true),
+            direction.isHorizontal(x: 1, y: 12),
+            direction.isHorizontal(x: 6, y: 0, isMouseWheel: true),
+            direction.isHorizontal(x: 0, y: 6, isMouseWheel: true),
+        ]
+        #expect(directions == [false, true, true, false, false, true, false])
+    }
+
     @Test func heightShrinksWhenTextReflowsIntoAWiderPane() async throws {
         let height = HeightValue()
         let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))

@@ -131,13 +131,14 @@ struct MessageWebView: NSViewRepresentable {
 /// reflow the message and change its height.
 final class ContentSizedWebView: WKWebView {
     var onWidthChange: (() -> Void)?
-    private var scrollsHorizontally = false
+    private var scrollDirection = ScrollDirection()
 
     override func scrollWheel(with event: NSEvent) {
-        // A trackpad gesture keeps the direction it started with; a mouse wheel decides per event.
-        if event.phase == .began || (event.phase.isEmpty && event.momentumPhase.isEmpty) {
-            scrollsHorizontally = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-        }
+        let scrollsHorizontally = scrollDirection.isHorizontal(
+            x: event.scrollingDeltaX, y: event.scrollingDeltaY,
+            startsGesture: event.phase.contains(.began) || event.phase.contains(.mayBegin),
+            isMouseWheel: event.phase.isEmpty && event.momentumPhase.isEmpty
+        )
         if scrollsHorizontally {
             super.scrollWheel(with: event)
         } else {
@@ -149,6 +150,18 @@ final class ContentSizedWebView: WKWebView {
         let widthChanged = newSize.width != frame.width
         super.setFrameSize(newSize)
         if widthChanged { onWidthChange?() }
+    }
+}
+
+/// A trackpad may begin with zero deltas. Choose its axis on the first actual
+/// movement and keep it through momentum; a mouse wheel decides per event.
+struct ScrollDirection {
+    private var horizontal: Bool?
+
+    mutating func isHorizontal(x: CGFloat, y: CGFloat, startsGesture: Bool = false, isMouseWheel: Bool = false) -> Bool {
+        if startsGesture || isMouseWheel { horizontal = nil }
+        if horizontal == nil, x != 0 || y != 0 { horizontal = abs(x) > abs(y) }
+        return horizontal ?? false
     }
 }
 
