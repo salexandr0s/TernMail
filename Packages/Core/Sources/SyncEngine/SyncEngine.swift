@@ -24,7 +24,7 @@ public actor SyncEngine {
     static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date"]
     static let inboxCap = 5000
     static let recentQuery = "newer_than:30d"
-    /// Messages fetched per cache write during a full sync, so the list fills in as it goes.
+    /// Metadata fetched per request group during a full sync.
     static let fullSyncChunk = 100
 
     public nonisolated let events: AsyncStream<SyncEvent>
@@ -167,28 +167,38 @@ public actor SyncEngine {
         // Messages pending actions target stay cached even when unlisted. Refetch
         // them as well: their stored labels may predate changes the lost history held.
         let targeted = try await cache.read { tx in try tx.messageIDsTargetedByPendingActions(accountID: accountID) }
-        let wanted = listed + targeted.subtracting(listed).sorted()
+        var wanted = listed + targeted.subtracting(listed).sorted()
 
         var gone = Set<String>()
-        for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
-            let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
-            let (updates, missing) = try await fetchMetadata(chunk)
-            gone.formUnion(missing)
-            try await write { tx in
-                let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
-                try tx.rebuildThreads(try tx.upsertMessages(live), accountID: accountID)
-            }
-        }
-
+        var fetchedIDs = Set<String>()
+        var updates: [CacheTransaction.MessageUpdate] = []
         let kept = Set(listed)
-        let finishedAt = now()
-        try await write { [gone] tx in
-            deleted.withLock { $0.formUnion(gone) }
-            var threads = try tx.deleteMessages(ids: gone, accountID: accountID)
-            threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID))
-            try tx.rebuildThreads(threads, accountID: accountID)
-            try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
-            try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+        while true {
+            for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
+                let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
+                let (fetched, missing) = try await fetchMetadata(chunk)
+                updates += fetched
+                fetchedIDs.formUnion(chunk)
+                gone.formUnion(missing)
+            }
+            let finishedAt = now()
+            let remaining = try await write { [gone, fetchedIDs, updates] tx -> Set<String> in
+                // Recheck inside the committing transaction. User actions and
+                // thread loads can have added protected targets while we awaited.
+                let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
+                guard remaining.isEmpty else { return remaining }
+                deleted.withLock { $0.formUnion(gone) }
+                let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+                var threads = try tx.upsertMessages(live)
+                threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
+                threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID))
+                try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+                try tx.rebuildThreads(threads, accountID: accountID)
+                try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
+                return []
+            }
+            guard !remaining.isEmpty else { return }
+            wanted = remaining.sorted()
         }
     }
 

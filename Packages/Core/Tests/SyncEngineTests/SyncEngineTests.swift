@@ -144,6 +144,33 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func resyncRefreshesTargetsQueuedWhileMetadataIsInFlight() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox, SystemLabel.unread])], cursor: 100)
+        await gmail.expireHistory()
+        await gmail.add(try gmailMessage("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        await gmail.add(try gmailMessage("m2", thread: "t2", labels: [SystemLabel.unread], historyID: 160))
+        await gmail.holdNextMetadata()
+        let syncing = Task { try await engine.sync() }
+        while await !gmail.isHoldingMetadata { await Task.yield() }
+        try await engine.perform(.markRead, threadIDs: ["t2"])
+        await gmail.releaseMetadata()
+        try await syncing.value
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+        #expect(await gmail.metadataRequests.contains(["m2"]))
+    }
+
+    @Test func failedFullSyncDoesNotPublishPartialMessages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        for index in 0...100 {
+            await gmail.add(try gmailMessage("m\(index)", thread: "t\(index)", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        }
+        await gmail.setMetadataErrors(["m100": .server(status: 503)])
+        await #expect(throws: GmailError.server(status: 503)) { try await engine.sync() }
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) }.isEmpty)
+        #expect(try await cache.syncState(accountID: account) == nil)
+    }
+
     @Test func historyPassAppliesChangesAndDropsConfirmedActions() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [
@@ -273,6 +300,10 @@ actor FakeGmail: GmailService {
     private var changeErrors: [String: GmailError] = [:]
     private var holdsNextChange = false
     private var held: CheckedContinuation<Void, Never>?
+    private var holdsMetadata = false
+    private var heldMetadata: CheckedContinuation<Void, Never>?
+    private var metadataErrors: [String: GmailError] = [:]
+    private(set) var metadataRequests: [[String]] = []
 
     func add(_ message: GmailMessage, inInbox: Bool = false) {
         messagesByID[message.id] = message
@@ -286,6 +317,10 @@ actor FakeGmail: GmailService {
     /// The next change is recorded, as if Gmail applied it, then fails with `error`.
     func failNextChange(with error: GmailError) { nextChangeError = error }
     func setChangeErrors(_ errors: [String: GmailError]) { changeErrors = errors }
+    func holdNextMetadata() { holdsMetadata = true }
+    var isHoldingMetadata: Bool { heldMetadata != nil }
+    func releaseMetadata() { heldMetadata?.resume(); heldMetadata = nil }
+    func setMetadataErrors(_ errors: [String: GmailError]) { metadataErrors = errors }
 
     /// The next change waits until `release()`.
     func holdNextChange() { holdsNextChange = true }
@@ -323,7 +358,15 @@ actor FakeGmail: GmailService {
     }
 
     func messages(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailMessage, GmailError>] {
-        Dictionary(uniqueKeysWithValues: ids.map { id in (id, messagesByID[id].map { .success($0) } ?? .failure(.notFound)) })
+        metadataRequests.append(ids)
+        let results = Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, metadataErrors[id].map { .failure($0) } ?? messagesByID[id].map { .success($0) } ?? Result<GmailMessage, GmailError>.failure(.notFound))
+        })
+        if holdsMetadata {
+            holdsMetadata = false
+            await withCheckedContinuation { heldMetadata = $0 }
+        }
+        return results
     }
 
     func thread(id: String, format: MessageFormat) async throws -> GmailThread {
