@@ -54,13 +54,6 @@ public struct CacheTransaction {
             .deleteAll(db)
     }
 
-    /// Updates labels returned by `labels.get`, leaving other labels alone.
-    public func updateLabels(_ labels: [LabelRecord]) throws {
-        for label in labels {
-            try label.upsert(db)
-        }
-    }
-
     // MARK: Messages
 
     public struct MessageUpdate: Sendable {
