@@ -78,6 +78,17 @@ struct MainView: View {
         } message: {
             Text(app.signOutMessage)
         }
+        .confirmationDialog(
+            "Sign out of \(app.accountToSignOut?.email ?? "this account")?",
+            isPresented: Binding(get: { app.accountToSignOut != nil }, set: { if !$0 { app.accountToSignOut = nil } }),
+            presenting: app.accountToSignOut
+        ) { account in
+            Button("Sign Out", role: .destructive) {
+                Task { await app.signOut(of: account.id) }
+            }
+        } message: { account in
+            Text(app.signOutMessage(for: account))
+        }
         .onChange(of: mailbox.draftToReopen) { _, id in
             guard let id else { return }
             mailbox.draftToReopen = nil

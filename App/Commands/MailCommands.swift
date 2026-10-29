@@ -22,6 +22,9 @@ struct MailCommands: Commands {
             Button("Attach Files…") { compose?.isChoosingFiles = true }
                 .keyboardShortcut("a", modifiers: [.shift, .command])
                 .disabled(!canEdit)
+            Divider()
+            Button("Add Account…") { Task { await app.addAccount() } }
+                .disabled(mailbox == nil || app.isSigningIn)
         }
         CommandGroup(after: .undoRedo) {
             // Compose windows can still send while the session has expired,
@@ -98,8 +101,16 @@ struct MailCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.option, .command])
                 .disabled(mailbox == nil || compose != nil)
             Divider()
-            Button("Sign Out…") { app.isConfirmingSignOut = true }
-                .disabled(!app.canSignOut)
+            if let mailbox, mailbox.hasSeveralAccounts {
+                Menu("Sign Out") {
+                    ForEach(mailbox.accounts, id: \.account.id) { owner in
+                        Button("\(owner.account.email)…") { app.accountToSignOut = owner.account }
+                    }
+                }
+            } else {
+                Button("Sign Out…") { app.isConfirmingSignOut = true }
+                    .disabled(!app.canSignOut)
+            }
         }
         CommandMenu("Format") {
             Group {

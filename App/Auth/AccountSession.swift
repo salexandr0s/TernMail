@@ -17,8 +17,9 @@ final class AccountSession: AccessTokenProvider {
     private var authState: OIDAuthState?
     private var persistedAccessToken: String?
 
-    /// A session from a sign-in. `save()` stores it.
-    init(accountID: String, state: OIDAuthState) {
+    /// A session from a sign-in, which `save()` stores. Without a state it
+    /// waits for `replace(with:)`, and its client's requests ask for sign-in.
+    init(accountID: String, state: OIDAuthState? = nil) {
         self.accountID = accountID
         authState = state
     }

@@ -173,6 +173,38 @@ final class MailboxModel {
         if isStarted { await added.start() }
     }
 
+    /// Takes an account out of the window and stops it, for its sign-out.
+    /// The next account becomes the default if this one was. Returns once
+    /// the account no longer writes to the cache.
+    func removeAccount(id: String) async {
+        guard hasSeveralAccounts, let removed = account(id: id) else { return }
+        if removed === defaultAccount {
+            defaultAccount = otherAccounts.removeFirst()
+        } else {
+            otherAccounts.removeAll { $0 === removed }
+        }
+        // Undo, pickers and sheets can't reach a signed-out account.
+        for entry in undoEntries.values where entry.applied.contains(where: { $0.account === removed }) {
+            removeUndo(entry)
+        }
+        if labelEdit?.accountID == id { labelEdit = nil }
+        if labelEditor?.accountID == id { labelEditor = nil }
+        if labelToDelete?.accountID == id { labelToDelete = nil }
+        if moveTargets?.contains(where: { $0.accountID == id }) == true { moveTargets = nil }
+        if snoozeDateTargets?.contains(where: { $0.accountID == id }) == true { snoozeDateTargets = nil }
+        switch selectedMailbox {
+        case .account(id, _)?:
+            selectedMailbox = .account(defaultAccount.account.id, SystemLabel.inbox)
+        case .combined(let box)? where !hasSeveralAccounts:
+            selectedMailbox = .account(defaultAccount.account.id, box)
+        default:
+            selectedThreadIDs = selectedThreadIDs.filter { $0.accountID != id }
+        }
+        // Search and combined lists drop it before it stops.
+        accountsChanged()
+        await removed.stop()
+    }
+
     func start() async {
         guard !isStopped, !isStarted else { return }
         isStarted = true
@@ -316,7 +348,9 @@ final class MailboxModel {
     func download(_ attachment: AttachmentRecord) async -> URL? {
         do {
             guard let owner = account(id: attachment.accountID) else { return nil }
-            return try await owner.engine.downloadAttachment(attachment, into: downloadsDirectory)
+            // Message IDs repeat across accounts, so each account has its own folder.
+            let folder = downloadsDirectory.appending(path: attachment.accountID, directoryHint: .isDirectory)
+            return try await owner.engine.downloadAttachment(attachment, into: folder)
         } catch {
             guard !isStopped, !(error is CancellationError) else { return nil }
             notice = Notice(message: "Tern couldn't download “\(attachment.filename)”. Check your connection.", isError: true)
