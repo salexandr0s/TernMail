@@ -165,14 +165,27 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         case updateLabel
         /// `labels.delete`, which Gmail can't undo.
         case deleteLabel
+        /// `filters.create`. The payload is `SettingsChange.createFilter`.
+        case createFilter
+        /// `filters.delete`. The payload is `SettingsChange.deleteFilter`.
+        case deleteFilter
+        /// `filters.create`, then `filters.delete` of the old filter. The
+        /// payload is `SettingsChange.replaceFilter`.
+        case replaceFilter
+        /// `settings.updateVacation`. The payload is `SettingsChange.vacation`.
+        case updateVacation
+        /// `sendAs.patch` of a signature. The payload is `SettingsChange.signature`.
+        case updateSignature
 
-        /// Draft rows drain apart from label changes, so a large upload
-        /// doesn't hold up archive or star.
+        /// Draft rows and settings rows each drain apart from label changes,
+        /// so a large upload or a slow settings call doesn't hold up archive
+        /// or star.
         public var lane: Lane {
             switch self {
             case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads: .labels
             case .createLabel, .updateLabel, .deleteLabel: .labels
             case .saveDraft, .sendDraft, .discardDraft: .compose
+            case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature: .settings
             }
         }
 
@@ -242,16 +255,32 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         /// before the first attempt, so a retry can find the filter an
         /// unanswered attempt created.
         case createFilter(filter: GmailFilter, listedIDs: [String]?)
-        /// `filters.delete`, with the filter as listed so undo can create it again.
-        case deleteFilter(id: String, filter: GmailFilter)
+        /// `filters.delete`, with the filter as listed so undo can create it
+        /// again. Without an `id`, the row deletes the filter that matches
+        /// `filter` and isn't in `listedIDs`, which is how undo finds a
+        /// filter whose create may not have answered.
+        case deleteFilter(id: String?, filter: GmailFilter, listedIDs: [String]? = nil)
         /// Gmail can't edit a filter, so a replace creates the new one, then
         /// deletes the old. `newID` is set once the create has answered.
-        case replaceFilter(oldID: String, old: GmailFilter, new: GmailFilter, listedIDs: [String]?, newID: String?)
+        /// Without an `oldID`, the old filter is found by content, as for a
+        /// delete without an ID.
+        case replaceFilter(oldID: String?, old: GmailFilter, new: GmailFilter, listedIDs: [String]?, newID: String?)
         /// `settings.updateVacation`, sending only `fields` from `new` over
         /// the settings Gmail holds at that moment.
         case vacation(fields: Set<VacationField>, new: VacationSettings, previous: VacationSettings)
         /// `sendAs.patch` of one address's signature.
         case signature(address: String, html: String, previousHTML: String)
+
+        /// The kind of row that carries this change.
+        public var kind: Kind {
+            switch self {
+            case .createFilter: .createFilter
+            case .deleteFilter: .deleteFilter
+            case .replaceFilter: .replaceFilter
+            case .vacation: .updateVacation
+            case .signature: .updateSignature
+            }
+        }
     }
 
     /// A part of the vacation responder that one edit changes.
@@ -263,7 +292,7 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     }
 
     public enum Lane: Sendable {
-        case labels, compose
+        case labels, compose, settings
     }
 
     public enum State: String, Codable, Sendable {

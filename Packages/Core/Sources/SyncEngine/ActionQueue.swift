@@ -185,6 +185,9 @@ extension SyncEngine {
             return
         case .createLabel, .updateLabel, .deleteLabel:
             try enqueueLabelInverse(of: action, accountID: accountID, now: now, in: tx)
+        case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
+            // Nothing queues settings rows until their sender and its undo exist.
+            return
         case .modifyThreads, .modifyMessages:
             // Restore each message exactly: archiving a thread removed INBOX only
             // from the messages that had it, so only those get it back. A label
@@ -248,6 +251,8 @@ extension SyncEngine {
         switch lane {
         case .labels: await sendDueActions()
         case .compose: await sendDueDrafts()
+        // `scheduleSending()` doesn't start this lane until settings rows have a sender.
+        case .settings: 0
         }
     }
 
@@ -430,6 +435,9 @@ extension SyncEngine {
             return [:]
         case .createLabel, .updateLabel, .deleteLabel:
             // Sent one at a time by `sendLabelChange(_:)`.
+            return [:]
+        case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
+            // Claimed only by the settings lane.
             return [:]
         }
     }
