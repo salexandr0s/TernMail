@@ -313,7 +313,7 @@ import Testing
     }
 
     @Test func defaultTransportHasNoURLCache() {
-        #expect(GmailClient.defaultSession.configuration.urlCache == nil)
+        #expect(GoogleSession.defaultTransport.configuration.urlCache == nil)
     }
 }
 
