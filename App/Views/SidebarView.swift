@@ -9,7 +9,7 @@ struct SidebarView: View {
             Section("Mailboxes") {
                 ForEach(SystemMailbox.all) { box in
                     Label(box.title, systemImage: box.systemImage)
-                        .badge(box.id == SystemLabel.inbox ? mailbox.label(id: box.id)?.threadsUnread ?? 0 : 0)
+                        .badge(mailbox.label(id: box.id)?.threadsUnread ?? 0)
                         .tag(box.id as String?)
                 }
             }

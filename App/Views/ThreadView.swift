@@ -9,6 +9,7 @@ struct ThreadView: View {
 
     @State private var detail: ThreadDetail?
     @State private var expanded: Set<String> = []
+    @State private var initializedExpansion = false
     @State private var blocker: WKContentRuleList?
     @State private var blockerReady = false
 
@@ -51,16 +52,21 @@ struct ThreadView: View {
             blockerReady = true
         }
         .task(id: threadID) {
-            await mailbox.open(threadID)
-        }
-        .task(id: threadID) {
+            var loading: Task<Void, Never>?
+            defer { loading?.cancel() }
             do {
                 for try await detail in mailbox.threadDetail(threadID) {
-                    if expanded.isEmpty, let last = detail?.messages.last {
+                    guard !Task.isCancelled else { return }
+                    if !initializedExpansion, let last = detail?.messages.last {
                         // Older messages start collapsed; unread ones stay open.
                         expanded = Set(detail?.messages.filter(\.isUnread).map(\.id) ?? []).union([last.id])
+                        initializedExpansion = true
                     }
                     self.detail = detail
+                    // Capture initial unread expansion before opening marks read.
+                    if loading == nil, detail != nil {
+                        loading = Task { await mailbox.open(threadID) }
+                    }
                 }
             } catch {
                 self.detail = nil
@@ -85,6 +91,7 @@ private struct MessageView: View {
                 header
             }
             .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint(isExpanded ? "Collapses this message" : "Expands this message")
 
             if isExpanded {
