@@ -22,6 +22,7 @@ public protocol GmailService: Sendable {
         metadataHeaders: [String]
     ) async throws -> [String: Result<GmailMessage, GmailError>]
     func thread(id: String, format: MessageFormat) async throws -> GmailThread
+    func attachment(messageID: String, attachmentID: String) async throws -> Data
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
     func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError]
     func trashThreads(ids: [String]) async throws -> [String: GmailError]
@@ -46,9 +47,9 @@ enum Mapping {
         )
     }
 
-    /// Nil when Gmail sent no history ID, which the cache needs to order updates.
-    static func message(_ message: GmailMessage, accountID: String) -> CacheTransaction.MessageUpdate? {
-        guard let historyID = message.historyId.flatMap(Int64.init) else { return nil }
+    /// Reject incomplete metadata rather than confirming a cursor past lost mail.
+    static func message(_ message: GmailMessage, accountID: String) throws -> CacheTransaction.MessageUpdate {
+        guard let historyID = message.historyId.flatMap(Int64.init), historyID > 0 else { throw SyncError.invalidHistoryID }
         let record = MessageRecord(
             accountID: accountID,
             id: message.id,
@@ -65,8 +66,8 @@ enum Mapping {
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }
 
-    static func body(_ message: GmailMessage, accountID: String, fetchedAt: Date) -> MessageBodyRecord {
-        let body = MIMEParts.body(of: message)
+    static func body(_ message: GmailMessage, accountID: String, fetchedAt: Date, attachments: [String: Data] = [:]) -> MessageBodyRecord {
+        let body = MIMEParts.body(of: message, attachments: attachments)
         return MessageBodyRecord(
             accountID: accountID,
             messageID: message.id,

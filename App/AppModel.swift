@@ -33,6 +33,21 @@ final class AppModel {
     func start() async {
         guard phase == .loading else { return }
         do {
+#if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+                let cache = try MailCache.inMemory()
+                let accounts = try AccountStore.inMemory()
+                let account = AccountRecord(id: "ui-audit", email: "audit@example.invalid", displayName: "UI Audit", grantedScopes: [], addedAt: .now)
+                try await accounts.save(account)
+                self.cache = cache
+                self.accounts = accounts
+                let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+                self.mailbox = mailbox
+                phase = .signedIn(account)
+                Task { await mailbox.start() }
+                return
+            }
+#endif
             let directory = try Self.dataDirectory()
             let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
             cache = try MailCache.open(at: directory.appending(path: "cache.sqlite"))
@@ -68,6 +83,7 @@ final class AppModel {
                 addedAt: .now
             )
             // One account for now: a different Google account replaces the old one.
+            await closeMailbox()
             for old in try await accounts.accounts() where old.id != account.id {
                 try await removeAccountData(old, from: accounts)
             }

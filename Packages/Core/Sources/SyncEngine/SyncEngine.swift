@@ -1,6 +1,8 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MessageContent
+import os
 
 public enum SyncEvent: Sendable, Equatable {
     case syncStarted
@@ -10,7 +12,7 @@ public enum SyncEvent: Sendable, Equatable {
     case actionFailed(String)
 }
 
-enum SyncError: Error {
+enum SyncError: Error, Equatable {
     case invalidHistoryID
 }
 
@@ -23,7 +25,7 @@ public actor SyncEngine {
     static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date"]
     static let inboxCap = 5000
     static let recentQuery = "newer_than:30d"
-    /// Messages fetched per cache write during a full sync, so the list fills in as it goes.
+    /// Metadata fetched per request group during a full sync.
     static let fullSyncChunk = 100
 
     public nonisolated let events: AsyncStream<SyncEvent>
@@ -37,11 +39,20 @@ public actor SyncEngine {
 
     private var pass: Task<Void, any Error>?
     private var pollTask: Task<Void, Never>?
+    private var hasStarted = false
+    private var writesInFlight = 0
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     var drainTask: Task<Void, Never>?
     var wakeRequested = false
+    /// Undo receipts exist only for this engine's lifetime. Remember rejected
+    /// and consumed row IDs even after history has removed the queue rows.
+    var unavailableUndoIDs = Set<Int64>()
+    var undoReceipts: [Int64: WeakActionReceipt] = [:]
     private(set) var isStopped = false
-    /// Messages recent passes deleted, so a slow thread load can't bring them back.
-    private var deletedMessageIDs = Set<String>()
+    /// Accessed only inside the cache's serialized writes. The lock safely
+    /// carries deletion knowledge into their Sendable closures. Gmail message
+    /// IDs are never reused; forgetting one could resurrect deleted mail.
+    private let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// - Parameters:
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
@@ -67,9 +78,17 @@ public actor SyncEngine {
 
     /// Resumes interrupted sends and syncs now and every `pollInterval`.
     public func start(pollInterval: Duration = .seconds(60)) async {
-        guard pollTask == nil, !isStopped else { return }
+        guard !hasStarted, !isStopped else { return }
+        hasStarted = true
         let accountID = accountID
-        _ = try? await write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
+        do {
+            try await write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
+        } catch {
+            hasStarted = false
+            if !isStopped { continuation.yield(.syncFailed(Self.message(for: error))) }
+            return
+        }
+        guard !isStopped else { return }
         scheduleSending()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -93,12 +112,24 @@ public actor SyncEngine {
         running?.cancel()
         await drain?.value
         _ = try? await running?.value
+        if writesInFlight > 0 {
+            await withCheckedContinuation { writeWaiters.append($0) }
+        }
         continuation.finish()
     }
 
     /// Every engine write goes through here, so nothing lands after `stop()`.
     func write<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async throws -> T {
         if isStopped || Task.isCancelled { throw CancellationError() }
+        writesInFlight += 1
+        defer {
+            writesInFlight -= 1
+            if writesInFlight == 0 {
+                let waiters = writeWaiters
+                writeWaiters = []
+                for waiter in waiters { waiter.resume() }
+            }
+        }
         return try await cache.write(updates)
     }
 
@@ -134,13 +165,8 @@ public actor SyncEngine {
         guard let state else {
             return try await fullSync(reset: false)
         }
-        switch try await incrementalSync(from: state.historyID, passStart: passStart) {
-        case nil:
+        if try await incrementalSync(from: state.historyID, passStart: passStart) == nil {
             try await fullSync(reset: true)
-        case true?:
-            try await refreshLabels()
-        case false?:
-            break
         }
     }
 
@@ -150,37 +176,50 @@ public actor SyncEngine {
     private func fullSync(reset: Bool) async throws {
         let passStart = now()
         let accountID = accountID
+        let deleted = deletedMessageIDs
         let profile = try await gmail.profile()
-        guard let historyID = Int64(profile.historyId) else { throw SyncError.invalidHistoryID }
-        try await refreshLabels()
+        guard let historyID = Int64(profile.historyId), historyID > 0 else { throw SyncError.invalidHistoryID }
+        let labels = try await fetchLabels()
 
-        let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false)
+        let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
         let listed = (inbox + recent).removingDuplicates()
         // Messages pending actions target stay cached even when unlisted. Refetch
         // them as well: their stored labels may predate changes the lost history held.
         let targeted = try await cache.read { tx in try tx.messageIDsTargetedByPendingActions(accountID: accountID) }
-        let wanted = listed + targeted.subtracting(listed).sorted()
+        var wanted = listed + targeted.subtracting(listed).sorted()
 
         var gone = Set<String>()
-        for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
-            let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
-            let (updates, missing) = try await fetchMetadata(chunk)
-            gone.formUnion(missing)
-            try await write { tx in
-                try tx.rebuildThreads(try tx.upsertMessages(updates), accountID: accountID)
-            }
-        }
-
-        rememberDeleted(gone)
+        var fetchedIDs = Set<String>()
+        var updates: [CacheTransaction.MessageUpdate] = []
         let kept = Set(listed)
-        let finishedAt = now()
-        try await write { [gone] tx in
-            var threads = try tx.deleteMessages(ids: gone, accountID: accountID)
-            threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID))
-            try tx.rebuildThreads(threads, accountID: accountID)
-            try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
-            try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+        while true {
+            for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
+                let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
+                let (fetched, missing) = try await fetchMetadata(chunk)
+                updates += fetched
+                fetchedIDs.formUnion(chunk)
+                gone.formUnion(missing)
+            }
+            let finishedAt = now()
+            let remaining = try await write { [gone, fetchedIDs, updates] tx -> Set<String> in
+                // Recheck inside the committing transaction. User actions and
+                // thread loads can have added protected targets while we awaited.
+                let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
+                guard remaining.isEmpty else { return remaining }
+                try tx.replaceLabels(labels, accountID: accountID)
+                deleted.withLock { $0.formUnion(gone) }
+                let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+                var threads = try tx.upsertMessages(live)
+                threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
+                threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID, through: historyID))
+                try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+                try tx.rebuildThreads(threads, accountID: accountID)
+                try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
+                return []
+            }
+            guard !remaining.isEmpty else { return }
+            wanted = remaining.sorted()
         }
     }
 
@@ -198,17 +237,25 @@ public actor SyncEngine {
                 return nil
             }
             records += page.history ?? []
-            latest = Int64(page.historyId) ?? latest
+            guard let pageHistoryID = Int64(page.historyId), pageHistoryID > 0, pageHistoryID >= cursor else {
+                throw SyncError.invalidHistoryID
+            }
+            latest = max(latest, pageHistoryID)
             pageToken = page.nextPageToken
         } while pageToken != nil
 
         let accountID = accountID
         let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
-        let changes = HistoryChanges(records: records, cachedMessageIDs: cached)
-        let (fetched, _) = try await fetchMetadata(changes.messagesToFetch)
+        let changes = try HistoryChanges(records: records, cachedMessageIDs: cached)
+        let (fetched, missing) = try await fetchMetadata(changes.messagesToFetch)
+        let gone = changes.deletedIDs.union(missing)
+        let deleted = deletedMessageIDs
+        // Labels can change without any message history (for example a rename).
+        let labels = try await fetchLabels()
 
-        rememberDeleted(changes.deletedIDs)
         try await write { [latest] tx in
+            try tx.replaceLabels(labels, accountID: accountID)
+            deleted.withLock { $0.formUnion(gone) }
             var threads = Set<String>()
             for change in changes.labelChanges {
                 if let threadID = try tx.applyLabelChange(
@@ -218,8 +265,9 @@ public actor SyncEngine {
                     threads.insert(threadID)
                 }
             }
-            threads.formUnion(try tx.deleteMessages(ids: changes.deletedIDs, accountID: accountID))
-            threads.formUnion(try tx.upsertMessages(fetched))
+            threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
+            let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
+            threads.formUnion(try tx.upsertMessages(live))
             // Store the cursor even when nothing changed, so the next pass starts later.
             try tx.saveCursor(historyID: latest, accountID: accountID)
             try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
@@ -228,19 +276,27 @@ public actor SyncEngine {
         return !records.isEmpty
     }
 
-    /// Replaces the label list, with counts from `labels.get`.
-    private func refreshLabels() async throws {
+    /// Fetches a complete label snapshot before the pass commits anything.
+    private func fetchLabels() async throws -> [LabelRecord] {
         let accountID = accountID
         let list = try await gmail.labels()
         let detailed = try await gmail.labels(ids: list.map(\.id))
-        let records = list.map { label in
-            let full = (try? detailed[label.id]?.get()) ?? label
-            return Mapping.label(full, accountID: accountID)
+        return try list.compactMap { label in
+            switch detailed[label.id] {
+            case .success(let full)?:
+                guard full.id == label.id else { throw GmailError.decoding("Label identity") }
+                return Mapping.label(full, accountID: accountID)
+            case .failure(.notFound)?:
+                return nil // Deleted after labels.list, before labels.get.
+            case .failure(let error)?:
+                throw error
+            case nil:
+                throw GmailError.missingBatchPart
+            }
         }
-        try await write { tx in try tx.replaceLabels(records, accountID: accountID) }
     }
 
-    private func listMessageIDs(labelIDs: [String], query: String?, includeSpamTrash: Bool) async throws -> [String] {
+    private func listMessageIDs(labelIDs: [String], query: String?, includeSpamTrash: Bool, limit: Int? = nil) async throws -> [String] {
         var ids: [String] = []
         var pageToken: String?
         repeat {
@@ -253,8 +309,8 @@ public actor SyncEngine {
             )
             ids += (page.messages ?? []).map(\.id)
             pageToken = page.nextPageToken
-        } while pageToken != nil && ids.count < Self.inboxCap
-        return Array(ids.prefix(Self.inboxCap))
+        } while pageToken != nil && (limit.map { ids.count < $0 } ?? true)
+        return limit.map { Array(ids.prefix($0)) } ?? ids
     }
 
     /// Metadata for `ids`, plus the IDs Gmail no longer has. Any other failed
@@ -269,9 +325,12 @@ public actor SyncEngine {
         for id in ids {
             switch results[id] {
             case .success(let message)?:
-                if let update = Mapping.message(message, accountID: accountID) { updates.append(update) }
-            case .failure(.notFound)?, nil:
+                guard message.id == id else { throw GmailError.decoding("Message identity") }
+                updates.append(try Mapping.message(message, accountID: accountID))
+            case .failure(.notFound)?:
                 missing.insert(id)
+            case nil:
+                throw GmailError.missingBatchPart
             case .failure(let error)?:
                 throw error
             }
@@ -279,41 +338,68 @@ public actor SyncEngine {
         return (updates, missing)
     }
 
-    private func rememberDeleted(_ ids: Set<String>) {
-        if deletedMessageIDs.count > 10_000 { deletedMessageIDs.removeAll() }
-        deletedMessageIDs.formUnion(ids)
-    }
-
     // MARK: Opening a thread
 
     /// Fetches bodies the cache lacks for a thread the user opened, and marks
     /// the thread read.
     public func openThread(_ threadID: String) async throws {
+        if isStopped || Task.isCancelled { throw CancellationError() }
         let accountID = accountID
-        let (missing, isUnread) = try await cache.read { tx in
-            (
-                try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID),
-                try tx.thread(id: threadID, accountID: accountID)?.isUnread ?? false
-            )
+        let deleted = deletedMessageIDs
+        let openedAt = now()
+        let opened = try await write { tx in
+            let missing = try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)
+            let versions = Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) })
+            if try tx.thread(id: threadID, accountID: accountID)?.isUnread == true {
+                // Reading state and recording mark-read are one transaction, so
+                // a user command cannot land between them and be overwritten.
+                _ = try tx.enqueue(
+                    .modifyThreads, accountID: accountID, threadIDs: [threadID],
+                    remove: [SystemLabel.unread], now: openedAt, notBefore: openedAt
+                )
+            }
+            return (missing: missing, versions: versions)
         }
-        if isUnread {
-            try await enqueue(.markRead, threadIDs: [threadID], hold: 0)
-        }
-        guard !missing.isEmpty else { return }
+        scheduleSending()
+        guard !opened.missing.isEmpty else { return }
+        if isStopped || Task.isCancelled { throw CancellationError() }
 
-        let thread = try await gmail.thread(id: threadID, format: .full)
+        let thread: GmailThread
+        do {
+            thread = try await gmail.thread(id: threadID, format: .full)
+        } catch GmailError.notFound {
+            try await write { tx in
+                // A slow 404 describes the request's starting state. Preserve
+                // messages that a newer sync or thread response has since stored.
+                let ids = try tx.messages(threadID: threadID, accountID: accountID)
+                    .filter { opened.versions[$0.id] == $0.historyID }.map(\.id)
+                deleted.withLock { $0.formUnion(ids) }
+                try tx.rebuildThreads(try tx.deleteMessages(ids: ids, accountID: accountID), accountID: accountID)
+            }
+            return
+        }
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
-        // A pass may have deleted messages while the fetch was in flight.
-        for message in thread.messages ?? [] where !deletedMessageIDs.contains(message.id) {
-            guard let update = Mapping.message(message, accountID: accountID) else { continue }
+        guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
+        for message in messages {
+            guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
+            let update = try Mapping.message(message, accountID: accountID)
             updates.append(update)
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt))
+            var attachments: [String: Data] = [:]
+            for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
+                if isStopped || Task.isCancelled { throw CancellationError() }
+                attachments[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+            }
+            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: attachments))
         }
         try await write { [updates, bodies] tx in
-            let threads = try tx.upsertMessages(updates)
-            try tx.saveBodies(bodies)
+            // Decide inside the same serialized write as ingestion, so a delete
+            // committed while this request was awaiting cannot be overwritten.
+            let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+            let liveIDs = Set(live.map(\.record.id))
+            let threads = try tx.upsertMessages(live)
+            try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) })
             try tx.rebuildThreads(threads, accountID: accountID)
         }
     }
@@ -354,7 +440,7 @@ struct HistoryChanges {
     /// are left out, since their fresh metadata already has the final labels.
     let labelChanges: [LabelChange]
 
-    init(records: [HistoryRecord], cachedMessageIDs: Set<String>) {
+    init(records: [HistoryRecord], cachedMessageIDs: Set<String>) throws {
         let deleted = Set(records.flatMap { $0.messagesDeleted ?? [] }.map(\.message.id))
         var fetch: [String] = []
         for record in records {
@@ -367,7 +453,7 @@ struct HistoryChanges {
 
         var changes: [LabelChange] = []
         for record in records {
-            let historyID = Int64(record.id) ?? 0
+            guard let historyID = Int64(record.id), historyID > 0 else { throw SyncError.invalidHistoryID }
             for change in record.labelsAdded ?? [] {
                 changes.append(LabelChange(
                     messageID: change.message.id, added: change.labelIds, removed: [], historyID: historyID

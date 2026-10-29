@@ -109,6 +109,7 @@ public struct CacheTransaction {
         guard var message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
             return nil
         }
+        guard historyID >= message.historyID else { return nil }
         if historyID > message.historyID {
             message.historyID = historyID
             try message.update(db)
@@ -144,9 +145,16 @@ public struct CacheTransaction {
     /// Deletes every message not in `kept`, except messages a pending action
     /// still targets. Used after a full resync. Returns the affected thread IDs.
     @discardableResult
-    public func deleteMessages(notIn kept: Set<String>, accountID: String) throws -> Set<String> {
+    public func deleteMessages(notIn kept: Set<String>, accountID: String, through historyID: Int64? = nil) throws -> Set<String> {
         let protected = try messageIDsTargetedByPendingActions(accountID: accountID)
-        let stale = try cachedMessageIDs(accountID: accountID).subtracting(kept).subtracting(protected)
+        var stale = try cachedMessageIDs(accountID: accountID).subtracting(kept).subtracting(protected)
+        if let historyID {
+            // A thread load can ingest new mail while the resync awaits its
+            // listings. Those revisions postdate the held profile snapshot.
+            let oldEnough = try String.fetchSet(db, MessageRecord.select(Column("id"))
+                .filter(Column("accountID") == accountID && Column("historyID") <= historyID))
+            stale.formIntersection(oldEnough)
+        }
         return try deleteMessages(ids: stale, accountID: accountID)
     }
 
@@ -241,24 +249,26 @@ public struct CacheTransaction {
         }
 
         var diff: [String: PendingAction.LabelDiff] = [:]
+        var alreadyTrashed: [String] = []
         for threadID in affectedThreads {
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: existing)
-            let targets = threadIDs.contains(threadID) ? Array(labels.keys) : messageIDs.filter { labels[$0] != nil }
+            let targets = kind == .modifyMessages ? messageIDs.filter { labels[$0] != nil } : Array(labels.keys)
             for messageID in targets {
                 let current = labels[messageID] ?? []
+                if kind == .trashThreads, current.contains(SystemLabel.trash) { alreadyTrashed.append(messageID) }
                 let change = PendingAction.LabelDiff(
                     added: add.filter { !current.contains($0) }.sorted(),
                     removed: remove.filter { current.contains($0) }.sorted()
                 )
-                if !change.added.isEmpty || !change.removed.isEmpty {
-                    diff[messageID] = change
-                }
+                // Empty diffs still record which messages were known when the
+                // command was made, so a later send snapshot won't rewrite them.
+                diff[messageID] = change
             }
         }
 
         var action = PendingAction(
             id: nil, accountID: accountID, kind: kind,
-            threadIDs: threadIDs, messageIDs: messageIDs,
+            threadIDs: threadIDs, messageIDs: kind == .trashThreads ? alreadyTrashed.sorted() : messageIDs,
             addLabelIDs: add, removeLabelIDs: remove, diff: diff,
             state: .queued, attempts: 0, lastError: nil,
             createdAt: now, notBefore: notBefore, sentAt: nil
@@ -287,6 +297,9 @@ public struct CacheTransaction {
             let threads = try threadIDs(of: action)
             if action.state == .queued, action.notBefore <= now, busyThreads.isDisjoint(with: threads) {
                 action.state = .sending
+                // A crash may happen after Gmail applies this attempt but before
+                // its reply is saved. Undo must compensate after recovery.
+                action.attempts += 1
                 try action.update(db)
                 claimed.append(action)
             }
@@ -304,7 +317,7 @@ public struct CacheTransaction {
             arguments: [accountID, PendingAction.State.undone.rawValue]
         )
         try db.execute(
-            sql: "UPDATE pendingAction SET state = ? WHERE accountID = ? AND state = ?",
+            sql: "UPDATE pendingAction SET state = ?, attempts = MAX(attempts, 1) WHERE accountID = ? AND state = ?",
             arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
         )
     }

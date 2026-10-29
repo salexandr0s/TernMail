@@ -98,7 +98,9 @@ final class GoogleAuth: AccessTokenProvider {
               let idToken = OIDIDToken(idTokenString: idTokenString),
               let email = idToken.claims["email"] as? String
         else { throw AuthError.missingIdentity }
-        let granted = (state.lastTokenResponse?.scope ?? "").split(separator: " ").map(String.init)
+        // AppAuth preserves the effective grant when a token response omits
+        // scope (OAuth defines an omitted scope as unchanged).
+        let granted = (state.scope ?? "").split(separator: " ").map(String.init)
         guard granted.contains(Self.gmailScope) else { throw AuthError.gmailAccessNotGranted }
 
         authState = state
@@ -128,11 +130,15 @@ final class GoogleAuth: AccessTokenProvider {
         if forceRefresh { state.setNeedsTokenRefresh() }
         do {
             let token = try await freshToken(from: state)
+            try Task.checkCancellation()
+            guard authState === state else { throw AuthError.signInRequired }
             if token != persistedAccessToken {
                 try? persist(state)
             }
             return token
         } catch {
+            // A refresh from an older mailbox must not clear a new sign-in.
+            guard authState === state else { throw AuthError.signInRequired }
             let nsError = error as NSError
             if nsError.domain == OIDOAuthTokenErrorDomain, nsError.code == OIDErrorCodeOAuth.invalidGrant.rawValue {
                 signOut()

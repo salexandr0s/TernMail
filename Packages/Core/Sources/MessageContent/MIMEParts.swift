@@ -32,16 +32,31 @@ public struct AttachmentPart: Sendable, Equatable {
 /// Gmail undoes the transfer encoding but leaves the bytes in the part's
 /// declared charset, so each part is decoded here.
 public enum MIMEParts {
-    public static func body(of message: GmailMessage) -> ExtractedBody {
+    public static func body(of message: GmailMessage, attachments: [String: Data] = [:]) -> ExtractedBody {
         guard let payload = message.payload else { return ExtractedBody() }
-        let found = collect(payload)
+        let found = collect(payload, attachments: attachments)
         return ExtractedBody(
             html: found.html.isEmpty ? nil : found.html.joined(separator: "\n"),
             plainText: found.plain.isEmpty ? nil : found.plain.joined(separator: "\n")
         )
     }
 
-    /// Leaf parts with a file name or an attachment disposition, in payload order.
+    /// Only readable body parts are requested. Attached documents stay excluded.
+    public static func requiredAttachmentIDs(of message: GmailMessage) -> Set<String> {
+        func collect(_ part: MessagePart) -> Set<String> {
+            guard !isAttachment(part) else { return [] }
+            if (part.mimeType ?? "").lowercased().hasPrefix("multipart/") {
+                return (part.parts ?? []).reduce(into: Set<String>()) { $0.formUnion(collect($1)) }
+            }
+            guard ["text/plain", "text/html"].contains((part.mimeType ?? "").lowercased()),
+                  part.body?.decodedData == nil, let id = part.body?.attachmentId else { return [] }
+            return [id]
+        }
+        return message.payload.map(collect) ?? []
+    }
+
+    /// Parts with a file name or an attachment disposition, in payload order.
+    /// An attached message with its own bytes is listed once, not by its parts.
     public static func attachments(of message: GmailMessage) -> [AttachmentPart] {
         guard let payload = message.payload else { return [] }
         var found: [AttachmentPart] = []
@@ -50,11 +65,12 @@ public enum MIMEParts {
     }
 
     private static func collectAttachments(_ part: MessagePart, into found: inout [AttachmentPart]) {
-        if let children = part.parts, !children.isEmpty {
+        let children = part.parts ?? []
+        let hasBytes = part.body?.attachmentId != nil || part.body?.decodedData != nil
+        guard isAttachment(part), hasBytes || children.isEmpty, let partID = part.partId else {
             for child in children { collectAttachments(child, into: &found) }
             return
         }
-        guard isAttachment(part), let partID = part.partId else { return }
         let contentType = part.header("Content-Type")
         let disposition = part.header("Content-Disposition")?.trimmingCharacters(in: .whitespaces).lowercased()
         let filename = part.filename.flatMap { $0.isEmpty ? nil : $0 }
@@ -77,11 +93,12 @@ public enum MIMEParts {
         var plain: [String] = []
     }
 
-    private static func collect(_ part: MessagePart) -> Found {
+    private static func collect(_ part: MessagePart, attachments: [String: Data]) -> Found {
+        guard !isAttachment(part) else { return Found() }
         let mimeType = (part.mimeType ?? "").lowercased()
 
         if mimeType.hasPrefix("multipart/") {
-            let children = (part.parts ?? []).map(collect)
+            let children = (part.parts ?? []).map { collect($0, attachments: attachments) }
             if mimeType == "multipart/alternative" {
                 // Alternatives are ordered plainest first; keep the richest of each kind.
                 var found = Found()
@@ -95,7 +112,7 @@ public enum MIMEParts {
             }
         }
 
-        guard !isAttachment(part), let data = part.body?.decodedData else { return Found() }
+        guard let data = part.body?.decodedData ?? part.body?.attachmentId.flatMap({ attachments[$0] }) else { return Found() }
         let charset = part.header("Content-Type").flatMap { MIMEReader.parameters(of: $0)["charset"] }
         switch mimeType {
         case "text/html": return Found(html: [decode(data, charset: charset)])

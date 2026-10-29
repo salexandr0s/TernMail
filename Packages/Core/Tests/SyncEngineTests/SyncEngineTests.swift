@@ -9,6 +9,134 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func unreadableMutationResponsesKeepTheActionAndItsUndo() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        let receipt = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
+        await gmail.failNextChange(with: .decoding("Batch response has no boundary"))
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.state) == [.queued])
+        try await engine.undo(receipt)
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [
+            Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox]),
+            Change("batchModify", ["m1"], add: [SystemLabel.inbox]),
+        ])
+    }
+
+    @Test func retriesBlockLaterChangesOnlyOnTheSameThread() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])])
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        clock.advance(3)
+        await gmail.failNextChange(with: .rateLimited)
+        await engine.sendDueActions()
+        try await engine.perform(.markUnread, threadIDs: ["t1"])
+        try await engine.perform(.markUnread, threadIDs: ["t2"])
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.state) == [.sent, .queued, .sent])
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [
+            Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox]),
+            Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox]),
+            Change("modifyThreads", ["t2"], add: [SystemLabel.unread]),
+            Change("modifyThreads", ["t1"], add: [SystemLabel.unread]),
+        ])
+    }
+
+    @Test func independentThreadChangesShareOneDeliveryBatch() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])])
+        try await engine.perform(.archive, threadIDs: ["t1", "t2"])
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [Change("modifyThreads", ["t1", "t2"], remove: [SystemLabel.inbox])])
+        #expect(try await pendingActions(cache).map(\.state) == [.sent, .sent])
+    }
+
+    @Test func undoAfterConfirmationRestoresUncachedMessagesFromTheSendSnapshot() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.setThread(try decode(GmailThread.self, """
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1")),\(try encodedMessage("m2", thread: "t1")),\(try encodedMessage("m3", thread: "t1", labels: [SystemLabel.sent]))]}
+            """))
+        let receipt = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
+        clock.advance(3)
+        await engine.sendDueActions()
+        clock.advance(1)
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"250"}"#))
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+        try await engine.undo(receipt)
+        await engine.sendDueActions()
+        #expect(await gmail.changes.last == Change("batchModify", ["m1", "m2"], add: [SystemLabel.inbox]))
+    }
+
+    @Test func undoTrashKeepsMessagesThatWereAlreadyInTrash() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t1", [SystemLabel.trash])])
+        let action = try #require(try await engine.perform(.trash, threadIDs: ["t1"]))
+        clock.advance(3)
+        await engine.sendDueActions()
+        try await engine.undo(action)
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+        #expect(try await threadIDs(cache, SystemLabel.trash) == ["t1"])
+        await engine.sendDueActions()
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [
+            Change("trash", ["t1"]), Change("untrash", ["t1"]), Change("batchModify", ["m2"], add: [SystemLabel.trash]),
+        ])
+    }
+
+    @Test func rejectedCredentialsKeepTheChangeForReauthentication() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        await gmail.failNextChange(with: .unauthorized)
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.state) == [.queued])
+        #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
+    }
+
+    @Test func partialFailuresKeepIndependentRetriesAndUndoOnlyAcceptedTargets() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [
+            ("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox]), ("m3", "t3", [SystemLabel.inbox]),
+        ])
+        await gmail.setChangeErrors(["t1": .rateLimited, "t2": .http(status: 403, reason: "forbidden")])
+        let action = try #require(try await engine.perform(.archive, threadIDs: ["t1", "t2", "t3"]))
+        clock.advance(3)
+        await engine.sendDueActions()
+        let rows = try await pendingActions(cache)
+        #expect(rows.map(\.threadIDs) == [["t1"], ["t3"]])
+        #expect(rows.map(\.state) == [.queued, .sent])
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t2"])
+        try await engine.undo(action)
+        await engine.sendDueActions()
+        let inverses = await gmail.changes.filter { $0.kind == "batchModify" }
+        #expect(inverses.map(\.ids) == [["m1", "m3"]])
+        // A repeated undo cannot enqueue another inverse after confirmation.
+        try await engine.undo(action)
+        #expect(try await pendingActions(cache).filter { $0.state == .queued }.isEmpty)
+    }
+
+    @Test func undoAfterCrashCompensatesAnInterruptedFirstSend() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        let action = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
+        clock.advance(3)
+        // Claiming is durable; the process can quit after Gmail sees this send.
+        let date = clock.now()
+        _ = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: date) }
+        try await cache.write { tx in try tx.requeueInterruptedActions(accountID: account) }
+        try await engine.undo(action)
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [Change("batchModify", ["m1"], add: [SystemLabel.inbox])])
+    }
+
     @Test func undoDuringTheHoldSendsNothing() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
@@ -108,6 +236,182 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func resyncDoesNotPruneNewerMessagesLoadedAfterItsListings() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.expireHistory()
+        await gmail.add(try gmailMessage("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        await gmail.setThread(try decode(GmailThread.self, """
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1", historyID: 150)),\(try encodedMessage("m2", thread: "t1", historyID: 250))]}
+            """))
+        await gmail.holdNextMetadata()
+        let syncing = Task { try await engine.sync() }
+        while await !gmail.isHoldingMetadata { await Task.yield() }
+        try await engine.openThread("t1")
+        await gmail.releaseMetadata()
+        try await syncing.value
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1", "m2"])
+        #expect(try await cache.syncState(accountID: account)?.historyID == 200)
+    }
+
+    @Test func staleThreadNotFoundDoesNotDeleteMessagesIngestedDuringTheRequest() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.holdNextThread()
+        let loading = Task { try await engine.openThread("t1") }
+        while await !gmail.isHoldingThread { await Task.yield() }
+        await gmail.add(try gmailMessage("m2", thread: "t1", labels: [SystemLabel.inbox], historyID: 150))
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"160","history":[{"id":"150","messagesAdded":[{"message":{"id":"m2","threadId":"t1"}}]}]}"#))
+        try await engine.sync()
+        await gmail.releaseThread()
+        try await loading.value
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m2"])
+    }
+
+    @Test func threadLoadPreservesLaterUnreadIntentAndConcurrentDeletions() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread]), ("m2", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.setThread(try decode(GmailThread.self, """
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1", labels: [SystemLabel.inbox, SystemLabel.unread])),\(try encodedMessage("m2", thread: "t1"))]}
+            """))
+        await gmail.holdNextThread()
+        let loading = Task { try await engine.openThread("t1") }
+        while await !gmail.isHoldingThread { await Task.yield() }
+        try await engine.perform(.markUnread, threadIDs: ["t1"])
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"120","history":[{"id":"110","messagesDeleted":[{"message":{"id":"m2","threadId":"t1"}}]}]}"#))
+        try await engine.sync()
+        await gmail.releaseThread()
+        try await loading.value
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1"])
+        #expect(try await cache.read { tx in try tx.thread(id: "t1", accountID: account)?.isUnread } == true)
+    }
+
+    @Test func textStoredAsAnAttachmentLoadsWithoutDownloadingAttachedFiles() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        await gmail.setThread(try decode(GmailThread.self, #"""
+            {"id":"t1","messages":[{"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
+            "payload":{"mimeType":"multipart/mixed","parts":[
+              {"mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=ISO-8859-1"}],"body":{"attachmentId":"body"}},
+              {"mimeType":"text/plain","filename":"notes.txt","body":{"attachmentId":"file"}}
+            ]}}]}
+            """#))
+        await gmail.setAttachment("body", data: try #require("Café".data(using: .isoLatin1)))
+        try await engine.openThread("t1")
+        for try await detail in cache.thread(accountID: account, threadID: "t1") {
+            #expect(detail?.messages.first?.body?.plainText == "Café")
+            break
+        }
+        #expect(await gmail.attachmentRequests == ["body"])
+    }
+
+    @Test func emptyHistoryRefreshesLabelsAndFailedDetailsPreserveTheCache() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [], cursor: 100)
+        let label = try decode(GmailLabel.self, #"{"id":"label1","name":"Renamed","type":"user","threadsUnread":3}"#)
+        await gmail.setLabels([label])
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"120"}"#))
+        try await engine.sync()
+        let saved = try await cache.read { tx in try tx.labels(accountID: account) }
+        #expect(saved.first?.name == "Renamed")
+        #expect(saved.first?.threadsUnread == 3)
+        await gmail.failLabelDetails(with: .rateLimited)
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"130"}"#))
+        await #expect(throws: GmailError.rateLimited) { try await engine.sync() }
+        #expect(try await cache.read { tx in try tx.labels(accountID: account) } == saved)
+        #expect(try await cache.syncState(accountID: account)?.historyID == 120)
+    }
+
+    @Test func recentListingContinuesPastTheInboxCap() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        var pages: [MessageListPage] = []
+        for page in 0..<10 {
+            let refs = (0..<500).map { #"{"id":"old-\#(page)-\#($0)","threadId":"old"}"# }.joined(separator: ",")
+            pages.append(try decode(MessageListPage.self, #"{"messages":[\#(refs)],"nextPageToken":"next"}"#))
+        }
+        pages.append(try decode(MessageListPage.self, #"{"messages":[{"id":"tail","threadId":"tail"}]}"#))
+        await gmail.setRecentPages(pages)
+        await gmail.add(try gmailMessage("tail", thread: "tail", labels: [], historyID: 150))
+        try await engine.sync()
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["tail"])
+    }
+
+    @Test func stopWaitsForDatabaseWritesAlreadyInFlight() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        let (entered, signal) = AsyncStream.makeStream(of: Void.self)
+        let release = DispatchSemaphore(value: 0)
+        let didStop = OSAllocatedUnfairLock(initialState: false)
+        let writing = Task {
+            try await engine.write { tx in
+                signal.yield(())
+                release.wait()
+                try tx.saveCursor(historyID: 100, accountID: account)
+            }
+        }
+        for await _ in entered { break }
+        let stopping = Task { await engine.stop(); didStop.withLock { $0 = true } }
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(!didStop.withLock { $0 })
+        release.signal()
+        try await writing.value
+        await stopping.value
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+    }
+
+    @Test(arguments: [
+        #"{"historyId":"bad"}"#,
+        #"{"historyId":"120","history":[{"id":"bad","labelsRemoved":[{"message":{"id":"m1","threadId":"t1"},"labelIds":["INBOX"]}]}]}"#,
+    ])
+    func malformedHistoryDoesNotAdvanceTheCursor(_ json: String) async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.queueHistory(try decode(HistoryPage.self, json))
+        await #expect(throws: SyncError.invalidHistoryID) { try await engine.sync() }
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+    }
+
+    @Test func invalidMetadataAndAbsentBatchPartsFailThePass() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        let page = try decode(HistoryPage.self, #"{"historyId":"120","history":[{"id":"110","messagesAdded":[{"message":{"id":"m2","threadId":"t2"}}]}]}"#)
+        await gmail.add(try decode(GmailMessage.self, #"{"id":"m2","threadId":"t2","historyId":"bad"}"#))
+        await gmail.queueHistory(page)
+        await #expect(throws: SyncError.invalidHistoryID) { try await engine.sync() }
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+        await gmail.omitMetadata(["m2"])
+        await gmail.queueHistory(page)
+        await #expect(throws: GmailError.missingBatchPart) { try await engine.sync() }
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+    }
+
+    @Test func resyncRefreshesTargetsQueuedWhileMetadataIsInFlight() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox, SystemLabel.unread])], cursor: 100)
+        await gmail.expireHistory()
+        await gmail.add(try gmailMessage("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        await gmail.add(try gmailMessage("m2", thread: "t2", labels: [SystemLabel.unread], historyID: 160))
+        await gmail.holdNextMetadata()
+        let syncing = Task { try await engine.sync() }
+        while await !gmail.isHoldingMetadata { await Task.yield() }
+        try await engine.perform(.markRead, threadIDs: ["t2"])
+        await gmail.releaseMetadata()
+        try await syncing.value
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+        #expect(await gmail.metadataRequests.contains(["m2"]))
+    }
+
+    @Test func failedFullSyncDoesNotPublishPartialMessages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        for index in 0...100 {
+            await gmail.add(try gmailMessage("m\(index)", thread: "t\(index)", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        }
+        await gmail.setMetadataErrors(["m100": .server(status: 503)])
+        await #expect(throws: GmailError.server(status: 503)) { try await engine.sync() }
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) }.isEmpty)
+        #expect(try await cache.syncState(accountID: account) == nil)
+    }
+
     @Test func historyPassAppliesChangesAndDropsConfirmedActions() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [
@@ -176,12 +480,32 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
             """))
         try await engine.sync()
 
+        // Tombstones must survive a large deletion pass and subsequent empty polls.
+        let deletions = (0...10_000).map { #"{"message":{"id":"gone-\#($0)","threadId":"gone"}}"# }.joined(separator: ",")
+        await gmail.queueHistory(try decode(HistoryPage.self, """
+            {"historyId":"140","history":[{"id":"130","messagesDeleted":[\(deletions)]}]}
+            """))
+        try await engine.sync()
+        try await engine.sync()
+
         // A thread response from before the deletion arrives afterwards.
         await gmail.setThread(try decode(GmailThread.self, """
             {"id": "t1", "messages": [\(try encodedMessage("m1", thread: "t1")), \(try encodedMessage("m2", thread: "t1"))]}
             """))
         try await engine.openThread("t1")
         #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1"])
+    }
+
+    @Test func missingMetadataAndMissingThreadsRemoveCachedMessages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
+        await gmail.queueHistory(try decode(HistoryPage.self, """
+            {"historyId":"120","history":[{"id":"110","messagesAdded":[{"message":{"id":"m1","threadId":"t1"}}]}]}
+            """))
+        try await engine.sync()
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m2"])
+        try await engine.openThread("t2")
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) }.isEmpty)
     }
 }
 
@@ -210,12 +534,25 @@ actor FakeGmail: GmailService {
     private var messagesByID: [String: GmailMessage] = [:]
     private var inboxIDs: [String] = []
     private var historyPages: [HistoryPage] = []
+    private var labelValues: [GmailLabel] = []
+    private var labelError: GmailError?
+    private var recentPages: [MessageListPage] = []
     private var historyExpired = false
     private let profileHistoryID = "200"
     private var threadsByID: [String: GmailThread] = [:]
+    private var attachments: [String: Data] = [:]
+    private(set) var attachmentRequests: [String] = []
     private var nextChangeError: GmailError?
+    private var changeErrors: [String: GmailError] = [:]
     private var holdsNextChange = false
     private var held: CheckedContinuation<Void, Never>?
+    private var holdsMetadata = false
+    private var heldMetadata: CheckedContinuation<Void, Never>?
+    private var holdsThread = false
+    private var heldThread: CheckedContinuation<Void, Never>?
+    private var metadataErrors: [String: GmailError] = [:]
+    private var omittedMetadataIDs = Set<String>()
+    private(set) var metadataRequests: [[String]] = []
 
     func add(_ message: GmailMessage, inInbox: Bool = false) {
         messagesByID[message.id] = message
@@ -223,11 +560,29 @@ actor FakeGmail: GmailService {
     }
 
     func queueHistory(_ page: HistoryPage) { historyPages.append(page) }
+    func setRecentPages(_ pages: [MessageListPage]) { recentPages = pages }
+    func setLabels(_ labels: [GmailLabel]) { labelValues = labels }
+    func failLabelDetails(with error: GmailError) { labelError = error }
     func expireHistory() { historyExpired = true }
     func setThread(_ thread: GmailThread) { threadsByID[thread.id] = thread }
+    func setAttachment(_ id: String, data: Data) { attachments[id] = data }
+    func attachment(messageID: String, attachmentID: String) throws -> Data {
+        attachmentRequests.append(attachmentID)
+        guard let data = attachments[attachmentID] else { throw GmailError.notFound }
+        return data
+    }
 
     /// The next change is recorded, as if Gmail applied it, then fails with `error`.
     func failNextChange(with error: GmailError) { nextChangeError = error }
+    func setChangeErrors(_ errors: [String: GmailError]) { changeErrors = errors }
+    func holdNextMetadata() { holdsMetadata = true }
+    func holdNextThread() { holdsThread = true }
+    var isHoldingThread: Bool { heldThread != nil }
+    func releaseThread() { heldThread?.resume(); heldThread = nil }
+    var isHoldingMetadata: Bool { heldMetadata != nil }
+    func releaseMetadata() { heldMetadata?.resume(); heldMetadata = nil }
+    func setMetadataErrors(_ errors: [String: GmailError]) { metadataErrors = errors }
+    func omitMetadata(_ ids: Set<String>) { omittedMetadataIDs = ids }
 
     /// The next change waits until `release()`.
     func holdNextChange() { holdsNextChange = true }
@@ -253,23 +608,41 @@ actor FakeGmail: GmailService {
         try decode(GmailProfile.self, #"{"emailAddress": "me@example.com", "historyId": "\#(profileHistoryID)"}"#)
     }
 
-    func labels() async throws -> [GmailLabel] { [] }
-    func labels(ids: [String]) async throws -> [String: Result<GmailLabel, GmailError>] { [:] }
+    func labels() async throws -> [GmailLabel] { labelValues }
+    func labels(ids: [String]) async throws -> [String: Result<GmailLabel, GmailError>] {
+        Dictionary(uniqueKeysWithValues: labelValues.filter { ids.contains($0.id) }.map { label in
+            (label.id, labelError.map { .failure($0) } ?? Result<GmailLabel, GmailError>.success(label))
+        })
+    }
 
     func listMessages(
         query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int
     ) async throws -> MessageListPage {
+        if query != nil, !recentPages.isEmpty { return recentPages.removeFirst() }
         let ids = labelIDs.contains(SystemLabel.inbox) ? inboxIDs : []
         let refs = ids.compactMap { messagesByID[$0] }.map { #"{"id": "\#($0.id)", "threadId": "\#($0.threadId)"}"# }
         return try decode(MessageListPage.self, #"{"messages": [\#(refs.joined(separator: ","))]}"#)
     }
 
     func messages(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailMessage, GmailError>] {
-        Dictionary(uniqueKeysWithValues: ids.map { id in (id, messagesByID[id].map { .success($0) } ?? .failure(.notFound)) })
+        metadataRequests.append(ids)
+        let results = Dictionary(uniqueKeysWithValues: ids.filter { !omittedMetadataIDs.contains($0) }.map { id in
+            (id, metadataErrors[id].map { .failure($0) } ?? messagesByID[id].map { .success($0) } ?? Result<GmailMessage, GmailError>.failure(.notFound))
+        })
+        if holdsMetadata {
+            holdsMetadata = false
+            await withCheckedContinuation { heldMetadata = $0 }
+        }
+        return results
     }
 
     func thread(id: String, format: MessageFormat) async throws -> GmailThread {
-        guard let thread = threadsByID[id] else { throw GmailError.notFound }
+        let response = threadsByID[id]
+        if holdsThread {
+            holdsThread = false
+            await withCheckedContinuation { heldThread = $0 }
+        }
+        guard let thread = response else { throw GmailError.notFound }
         return thread
     }
 
@@ -281,7 +654,7 @@ actor FakeGmail: GmailService {
 
     func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError] {
         try await record(Change("modifyThreads", ids, add: addLabelIDs, remove: removeLabelIDs))
-        return [:]
+        return changeErrors.filter { ids.contains($0.key) }
     }
 
     func trashThreads(ids: [String]) async throws -> [String: GmailError] {

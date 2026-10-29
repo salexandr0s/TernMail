@@ -3,6 +3,41 @@ import Testing
 @testable import GmailAPI
 
 @Suite struct GmailClientTests {
+    @Test func externalMessagePartUsesTheMessageScopedEndpointAndDecodesData() async throws {
+        let transport = StubTransport([.init(status: 200, body: #"{"data":"Y2Fmw6k","size":5}"#)])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let data = try await client.attachment(messageID: "m1", attachmentID: "part1")
+        #expect(String(data: data, encoding: .utf8) == "café")
+        #expect(await transport.requests.first?.url?.path == "/gmail/v1/users/me/messages/m1/attachments/part1")
+    }
+
+    @Test func unauthorizedBatchPartsRefreshOnceWithoutResendingSuccesses() async throws {
+        let transport = StubTransport([
+            batchResponse([(0, 200, #"{"id":"a","threadId":"t1"}"#), (1, 401, "{}")]),
+            batchResponse([(0, 401, "{}")]),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport, retryDelays: [.zero])
+        let results = try await client.messages(ids: ["a", "b"], format: .minimal)
+        #expect(try results["a"]?.get().id == "a")
+        #expect(results["b"].flatMap(failure) == .unauthorized)
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(requests.map { $0.value(forHTTPHeaderField: "Authorization") } == ["Bearer token-0", "Bearer token-1"])
+        let retryBody = String(decoding: requests.last?.httpBody ?? Data(), as: UTF8.self)
+        #expect(!retryBody.contains("/messages/a?"))
+    }
+
+    @Test func batchUsesCompleteRequestLinesAndIgnoresBoundaryTextInJSON() async throws {
+        let transport = StubTransport([batchResponse([
+            (0, 200, #"{"id":"a","threadId":"t1","snippet":"text --resp inside JSON"}"#),
+        ])])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let results = try await client.messages(ids: ["a"], format: .metadata)
+        #expect(try results["a"]?.get().snippet == "text --resp inside JSON")
+        let body = String(decoding: try #require(await transport.requests.first?.httpBody), as: UTF8.self)
+        #expect(body.contains("GET /gmail/v1/users/me/messages/a?format=metadata HTTP/1.1\r\n"))
+    }
+
     @Test func batchMatchesPartsByContentIDAndRetriesOnlyRetryableParts() async throws {
         // First batch: parts out of order, "c" is gone, "b" is rate limited, "d" has no part.
         let first = batchResponse([
@@ -199,14 +234,6 @@ import Testing
             try await client.sendDraft(id: "d1", with: OutgoingMessage(raw: raw))
         }
         #expect(GmailError.uploadSessionLost.isRetryable)
-    }
-
-    @Test func attachmentsDecodeFromBase64URL() async throws {
-        let transport = StubTransport([.init(status: 200, body: #"{"size":3,"data":"-_8"}"#)])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
-
-        #expect(try await client.attachment(messageID: "m1", attachmentID: "a1") == Data([0xFB, 0xFF]))
-        #expect(await transport.requests.first?.url?.path == "/gmail/v1/users/me/messages/m1/attachments/a1")
     }
 }
 

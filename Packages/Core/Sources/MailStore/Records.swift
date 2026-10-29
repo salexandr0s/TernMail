@@ -165,6 +165,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     public var accountID: String
     public var kind: Kind
     public var threadIDs: [String]
+    /// Targets for modifyMessages. For trashThreads, the messages that
+    /// were already in Trash, to preserve their membership when undoing.
     public var messageIDs: [String]
     public var addLabelIDs: [String]
     public var removeLabelIDs: [String]

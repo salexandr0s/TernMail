@@ -94,6 +94,14 @@ public struct GmailClient: Sendable {
         try decode(await send(.get("threads/\(id)", [URLQueryItem(name: "format", value: format.rawValue)])))
     }
 
+    /// The bytes of a part Gmail stores outside the payload: an attachment, or
+    /// sometimes a readable text part. `attachmentID` is the part's `body.attachmentId`.
+    public func attachment(messageID: String, attachmentID: String) async throws -> Data {
+        let body: MessagePart.Body = try decode(await send(.get("messages/\(messageID)/attachments/\(attachmentID)")))
+        guard let data = body.decodedData else { throw GmailError.decoding("Message part data") }
+        return data
+    }
+
     /// One page of `history.list`. Gmail answers 404 when `startHistoryID` is too old.
     public func history(startHistoryID: String, pageToken: String? = nil) async throws -> HistoryPage {
         var items = [
@@ -102,13 +110,6 @@ public struct GmailClient: Sendable {
         ]
         if let pageToken { items.append(URLQueryItem(name: "pageToken", value: pageToken)) }
         return try decode(await send(.get("history", items)))
-    }
-
-    /// The bytes of one attachment. `attachmentID` is a part's `body.attachmentId`.
-    public func attachment(messageID: String, attachmentID: String) async throws -> Data {
-        let body: MessagePart.Body = try decode(await send(.get("messages/\(messageID)/attachments/\(attachmentID)")))
-        guard let data = body.decodedData else { throw GmailError.decoding("attachment data") }
-        return data
     }
 
     // MARK: Changes
@@ -155,11 +156,12 @@ public struct GmailClient: Sendable {
 
     /// Sends a request with a bearer token. A 401 is retried once with a
     /// forced token refresh; any other non-2xx status throws.
-    func send(_ request: URLRequest) async throws -> (data: Data, response: HTTPURLResponse) {
-        var forceRefresh = false
+    func send(_ request: URLRequest, forceRefresh initiallyForced: Bool = false) async throws -> (data: Data, response: HTTPURLResponse) {
+        var forceRefresh = initiallyForced
         while true {
             var authorized = request
             let token = try await tokens.accessToken(forceRefresh: forceRefresh)
+            try Task.checkCancellation()
             authorized.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             let (data, response) = try await perform(authorized)
             if (200..<300).contains(response.statusCode) {
@@ -207,13 +209,13 @@ public struct GmailClient: Sendable {
         return results
     }
 
-    private func sendBatch(_ endpoints: [Endpoint]) async throws -> [Result<Data, GmailError>] {
+    private func sendBatch(_ endpoints: [Endpoint], forceRefresh: Bool = false) async throws -> [Result<Data, GmailError>] {
         let boundary = "tern-\(UUID().uuidString)"
         var request = try Endpoint.batchRequest()
         request.setValue("multipart/mixed; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = try BatchCodec.encode(endpoints, boundary: boundary)
 
-        let (data, response) = try await send(request)
+        let (data, response) = try await send(request, forceRefresh: forceRefresh)
         guard let responseBoundary = BatchCodec.boundary(contentType: response.value(forHTTPHeaderField: "Content-Type")) else {
             throw GmailError.decoding("Batch response has no boundary")
         }
@@ -221,13 +223,24 @@ public struct GmailClient: Sendable {
         for part in try BatchCodec.decode(data, boundary: responseBoundary) {
             if let index = part.itemIndex { partsByIndex[index] = part }
         }
-        return endpoints.indices.map { index in
+        var results: [Result<Data, GmailError>] = endpoints.indices.map { index in
             guard let part = partsByIndex[index] else { return .failure(.missingBatchPart) }
             guard (200..<300).contains(part.status) else {
                 return .failure(GmailError(status: part.status, body: part.body))
             }
             return .success(part.body)
         }
+        if !forceRefresh {
+            let unauthorized = results.indices.filter {
+                if case .failure(.unauthorized) = results[$0] { return true }
+                return false
+            }
+            if !unauthorized.isEmpty {
+                let refreshed = try await sendBatch(unauthorized.map { endpoints[$0] }, forceRefresh: true)
+                for (index, result) in zip(unauthorized, refreshed) { results[index] = result }
+            }
+        }
+        return results
     }
 
     private func batchDecode<T: Decodable & Sendable>(

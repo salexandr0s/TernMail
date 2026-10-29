@@ -30,7 +30,6 @@ struct MainView: View {
             }
         }
         .animation(Tokens.Motion.standard(), value: mailbox.notice)
-        .focusedSceneValue(\.mailbox, mailbox)
         .onAppear { mailbox.undoManager = undoManager }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()

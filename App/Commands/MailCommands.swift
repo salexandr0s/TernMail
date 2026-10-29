@@ -1,13 +1,11 @@
 import SwiftUI
 
-extension FocusedValues {
-    @Entry var mailbox: MailboxModel?
-}
-
 /// Menu bar commands. Shortcuts follow Apple Mail.
 struct MailCommands: Commands {
     let app: AppModel
-    @FocusedValue(\.mailbox) private var mailbox
+    // Tern has one mailbox window. Its commands remain available when focus
+    // moves between a list, WebKit and the menu bar.
+    var mailbox: MailboxModel? { app.mailbox }
 
     var body: some Commands {
         CommandMenu("Message") {

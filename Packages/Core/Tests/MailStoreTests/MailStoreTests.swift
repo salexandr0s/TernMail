@@ -20,7 +20,7 @@ private let account = "acct"
         let action = try await cache.write { tx in
             try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now)
         }
-        #expect(action.diff == ["m1": .init(added: [], removed: [SystemLabel.inbox])])
+        #expect(action.diff == ["m1": .init(added: [], removed: [SystemLabel.inbox]), "m2": .init(added: [], removed: [])])
         #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
         #expect(try await threadIDs(cache, SystemLabel.allMail) == ["t1"])
         #expect(try await serverLabels(cache, "m1") == [SystemLabel.inbox, SystemLabel.unread])
@@ -57,9 +57,17 @@ private let account = "acct"
                 messageID: "m1", added: [SystemLabel.starred], removed: [], historyID: 220, accountID: account
             )
             try tx.upsertMessages([update("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 210)])
+            // History and openThread can finish in either order.
+            _ = try tx.applyLabelChange(
+                messageID: "m1", added: [SystemLabel.unread], removed: [SystemLabel.starred], historyID: 210, accountID: account
+            )
+            // Two changes in one record share a history ID and must both apply.
+            _ = try tx.applyLabelChange(
+                messageID: "m1", added: [], removed: [SystemLabel.inbox], historyID: 220, accountID: account
+            )
         }
 
-        #expect(try await serverLabels(cache, "m1") == [SystemLabel.inbox, SystemLabel.starred])
+        #expect(try await serverLabels(cache, "m1") == [SystemLabel.starred])
     }
 
     @Test func resyncCleanupKeepsMessagesThatPendingActionsTarget() async throws {

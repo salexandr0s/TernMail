@@ -19,6 +19,7 @@ struct MessageWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternHeight")
         if let blocker {
             configuration.userContentController.add(blocker)
         }
@@ -39,9 +40,10 @@ struct MessageWebView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var height: Binding<CGFloat>
         private var loadedHTML: String?
+        private var revision = 0
 
         init(height: Binding<CGFloat>) {
             self.height = height
@@ -50,6 +52,7 @@ struct MessageWebView: NSViewRepresentable {
         func load(_ html: String, in view: WKWebView) {
             guard html != loadedHTML else { return }
             loadedHTML = html
+            revision += 1
             view.loadHTMLString(html, baseURL: nil)
         }
 
@@ -71,21 +74,54 @@ struct MessageWebView: NSViewRepresentable {
 
         func measure(_ webView: WKWebView) {
             // Runs in Tern's own script world, which page JavaScript settings don't affect.
+            let revision = revision
             let script = """
-                Math.ceil(Math.max(
-                  document.documentElement.getBoundingClientRect().height,
-                  document.body ? document.body.scrollHeight : 0
-                ))
+                (() => {
+                  if (!document.body) return 0;
+                  if (typeof globalThis.__ternSizing?.measure !== 'function') {
+                    const measure = () => {
+                      const body = document.body;
+                      const range = document.createRange();
+                      range.selectNodeContents(body);
+                      const style = getComputedStyle(body);
+                      const px = value => parseFloat(value) || 0;
+                      // Content bounds can shrink; the document viewport cannot.
+                      return Math.ceil(Math.max(px(style.paddingTop),
+                        range.getBoundingClientRect().bottom - body.getBoundingClientRect().top)
+                        + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
+                    };
+                    const report = () => {
+                      webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
+                    };
+                    const observer = new ResizeObserver(report);
+                    observer.observe(document.body);
+                    document.querySelectorAll('img').forEach(image => observer.observe(image));
+                    document.addEventListener('load', report, true);
+                    document.fonts.ready.then(report);
+                    globalThis.__ternSizing = {measure, observer};
+                  }
+                  return globalThis.__ternSizing.measure();
+                })()
                 """
-            Task { [height] in
+            Task { [weak self] in
                 guard let value = try? await webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient),
-                      let measured = (value as? NSNumber)?.doubleValue,
-                      measured > 0
+                      let self, self.revision == revision,
+                      let measured = (value as? NSNumber)?.doubleValue
                 else { return }
-                if abs(height.wrappedValue - measured) >= 1 {
-                    height.wrappedValue = measured
-                }
+                acceptHeight(measured)
             }
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let value = message.body as? [String: Any],
+                  (value["revision"] as? NSNumber)?.intValue == revision,
+                  let measured = (value["height"] as? NSNumber)?.doubleValue else { return }
+            acceptHeight(measured)
+        }
+
+        private func acceptHeight(_ measured: Double) {
+            guard measured.isFinite, measured > 0 else { return }
+            if abs(height.wrappedValue - measured) >= 1 { height.wrappedValue = measured }
         }
     }
 }
@@ -95,13 +131,14 @@ struct MessageWebView: NSViewRepresentable {
 /// reflow the message and change its height.
 final class ContentSizedWebView: WKWebView {
     var onWidthChange: (() -> Void)?
-    private var scrollsHorizontally = false
+    private var scrollDirection = ScrollDirection()
 
     override func scrollWheel(with event: NSEvent) {
-        // A trackpad gesture keeps the direction it started with; a mouse wheel decides per event.
-        if event.phase == .began || (event.phase.isEmpty && event.momentumPhase.isEmpty) {
-            scrollsHorizontally = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-        }
+        let scrollsHorizontally = scrollDirection.isHorizontal(
+            x: event.scrollingDeltaX, y: event.scrollingDeltaY,
+            startsGesture: event.phase.contains(.began) || event.phase.contains(.mayBegin),
+            isMouseWheel: event.phase.isEmpty && event.momentumPhase.isEmpty
+        )
         if scrollsHorizontally {
             super.scrollWheel(with: event)
         } else {
@@ -113,6 +150,18 @@ final class ContentSizedWebView: WKWebView {
         let widthChanged = newSize.width != frame.width
         super.setFrameSize(newSize)
         if widthChanged { onWidthChange?() }
+    }
+}
+
+/// A trackpad may begin with zero deltas. Choose its axis on the first actual
+/// movement and keep it through momentum; a mouse wheel decides per event.
+struct ScrollDirection {
+    private var horizontal: Bool?
+
+    mutating func isHorizontal(x: CGFloat, y: CGFloat, startsGesture: Bool = false, isMouseWheel: Bool = false) -> Bool {
+        if startsGesture || isMouseWheel { horizontal = nil }
+        if horizontal == nil, x != 0 || y != 0 { horizontal = abs(x) > abs(y) }
+        return horizontal ?? false
     }
 }
 

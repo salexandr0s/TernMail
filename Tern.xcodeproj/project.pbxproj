@@ -13,6 +13,7 @@
 		22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96214EE63FDC52A0940F4105 /* MessageWebView.swift */; };
 		2C5D3D7718C073EF6FC3B4EB /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
 		44C15A8C7042454C99FD8246 /* MessageContent in Frameworks */ = {isa = PBXBuildFile; productRef = 1D2F537B3CC39297117479CF /* MessageContent */; };
+		4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2664304C0271DB6260097A /* MessageWebViewTests.swift */; };
 		60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F78C5270B0AE64BD13220AD /* MainView.swift */; };
 		6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4463F25A316147E854AB475E /* Tokens.swift */; };
 		6B84492B9FCDB6CD6DF22F91 /* MailStore in Frameworks */ = {isa = PBXBuildFile; productRef = D81AAEFC210B6543F89E42B7 /* MailStore */; };
@@ -22,16 +23,31 @@
 		8A7FEC940FEFE0241F30C670 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BB9B46E342248DBF893DA9 /* ThreadView.swift */; };
 		8CAFA56EDF8661042094300E /* GmailAPI in Frameworks */ = {isa = PBXBuildFile; productRef = DADFA2A14CD8FDA35DA120E3 /* GmailAPI */; };
 		A2DFB3214AD23A2BE8631B27 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5497ADD358BEE4C53246A55C /* SignInView.swift */; };
+		BE8034EF718B842D206C9BF6 /* MailStore in Frameworks */ = {isa = PBXBuildFile; productRef = A29455DD1AA22ACDFD6E9A85 /* MailStore */; };
+		C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */; };
 		CE5838DB32E85E4BC42F3C83 /* ThreadListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 313612542F6E2902BDDD3B95 /* ThreadListView.swift */; };
+		CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298461CDC5883F34E395CE4F /* AuditGmail.swift */; };
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
 		F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9ECAA922136B06A807EEDB /* MailboxModel.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		CEB677BE6FE246257EE21F82 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3F05839F78952C56E263E71B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BBFF520E39915BE740C6E8B0;
+			remoteInfo = Tern;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		24BB9B46E342248DBF893DA9 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
+		298461CDC5883F34E395CE4F /* AuditGmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditGmail.swift; sourceTree = "<group>"; };
 		2BAB4E48504F15C1FDFDFE2D /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Packages/Core; sourceTree = SOURCE_ROOT; };
 		313612542F6E2902BDDD3B95 /* ThreadListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadListView.swift; sourceTree = "<group>"; };
+		4154FA36100D7D066F989912 /* TernTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TernTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4463F25A316147E854AB475E /* Tokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tokens.swift; sourceTree = "<group>"; };
 		4F78C5270B0AE64BD13220AD /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		50BC5CC58387671AC6A5DD09 /* MailCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailCommands.swift; sourceTree = "<group>"; };
@@ -41,7 +57,9 @@
 		96214EE63FDC52A0940F4105 /* MessageWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageWebView.swift; sourceTree = "<group>"; };
 		969FF5980D41DC77A747FDB9 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		9CF7592F8975F73FEA1842BC /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		AE2664304C0271DB6260097A /* MessageWebViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageWebViewTests.swift; sourceTree = "<group>"; };
 		BE892D00A83688026D463D87 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxModelTests.swift; sourceTree = "<group>"; };
 		C6B1962F97D1AE340138E9E8 /* Tern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tern.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
@@ -63,9 +81,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F71D1CDC7FD2038DEC76A928 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BE8034EF718B842D206C9BF6 /* MailStore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0625A868981EAB83319B3C24 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				298461CDC5883F34E395CE4F /* AuditGmail.swift */,
+			);
+			path = Debug;
+			sourceTree = "<group>";
+		};
 		0E31E9C599FC3A1DA1F44C6B /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -86,14 +120,25 @@
 				C77BFD0C749A54573F34B7A8 /* App */,
 				899049F48FC4BA2EE848EA0E /* Config */,
 				81DDC23E72623676D3E9F22C /* Packages */,
+				F7C46F634C1E7429CB3AE32C /* Tests */,
 				5A450F05DF7571ACABA2226F /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		2FB765E6928018CC4A2B1B02 /* AppTests */ = {
+			isa = PBXGroup;
+			children = (
+				C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */,
+				AE2664304C0271DB6260097A /* MessageWebViewTests.swift */,
+			);
+			path = AppTests;
 			sourceTree = "<group>";
 		};
 		5A450F05DF7571ACABA2226F /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				C6B1962F97D1AE340138E9E8 /* Tern.app */,
+				4154FA36100D7D066F989912 /* TernTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -139,6 +184,7 @@
 				F0EB3C8158C8A6AFF45439BC /* TernApp.swift */,
 				EBD973E6CF87B69E185C50A2 /* Auth */,
 				C992F2D78997BA4B8DEF81B6 /* Commands */,
+				0625A868981EAB83319B3C24 /* Debug */,
 				79FD092A5C9E2B3084A073E1 /* Design */,
 				79C2C151F2570607C95BBB25 /* Mailbox */,
 				0E31E9C599FC3A1DA1F44C6B /* Views */,
@@ -163,9 +209,37 @@
 			path = Auth;
 			sourceTree = "<group>";
 		};
+		F7C46F634C1E7429CB3AE32C /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				2FB765E6928018CC4A2B1B02 /* AppTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		B84A614DB96AD71B81DB1BA8 /* TernTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 43ED58DD8C2D11F8792E0AD7 /* Build configuration list for PBXNativeTarget "TernTests" */;
+			buildPhases = (
+				35CFF6676D02CF39E92FF835 /* Sources */,
+				F71D1CDC7FD2038DEC76A928 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0CE9CE495F61765FEDA95523 /* PBXTargetDependency */,
+			);
+			name = TernTests;
+			packageProductDependencies = (
+				A29455DD1AA22ACDFD6E9A85 /* MailStore */,
+			);
+			productName = TernTests;
+			productReference = 4154FA36100D7D066F989912 /* TernTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		BBFF520E39915BE740C6E8B0 /* Tern */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 4A49523F1A031359434BF5E7 /* Build configuration list for PBXNativeTarget "Tern" */;
@@ -222,16 +296,27 @@
 			projectRoot = "";
 			targets = (
 				BBFF520E39915BE740C6E8B0 /* Tern */,
+				B84A614DB96AD71B81DB1BA8 /* TernTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		35CFF6676D02CF39E92FF835 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */,
+				4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C3D3ED9347EDD2ED0A650D28 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				71B4075ADE8ADA6F30496EC0 /* AppModel.swift in Sources */,
+				CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */,
 				0804BB24C1D8EE0EADDB9FF2 /* GoogleAuth.swift in Sources */,
 				07073AF8859012972375BDA0 /* KeychainStore.swift in Sources */,
 				7687C3F0FC62813AF8BCE982 /* MailCommands.swift in Sources */,
@@ -249,6 +334,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0CE9CE495F61765FEDA95523 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BBFF520E39915BE740C6E8B0 /* Tern */;
+			targetProxy = CEB677BE6FE246257EE21F82 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		44FD69CD5EC952E46545BC5F /* Release */ = {
@@ -327,6 +420,24 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tern.mail;
 				PRODUCT_NAME = Tern;
 				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		7B2C3A8469160B92E41C87A0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tern.mail.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tern.app/Contents/MacOS/Tern";
 			};
 			name = Release;
 		};
@@ -416,6 +527,24 @@
 			};
 			name = Debug;
 		};
+		C4588527F01BE8973B6A995D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tern.mail.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tern.app/Contents/MacOS/Tern";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -424,6 +553,15 @@
 			buildConfigurations = (
 				B2924E758C9F4F33CF168DAF /* Debug */,
 				44FD69CD5EC952E46545BC5F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		43ED58DD8C2D11F8792E0AD7 /* Build configuration list for PBXNativeTarget "TernTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C4588527F01BE8973B6A995D /* Debug */,
+				7B2C3A8469160B92E41C87A0 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -465,6 +603,10 @@
 		83A833DCF26A2C49025C1785 /* SyncEngine */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SyncEngine;
+		};
+		A29455DD1AA22ACDFD6E9A85 /* MailStore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MailStore;
 		};
 		B58851480C2185F8DD3A87A4 /* AppAuth */ = {
 			isa = XCSwiftPackageProductDependency;
