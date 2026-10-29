@@ -94,6 +94,46 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func snoozeMovesTheConversationToSnoozedAndUndoEndsTheSnooze() async throws {
+        let cache = try MailCache.inMemory()
+        let accounts = try AccountStore.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        try await accounts.save(account)
+        let mailbox = MailboxModel(
+            account: account, cache: cache, gmail: AuditGmail(),
+            outgoingDirectory: FileManager.default.temporaryDirectory, snoozeStore: accounts
+        )
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 }
+        mailbox.selectedThreadIDs = ["t1"]
+        #expect(mailbox.canSnooze)
+
+        // A preset worked out before its time passed is refused.
+        #expect(mailbox.snooze(until: .now.addingTimeInterval(-60)) == nil)
+        #expect(mailbox.notice?.isError == true)
+
+        let snooze = mailbox.snooze(until: .now.addingTimeInterval(3600))
+        #expect(mailbox.selectedThreadIDs == ["t2"])
+        await snooze?.value
+        try await waitUntil { mailbox.threads.map(\.id) == ["t2"] && mailbox.snoozed.map(\.id) == ["t1"] }
+        #expect(try await accounts.snoozes(accountID: account.id).map(\.threadID) == ["t1"])
+        mailbox.selectedLabelID = MailboxModel.snoozedID
+        #expect(mailbox.threads.map(\.id) == ["t1"])
+        #expect(mailbox.wakeTimes["t1"] != nil)
+
+        // Undo from the notice takes back the archive, the hold and the record.
+        guard case .action(let receipt)? = mailbox.notice?.undo else {
+            Issue.record("Snooze left no notice with Undo")
+            return
+        }
+        mailbox.undo(receipt)
+        try await waitUntil { mailbox.snoozed.isEmpty && mailbox.threads.isEmpty }
+        #expect(try await accounts.snoozes(accountID: account.id).isEmpty)
+        mailbox.selectedLabelID = SystemLabel.inbox
+        try await waitUntil { mailbox.threads.map(\.id).sorted() == ["t1", "t2"] }
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
