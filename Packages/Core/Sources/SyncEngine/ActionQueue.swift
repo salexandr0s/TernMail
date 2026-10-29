@@ -227,10 +227,23 @@ extension SyncEngine {
         guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now) }) else {
             return 0
         }
-        for action in due {
-            await send(action)
+        let groups = Dictionary(grouping: due, by: DeliveryKey.init).values.sorted {
+            ($0.first?.id ?? Int64.max) < ($1.first?.id ?? Int64.max)
         }
+        for group in groups { await send(group) }
         return due.count
+    }
+
+    private struct DeliveryKey: Hashable {
+        let kind: String
+        let add: [String]
+        let remove: [String]
+
+        init(_ row: PendingAction) {
+            kind = row.kind.rawValue
+            add = row.addLabelIDs.sorted()
+            remove = row.removeLabelIDs.sorted()
+        }
     }
 
     private enum Outcome {
@@ -269,43 +282,56 @@ extension SyncEngine {
         }
     }
 
-    private func send(_ action: PendingAction) async {
-        guard !isStopped, !Task.isCancelled else { return }
-        guard let id = action.id else { return }
-        // Undo can reach a claimed row before its turn in this batch.
-        let current = try? await cache.read { tx in try tx.action(id: id) }
-        guard let current = current ?? nil, current.state == .sending else {
-            _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
-            return
-        }
-        guard !isStopped, !Task.isCancelled else { return }
-
-        let outcome: Outcome
-        var row = current
-        do {
-            guard let prepared = try await prepare(row) else {
+    private func send(_ actions: [PendingAction]) async {
+        var ready: [PendingAction] = []
+        for action in actions {
+            guard !isStopped, !Task.isCancelled, let id = action.id else { return }
+            let current = try? await cache.read { tx in try tx.action(id: id) }
+            guard let current = current ?? nil, current.state == .sending else {
                 _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
-                return
+                continue
             }
-            row = prepared
-            undoReceipts[id]?.value?.update(row)
-            let failures = try await deliver(row).values.filter { $0 != .notFound }
-            if failures.isEmpty {
-                outcome = .sent
-            } else if failures.allSatisfy({ $0.isRetryable || $0 == .unauthorized }) {
-                outcome = .retry(String(describing: failures[0]))
-            } else {
-                outcome = .failed
+            do {
+                guard let prepared = try await prepare(current) else {
+                    _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
+                    continue
+                }
+                undoReceipts[id]?.value?.update(prepared)
+                ready.append(prepared)
+            } catch {
+                await finish(current, outcome: Self.outcome(for: error))
             }
-        } catch let error as GmailError {
-            // Reauthentication can make this request valid again. Keep the
-            // user's intent just as we do for an invalid_grant from the provider.
-            outcome = error.isRetryable || error == .unauthorized ? .retry(String(describing: error)) : .failed
-        } catch {
-            // Offline, signed out or cancelled: keep the row and try later.
-            outcome = .retry(String(describing: type(of: error)))
         }
+        guard var combined = ready.first, !isStopped, !Task.isCancelled else { return }
+        combined.threadIDs = ready.flatMap(\.threadIDs).removingDuplicates().sorted()
+        combined.messageIDs = ready.flatMap(\.messageIDs).removingDuplicates().sorted()
+        do {
+            let failures = try await deliver(combined)
+            for action in ready {
+                let ids = Set(action.threadIDs + action.messageIDs)
+                let errors = failures.filter { ids.contains($0.key) }.map(\.value).filter { $0 != .notFound }
+                let outcome: Outcome
+                if errors.isEmpty { outcome = .sent }
+                else if errors.allSatisfy({ $0.isRetryable || $0 == .unauthorized }) { outcome = .retry(String(describing: errors[0])) }
+                else { outcome = .failed }
+                await finish(action, outcome: outcome)
+            }
+        } catch {
+            for action in ready { await finish(action, outcome: Self.outcome(for: error)) }
+        }
+    }
 
+    private static func outcome(for error: any Error) -> Outcome {
+        if let error = error as? GmailError {
+            // Reauthentication can make a rejected request valid again.
+            return error.isRetryable || error == .unauthorized ? .retry(String(describing: error)) : .failed
+        }
+        return .retry(String(describing: type(of: error)))
+    }
+
+    private func finish(_ current: PendingAction, outcome: Outcome) async {
+        guard let id = current.id else { return }
+        var row = current
         let now = now()
         switch outcome {
         case .sent:

@@ -9,6 +9,37 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func retriesBlockLaterChangesOnlyOnTheSameThread() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])])
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        clock.advance(3)
+        await gmail.failNextChange(with: .rateLimited)
+        await engine.sendDueActions()
+        try await engine.perform(.markUnread, threadIDs: ["t1"])
+        try await engine.perform(.markUnread, threadIDs: ["t2"])
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.state) == [.sent, .queued, .sent])
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [
+            Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox]),
+            Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox]),
+            Change("modifyThreads", ["t2"], add: [SystemLabel.unread]),
+            Change("modifyThreads", ["t1"], add: [SystemLabel.unread]),
+        ])
+    }
+
+    @Test func independentThreadChangesShareOneDeliveryBatch() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])])
+        try await engine.perform(.archive, threadIDs: ["t1", "t2"])
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [Change("modifyThreads", ["t1", "t2"], remove: [SystemLabel.inbox])])
+        #expect(try await pendingActions(cache).map(\.state) == [.sent, .sent])
+    }
+
     @Test func undoAfterConfirmationRestoresUncachedMessagesFromTheSendSnapshot() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
@@ -70,7 +101,7 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         try await engine.undo(action)
         await engine.sendDueActions()
         let inverses = await gmail.changes.filter { $0.kind == "batchModify" }
-        #expect(inverses.map(\.ids) == [["m1"], ["m3"]])
+        #expect(inverses.map(\.ids) == [["m1", "m3"]])
         // A repeated undo cannot enqueue another inverse after confirmation.
         try await engine.undo(action)
         #expect(try await pendingActions(cache).filter { $0.state == .queued }.isEmpty)
