@@ -626,15 +626,21 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
     }
 
     @Test func aFirstSendThatFindsTheDraftGoneReturnsItToEditing() async throws {
-        let (engine, cache, gmail, _) = try await makeEngine()
+        let (engine, cache, gmail, clock) = try await makeEngine()
         let draft = makeDraft()
         try await engine.createDraft(draft)
         try await engine.saveDraft(draft.id)
         await engine.sendDueDrafts()
         await gmail.deleteDraftElsewhere("D1")
         try await engine.sendDraft(draft.id, delay: 0)
+        // Claimed alongside another row, then the app quit before this one started.
+        try await cache.write { tx in
+            _ = try tx.claimDueActions(accountID: account, now: clock.now(), lane: .compose)
+            try tx.requeueInterruptedActions(accountID: account)
+        }
         await engine.sendDueDrafts()
 
+        #expect(await gmail.draftCalls == ["create", "send D1"])
         let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
         #expect(stored.state == .editing)
         #expect(stored.gmailDraftID == nil)
@@ -656,6 +662,52 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(await gmail.draftCalls == ["create", "update D1"])
         let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
         #expect(stored?.gmailDraftID == "D1")
+    }
+
+    @Test func aSendAfterAnUpdateLostItsAnswerSendsTheSameDraft() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        var content = draft.content
+        content.subject = "Re: Lunch on Friday"
+        await gmail.failNextDraftCall("update", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id, content: content)
+        await engine.sendDueDrafts()
+        // The send replaces the save waiting to retry.
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+
+        // The changed Gmail draft is Tern's own upload, not another app's.
+        #expect(await gmail.draftCalls == ["create", "update D1", "send D1"])
+        #expect(await gmail.draftsByID.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+        await engine.stop()
+        var events: [SyncEvent] = []
+        for await event in engine.events { events.append(event) }
+        #expect(events == [.draftSent(localDraftID: draft.id)])
+    }
+
+    @Test(arguments: [true, false])
+    func aSendOrDiscardAfterACreateLostItsAnswerUsesTheDraftGmailMade(sending: Bool) async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        await gmail.failNextDraftCall("create", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        await gmail.setDraftSearch("rfc822msgid:draft1@example.com", ids: ["D1"])
+        if sending {
+            try await engine.sendDraft(draft.id, delay: 0)
+        } else {
+            try await engine.discardDraft(draft.id, hold: 0)
+        }
+        await engine.sendDueDrafts()
+
+        #expect(await gmail.draftCalls == (sending ? ["create", "update D1", "send D1"] : ["create", "delete D1"]))
+        #expect(await gmail.draftsByID.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
     }
 
     @Test func aRefusedSendReturnsTheDraftToEditingWithAMessage() async throws {
@@ -1049,7 +1101,10 @@ actor FakeGmail: GmailService {
         let id = "msg\(nextID)"
         let thread = upload.threadID ?? "thread\(nextID)"
         nextID += 1
-        let message = try? gmailMessage(id, thread: thread, labels: labels, historyID: 300 + nextID, minutes: 10)
+        // Gmail keeps the upload's Message-ID header.
+        let head = String(decoding: upload.raw, as: UTF8.self).components(separatedBy: "\r\n\r\n").first ?? ""
+        let messageID = head.components(separatedBy: "\r\n").first { $0.hasPrefix("Message-ID: ") }?.dropFirst("Message-ID: ".count)
+        let message = try? gmailMessage(id, thread: thread, labels: labels, historyID: 300 + nextID, minutes: 10, messageID: messageID.map(String.init))
         messagesByID[id] = message
         return message
     }
@@ -1063,7 +1118,8 @@ actor FakeGmail: GmailService {
     func draft(id: String, format: MessageFormat) throws -> GmailDraft {
         if let json = draftJSONByID[id] { return try decode(GmailDraft.self, json) }
         guard let stored = draftsByID[id], let message = messagesByID[stored.messageID] else { throw GmailError.notFound }
-        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":\#(try encodedMessage(message.id, thread: message.threadId, labels: message.labelIds ?? []))}"#)
+        let encoded = try encodedMessage(message.id, thread: message.threadId, labels: message.labelIds ?? [], messageID: message.header("Message-ID"))
+        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":\#(encoded)}"#)
     }
 
     func createDraft(_ message: OutgoingMessage) async throws -> GmailDraft {
@@ -1157,19 +1213,23 @@ private func seed(_ cache: MailCache, _ messages: [(id: String, thread: String, 
     }
 }
 
-private func gmailMessage(_ id: String, thread: String, labels: [String], historyID: Int, minutes: Double = 0) throws -> GmailMessage {
-    try decode(GmailMessage.self, try encodedMessage(id, thread: thread, labels: labels, historyID: historyID, minutes: minutes))
+private func gmailMessage(
+    _ id: String, thread: String, labels: [String], historyID: Int, minutes: Double = 0, messageID: String? = nil
+) throws -> GmailMessage {
+    try decode(GmailMessage.self, try encodedMessage(id, thread: thread, labels: labels, historyID: historyID, minutes: minutes, messageID: messageID))
 }
 
 private func encodedMessage(
-    _ id: String, thread: String, labels: [String] = [SystemLabel.inbox], historyID: Int = 100, minutes: Double = 0
+    _ id: String, thread: String, labels: [String] = [SystemLabel.inbox], historyID: Int = 100, minutes: Double = 0,
+    messageID: String? = nil
 ) throws -> String {
     let milliseconds = Int(baseDate.addingTimeInterval(minutes * 60).timeIntervalSince1970 * 1000)
     let labelJSON = String(decoding: try JSONEncoder().encode(labels), as: UTF8.self)
+    let messageIDHeader = messageID.map { #", {"name": "Message-ID", "value": "\#($0)"}"# } ?? ""
     return """
         {"id": "\(id)", "threadId": "\(thread)", "labelIds": \(labelJSON), "historyId": "\(historyID)",
          "internalDate": "\(milliseconds)", "snippet": "Hi &amp; bye",
-         "payload": {"headers": [{"name": "From", "value": "B <b@example.com>"}, {"name": "Subject", "value": "New"}]}}
+         "payload": {"headers": [{"name": "From", "value": "B <b@example.com>"}, {"name": "Subject", "value": "New"}\(messageIDHeader)]}}
         """
 }
 

@@ -179,6 +179,24 @@ enum Schema {
                 t.foreignKey(["accountID", "messageID"], references: "message", onDelete: .cascade)
             }
         }
+
+        migrator.registerMigration("compose-v2") { db in
+            // What Gmail may have seen of a draft. It lives on the draft, since
+            // a send or discard replaces a save row that is waiting to retry.
+            try db.alter(table: "localDraft") { t in
+                t.add(column: "hasUnrecordedUpload", .boolean).notNull().defaults(to: false)
+                t.add(column: "sendRequested", .boolean).notNull().defaults(to: false)
+            }
+            // Rows that already ran are read as the attempt counts were read before.
+            try db.execute(sql: """
+                UPDATE localDraft SET hasUnrecordedUpload = 1 WHERE id IN (
+                    SELECT localDraftID FROM pendingAction WHERE kind IN ('saveDraft', 'sendDraft') AND attempts > 0)
+                """)
+            try db.execute(sql: """
+                UPDATE localDraft SET sendRequested = 1 WHERE id IN (
+                    SELECT localDraftID FROM pendingAction WHERE kind = 'sendDraft' AND attempts > 0)
+                """)
+        }
         return migrator
     }
 
