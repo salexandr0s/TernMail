@@ -209,6 +209,21 @@ import Testing
         mailbox.go(to: SystemLabel.allMail)
         #expect(mailbox.selectedMailbox == .combined(SystemLabel.allMail))
         try await waitUntil { Set(mailbox.threads.map(\.accountID)) == ["audit", "second"] }
+
+        // Signing out of one account keeps Undo for the other's part.
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        mailbox.undoManager = manager
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await waitUntil { mailbox.threads.count == 4 }
+        mailbox.selectedThreadIDs = [key("t1"), otherT1]
+        await mailbox.perform(.archive)?.value
+        await mailbox.removeAccount(id: "second")
+        #expect(mailbox.selectedMailbox == .account("audit", SystemLabel.inbox))
+        try await waitUntil { mailbox.threads.map(\.key) == [key("t2")] }
+        #expect(manager.canUndo)
+        manager.undo()
+        try await waitUntil { Set(mailbox.threads.map(\.key)) == keys("t1", "t2") }
         await mailbox.stop()
     }
 
