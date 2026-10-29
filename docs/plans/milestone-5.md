@@ -2,11 +2,11 @@
 
 Status: scope approved 2026-10-29. File-level phases are written and reviewed after milestone 4 merges. Branch `feat/milestone-5`, cut from `feat/milestone-4` at `5d4d385`.
 
-Inputs: the owner's screenshots of Mimestream 1.10.8 (Inbox, Sent, Spam and every Settings pane), `docs/research/mimestream-behavior.md`, the milestone 1 to 3 plans, and milestone 4's draft plan of 2026-10-29. The screenshots are a feature checklist only. Layout, wording, icons and sounds stay Tern's own (project rule).
+Inputs: the owner's screenshots of Mimestream 1.10.8 (Inbox, Sent, Spam and every Settings pane), `docs/research/mimestream-behavior.md`, the milestone 1 to 3 plans, and milestone 4's plan (approved 2026-10-29, `621772c` on `feat/milestone-4`). The screenshots are a feature checklist only. Layout, wording, icons and sounds stay Tern's own (project rule).
 
 ## How the list was built
 
-Every feature visible in the screenshots or named in the research notes was checked against milestones 1 to 4. Covered features are left out, and partly covered ones list only the missing part. Workstream J holds features next to milestone 4's scope that its draft leaves out. "Check against milestone 4" lists what waits on that draft's review.
+Every feature visible in the screenshots or named in the research notes was checked against milestones 1 to 4. Covered features are left out, and partly covered ones list only the missing part. Workstream J holds features next to milestone 4's scope that its plan leaves out. "Check against milestone 4" lists what this milestone builds on there and what is still open.
 
 ## Scope, by workstream
 
@@ -54,13 +54,13 @@ Every feature visible in the screenshots or named in the research notes was chec
 1. Report Spam and Not Spam, with undo.
 2. Mark as Important and Not Important.
 3. Mark All as Read for the open mailbox: `messages.list` for unread IDs, then `messages.batchModify` in chunks of 1,000 (its documented limit). Undo restores exactly the changed IDs.
-4. Delete Forever in Trash and Spam, plus Empty Trash and Delete All Spam behind a confirmation that gives the count. `messages.batchDelete` accepts only the full `https://mail.google.com/` scope. Its page states no ID limit, so requests use chunks of 1,000. No undo.
+4. Delete Forever in Trash and Spam, plus Empty Trash and Delete All Spam behind a confirmation that gives the count. `messages.batchDelete` accepts only the full `https://mail.google.com/` scope. Its page states no ID limit, so requests use chunks of 1,000. No undo. The scope is asked for as a Permanent Deletion feature through milestone 4's per-feature authorization. Accounts with Inbox Updates on already hold it and see no second consent screen.
 5. Delete key: archive (in a user label, remove that label instead) or move to Trash.
 6. Sound effects for archive, trash, send and new mail, using macOS system sounds, with an on/off setting.
 7. Send and Archive: the archive is queued when the send succeeds, and Undo Send cancels both.
 8. Send Again: opens a sent message as a new draft with its recipients, subject, body and attachments.
 9. Forward as Attachment: the raw message attached as `message/rfc822`.
-10. Block Sender: a Gmail filter that sends that address's mail to Trash, listed under Blocked in Settings. It uses milestone 4's filter calls and needs its Gmail Settings permission. The API has no block list, so this is Tern's design.
+10. Block Sender: a Gmail filter that sends that address's mail to Trash, listed under Blocked in Settings. It uses milestone 4's `createFilter(criteria:action:)` through its settings queue lane and needs its Gmail Settings permission. The API has no block list, so this is Tern's design.
 11. Filter Messages Like These: opens milestone 4's filter editor filled in from the selected messages (sender, recipients, subject).
 
 ### E. Compose
@@ -81,7 +81,7 @@ Every feature visible in the screenshots or named in the research notes was chec
 ### F. Accounts, profiles and notifications
 
 1. Account details: nickname used as the sidebar section title, account color, sync on or off without signing out, account order.
-2. Notifications: alerts for mail that arrives after each account's last alerted history point, with Off, Inbox, Inbox without categories, or All Mail per account. Alerts group by conversation, show sender, subject and snippet, open the conversation on click and offer one action chosen in Settings (Archive, Trash, Mark as Read, Star). Dock badge with the unread Inbox count, an optional unread count in the menu bar, and a Send Test Notification button. The first sync, a cache rebuild and re-enabling an account never alert.
+2. Notifications: alerts for mail that arrives after each account's last alerted history point, with Off, Inbox, Inbox without categories, or All Mail per account. Alerts group by conversation, show sender, subject and snippet, open the conversation on click and offer one action chosen in Settings (Archive, Trash, Mark as Read, Star). Alerts arrive within seconds for accounts with milestone 4's Inbox Updates on, and at the next 60-second poll otherwise. Dock badge with the unread Inbox count, an optional unread count in the menu bar, and a Send Test Notification button. The first sync, a cache rebuild and re-enabling an account never alert.
 3. Background running: closing the last window keeps Tern syncing, watching for new mail, alerting and waking snoozes. Quit stops it (owner's choice).
 4. Profiles: named groups of accounts with a color and a symbol, each account in one profile, plus an All profile. The window shows the active profile's accounts.
 5. Notification schedule per profile: off, every day between two times, weekdays, or custom times per day.
@@ -106,9 +106,9 @@ Every feature visible in the screenshots or named in the research notes was chec
 2. Reset Cache: deletes and rebuilds `cache.sqlite` and keeps `config.sqlite`. Refused while the Outbox or queue holds work, since milestone 2 keeps unsent drafts and queued changes in the cache. The message says why.
 3. Failed changes: a permanently failed queue row moves to a `failed` state instead of being deleted. It no longer changes what the list shows. Settings lists it with Gmail's message and offers Retry or Discard.
 
-### J. Beyond milestone 4's draft
+### J. Beyond milestone 4
 
-Milestone 4's draft lists these as out of scope or doesn't mention them.
+Milestone 4's plan lists these as out of scope or doesn't mention them.
 
 1. Filters that forward: the forward action in the filter editor, limited to the account's verified forwarding addresses, and editing existing forwarding filters. Adding and verifying a forwarding address stays in Gmail. The phase plan checks which scope listing forwarding addresses needs.
 2. Vacation message with formatting: the vacation editor uses the compose editor and saves `responseBodyHtml`, so formatted replies stay editable.
@@ -126,17 +126,25 @@ Milestone 4's draft lists these as out of scope or doesn't mention them.
 
 ## Check against milestone 4
 
-Milestone 4's draft (`docs/plans/milestone-4.md` in the milestone 4 worktree, under review on 2026-10-29) covers vacation dates and the contacts-only and domain-only options, Gmail signatures per address, replying from the address a message was sent to, other contacts, RSVP, and Google permissions per feature. Those are left out here. Three points wait on its review:
+Milestone 4's plan (`docs/plans/milestone-4.md` on `feat/milestone-4`, approved 2026-10-29) covers vacation dates and the contacts-only and domain-only options, Gmail signatures per address, replying from the address a message was sent to, other contacts, RSVP, and Google permissions per feature. Those are left out here.
 
-- Inbox updates: IMAP IDLE or faster polling (its open question 1). Alerts work either way, and IMAP makes them arrive within seconds. With IMAP, the account already holds the full mail scope D4 needs.
-- Filter actions: whether its filter editor offers every action Gmail's own filter form has (skip the Inbox, mark as read, star, apply a label, never send to Spam, mark important or not, categorize, delete) as label adds and removes. A missing action moves to J.
-- Scope changes in its review move items between its plan and this one.
+What milestone 5 builds on, as the milestone 4 session confirmed on 2026-10-29:
+
+- Inbox updates use IMAP IDLE behind `https://mail.google.com/`, asked for per account when the user turns on Inbox Updates. Accounts without it pick up new mail at the 60-second poll.
+- Per-feature authorization (its phase B3) keeps a set of features per account, each with its scopes, and counts a broader granted scope. D4 adds a Permanent Deletion feature to it.
+- The filter action model (its phase A1) takes any label adds and removes plus a forward address. So every label-based action in Gmail's filter form fits: skip the Inbox, mark as read, star, apply a label, never send to Spam, mark important or not, categorize, and delete. Its phase B10b sets the editor's action list, and the milestone 4 session has recommended all of them to the owner.
+
+Still open:
+
+- Whether milestone 4 takes on any J item. The owner decides.
+- Which system labels `filters.create` accepts. Nobody has checked this live.
+- Gmail's web option to also apply a new filter to existing mail has no API equivalent, since filters act only on mail that arrives after they exist. It isn't planned here.
 
 ## Decisions
 
 | Area | Choice | Why |
 |---|---|---|
-| Scopes | No new scope apart from `https://mail.google.com/` for permanent deletion, asked for through milestone 4's per-feature authorization unless the account already holds it. J3 and J4 use milestone 4's contacts scopes | `messages.batchDelete` accepts only that scope. `batchModify` and everything else here accept `gmail.modify` |
+| Scopes | No new scope apart from `https://mail.google.com/` for permanent deletion, asked for as a Permanent Deletion feature through milestone 4's per-feature authorization. Accounts with Inbox Updates on already hold it. J3 and J4 use milestone 4's contacts scopes | `messages.batchDelete` accepts only that scope. `batchModify` and everything else here accept `gmail.modify` |
 | Gmail changes | Spam, importance, mark all read, permanent deletion, label visibility and block filters are new queue kinds | Every change to Gmail state goes through the action queue (project rule) |
 | Where settings live | Display preferences (text size, density, order, sounds) in `UserDefaults`. Anything that must survive a cache reset (account details, profiles, favorites, saved searches, templates, Tern signatures, suggestion blocklist, allowed image senders, category switches, alert watermarks) in `config.sqlite` | Reset Cache must not lose user setup |
 | Page scripts | Page JavaScript stays off. Link hover and quote selection use scripts in an isolated `WKContentWorld`, which `allowsContentJavaScript = false` doesn't disable. The first rendering phase confirms this | Keeps the milestone 1 security posture |
@@ -163,8 +171,8 @@ The milestone starts after milestone 4 merges. Phases then follow the workspace 
 | 5 | C Sidebar and mailboxes | |
 | 6 | E Compose | |
 | 7 | G and H | |
-| 8 | F Accounts, profiles and notifications | Alert delay follows milestone 4's inbox updates |
-| 9 | J Beyond milestone 4's draft | Items milestone 4 takes on in review drop out |
+| 8 | F Accounts, profiles and notifications | Prompt alerts need milestone 4's Inbox Updates |
+| 9 | J Beyond milestone 4 | Items milestone 4 takes on drop out |
 | 10 | I Cache and maintenance | |
 | 11 | Review pass and fixes | |
 
@@ -187,7 +195,7 @@ No UI snapshot tests.
 
 ## What you need to do
 
-- When permanent deletion ships, the OAuth consent screen must list `https://mail.google.com/`, unless milestone 4's IMAP choice already added it.
+- Permanent deletion needs no change to the OAuth consent screen, since milestone 4 already adds `https://mail.google.com/` for Inbox Updates.
 - Allow Tern's Calendars access when the invitation agenda first asks for it.
 - Live testing: the part-tree `fields` mask, `cid:` mail, Gmail web links, and allowing alerts in System Settings.
 
@@ -199,12 +207,12 @@ No UI snapshot tests.
 - Message mode changes queue targeting across many actions.
 - Alerts need Tern running.
 - The tracker list's license must allow bundling.
-- Milestone 4's plan is still a draft, so workstream J and the check list may change.
+- Workstream J shrinks if milestone 4 takes on any of its items.
 
 ## Answered questions
 
 Answered on 2026-10-29:
 
-1. No relay server. Tern keeps running in the background and alerts from its own sync, which milestone 4 speeds up with IMAP IDLE or faster polling.
+1. No relay server. Tern keeps running in the background and alerts from its own sync, which milestone 4's IMAP IDLE speeds up for accounts with Inbox Updates on.
 2. No self-updating.
 3. This document sets scope. File-level phases follow once milestone 4 merges.
