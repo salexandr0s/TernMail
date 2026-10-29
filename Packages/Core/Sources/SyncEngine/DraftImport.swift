@@ -108,8 +108,9 @@ extension SyncEngine {
     }
 
     /// Opens a Gmail draft. One already open here comes back as it is unless
-    /// another app changed it since: then Gmail's copy is imported, and local
-    /// changes Gmail hasn't seen go on as a new draft.
+    /// another app changed it since and no save of it is uploading: then
+    /// Gmail's copy is imported, and local changes Gmail hasn't seen go on as
+    /// a new draft.
     public func openDraft(id: String) async throws -> OpenedDraft {
         let accountID = accountID
         let lookup = { @Sendable (tx: CacheTransaction) in try tx.localDraft(gmailDraftID: id, accountID: accountID) }
@@ -179,12 +180,20 @@ extension SyncEngine {
         let record = DraftRecord(accountID: accountID, id: gmailDraftID, messageID: message.id, threadID: message.threadId)
         let metadata = try? Mapping.message(message, accountID: accountID)
         let now = now()
-        let result: (draft: LocalDraft, removed: [OutgoingAttachment], copiedID: String?, stale: Set<String>)
+        let result: (draft: LocalDraft, removed: [OutgoingAttachment], copiedID: String?, stale: Set<String>, imported: Bool)
         do {
             result = try await write { tx in
                 let current = try tx.localDraft(gmailDraftID: gmailDraftID, accountID: accountID)
-                // Another open imported it while this one downloaded.
-                if let current, current != existing { return (current, copies, nil, []) }
+                if let current {
+                    // Another open imported it while this one downloaded.
+                    let replaced = current != existing
+                    // A save of the open copy that's uploading has already picked
+                    // this Gmail draft, and its answer is recorded on the open copy.
+                    // If the other app's change outlasts it, the next save keeps both.
+                    let uploading = try tx.composeRows(localDraftID: current.id)
+                        .contains { $0.kind == .saveDraft && $0.state == .sending }
+                    if replaced || uploading { return (current, copies, nil, [], false) }
+                }
                 var removed: [OutgoingAttachment] = []
                 var copiedID: String?
                 var stale = Set([try tx.draft(id: gmailDraftID, accountID: accountID)?.messageID].compactMap { $0 })
@@ -205,7 +214,7 @@ extension SyncEngine {
                 let threads = try tx.deleteMessages(ids: stale, accountID: accountID)
                 stale.formUnion(try tx.recordDraftSave(record, localDraftID: localID, revision: revision, message: metadata))
                 try tx.rebuildThreads(threads, accountID: accountID)
-                return (try tx.localDraft(id: localID) ?? imported, removed, copiedID, stale)
+                return (try tx.localDraft(id: localID) ?? imported, removed, copiedID, stale, true)
             }
         } catch {
             removeFiles(copies)
@@ -218,7 +227,7 @@ extension SyncEngine {
             continuation.yield(.draftCopied(localDraftID: copiedID))
             scheduleSending()
         }
-        return OpenedDraft(draft: result.draft, droppedFormatting: droppedFormatting && result.draft.id == localID)
+        return OpenedDraft(draft: result.draft, droppedFormatting: droppedFormatting && result.imported)
     }
 
     // MARK: Files
