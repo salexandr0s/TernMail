@@ -15,7 +15,6 @@ public enum MailAction: Sendable, Equatable {
 /// One user command can affect several threads. Each target has its own
 /// durable queue row, while undo still treats the command as one operation.
 public final class ActionReceipt: Sendable, Equatable {
-    public let id: Int64?
     // The engine enriches rows before sending; UI undo can read them safely
     // after history has removed the durable rows. All access holds this lock.
     private let rows: OSAllocatedUnfairLock<[PendingAction]>
@@ -24,7 +23,6 @@ public final class ActionReceipt: Sendable, Equatable {
     let snooze: SnoozeChange?
 
     init(actions: [PendingAction], snooze: SnoozeChange? = nil) {
-        id = actions.first?.id
         rows = OSAllocatedUnfairLock(initialState: actions)
         self.snooze = snooze
     }
