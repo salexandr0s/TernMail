@@ -94,7 +94,7 @@ Not stated on the current pages, so checked in live testing (the plan works eith
 | Engines | One `SyncEngine` and one `SnoozeKeeper` per account, sharing one `cache.sqlite` | Every cache table already has `accountID`, apart from `outgoingAttachment`, which hangs off `localDraft` |
 | Sessions | `GoogleAuth` splits into a sign-in coordinator and an `AccountSession` per account that implements `AccessTokenProvider` and owns its Keychain item | One expired session then can't block the other accounts |
 | Identity | `ThreadKey(accountID, threadID)` identifies rows and selection. A mailbox is `.combined(id)` or `.account(accountID, id)`, where `id` is a label ID or one of the virtual mailboxes (All Mail, Outbox, Snoozed), each with its own data source | Gmail IDs are only unique within one mailbox, and SwiftUI lists need stable IDs |
-| Sidebar | With one account, unchanged. With more, a combined section (Inbox, Starred, Snoozed, Drafts, Sent, and Outbox while it has items) above one section per account with all its mailboxes and labels | Those mailboxes mean the same thing in every account; labels don't |
+| Sidebar | Changed in phase 10d at the owner's request. With one account, a flat list as before. With more, one mailbox list: Inbox, Starred, Snoozed, Sent, Drafts, All Mail, Spam and Trash appear once each, plus the Outbox while it has items. Each row shows every account's mail and expands to a row per account. A collapsed row's badge is the total; an expanded row leaves it to the account rows. Tern remembers which rows are expanded, and Inbox starts expanded. Below the list, each account's section holds its header and labels. Each system mailbox has its own color. Account rows use the account's color, from a fixed palette stored by account ID, and the part of its address before the @. Labels Gmail gives a color have filled tags | A mailbox sits in one place however many accounts there are; labels belong to one account |
 | Mixed selections | Actions are grouped by account and go through each account's queue, with one notice and one undo | Undo should reverse what the user did, not part of it |
 | Sign-out | Per account. Stops that account's keeper, search tasks and engine, in that order. Reads its local draft IDs, closes its compose windows, then deletes its cache rows, Keychain item, snooze records and `Outgoing/<draft>` folders. The confirmation counts its Outbox items and snoozed conversations, which stay archived in Gmail. At launch, cache rows for accounts no longer in `config.sqlite` are deleted | The other accounts keep working. Outgoing folders can only be found through local drafts, and the launch cleanup finishes a sign-out interrupted by a crash |
 | Compose From | Replies and forwards keep the conversation's account, and From isn't editable for them. A new message starts with the selected mailbox's account (the first account in a combined mailbox) and From is a menu. Changing it after a save moves the draft in one cache transaction: a new local draft in the new account and a discard of the old Gmail draft through the old account's queue | A Gmail draft belongs to one mailbox, and a reply's thread ID only means something in its own account |
@@ -189,7 +189,7 @@ In `GmailAPI`:
 ## UI
 
 - Search: the toolbar field, the results list and its Gmail row. In combined mailboxes each row names its account.
-- Sidebar: labels as an outline split on "/", pending labels dimmed, a context menu with Rename, Color and Delete, and a `+` for New Label. With several accounts, the combined section and one section per account. Snoozed sits under Starred.
+- Sidebar: labels as an outline split on "/", pending labels dimmed, a context menu with Rename, Color and Delete, and a `+` for New Label. With several accounts, one mailbox list whose rows expand to each account, then one section of labels per account. Snoozed sits under Starred.
 - Edit Labels and Move to are popovers from toolbar buttons; the menu commands open the same popovers.
 - Snooze is a toolbar menu with the presets and a date and time sheet.
 - Settings gains an Accounts pane (list, Add Account, Sign Out) and a single-key shortcuts switch.
@@ -252,6 +252,7 @@ Milestone 2 gates: before each phase that changes a file milestone 2 also change
 | 9g | Sidebar sections, account names on rows, sign-in again per account, per-account sign-out with launch cleanup, Add Account, distinct mail for the second fake account | `SidebarView.swift`, `ThreadListView.swift`, `MainView.swift`, `MailCommands.swift`, `AuditGmail.swift` | Launch |
 | 9h | Compose From menu for new messages and moving a draft between accounts; Accounts pane in Settings | Milestone 2's `ComposeModel.swift` and `ComposeView.swift`, its Settings view, `Drafts.swift`, `ComposeQueue.swift`; split if Settings needs more | Launch |
 | 10 | Single keys: event monitor, Go menu, Keyboard Shortcuts window, Settings switch | `MailCommands.swift`, `TernApp.swift`, milestone 2's Settings view; `ShortcutMonitor.swift`, `KeyboardShortcutsView.swift` (new) | Launch |
+| 10d | Added after phase 10 at the owner's request. Sidebar regroup: one mailbox list with rows per account, remembered expansion, mailbox and account colors, filled label tags. All Mail, Spam and Trash join the combined mailboxes. Split into the app change and its tests to stay within five files | `SidebarView.swift`, `MailboxModel.swift`, `MailCommands.swift`, `AccountAppearance.swift` (new); then `MailboxModelTests.swift` and a test file (new) | Launch |
 | 11 | Review pass and fixes | As found | Full checks |
 
 Phases 1 to 3b add files, apart from phase 2's small change to `GmailClient.swift`, which milestone 2 doesn't touch. They run before any merge. Core phases that change an API the app calls use "App" checks.
@@ -307,6 +308,6 @@ Answered on 2026-10-29:
 1. No background body download in this milestone. Gmail's results cover bodies Tern hasn't downloaded.
 2. Gmail search uses `threads.list`, not `messages.list`.
 3. Single-key shortcuts are off by default.
-4. Combined mailboxes: Inbox, Starred, Snoozed, Drafts, Sent and Outbox. All Mail, Spam, Trash and labels stay per account.
+4. Combined mailboxes: Inbox, Starred, Snoozed, Drafts, Sent and Outbox. All Mail, Spam, Trash and labels stay per account. Phase 10d changed this: All Mail, Spam and Trash are combined too, and only labels stay per account.
 5. Gates: when milestone 2 hasn't moved since the last merge, the phase goes ahead without asking. Otherwise I ask each time.
 6. The phases run back to back, each tested and committed, stopping only at the gates.
