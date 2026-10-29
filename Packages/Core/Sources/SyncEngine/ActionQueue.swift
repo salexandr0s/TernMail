@@ -64,11 +64,10 @@ extension SyncEngine {
         let accountID = accountID
         let now = now()
         do {
-            try await write { tx in
-                for action in actions {
-                    try Self.undo(action, accountID: accountID, now: now, in: tx)
-                }
+            let dropped = try await write { tx -> [Int64] in
+                try actions.flatMap { action in try Self.undo(action, accountID: accountID, now: now, in: tx) }
             }
+            unavailableUndoIDs.formUnion(dropped)
         } catch {
             unavailableUndoIDs.subtract(ids)
             throw error
@@ -76,10 +75,14 @@ extension SyncEngine {
         scheduleSending()
     }
 
-    private static func undo(_ action: PendingAction, accountID: String, now: Date, in tx: CacheTransaction) throws {
+    /// Returns the IDs of other rows the undo took out of the queue.
+    private static func undo(_ action: PendingAction, accountID: String, now: Date, in tx: CacheTransaction) throws -> [Int64] {
+        if action.kind.changesLabel {
+            return try undoLabelChange(action, accountID: accountID, now: now, in: tx)
+        }
         guard let id = action.id, let stored = try tx.action(id: id) else {
             try Self.enqueueInverse(of: action, accountID: accountID, now: now, in: tx)
-            return
+            return []
         }
         switch stored.state {
         case .queued:
@@ -96,8 +99,9 @@ extension SyncEngine {
         case .sent:
             try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
         case .undone:
-            return
+            break
         }
+        return []
     }
 
     @discardableResult
@@ -140,6 +144,11 @@ extension SyncEngine {
             }
         }
         scheduleSending()
+        return register(rows)
+    }
+
+    /// One receipt for the rows of one user command, so undo treats them as one.
+    func register(_ rows: [PendingAction]) -> ActionReceipt {
         let receipt = ActionReceipt(actions: rows)
         undoReceipts = undoReceipts.filter { $0.value.value != nil }
         for row in rows {
@@ -171,18 +180,21 @@ extension SyncEngine {
             // Draft rows have no inverse. Undo send cancels the row instead.
             return
         case .createLabel, .updateLabel, .deleteLabel:
-            // Nothing queues label rows yet, so there is nothing to invert.
-            return
+            try enqueueLabelInverse(of: action, accountID: accountID, now: now, in: tx)
         case .modifyThreads, .modifyMessages:
             // Restore each message exactly: archiving a thread removed INBOX only
-            // from the messages that had it, so only those get it back.
+            // from the messages that had it, so only those get it back. A label
+            // created since gets Gmail's ID in place of the temporary one.
+            let resolve = { (ids: [String]) throws -> [String] in
+                try ids.map { try tx.resolvedLabelID($0, accountID: accountID) }
+            }
             let groups = Dictionary(grouping: action.diff, by: \.value)
                 .map { (diff: $0.key, messageIDs: $0.value.map(\.key).sorted()) }
                 .sorted { $0.messageIDs.first ?? "" < $1.messageIDs.first ?? "" }
             for group in groups where !group.diff.added.isEmpty || !group.diff.removed.isEmpty {
                 _ = try tx.enqueue(
                     .modifyMessages, accountID: accountID, threadIDs: action.threadIDs, messageIDs: group.messageIDs,
-                    add: group.diff.removed, remove: group.diff.added, now: now, notBefore: now
+                    add: try resolve(group.diff.removed), remove: try resolve(group.diff.added), now: now, notBefore: now
                 )
             }
         }
@@ -236,19 +248,24 @@ extension SyncEngine {
     }
 
     /// Sends every queued row whose hold or backoff has passed and returns how
-    /// many it claimed.
+    /// many it claimed. Label rows go out one at a time; changes to
+    /// conversations that match are combined into one request.
     @discardableResult
     public func sendDueActions() async -> Int {
         let accountID = accountID
         let now = now()
-        guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now, lane: .labels) }) else {
+        guard let (claimed, due) = try? await write({ tx -> (Int, [PendingAction]) in
+            let claimed = try tx.claimDueActions(accountID: accountID, now: now, lane: .labels)
+            return (claimed.count, try claimed.compactMap { try Self.resolvingTemporaryLabels($0, accountID: accountID, in: tx) })
+        }) else {
             return 0
         }
-        let groups = Dictionary(grouping: due, by: DeliveryKey.init).values.sorted {
+        for row in due where row.kind.changesLabel { await sendLabelChange(row) }
+        let groups = Dictionary(grouping: due.filter { !$0.kind.changesLabel }, by: DeliveryKey.init).values.sorted {
             ($0.first?.id ?? Int64.max) < ($1.first?.id ?? Int64.max)
         }
         for group in groups { await send(group) }
-        return due.count
+        return claimed
     }
 
     private struct DeliveryKey: Hashable {
@@ -263,7 +280,7 @@ extension SyncEngine {
         }
     }
 
-    private enum Outcome {
+    enum Outcome {
         case sent
         case retry(String)
         case failed
@@ -338,7 +355,7 @@ extension SyncEngine {
         }
     }
 
-    private static func outcome(for error: any Error) -> Outcome {
+    static func outcome(for error: any Error) -> Outcome {
         if let error = error as? GmailError {
             return shouldRetry(error) ? .retry(String(describing: error)) : .failed
         }
@@ -354,7 +371,7 @@ extension SyncEngine {
         }
     }
 
-    private func finish(_ current: PendingAction, outcome: Outcome) async {
+    func finish(_ current: PendingAction, outcome: Outcome) async {
         guard let id = current.id else { return }
         var row = current
         let now = now()
@@ -408,7 +425,7 @@ extension SyncEngine {
             // Claimed only by the compose lane, never batched with label changes.
             return [:]
         case .createLabel, .updateLabel, .deleteLabel:
-            // Nothing queues label rows yet.
+            // Sent one at a time by `sendLabelChange(_:)`.
             return [:]
         }
     }

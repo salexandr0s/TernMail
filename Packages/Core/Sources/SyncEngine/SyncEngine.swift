@@ -112,7 +112,10 @@ public actor SyncEngine {
         hasStarted = true
         let accountID = accountID
         do {
-            try await write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
+            try await write { tx in
+                try tx.requeueInterruptedActions(accountID: accountID)
+                try tx.clearLabelAliases(accountID: accountID)
+            }
         } catch {
             hasStarted = false
             if !isStopped { continuation.yield(.syncFailed(Self.message(for: error))) }

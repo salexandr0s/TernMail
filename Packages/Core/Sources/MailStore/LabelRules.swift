@@ -169,20 +169,19 @@ extension CacheTransaction {
         try db.execute(sql: "DELETE FROM labelAlias WHERE accountID = ?", arguments: [accountID])
     }
 
-    /// Takes a label that's gone, or that Gmail refused to create, out of the
-    /// cache: off its messages, out of queued rows (deleting conversation rows
-    /// left with nothing to change and the label's own queued rows), and off
-    /// the conversations. Returns the IDs of the rows deleted.
+    /// Takes a label that's gone, or that Gmail never created, out of the
+    /// cache: off its messages, out of queued rows (deleting the label's own
+    /// queued rows and conversation rows left with nothing to change), and off
+    /// the conversations. A conversation row that adds a label Gmail never
+    /// had is deleted whole, so a move into it doesn't leave the conversation
+    /// out of its mailbox with no label. Returns the IDs of the rows deleted.
     @discardableResult
     public func dropLabel(_ labelID: String, accountID: String) throws -> [Int64] {
         var threads = try threadIDsListed(under: labelID, accountID: accountID)
-        threads.formUnion(try String.fetchSet(db, sql: """
-            SELECT message.threadID FROM messageLabel
-            JOIN message ON message.accountID = messageLabel.accountID AND message.id = messageLabel.messageID
-            WHERE messageLabel.accountID = ? AND messageLabel.labelID = ?
-            """, arguments: [accountID, labelID]))
+        threads.formUnion(try threadIDsCarrying(labelID, accountID: accountID))
         try db.execute(sql: "DELETE FROM messageLabel WHERE accountID = ? AND labelID = ?", arguments: [accountID, labelID])
 
+        let neverCreated = LabelRules.isTemporary(labelID)
         var deleted: [Int64] = []
         for var row in try pendingActions(accountID: accountID) where row.state == .queued {
             if row.kind.changesLabel {
@@ -192,14 +191,15 @@ extension CacheTransaction {
                 continue
             }
             guard (row.addLabelIDs + row.removeLabelIDs).contains(labelID) else { continue }
+            threads.formUnion(row.threadIDs)
+            threads.formUnion(try threadIDsOf(messageIDs: row.messageIDs, accountID: accountID))
+            let dropsWhole = neverCreated && row.addLabelIDs.contains(labelID)
             row.addLabelIDs.removeAll { $0 == labelID }
             row.removeLabelIDs.removeAll { $0 == labelID }
             row.diff = row.diff.mapValues {
                 .init(added: $0.added.filter { $0 != labelID }, removed: $0.removed.filter { $0 != labelID })
             }
-            threads.formUnion(row.threadIDs)
-            threads.formUnion(try threadIDsOf(messageIDs: row.messageIDs, accountID: accountID))
-            if row.addLabelIDs.isEmpty && row.removeLabelIDs.isEmpty {
+            if dropsWhole || (row.addLabelIDs.isEmpty && row.removeLabelIDs.isEmpty) {
                 try row.delete(db)
                 deleted += row.id.map { [$0] } ?? []
             } else {
@@ -208,6 +208,29 @@ extension CacheTransaction {
         }
         try rebuildThreads(threads, accountID: accountID)
         return deleted
+    }
+
+    /// Removes a label row. The conversations a queued delete took the label
+    /// off get it back.
+    public func deleteLabelChange(id: Int64, accountID: String) throws {
+        guard let row = try action(id: id) else { return }
+        try row.delete(db)
+        guard row.kind == .deleteLabel, let labelID = row.labelID else { return }
+        var threads = try threadIDsCarrying(labelID, accountID: accountID)
+        for use in try pendingActions(accountID: accountID) where (use.addLabelIDs + use.removeLabelIDs).contains(labelID) {
+            threads.formUnion(use.threadIDs)
+            threads.formUnion(try threadIDsOf(messageIDs: use.messageIDs, accountID: accountID))
+        }
+        try rebuildThreads(threads, accountID: accountID)
+    }
+
+    /// Conversations with a message that has the label on Gmail.
+    private func threadIDsCarrying(_ labelID: String, accountID: String) throws -> Set<String> {
+        try String.fetchSet(db, sql: """
+            SELECT message.threadID FROM messageLabel
+            JOIN message ON message.accountID = messageLabel.accountID AND message.id = messageLabel.messageID
+            WHERE messageLabel.accountID = ? AND messageLabel.labelID = ?
+            """, arguments: [accountID, labelID])
     }
 
     private func threadIDsListed(under labelID: String, accountID: String) throws -> Set<String> {
