@@ -29,6 +29,13 @@ struct TernApp: App {
             SettingsView()
                 .environment(model)
         }
+
+        Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
+            KeyboardShortcutsView()
+        }
+        .windowResizability(.contentSize)
+        // Help opens it, so the Window menu doesn't list it too.
+        .commandsRemoved()
     }
 }
 

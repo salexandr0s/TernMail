@@ -123,6 +123,9 @@ struct MailCommands: Commands {
             Button("All Mail") { mailbox?.go(to: SystemLabel.allMail) }
                 .disabled(mailbox == nil || compose != nil)
         }
+        CommandGroup(replacing: .help) {
+            Button("Keyboard Shortcuts") { openWindow(id: KeyboardShortcutsView.sceneID) }
+        }
         CommandMenu("Format") {
             Group {
                 Button("Bold") { compose?.editor?.toggleBold() }
