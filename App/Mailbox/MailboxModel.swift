@@ -1,3 +1,4 @@
+import Accessibility
 import Foundation
 import MailStore
 import MessageContent
@@ -284,7 +285,12 @@ final class MailboxModel {
             let undone = try await engine.undoSend(localDraftID)
             guard !isStopped else { return false }
             finishSend(localDraftID)
-            if !undone { sendNotice = Notice(message: "Too late to undo. Tern has started sending this message.") }
+            if undone {
+                // The reopened window is the visible sign, which VoiceOver doesn't read out.
+                AccessibilityNotification.Announcement("Send undone").post()
+            } else {
+                sendNotice = Notice(message: "Too late to undo. Tern has started sending this message.")
+            }
             return undone
         } catch {
             guard !isStopped else { return false }

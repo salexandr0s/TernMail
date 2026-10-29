@@ -24,6 +24,10 @@ struct TernApp: App {
         .defaultSize(width: 720, height: 600)
         // File > New Message replaces the New Window item this scene would add.
         .commandsRemoved()
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
