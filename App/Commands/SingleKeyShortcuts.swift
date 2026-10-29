@@ -20,6 +20,9 @@ struct SingleKeyShortcuts {
         case perform(Action)
         /// "g" was pressed; the next key picks a mailbox.
         case awaitingDestination
+        /// A held shortcut key repeating. Only J and K repeat; the monitor
+        /// drops the rest so holding E archives one conversation.
+        case held
         /// Not a shortcut. The monitor lets the event through.
         case ignored
     }
@@ -90,12 +93,21 @@ struct SingleKeyShortcuts {
     ///   - characters: The event's characters, with Shift applied.
     ///   - shift: Whether Shift is held. Without it, letters count as lowercase,
     ///     so Caps Lock neither breaks "e" nor turns "i" into Mark as Read.
+    ///   - isRepeat: Whether the event is a repeat of a held key.
     ///   - time: The event's timestamp, in seconds.
-    mutating func outcome(for characters: String, shift: Bool, at time: TimeInterval) -> Outcome {
+    mutating func outcome(for characters: String, shift: Bool, isRepeat: Bool = false, at time: TimeInterval) -> Outcome {
+        guard characters.count == 1 else {
+            prefixTime = nil
+            return .ignored
+        }
+        let key = shift ? characters : characters.lowercased()
+        if isRepeat {
+            // A repeat leaves a pending "g" alone, so holding it still waits.
+            guard let action = Self.actions[key] else { return key == "g" ? .held : .ignored }
+            return [.nextConversation, .previousConversation].contains(action) ? .perform(action) : .held
+        }
         let prefix = prefixTime
         prefixTime = nil
-        guard characters.count == 1 else { return .ignored }
-        let key = shift ? characters : characters.lowercased()
 
         if let prefix, time - prefix <= Self.destinationTimeout {
             return Self.destinations[key].map(Outcome.perform) ?? .ignored

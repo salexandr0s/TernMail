@@ -7,7 +7,9 @@ import SwiftUI
 /// other windows, so typing there never triggers one.
 struct ShortcutMonitor: NSViewRepresentable {
     let isEnabled: Bool
-    let perform: (SingleKeyShortcuts.Action) -> Void
+    /// Returns false when the action does nothing, so the key goes on to the
+    /// focused view.
+    let perform: (SingleKeyShortcuts.Action) -> Bool
 
     func makeNSView(context: Context) -> MonitorView {
         MonitorView()
@@ -23,7 +25,7 @@ struct ShortcutMonitor: NSViewRepresentable {
     }
 
     final class MonitorView: NSView {
-        var perform: (SingleKeyShortcuts.Action) -> Void = { _ in }
+        var perform: (SingleKeyShortcuts.Action) -> Bool = { _ in false }
         var isEnabled = false {
             didSet { updateMonitor() }
         }
@@ -58,11 +60,11 @@ struct ShortcutMonitor: NSViewRepresentable {
                 keys.reset()
                 return event
             }
-            switch keys.outcome(for: characters, shift: event.modifierFlags.contains(.shift), at: event.timestamp) {
+            let shift = event.modifierFlags.contains(.shift)
+            switch keys.outcome(for: characters, shift: shift, isRepeat: event.isARepeat, at: event.timestamp) {
             case .perform(let action):
-                perform(action)
-                return nil
-            case .awaitingDestination:
+                return perform(action) ? nil : event
+            case .awaitingDestination, .held:
                 return nil
             case .ignored:
                 return event

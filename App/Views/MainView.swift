@@ -109,29 +109,47 @@ struct MainView: View {
         }
     }
 
-    /// A single-key shortcut does what its menu command does, when that is enabled.
-    private func perform(_ action: SingleKeyShortcuts.Action) {
-        let hasSelection = !mailbox.selectedThreadIDs.isEmpty
+    /// A single-key shortcut does what its menu command does, when that is
+    /// enabled. Returns false when it does nothing, so the key goes on to the
+    /// focused view: Return with a selection reaches the list, for one.
+    private func perform(_ action: SingleKeyShortcuts.Action) -> Bool {
+        guard canPerform(action) else { return false }
         switch action {
         case .nextConversation: mailbox.selectAdjacentThread(1)
         case .previousConversation: mailbox.selectAdjacentThread(-1)
-        case .openConversation: if !hasSelection { mailbox.selectAdjacentThread(1) }
-        case .archive: if mailbox.canArchive { mailbox.perform(.archive) }
-        case .trash: if mailbox.canTrash { mailbox.perform(.trash) }
-        case .toggleStar: if hasSelection { mailbox.toggleStar() }
-        case .markRead: if hasSelection { mailbox.perform(.markRead) }
-        case .markUnread: if hasSelection { mailbox.perform(.markUnread) }
-        case .editLabels: if hasSelection { mailbox.showEditLabels() }
-        case .moveTo: if hasSelection { mailbox.showMoveTo() }
-        case .snooze: if mailbox.canSnooze { mailbox.showSnoozeDate() }
+        case .openConversation: mailbox.selectAdjacentThread(1)
+        case .archive: mailbox.perform(.archive)
+        case .trash: mailbox.perform(.trash)
+        case .toggleStar: mailbox.toggleStar()
+        case .markRead: mailbox.perform(.markRead)
+        case .markUnread: mailbox.perform(.markUnread)
+        case .editLabels: mailbox.showEditLabels()
+        case .moveTo: mailbox.showMoveTo()
+        case .snooze: mailbox.showSnoozeDate()
         case .search: mailbox.search.focusField()
         case .newMessage: newMessage()
         case .reply: reply(.reply)
         case .replyAll: reply(.replyAll)
         case .forward: reply(.forward)
-        case .undo: if undoManager?.canUndo == true { undoManager?.undo() }
+        case .undo: undoManager?.undo()
         case .showShortcuts: openWindow(id: KeyboardShortcutsView.sceneID)
         case .go(let destination): mailbox.go(to: Self.labelID(of: destination))
+        }
+        return true
+    }
+
+    private func canPerform(_ action: SingleKeyShortcuts.Action) -> Bool {
+        let hasSelection = !mailbox.selectedThreadIDs.isEmpty
+        switch action {
+        case .openConversation: return !hasSelection
+        case .archive: return mailbox.canArchive
+        case .trash: return mailbox.canTrash
+        case .toggleStar, .markRead, .markUnread, .editLabels, .moveTo: return hasSelection
+        case .snooze: return mailbox.canSnooze
+        case .undo: return undoManager?.canUndo == true
+        case .nextConversation, .previousConversation, .search, .newMessage, .reply, .replyAll, .forward,
+             .showShortcuts, .go:
+            return true
         }
     }
 
