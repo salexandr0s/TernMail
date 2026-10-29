@@ -23,6 +23,11 @@ public struct MailCache: Sendable {
     public func write<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async throws -> T {
         try await writer.write { db in try updates(CacheTransaction(db: db)) }
     }
+
+    /// Runs `fetch` in a read-only transaction. Writing inside it throws.
+    public func read<T: Sendable>(_ fetch: @escaping @Sendable (CacheTransaction) throws -> T) async throws -> T {
+        try await writer.read { db in try fetch(CacheTransaction(db: db)) }
+    }
 }
 
 /// Write access to the cache inside one transaction.
@@ -154,6 +159,24 @@ public struct CacheTransaction {
             .fetchAll(db)
     }
 
+    /// Messages in a thread whose body has not been fetched yet.
+    public func messageIDsWithoutBody(threadID: String, accountID: String) throws -> [String] {
+        try String.fetchAll(db, sql: """
+            SELECT message.id
+            FROM message
+            LEFT JOIN messageBody ON messageBody.accountID = message.accountID AND messageBody.messageID = message.id
+            WHERE message.accountID = ? AND message.threadID = ? AND messageBody.messageID IS NULL
+            """, arguments: [accountID, threadID])
+    }
+
+    public func thread(id: String, accountID: String) throws -> ThreadRecord? {
+        try ThreadRecord.fetchOne(db, key: ["accountID": accountID, "id": id])
+    }
+
+    public func labels(accountID: String) throws -> [LabelRecord] {
+        try LabelRecord.filter(Column("accountID") == accountID).fetchAll(db)
+    }
+
     public func saveBodies(_ bodies: [MessageBodyRecord]) throws {
         for body in bodies {
             try body.upsert(db)
@@ -235,6 +258,26 @@ public struct CacheTransaction {
 
     public func action(id: Int64) throws -> PendingAction? {
         try PendingAction.fetchOne(db, key: id)
+    }
+
+    /// Marks queued actions that are due as `sending` and returns them, so two
+    /// senders never pick up the same row.
+    public func claimDueActions(accountID: String, now: Date) throws -> [PendingAction] {
+        var due = try pendingActions(accountID: accountID).filter { $0.state == .queued && $0.notBefore <= now }
+        for index in due.indices {
+            due[index].state = .sending
+            try due[index].update(db)
+        }
+        return due
+    }
+
+    /// Puts rows left in `sending` by a quit or crash back in the queue. Gmail
+    /// may already have applied them; resending a label change is harmless.
+    public func requeueInterruptedActions(accountID: String) throws {
+        try db.execute(
+            sql: "UPDATE pendingAction SET state = ? WHERE accountID = ? AND state = ?",
+            arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
+        )
     }
 
     public func updateAction(_ action: PendingAction) throws {

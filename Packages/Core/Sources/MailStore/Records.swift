@@ -148,9 +148,14 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     }
 
     /// What the action changed on one message, relative to what the user saw.
-    public struct LabelDiff: Codable, Sendable, Equatable {
+    public struct LabelDiff: Codable, Sendable, Hashable {
         public var added: [String]
         public var removed: [String]
+
+        public init(added: [String], removed: [String]) {
+            self.added = added
+            self.removed = removed
+        }
     }
 
     public var id: Int64?

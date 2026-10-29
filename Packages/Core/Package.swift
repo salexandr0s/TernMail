@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "GmailAPI", targets: ["GmailAPI"]),
         .library(name: "MailStore", targets: ["MailStore"]),
         .library(name: "MessageContent", targets: ["MessageContent"]),
+        .library(name: "SyncEngine", targets: ["SyncEngine"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.11.1"),
@@ -17,8 +18,10 @@ let package = Package(
         .target(name: "GmailAPI"),
         .target(name: "MailStore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
         .target(name: "MessageContent", dependencies: ["GmailAPI", "SwiftSoup"]),
+        .target(name: "SyncEngine", dependencies: ["GmailAPI", "MailStore", "MessageContent"]),
         .testTarget(name: "GmailAPITests", dependencies: ["GmailAPI"]),
         .testTarget(name: "MailStoreTests", dependencies: ["MailStore"]),
         .testTarget(name: "MessageContentTests", dependencies: ["MessageContent"]),
+        .testTarget(name: "SyncEngineTests", dependencies: ["SyncEngine", "GmailAPI", "MailStore"]),
     ]
 )
