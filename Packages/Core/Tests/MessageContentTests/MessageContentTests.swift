@@ -19,18 +19,23 @@ import Testing
             <svg><style><img src="https://t.example/svg.png"></style></svg>
             <a href=" java&#x09;script:alert(1)" onclick="x()">bad</a>
             <a href="https://example.com/ok">ok</a>
+            <form><input value="typed"><select><option>One</option></select><button>Send</button>
+            <textarea>Keep <b>this</b></textarea></form>
+            <div contenteditable="true">Edit me</div>
             </body></html>
             """
         let rendered = MessageDocument.render(html: html)
         let page = rendered.html.lowercased()
 
-        for forbidden in ["<script", "refresh", "onload", "onclick", "javascript", "<link", "@import", " src=\"https://", "srcset", "t.example/b.png", "t.example/bg.png", "t.example/set.png", "t.example/svg.png"] {
+        for forbidden in ["<script", "refresh", "onload", "onclick", "javascript", "<link", "@import", " src=\"https://", "srcset", "t.example/b.png", "t.example/bg.png", "t.example/set.png", "t.example/svg.png", "<input", "<select", "<option", "<button", "<textarea", "contenteditable"] {
             #expect(!page.contains(forbidden), "page still contains \(forbidden)")
         }
         #expect(page.contains("data-blocked-src=\"https://t.example/p.gif\""))
         #expect(page.contains("src=\"data:image/png;base64,aaaa\""))
         #expect(page.contains("url(#g)"))
         #expect(page.contains("href=\"https://example.com/ok\""))
+        #expect(page.contains("keep &lt;b&gt;this&lt;/b&gt;"))
+        #expect(page.contains("edit me"))
         #expect(rendered.html.contains(MessageDocument.contentSecurityPolicy))
         // The stylesheet link, @import, style-block url(), the remote img and the two inline styles.
         #expect(rendered.blockedRemoteContent == 6)
