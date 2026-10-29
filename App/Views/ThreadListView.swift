@@ -308,11 +308,8 @@ struct ThreadMenuItems: View {
             Button("Move to Trash") { mailbox.perform(.trash, on: ids) }
         }
         if mailbox.snoozeKeeper != nil, mailbox.offersArchive {
-            let schedule = SnoozeSchedule()
             Menu("Snooze") {
                 SnoozeMenuItems(
-                    options: schedule.options(now: .now),
-                    calendar: schedule.calendar,
                     onSnooze: { mailbox.snooze(ids, until: $0) },
                     onChooseDate: { mailbox.showSnoozeDate(for: ids) }
                 )
@@ -350,13 +347,8 @@ private struct ThreadToolbar: ToolbarContent {
             .help("Move to Trash")
             .disabled(!mailbox.canTrash)
 
-            // The presets are worked out when the toolbar draws. The model
-            // refuses a time that has passed by the time one is chosen.
             Menu {
-                let schedule = SnoozeSchedule()
                 SnoozeMenuItems(
-                    options: schedule.options(now: .now),
-                    calendar: schedule.calendar,
                     onSnooze: { mailbox.snooze(until: $0) },
                     onChooseDate: { mailbox.showSnoozeDate() }
                 )
@@ -367,6 +359,8 @@ private struct ThreadToolbar: ToolbarContent {
             } label: {
                 Label("Snooze", systemImage: "clock")
             }
+            // Without it, VoiceOver names the menu after its arrow image.
+            .accessibilityLabel("Snooze")
             .help("Snooze")
             .disabled(!mailbox.canSnooze)
 

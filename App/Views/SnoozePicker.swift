@@ -1,15 +1,17 @@
 import SwiftUI
 
 /// The Snooze menu: the presets that apply now, then Choose Date & Time.
+/// The menu bar and the toolbar draw their menus before they open, so the
+/// presets follow `MinuteClock` rather than the time the menu was drawn.
 struct SnoozeMenuItems: View {
-    let options: [SnoozeSchedule.Option]
-    let calendar: Calendar
     let onSnooze: (Date) -> Void
     let onChooseDate: () -> Void
+    private let schedule = SnoozeSchedule()
 
     var body: some View {
+        let options = schedule.options(now: MinuteClock.shared.now)
         ForEach(options, id: \.preset) { option in
-            Button(Self.title(for: option, calendar: calendar)) { onSnooze(option.wakeAt) }
+            Button(Self.title(for: option, calendar: schedule.calendar)) { onSnooze(option.wakeAt) }
         }
         if !options.isEmpty {
             Divider()
@@ -34,6 +36,26 @@ struct SnoozeMenuItems: View {
             style = style.weekday(.abbreviated)
         }
         return "\(name), \(option.wakeAt.formatted(style))"
+    }
+}
+
+/// The time to the minute, for menus drawn before they open. `now` changes
+/// at the start of each minute, so a view that reads it draws again.
+@MainActor
+@Observable
+final class MinuteClock {
+    static let shared = MinuteClock()
+    private(set) var now = Date.now
+
+    private init() {
+        Task { [weak self] in
+            while true {
+                let seconds = 60 - Date.now.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
+                try? await Task.sleep(for: .seconds(seconds))
+                guard let self else { return }
+                now = .now
+            }
+        }
     }
 }
 

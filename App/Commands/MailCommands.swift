@@ -76,10 +76,7 @@ struct MailCommands: Commands {
                 .disabled(!hasSelection)
             Divider()
             Menu("Snooze") {
-                let schedule = SnoozeSchedule()
                 SnoozeMenuItems(
-                    options: schedule.options(now: .now),
-                    calendar: schedule.calendar,
                     onSnooze: { mailbox?.snooze(until: $0) },
                     onChooseDate: { mailbox?.showSnoozeDate() }
                 )
