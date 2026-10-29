@@ -29,7 +29,7 @@ final class MailboxModel {
     static let pageSize = 200
     static let undoLimit = 100
     /// The sidebar's Outbox, which isn't a Gmail label.
-    static let outboxID = "TERN_OUTBOX"
+    nonisolated static let outboxID = "TERN_OUTBOX"
     /// The sidebar's Snoozed, which Tern keeps itself since Gmail's API has none.
     nonisolated static let snoozedID = "TERN_SNOOZED"
     /// Received attachments, downloaded when opened. Signing out deletes them.
@@ -278,7 +278,8 @@ final class MailboxModel {
     /// The Outbox of the selected mailbox's accounts.
     var selectedOutbox: [DraftActivity] { selectedAccounts.flatMap(\.outbox) }
 
-    /// With more than one account the sidebar gains a combined section.
+    /// With more than one account each sidebar mailbox lists every account's
+    /// mail and expands to one row per account.
     var hasSeveralAccounts: Bool { !otherAccounts.isEmpty }
 
     /// Whether the list can show conversations from more than one account,
@@ -431,12 +432,11 @@ final class MailboxModel {
         return defaultAccount
     }
 
-    /// The Go menu: a system mailbox across accounts when the sidebar lists it
-    /// there, so ⌘1 to ⌘5 match the sidebar's first rows. All Mail stays in
-    /// the account in view, or the first account.
+    /// The Go menu: a system mailbox across accounts, as the sidebar's top row
+    /// for it lists them, so ⌘1 to ⌘5 match the sidebar's first rows.
     func go(to labelID: String) {
         search.clear()
-        if hasSeveralAccounts, SystemMailbox.combined.contains(where: { $0.id == labelID }) {
+        if hasSeveralAccounts, SystemMailbox.all.contains(where: { $0.id == labelID }) {
             selectedMailbox = .combined(labelID)
         } else {
             let accountID = if case .account(let id, _)? = selectedMailbox { id } else { defaultAccount.account.id }
@@ -988,6 +988,7 @@ struct SystemMailbox: Identifiable {
     let title: String
     let systemImage: String
 
+    /// In sidebar order. With several accounts each lists every account's mail.
     static let all = [
         SystemMailbox(id: SystemLabel.inbox, title: "Inbox", systemImage: "tray"),
         SystemMailbox(id: SystemLabel.starred, title: "Starred", systemImage: "star"),
@@ -999,9 +1000,9 @@ struct SystemMailbox: Identifiable {
         SystemMailbox(id: SystemLabel.trash, title: "Trash", systemImage: "trash"),
     ]
 
-    /// The mailboxes that mean the same in every account, which the
-    /// sidebar also lists across accounts.
-    static let combined = all.filter {
-        [SystemLabel.inbox, SystemLabel.starred, MailboxModel.snoozedID, SystemLabel.sent, SystemLabel.draft].contains($0.id)
-    }
+    /// The mailboxes ⌘1 to ⌘5 open.
+    static let numbered = Array(all.prefix(5))
+
+    /// Listed after Drafts while it has items.
+    static let outbox = SystemMailbox(id: MailboxModel.outboxID, title: "Outbox", systemImage: "tray.and.arrow.up")
 }

@@ -115,7 +115,7 @@ struct MailCommands: Commands {
         }
         CommandMenu("Go") {
             // In the sidebar's order, so each number matches a row.
-            ForEach(Array(SystemMailbox.combined.enumerated()), id: \.element.id) { index, box in
+            ForEach(Array(SystemMailbox.numbered.enumerated()), id: \.element.id) { index, box in
                 Button(box.title) { mailbox?.go(to: box.id) }
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
                     .disabled(mailbox == nil || compose != nil)
