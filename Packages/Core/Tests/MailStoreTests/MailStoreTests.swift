@@ -186,6 +186,9 @@ private let account = "acct"
         #expect(try await threadIDs(cache, SystemLabel.draft).isEmpty)
         #expect(try await cache.read { tx in try tx.thread(id: "t1", accountID: account)?.messageCount } == 1)
         #expect(try await cache.read { tx in try tx.localDraft(id: "L1")?.subject } == "Final words")
+        let detail = try await first(cache.thread(accountID: account, threadID: "t1"))
+        #expect(detail??.messages.map(\.id) == ["m1"])
+        #expect(try await first(cache.outbox(accountID: account))?.map(\.id) == ["L1"])
 
         let undone = try await cache.write { tx in
             #expect(try tx.updateLocalDraft(id: "L1", content: DraftContent(), now: .now) == nil)
@@ -275,4 +278,9 @@ private func pendingKinds(_ cache: MailCache) async throws -> [PendingAction.Kin
 
 private func composeKinds(_ cache: MailCache) async throws -> [PendingAction.Kind] {
     try await cache.read { tx in try tx.composeRows(localDraftID: "L1").map(\.kind) }
+}
+
+private func first<T>(_ stream: AsyncThrowingStream<T, any Error>) async throws -> T? {
+    for try await value in stream { return value }
+    return nil
 }

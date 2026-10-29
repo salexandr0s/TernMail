@@ -7,6 +7,9 @@ public struct MessageDetail: Sendable, Equatable, Identifiable {
     /// Server labels with pending actions overlaid.
     public var labels: Set<String>
     public var body: MessageBodyRecord?
+    public var attachments: [AttachmentRecord] = []
+    /// The Gmail draft this message holds, for Edit Draft.
+    public var draftID: String?
 
     public var id: String { record.id }
     public var isUnread: Bool { labels.contains(SystemLabel.unread) }
@@ -16,6 +19,28 @@ public struct MessageDetail: Sendable, Equatable, Identifiable {
 public struct ThreadDetail: Sendable, Equatable {
     public var thread: ThreadRecord
     public var messages: [MessageDetail]
+}
+
+/// A local draft with its queue rows, for the Outbox and the compose window's status.
+public struct DraftActivity: Sendable, Equatable, Identifiable {
+    public var draft: LocalDraft
+    /// Oldest first.
+    public var rows: [PendingAction]
+
+    public var id: String { draft.id }
+
+    /// A send waiting out its delay, or under way.
+    public var isSending: Bool { draft.state == .sending }
+
+    /// Whether a save or send failed and waits to try again.
+    public var isWaitingToRetry: Bool {
+        rows.contains { $0.state == .queued && $0.lastError != nil }
+    }
+
+    /// Belongs in the Outbox: on its way out, refused, or unable to reach Gmail.
+    public var isOutgoing: Bool {
+        draft.state != .discarding && (isSending || draft.sendError != nil || isWaitingToRetry)
+    }
 }
 
 extension MailCache {
@@ -58,10 +83,38 @@ extension MailCache {
                 .joining(required: MessageBodyRecord.message.filter(Column("threadID") == threadID))
                 .fetchAll(db)
             let bodiesByID = Dictionary(bodies.map { ($0.messageID, $0) }, uniquingKeysWith: { first, _ in first })
-            let messages = try transaction.messages(threadID: threadID, accountID: accountID).map {
-                MessageDetail(record: $0, labels: labels[$0.id] ?? [], body: bodiesByID[$0.id])
-            }
+            let hidden = try transaction.hiddenDraftMessageIDs(accountID: accountID)
+            let messages = try transaction.messages(threadID: threadID, accountID: accountID)
+                .filter { !hidden.contains($0.id) }
+                .map { record in
+                    MessageDetail(
+                        record: record,
+                        labels: labels[record.id] ?? [],
+                        body: bodiesByID[record.id],
+                        attachments: try transaction.attachments(messageID: record.id, accountID: accountID),
+                        draftID: try transaction.draft(messageID: record.id, accountID: accountID)?.id
+                    )
+                }
             return ThreadDetail(thread: thread, messages: messages)
+        }
+    }
+
+    /// Drafts and sends that haven't reached Gmail, oldest first.
+    public func outbox(accountID: String) -> AsyncThrowingStream<[DraftActivity], any Error> {
+        observe { db in
+            let transaction = CacheTransaction(db: db)
+            return try transaction.localDrafts(accountID: accountID)
+                .map { DraftActivity(draft: $0, rows: try transaction.composeRows(localDraftID: $0.id)) }
+                .filter(\.isOutgoing)
+        }
+    }
+
+    /// One local draft and its queue rows, or nil once it is gone.
+    public func draftActivity(localDraftID: String) -> AsyncThrowingStream<DraftActivity?, any Error> {
+        observe { db in
+            let transaction = CacheTransaction(db: db)
+            guard let draft = try transaction.localDraft(id: localDraftID) else { return nil }
+            return DraftActivity(draft: draft, rows: try transaction.composeRows(localDraftID: localDraftID))
         }
     }
 

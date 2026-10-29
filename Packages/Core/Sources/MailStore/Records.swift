@@ -13,6 +13,8 @@ public enum SystemLabel {
     public static let trash = "TRASH"
     /// Not a Gmail label: every thread with a message outside Spam and Trash.
     public static let allMail = "TERN_ALL_MAIL"
+    /// Not a Gmail label: drafts and sends that haven't reached Gmail yet.
+    public static let outbox = "TERN_OUTBOX"
 }
 
 // MARK: cache.sqlite
