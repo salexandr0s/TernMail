@@ -24,14 +24,14 @@ import Testing
         try await waitUntil { mailbox.hasSyncedOnce && !mailbox.threads.isEmpty }
         mailbox.selectedLabelID = SystemLabel.allMail
         try await waitUntil { mailbox.threads.count == 4 }
-        mailbox.selectedThreadIDs = ["t1"]
+        mailbox.selectedThreadIDs = keys("t1")
         await mailbox.perform(.archive)?.value
-        #expect(mailbox.selectedThreadIDs == ["t1"])
+        #expect(mailbox.selectedThreadIDs == keys("t1"))
         mailbox.selectedLabelID = SystemLabel.trash
         #expect(mailbox.threads.isEmpty)
         #expect(mailbox.selectedThreadIDs.isEmpty)
         try await waitUntil { mailbox.threads.map(\.id) == ["t4"] }
-        mailbox.selectedThreadIDs = ["t4"]
+        mailbox.selectedThreadIDs = keys("t4")
         try await cache.write { tx in
             try tx.rebuildThreads(try tx.deleteMessages(ids: ["m5"], accountID: account.id), accountID: account.id)
         }
@@ -46,7 +46,7 @@ import Testing
         let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
         await mailbox.start()
         try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 }
-        mailbox.selectedThreadIDs = ["t1"]
+        mailbox.selectedThreadIDs = keys("t1")
 
         // Local matches come from every mailbox, and the selection stays inside the list.
         mailbox.search.update("plans")
@@ -73,21 +73,21 @@ import Testing
         await mailbox.start()
         try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 && !mailbox.labelChoices.isEmpty }
 
-        mailbox.showEditLabels(for: ["t2"])
+        mailbox.showEditLabels(for: keys("t2"))
         try await waitUntil { mailbox.labelEdit != nil }
         #expect(mailbox.labelEdit?.applied.first?.contains("Label_1") == false)
         await mailbox.applyLabels(LabelSelection.Change(add: ["Label_1"]))?.value
         #expect(mailbox.labelEdit == nil)
-        mailbox.showEditLabels(for: ["t2"])
+        mailbox.showEditLabels(for: keys("t2"))
         try await waitUntil { mailbox.labelEdit?.applied.first?.contains("Label_1") == true }
         mailbox.labelEdit = nil
 
         // Moving out of the Inbox selects the next conversation.
-        mailbox.selectedThreadIDs = ["t1"]
+        mailbox.selectedThreadIDs = keys("t1")
         mailbox.showMoveTo()
         #expect(!mailbox.moveChoices.contains { $0.id == SystemLabel.inbox })
         let move = mailbox.move(to: "Label_1")
-        #expect(mailbox.selectedThreadIDs == ["t2"])
+        #expect(mailbox.selectedThreadIDs == keys("t2"))
         await move?.value
         try await waitUntil { mailbox.threads.map(\.id) == ["t2"] }
         #expect(mailbox.notice?.message == "Conversation moved to “Hiking”")
@@ -105,7 +105,7 @@ import Testing
         )
         await mailbox.start()
         try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 }
-        mailbox.selectedThreadIDs = ["t1"]
+        mailbox.selectedThreadIDs = keys("t1")
         #expect(mailbox.canSnooze)
 
         // A preset worked out before its time passed is refused.
@@ -113,13 +113,13 @@ import Testing
         #expect(mailbox.notice?.isError == true)
 
         let snooze = mailbox.snooze(until: .now.addingTimeInterval(3600))
-        #expect(mailbox.selectedThreadIDs == ["t2"])
+        #expect(mailbox.selectedThreadIDs == keys("t2"))
         await snooze?.value
         try await waitUntil { mailbox.threads.map(\.id) == ["t2"] && mailbox.snoozed.map(\.id) == ["t1"] }
         #expect(try await accounts.snoozes(accountID: account.id).map(\.threadID) == ["t1"])
         mailbox.selectedLabelID = MailboxModel.snoozedID
         #expect(mailbox.threads.map(\.id) == ["t1"])
-        #expect(mailbox.wakeTimes["t1"] != nil)
+        #expect(mailbox.wakeTimes[key("t1")] != nil)
 
         // Undo from the notice takes back the archive, the hold and the record.
         guard case .action(let receipt)? = mailbox.notice?.undo else {
@@ -141,11 +141,11 @@ import Testing
         let manager = UndoManager()
         manager.groupsByEvent = false
         mailbox.undoManager = manager
-        let first = try #require(mailbox.perform(.archive, on: ["t1"]))
+        let first = try #require(mailbox.perform(.archive, on: keys("t1")))
         // Registration belongs to the initiating event, before any await.
         #expect(manager.canUndo)
         #expect(manager.undoActionName == "Archive")
-        let second = try #require(mailbox.perform(.markUnread, on: ["t2"]))
+        let second = try #require(mailbox.perform(.markUnread, on: keys("t2")))
         #expect(manager.undoActionName == "Mark as Unread")
         manager.undo()
         #expect(manager.undoActionName == "Archive")
@@ -165,7 +165,7 @@ import Testing
         let manager = UndoManager()
         manager.groupsByEvent = false
         mailbox.undoManager = manager
-        for _ in 0..<(MailboxModel.undoLimit + 5) { mailbox.perform(.archive, on: ["t1"]) }
+        for _ in 0..<(MailboxModel.undoLimit + 5) { mailbox.perform(.archive, on: keys("t1")) }
         #expect(mailbox.retainedUndoCount == MailboxModel.undoLimit)
         #expect(manager.levelsOfUndo == MailboxModel.undoLimit)
         await mailbox.stop()
@@ -201,4 +201,13 @@ private func waitUntil(_ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     #expect(condition(), "Mailbox observation did not reach the expected state")
+}
+
+/// Conversations in the audit account, which every test here uses.
+private func key(_ threadID: String) -> ThreadKey {
+    ThreadKey(accountID: "audit", threadID: threadID)
+}
+
+private func keys(_ threadIDs: String...) -> Set<ThreadKey> {
+    Set(threadIDs.map(key))
 }
