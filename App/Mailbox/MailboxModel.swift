@@ -43,13 +43,19 @@ final class MailboxModel {
         case editDraft(messageID: String)
     }
 
-    /// The signed-in account.
-    let primary: AccountMailbox
+    /// The first signed-in account. New messages from a combined mailbox,
+    /// and for now compose windows, use it.
+    private(set) var defaultAccount: AccountMailbox
+    /// The accounts added after the first.
+    private(set) var otherAccounts: [AccountMailbox] = []
     /// Compose windows read and edit their drafts through these directly.
     let cache: MailCache
-    var engine: SyncEngine { primary.engine }
-    var account: AccountRecord { primary.account }
+    var engine: SyncEngine { defaultAccount.engine }
+    var account: AccountRecord { defaultAccount.account }
     let downloadsDirectory: URL
+    @ObservationIgnored private let outgoingDirectory: URL
+    @ObservationIgnored private let snoozeStore: AccountStore?
+    @ObservationIgnored private var isStarted = false
     /// While the search field has text, the list shows its results.
     let search: SearchModel
 
@@ -136,21 +142,46 @@ final class MailboxModel {
     ) {
         self.cache = cache
         self.downloadsDirectory = downloadsDirectory
+        self.outgoingDirectory = outgoingDirectory
+        self.snoozeStore = snoozeStore
         selectedMailbox = .account(account.id, SystemLabel.inbox)
-        primary = AccountMailbox(
+        let first = AccountMailbox(
             account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore
         )
-        search = SearchModel(accountID: account.id, cache: cache, engine: primary.engine)
+        defaultAccount = first
+        search = SearchModel(cache: cache, sources: [.init(accountID: account.id, engine: first.engine)])
         search.onResultsChange = { [weak self] in self?.listChanged() }
-        primary.onLabelsChange = { [weak self] in self?.labelsChanged() }
-        primary.onSnoozedChange = { [weak self] in self?.snoozedChanged() }
-        primary.onEvent = { [weak self] in self?.handle($0) }
+        wire(first)
+    }
+
+    /// Every signed-in account, the default one first.
+    var accounts: [AccountMailbox] { [defaultAccount] + otherAccounts }
+
+    func account(id: String) -> AccountMailbox? {
+        accounts.first { $0.account.id == id }
+    }
+
+    /// Adds a signed-in account, starting it if the mailbox has started.
+    func addAccount(_ account: AccountRecord, gmail: any GmailService) async {
+        guard !isStopped, self.account(id: account.id) == nil else { return }
+        let added = AccountMailbox(
+            account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore
+        )
+        wire(added)
+        otherAccounts.append(added)
+        accountsChanged()
+        if isStarted { await added.start() }
     }
 
     func start() async {
-        guard !isStopped else { return }
+        guard !isStopped, !isStarted else { return }
+        isStarted = true
         observeThreads()
-        await primary.start()
+        await withTaskGroup(of: Void.self) { group in
+            for account in accounts {
+                group.addTask { await account.start() }
+            }
+        }
     }
 
     /// Returns once the accounts have stopped writing to the cache.
@@ -166,23 +197,47 @@ final class MailboxModel {
         }
         undoEntries = [:]
         undoOrder = []
-        await primary.stop()
+        await withTaskGroup(of: Void.self) { group in
+            for account in accounts {
+                group.addTask { await account.stop() }
+            }
+        }
     }
 
     func syncNow() {
-        primary.syncNow()
+        accounts.forEach { $0.syncNow() }
     }
 
     // MARK: Reading
 
-    var labels: [LabelRecord] { primary.labels }
-    var outbox: [DraftActivity] { primary.outbox }
-    var snoozed: [SnoozedThread] { primary.snoozed }
-    var wokenThreadIDs: Set<String> { primary.wokenThreadIDs }
-    var snoozeKeeper: SnoozeKeeper? { primary.snoozeKeeper }
-    var syncStatus: AccountMailbox.SyncStatus { primary.syncStatus }
-    var lastSyncedAt: Date? { primary.lastSyncedAt }
-    var hasSyncedOnce: Bool { primary.hasSyncedOnce }
+    /// The account label commands and Load Older act in: the selected
+    /// mailbox's, or in a combined mailbox the selected conversations'
+    /// when they share one, otherwise the default account.
+    var currentAccount: AccountMailbox {
+        if case .account(let accountID, _)? = selectedMailbox, let owner = account(id: accountID) { return owner }
+        let owners = Set(selectedThreadIDs.map(\.accountID))
+        if owners.count == 1, let accountID = owners.first, let owner = account(id: accountID) { return owner }
+        return defaultAccount
+    }
+
+    var labels: [LabelRecord] { currentAccount.labels }
+    var outbox: [DraftActivity] { accounts.flatMap(\.outbox) }
+    /// Every account's snoozed conversations, the soonest to wake first.
+    var snoozed: [SnoozedThread] { accounts.flatMap(\.snoozed).sorted { $0.wakeAt < $1.wakeAt } }
+    var wokenThreadIDs: Set<String> { defaultAccount.wokenThreadIDs }
+    var snoozeKeeper: SnoozeKeeper? { currentAccount.snoozeKeeper }
+    /// A failure in any account first, then syncing if any account is.
+    var syncStatus: AccountMailbox.SyncStatus {
+        let statuses = accounts.map(\.syncStatus)
+        if let failed = statuses.first(where: { if case .failed = $0 { true } else { false } }) { return failed }
+        return statuses.contains(.syncing) ? .syncing : .idle
+    }
+    /// The oldest of the accounts' last syncs.
+    var lastSyncedAt: Date? {
+        let dates = accounts.map(\.lastSyncedAt)
+        return dates.contains(nil) ? nil : dates.compactMap { $0 }.min()
+    }
+    var hasSyncedOnce: Bool { accounts.allSatisfy(\.hasSyncedOnce) }
 
     var userLabels: [LabelRecord] {
         labels.filter { !$0.isSystem }
@@ -229,7 +284,8 @@ final class MailboxModel {
     /// after showing why it couldn't be.
     func download(_ attachment: AttachmentRecord) async -> URL? {
         do {
-            return try await engine.downloadAttachment(attachment, into: downloadsDirectory)
+            guard let owner = account(id: attachment.accountID) else { return nil }
+            return try await owner.engine.downloadAttachment(attachment, into: downloadsDirectory)
         } catch {
             guard !isStopped, !(error is CancellationError) else { return nil }
             notice = Notice(message: "Tern couldn't download “\(attachment.filename)”. Check your connection.", isError: true)
@@ -264,7 +320,9 @@ final class MailboxModel {
         let mailbox = selectedMailbox
         if older == nil {
             let cutoff = threads.map(\.lastDate).min()
-            older = GmailPager { token in try await engine.loadOlder(labelID: labelID, before: cutoff, pageToken: token) }
+            older = GmailPager(accountID: accountID) { token in
+                try await engine.loadOlder(labelID: labelID, before: cutoff, pageToken: token)
+            }
         }
         older?.next { [weak self] page in
             guard let self, selectedMailbox == mailbox else { return }
@@ -405,17 +463,48 @@ final class MailboxModel {
             || (action == .trash && selectedLabelID != SystemLabel.trash) {
             selectThread(after: keys)
         }
-        let ids = Self.threadIDs(keys)
-        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: keys.count)) { engine in
-            try await engine.perform(action, threadIDs: ids)
+        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: keys.count), for: keys) {
+            owner, ids in try await owner.engine.perform(action, threadIDs: ids)
         }
     }
 
-    /// Queues a change with Undo, in order after earlier changes. The undo
-    /// entry is registered inside the initiating event, so it can remember
-    /// an undo requested before the engine returns the durable queue rows.
-    /// `confirmation` shows in a notice with Undo. `revert` replaces the
-    /// engine's undo for changes that keep more than queue rows.
+    /// Undoes one account's change instead of its engine, for changes that
+    /// keep more than queue rows.
+    typealias Revert = @MainActor (AccountMailbox, ActionReceipt) async throws -> Void
+
+    /// Queues a command on conversations in each account they belong to,
+    /// with one Undo. `change` gets each account and its thread IDs.
+    @discardableResult
+    func queueUndoable(
+        _ name: String,
+        confirmation: String? = nil,
+        for keys: Set<ThreadKey>,
+        revert: Revert? = nil,
+        _ change: @escaping @MainActor (AccountMailbox, [String]) async throws -> ActionReceipt?
+    ) -> Task<Void, Never>? {
+        let groups = Dictionary(grouping: keys, by: \.accountID).sorted { $0.key < $1.key }
+        let steps: [UndoStep] = groups.compactMap { accountID, keys in
+            guard let owner = account(id: accountID) else { return nil }
+            let ids = Self.threadIDs(Set(keys))
+            return UndoStep(account: owner) { try await change(owner, ids) }
+        }
+        return queueUndoable(name, confirmation: confirmation, steps: steps, revert: revert)
+    }
+
+    /// Queues a command in one account, such as a label change, with Undo.
+    @discardableResult
+    func queueUndoable(
+        _ name: String,
+        confirmation: String? = nil,
+        in owner: AccountMailbox,
+        revert: Revert? = nil,
+        _ change: @escaping @MainActor (SyncEngine) async throws -> ActionReceipt?
+    ) -> Task<Void, Never>? {
+        let step = UndoStep(account: owner) { try await change(owner.engine) }
+        return queueUndoable(name, confirmation: confirmation, steps: [step], revert: revert)
+    }
+
+    /// Until label and snooze commands pick their accounts: the current account.
     @discardableResult
     func queueUndoable(
         _ name: String,
@@ -423,30 +512,50 @@ final class MailboxModel {
         revert: (@Sendable (ActionReceipt) async throws -> Void)? = nil,
         _ change: @escaping @Sendable (SyncEngine) async throws -> ActionReceipt?
     ) -> Task<Void, Never>? {
-        guard !isStopped else { return nil }
+        var accountRevert: Revert?
+        if let revert {
+            accountRevert = { _, row in try await revert(row) }
+        }
+        return queueUndoable(name, confirmation: confirmation, in: currentAccount, revert: accountRevert, change)
+    }
+
+    /// Queues the steps with Undo, in order after earlier commands. The undo
+    /// entry is registered inside the initiating event, so it can remember
+    /// an undo requested before the engines return the durable queue rows.
+    /// `confirmation` shows in a notice with Undo.
+    private func queueUndoable(_ name: String, confirmation: String?, steps: [UndoStep], revert: Revert?) -> Task<Void, Never>? {
+        guard !isStopped, !steps.isEmpty else { return nil }
         let entry = UndoEntry(name: name, revert: revert)
         registerUndo(entry)
         let previous = actionTask
-        let engine = engine
         let task = Task {
             await previous?.value
             guard !isStopped, !Task.isCancelled else { return }
-            do {
-                guard let row = try await change(engine) else {
-                    removeUndo(entry)
-                    return
+            var failure: (any Error)?
+            for step in steps {
+                do {
+                    if let row = try await step.run() {
+                        entry.applied.append(.init(account: step.account, receipt: row))
+                        if entry.handle == nil { entry.handle = row }
+                    }
+                } catch {
+                    failure = error
+                    break
                 }
                 guard !isStopped else { return }
-                entry.receipt = row
-                if entry.undoRequested {
-                    await requestUndo(entry)?.value
-                } else if let confirmation {
-                    notice = Notice(message: confirmation, undo: .action(row))
-                }
-            } catch {
+            }
+            guard let handle = entry.handle else {
                 removeUndo(entry)
-                guard !isStopped else { return }
-                notice = Notice(message: Self.failureMessage(error), isError: true)
+                if let failure { notice = Notice(message: Self.failureMessage(failure), isError: true) }
+                return
+            }
+            if entry.undoRequested {
+                await requestUndo(entry)?.value
+            } else if let failure {
+                // Undo still takes back the accounts that did change.
+                notice = Notice(message: Self.failureMessage(failure), undo: .action(handle), isError: true)
+            } else if let confirmation {
+                notice = Notice(message: confirmation, undo: .action(handle))
             }
         }
         actionTask = task
@@ -455,8 +564,15 @@ final class MailboxModel {
 
     /// Reverts an action, from the notice or Edit > Undo.
     func undo(_ row: ActionReceipt) {
-        let entry = undoEntries.values.first { $0.receipt?.id == row.id } ?? UndoEntry(name: "Change")
-        entry.receipt = row
+        if let entry = undoEntries.values.first(where: { $0.handle === row }) {
+            _ = requestUndo(entry)
+            return
+        }
+        // Older than the undo history: the receipt still names its account.
+        guard let owner = row.actions.first.flatMap({ account(id: $0.accountID) }) else { return }
+        let entry = UndoEntry(name: "Change")
+        entry.applied = [.init(account: owner, receipt: row)]
+        entry.handle = row
         _ = requestUndo(entry)
     }
 
@@ -464,25 +580,28 @@ final class MailboxModel {
         guard !isStopped else { return nil }
         entry.undoRequested = true
         if !((undoManager?.isUndoing) ?? false) { undoManager?.removeAllActions(withTarget: entry) }
-        guard let row = entry.receipt, !entry.isApplying else { return nil }
+        guard let handle = entry.handle, !entry.isApplying else { return nil }
         entry.isApplying = true
-        let engine = engine
         let revert = entry.revert
         return Task {
             do {
-                if let revert {
-                    try await revert(row)
-                } else {
-                    try await engine.undo(row)
+                // Newest first. A change undone drops out, so a retry skips it.
+                while let last = entry.applied.last {
+                    if let revert {
+                        try await revert(last.account, last.receipt)
+                    } else {
+                        try await last.account.engine.undo(last.receipt)
+                    }
+                    entry.applied.removeLast()
                 }
                 removeUndo(entry)
-                if notice?.undo == .action(row) { notice = nil }
+                if notice?.undo == .action(handle) { notice = nil }
             } catch {
                 guard !isStopped else { return }
                 entry.isApplying = false
                 entry.undoRequested = false
                 registerUndo(entry)
-                notice = Notice(message: "Tern couldn't undo that change. Try again.", undo: .action(row), isError: true)
+                notice = Notice(message: "Tern couldn't undo that change. Try again.", undo: .action(handle), isError: true)
             }
         }
     }
@@ -529,17 +648,18 @@ final class MailboxModel {
 
     private func observeThreads() {
         threadsTask?.cancel()
-        guard let mailbox = selectedMailbox, mailbox.id != Self.outboxID, let source = selectedAccounts.first else {
+        let sources = selectedAccounts.map(\.account.id)
+        guard let mailbox = selectedMailbox, mailbox.id != Self.outboxID, !sources.isEmpty else {
             threads = []
             return
         }
         if mailbox.id == Self.snoozedID {
-            // The snoozed stream fills it.
-            threads = snoozed.map(\.thread)
+            // The snoozed streams fill it.
+            threads = snoozedThreads()
             listChanged()
             return
         }
-        let stream = cache.threads(accountID: source.account.id, labelID: mailbox.id, limit: threadLimit)
+        let stream = cache.threads(accountIDs: sources, labelID: mailbox.id, limit: threadLimit)
         threadsTask = Task { [weak self] in
             do {
                 for try await threads in stream {
@@ -549,7 +669,7 @@ final class MailboxModel {
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.primary.cacheReadFailed()
+                self?.selectedAccounts.forEach { $0.cacheReadFailed() }
             }
         }
     }
@@ -567,19 +687,33 @@ final class MailboxModel {
     var selectedAccounts: [AccountMailbox] {
         switch selectedMailbox {
         case .account(let accountID, _)?: account(id: accountID).map { [$0] } ?? []
-        case .combined?: [primary]
+        case .combined?: accounts
         case nil: []
         }
     }
 
-    func account(id: String) -> AccountMailbox? {
-        primary.account.id == id ? primary : nil
-    }
-
     private func snoozedChanged() {
         guard !isStopped, selectedLabelID == Self.snoozedID else { return }
-        threads = snoozed.map(\.thread)
+        threads = snoozedThreads()
         listChanged()
+    }
+
+    /// The selected accounts' snoozed conversations, the soonest to wake first.
+    private func snoozedThreads() -> [ThreadRecord] {
+        let sources = Set(selectedAccounts.map(\.account.id))
+        return snoozed.filter { sources.contains($0.thread.accountID) }.map(\.thread)
+    }
+
+    private func wire(_ account: AccountMailbox) {
+        account.onLabelsChange = { [weak self] in self?.labelsChanged() }
+        account.onSnoozedChange = { [weak self] in self?.snoozedChanged() }
+        account.onEvent = { [weak self] in self?.handle($0) }
+    }
+
+    /// Search covers every account, and a combined mailbox lists them all.
+    private func accountsChanged() {
+        search.setSources(accounts.map { .init(accountID: $0.account.id, engine: $0.engine) })
+        if case .combined? = selectedMailbox { observeThreads() }
     }
 
     /// Keeps the selection inside the list, and tells the engine what the
@@ -587,7 +721,10 @@ final class MailboxModel {
     private func listChanged() {
         let threads = listedThreads
         selectedThreadIDs.formIntersection(threads.map(\.key))
-        engine.setVisibleThreads(Set(threads.map(\.id)))
+        let shown = Dictionary(grouping: threads, by: \.accountID)
+        for account in accounts {
+            account.engine.setVisibleThreads(Set(shown[account.account.id, default: []].map(\.id)))
+        }
     }
 
     /// Shows the engine events the account passes on.
@@ -683,19 +820,34 @@ final class MailboxModel {
     }
 }
 
+/// One account's part of a command, queued by `queueUndoable`.
+@MainActor
+private struct UndoStep {
+    let account: AccountMailbox
+    let run: @MainActor () async throws -> ActionReceipt?
+}
+
 /// The target of one Edit > Undo entry. The model keeps it alive until the
 /// entry is used or removed.
 @MainActor
 private final class UndoEntry {
+    struct Applied {
+        let account: AccountMailbox
+        let receipt: ActionReceipt
+    }
+
     let id = UUID()
     let name: String
-    /// Undoes the change instead of the engine. Nil uses the engine.
-    let revert: (@Sendable (ActionReceipt) async throws -> Void)?
-    var receipt: ActionReceipt?
+    /// Undoes each change instead of its account's engine. Nil uses the engines.
+    let revert: MailboxModel.Revert?
+    /// Each account's change, in the order made.
+    var applied: [Applied] = []
+    /// The first change's receipt, which the notice's Undo carries.
+    var handle: ActionReceipt?
     var undoRequested = false
     var isApplying = false
 
-    init(name: String, revert: (@Sendable (ActionReceipt) async throws -> Void)? = nil) {
+    init(name: String, revert: MailboxModel.Revert? = nil) {
         self.name = name
         self.revert = revert
     }
