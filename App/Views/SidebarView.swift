@@ -35,7 +35,7 @@ struct SidebarView: View {
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
                         let boxID = MailboxID.account(owner.account.id, box.id)
                         MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarCount(boxID))
-                            .tag(boxID as MailboxID?)
+                            .tag(boxID)
                     }
                 }
                 Section {
@@ -170,16 +170,17 @@ private struct MailboxRow: View {
     let count: Int
     /// Set on a row listing every account to show its disclosure state.
     var isExpanded: Bool?
+    var isAccount = false
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s2) {
+        HStack(spacing: Tokens.Space.s1) {
             if let isExpanded {
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
-                    .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
+                    .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
                     .accessibilityHidden(true)
             }
             Label {
@@ -187,13 +188,14 @@ private struct MailboxRow: View {
                     .lineLimit(1)
             } icon: {
                 Image(systemName: box.systemImage)
+                    .font(.system(size: isAccount ? Tokens.Space.s3 : Tokens.Control.icon))
+                    .imageScale(.medium)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(color)
                     .frame(width: Tokens.Space.s5)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, Tokens.Space.s1)
         .contentShape(Rectangle())
         .badge(count)
     }
@@ -215,7 +217,7 @@ private struct CombinedMailboxRows: View {
             box: box, title: box.title, color: box.color,
             count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: isExpanded
         )
-        .tag(combinedID as MailboxID?)
+        .tag(combinedID)
         .onTapGesture(perform: selectAndToggle)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(isExpanded ? "Hides accounts" : "Shows accounts")
@@ -227,12 +229,12 @@ private struct CombinedMailboxRows: View {
                     let name = names[owner.account.id] ?? owner.account.email
                     MailboxRow(
                         box: box, title: name, color: colors[owner.account.id] ?? .secondary,
-                        count: mailbox.sidebarCount(boxID)
+                        count: mailbox.sidebarCount(boxID), isAccount: true
                     )
-                    .padding(.leading, Tokens.Space.s6)
+                    .padding(.leading, Tokens.Space.s8)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
-                    .tag(boxID as MailboxID?)
+                    .tag(boxID)
                 }
             }
         }
@@ -330,12 +332,14 @@ private struct LabelRow: View {
         } icon: {
             let color = Color(gmailHex: label.backgroundColor)
             Image(systemName: color == nil ? "tag" : "tag.fill")
+                .font(.system(size: Tokens.Control.icon))
+                .imageScale(.medium)
                 .foregroundStyle(color ?? .secondary)
+                .frame(width: Tokens.Space.s5)
         }
-        .padding(.vertical, Tokens.Space.s1)
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
-        .tag(MailboxID.account(label.accountID, label.id) as MailboxID?)
+        .tag(MailboxID.account(label.accountID, label.id))
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {
             Button("Edit Label…", systemImage: "pencil") { mailbox.showEditLabel(label) }

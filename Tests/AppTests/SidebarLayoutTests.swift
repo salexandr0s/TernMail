@@ -43,6 +43,21 @@ import Testing
         let scrollInsets = scroll.contentInsets
         let clipInsets = scroll.contentView.contentInsets
 
+        // Native selection uses MailboxID tags, even though the binding is optional.
+        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+        try await settle()
+        #expect(mailbox.selectedMailbox == .combined(SystemLabel.starred))
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        try await settle()
+        #expect(mailbox.selectedMailbox == .combined(SystemLabel.inbox))
+        settings.set(SystemLabel.inbox, forKey: SidebarView.expandedKey)
+        try await settle()
+        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+        try await settle()
+        #expect(mailbox.selectedMailbox == .account(mailbox.accounts[0].account.id, SystemLabel.inbox))
+        settings.set("", forKey: SidebarView.expandedKey)
+        try await settle()
+
         // Alternate populated and empty mailboxes while inserting/removing rows.
         var expanded = Set<String>()
         for id in [MailboxModel.snoozedID, SystemLabel.spam, SystemLabel.trash,
