@@ -80,5 +80,7 @@ schemes:
       targets:
         Tern: all
     test:
+      commandLineArguments:
+        --ui-audit: true
       targets:
         - TernTests

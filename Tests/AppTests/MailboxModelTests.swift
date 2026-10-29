@@ -4,6 +4,18 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct MailboxModelTests {
+    @Test func commandsUseTheOpenMailboxWithoutAFirstResponder() async throws {
+        // The test host's scheme uses --ui-audit, so no real account is opened.
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let commands = MailCommands(app: app)
+        #expect(commands.mailbox === mailbox)
+        await app.signOut()
+        #expect(commands.mailbox == nil)
+        #expect(app.phase == .signedOut)
+    }
+
     @Test func archiveKeepsSelectionOutsideInboxAndObservationsRemoveStaleSelection() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
