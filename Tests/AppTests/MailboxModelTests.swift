@@ -217,9 +217,9 @@ import Testing
         try await waitUntil { mailbox.outbox.map(\.id) == [id] }
         #expect(await mailbox.undoSend(id))
         try await waitUntil { mailbox.outbox.isEmpty }
-        #expect(mailbox.showsOutbox)
+        #expect(mailbox.showsOutbox(.account("audit", MailboxModel.outboxID)))
         mailbox.selectedMailbox = .account("audit", SystemLabel.inbox)
-        #expect(!mailbox.showsOutbox)
+        #expect(!mailbox.showsOutbox(.account("audit", MailboxModel.outboxID)))
         await mailbox.stop()
     }
 }

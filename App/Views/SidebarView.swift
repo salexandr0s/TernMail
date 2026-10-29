@@ -5,36 +5,39 @@ struct SidebarView: View {
     @Bindable var mailbox: MailboxModel
 
     var body: some View {
-        let accountID = mailbox.account.id
         List(selection: $mailbox.selectedMailbox) {
-            Section("Mailboxes") {
-                ForEach(SystemMailbox.all) { box in
-                    Label(box.title, systemImage: box.systemImage)
-                        .badge(mailbox.label(id: box.id)?.threadsUnread ?? 0)
-                        .tag(MailboxID.account(accountID, box.id) as MailboxID?)
-                    if box.id == SystemLabel.draft, mailbox.showsOutbox {
-                        Label("Outbox", systemImage: "tray.and.arrow.up")
-                            .badge(mailbox.outbox.count)
-                            .tag(MailboxID.account(accountID, MailboxModel.outboxID) as MailboxID?)
+            if mailbox.hasSeveralAccounts {
+                Section("All Accounts") {
+                    MailboxRows(mailbox: mailbox, boxes: SystemMailbox.combined, accountID: nil)
+                }
+                ForEach(mailbox.accounts, id: \.account.id) { owner in
+                    Section {
+                        MailboxRows(mailbox: mailbox, boxes: SystemMailbox.all, accountID: owner.account.id)
+                        labelOutline(owner)
+                    } header: {
+                        AccountHeader(mailbox: mailbox, owner: owner)
                     }
                 }
-            }
-            Section {
-                OutlineGroup(LabelNode.outline(mailbox.userLabels), children: \.children) { node in
-                    LabelRow(mailbox: mailbox, node: node)
+            } else {
+                let owner = mailbox.defaultAccount
+                Section("Mailboxes") {
+                    MailboxRows(mailbox: mailbox, boxes: SystemMailbox.all, accountID: owner.account.id)
                 }
-            } header: {
-                HStack {
-                    Text("Labels")
-                    Spacer()
-                    Button {
-                        mailbox.showNewLabel()
-                    } label: {
-                        Image(systemName: "plus")
+                Section {
+                    labelOutline(owner)
+                } header: {
+                    HStack {
+                        Text("Labels")
+                        Spacer()
+                        Button {
+                            mailbox.showNewLabel(in: owner.account.id)
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("New Label")
+                        .accessibilityLabel("New Label")
                     }
-                    .buttonStyle(.borderless)
-                    .help("New Label")
-                    .accessibilityLabel("New Label")
                 }
             }
         }
@@ -65,6 +68,12 @@ struct SidebarView: View {
         }
     }
 
+    private func labelOutline(_ owner: AccountMailbox) -> some View {
+        OutlineGroup(LabelNode.outline(owner.labels.filter { !$0.isSystem }), children: \.children) { node in
+            LabelRow(mailbox: mailbox, node: node)
+        }
+    }
+
     private static func editedLabel(_ request: MailboxModel.LabelEditorRequest) -> LabelRecord? {
         if case .edit(let label) = request.kind { return label }
         return nil
@@ -76,6 +85,57 @@ struct SidebarView: View {
 
     private static func editorSaveTitle(_ request: MailboxModel.LabelEditorRequest) -> String {
         editedLabel(request) == nil ? "Create" : "Save"
+    }
+}
+
+/// System mailboxes, with the Outbox after Drafts while it has items. A nil
+/// `accountID` lists them across every account.
+private struct MailboxRows: View {
+    let mailbox: MailboxModel
+    let boxes: [SystemMailbox]
+    let accountID: String?
+
+    var body: some View {
+        ForEach(boxes) { box in
+            let boxID = mailboxID(box.id)
+            Label(box.title, systemImage: box.systemImage)
+                .badge(mailbox.unreadCount(boxID))
+                .tag(boxID as MailboxID?)
+            if box.id == SystemLabel.draft, mailbox.showsOutbox(mailboxID(MailboxModel.outboxID)) {
+                let outboxID = mailboxID(MailboxModel.outboxID)
+                Label("Outbox", systemImage: "tray.and.arrow.up")
+                    .badge(mailbox.outbox(in: outboxID).count)
+                    .tag(outboxID as MailboxID?)
+            }
+        }
+    }
+
+    private func mailboxID(_ id: String) -> MailboxID {
+        accountID.map { .account($0, id) } ?? .combined(id)
+    }
+}
+
+/// An account's section title, which warns when its mail can't sync.
+private struct AccountHeader: View {
+    let mailbox: MailboxModel
+    let owner: AccountMailbox
+
+    var body: some View {
+        let email = owner.account.email
+        HStack(spacing: Tokens.Space.s1) {
+            Text(email)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(email)
+            if case .failed(let message) = owner.syncStatus {
+                Image(systemName: "exclamationmark.triangle")
+                    .help(message)
+                    .accessibilityLabel(message)
+            }
+        }
+        .contextMenu {
+            Button("New Label…") { mailbox.showNewLabel(in: owner.account.id) }
+        }
     }
 }
 
@@ -166,10 +226,13 @@ private struct SyncStatusView: View {
                     }
                 }
             }
-            Text(mailbox.account.email)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(mailbox.account.email)
+            // With several accounts, the section titles name them.
+            if !mailbox.hasSeveralAccounts {
+                Text(mailbox.account.email)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(mailbox.account.email)
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)

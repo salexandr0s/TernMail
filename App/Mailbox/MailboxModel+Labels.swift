@@ -94,11 +94,12 @@ extension MailboxModel {
     }
 
     /// New Label, from the sidebar, the menu or Edit Labels' Create Label.
-    /// It goes in the account of the conversations it's for, otherwise the current one.
-    func showNewLabel(named name: String = "", applyingTo threadIDs: Set<ThreadKey> = []) {
+    /// It goes in `accountID`, else the account of the conversations it's
+    /// for, else the current one.
+    func showNewLabel(named name: String = "", applyingTo threadIDs: Set<ThreadKey> = [], in accountID: String? = nil) {
         labelEdit = nil
         labelEditor = LabelEditorRequest(
-            accountID: threadIDs.first?.accountID ?? currentAccount.account.id,
+            accountID: accountID ?? threadIDs.first?.accountID ?? currentAccount.account.id,
             kind: .new(applyingTo: threadIDs),
             draft: .init(name: name, parent: nil, color: nil)
         )

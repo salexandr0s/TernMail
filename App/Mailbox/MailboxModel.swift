@@ -242,9 +242,40 @@ final class MailboxModel {
         labels.filter { !$0.isSystem }
     }
 
-    /// The Outbox stays in the sidebar while it is selected, even once empty.
-    var showsOutbox: Bool {
-        !outbox.isEmpty || selectedLabelID == Self.outboxID
+    /// The Outbox of the selected mailbox's accounts.
+    var selectedOutbox: [DraftActivity] { selectedAccounts.flatMap(\.outbox) }
+
+    /// With more than one account the sidebar gains a combined section.
+    var hasSeveralAccounts: Bool { !otherAccounts.isEmpty }
+
+    /// Whether the list can show conversations from more than one account,
+    /// so each row names its account.
+    var listMixesAccounts: Bool {
+        hasSeveralAccounts && (search.isActive || selectedAccounts.count > 1)
+    }
+
+    /// The account under the list's title when there are several.
+    var selectedMailboxSubtitle: String {
+        guard hasSeveralAccounts, !search.isActive, let selectedMailbox else { return "" }
+        if case .account(let accountID, _) = selectedMailbox { return account(id: accountID)?.account.email ?? "" }
+        return "All Accounts"
+    }
+
+    /// A sidebar Outbox shows while it has items, and while it is selected.
+    func showsOutbox(_ box: MailboxID) -> Bool {
+        selectedMailbox == box || !outbox(in: box).isEmpty
+    }
+
+    func outbox(in box: MailboxID) -> [DraftActivity] {
+        owners(of: box).flatMap(\.outbox)
+    }
+
+    /// A sidebar mailbox's unread conversations, summed across accounts
+    /// for a combined one.
+    func unreadCount(_ box: MailboxID) -> Int {
+        owners(of: box).reduce(0) { total, owner in
+            total + (owner.labels.first { $0.id == box.id }?.threadsUnread ?? 0)
+        }
     }
 
     func label(id: String) -> LabelRecord? {
@@ -670,10 +701,13 @@ final class MailboxModel {
 
     /// The accounts whose mail the selected mailbox shows.
     var selectedAccounts: [AccountMailbox] {
-        switch selectedMailbox {
-        case .account(let accountID, _)?: account(id: accountID).map { [$0] } ?? []
-        case .combined?: accounts
-        case nil: []
+        selectedMailbox.map(owners(of:)) ?? []
+    }
+
+    private func owners(of box: MailboxID) -> [AccountMailbox] {
+        switch box {
+        case .account(let accountID, _): account(id: accountID).map { [$0] } ?? []
+        case .combined: accounts
         }
     }
 
@@ -882,4 +916,10 @@ struct SystemMailbox: Identifiable {
         SystemMailbox(id: SystemLabel.spam, title: "Spam", systemImage: "xmark.bin"),
         SystemMailbox(id: SystemLabel.trash, title: "Trash", systemImage: "trash"),
     ]
+
+    /// The mailboxes that mean the same in every account, which the
+    /// sidebar also lists across accounts.
+    static let combined = all.filter {
+        [SystemLabel.inbox, SystemLabel.starred, MailboxModel.snoozedID, SystemLabel.sent, SystemLabel.draft].contains($0.id)
+    }
 }
