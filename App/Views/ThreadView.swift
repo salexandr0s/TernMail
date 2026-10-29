@@ -256,18 +256,24 @@ private struct MessageView: View {
     @State private var height: CGFloat = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
 
             if isExpanded {
                 Divider()
-                content
-                if !message.attachments.isEmpty {
-                    ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox)
+                    .padding(.horizontal, Tokens.Space.s3)
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    content
+                    if !message.attachments.isEmpty {
+                        ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox)
+                    }
                 }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s3)
             }
         }
-        .padding(Tokens.Space.s1_5)
         .ternSurface()
         .ternAnimation(value: isExpanded)
         .task(id: message.body?.fetchedAt) {
@@ -277,7 +283,7 @@ private struct MessageView: View {
 
     private var header: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
                 senderHeader
                     .frame(minWidth: Tokens.Space.s16 * 2)
                 messageMetadata
@@ -294,12 +300,19 @@ private struct MessageView: View {
 
     private var senderHeader: some View {
         Button(action: onToggle) {
-            HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
                 TernAvatar(name: senderName)
                 VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                    Text(senderName)
-                        .font(.body.weight(.semibold))
-                        .lineLimit(1)
+                    HStack(spacing: Tokens.Space.s1) {
+                        Text(senderName)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .accessibilityHidden(true)
+                    }
                     if isExpanded {
                         recipients("To:", message.record.recipients)
                         if let cc = message.record.cc, !cc.isEmpty {
@@ -313,11 +326,6 @@ private struct MessageView: View {
                     }
                 }
                 Spacer(minLength: Tokens.Space.s2)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .padding(.top, Tokens.Space.s1)
             }
             .contentShape(Rectangle())
         }
@@ -328,7 +336,7 @@ private struct MessageView: View {
     }
 
     private var messageMetadata: some View {
-        VStack(alignment: .trailing, spacing: Tokens.Space.s1_5) {
+        VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
             Text(ThreadDate.short(message.record.date))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -369,7 +377,7 @@ private struct MessageView: View {
                 Button(action: onToggleStar) {
                     Label(isThreadStarred ? "Remove Star" : "Star", systemImage: isThreadStarred ? "star.fill" : "star")
                         .foregroundStyle(isThreadStarred ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
-                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 }
                 .help(isThreadStarred ? "Remove Star" : "Star")
 
@@ -377,7 +385,7 @@ private struct MessageView: View {
                 Button(kind == .replyAll ? "Reply All" : "Reply", systemImage: Self.symbol(kind)) {
                     compose(.reply(kind, messageID: message.id, accountID: accountID))
                 }
-                .frame(minWidth: Tokens.Control.iconButton, minHeight: Tokens.Control.iconButton)
+                .frame(minWidth: Tokens.Space.s6, minHeight: Tokens.Space.s6)
                 .help(kind == .replyAll ? "Reply All" : "Reply")
 
                 Menu {
@@ -392,7 +400,7 @@ private struct MessageView: View {
                     }
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
-                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -403,7 +411,7 @@ private struct MessageView: View {
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .imageScale(.large)
+        .imageScale(.medium)
         .foregroundStyle(.secondary)
     }
 
@@ -447,7 +455,7 @@ private struct MessageView: View {
                     .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
             MessageWebView(html: rendered.html, blocker: blocker, height: $height)
-                .frame(height: max(height, Tokens.Space.s8))
+                .frame(height: max(height, Tokens.Space.s5))
                 .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .accessibilityLabel("Message from \(senderName)")
         } else if hasNoText {
