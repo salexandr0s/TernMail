@@ -43,7 +43,11 @@ final class AppModel {
                 let cache = try MailCache.inMemory()
                 let accounts = try AccountStore.inMemory()
                 let account = AccountRecord(id: "ui-audit", email: "audit@example.invalid", displayName: "UI Audit", grantedScopes: [], addedAt: .now)
+                // A second account with its own copy of the fake mail, so
+                // both accounts hold the same thread and message IDs.
+                let second = AccountRecord(id: "ui-audit-2", email: "second@example.invalid", displayName: "Second Audit", grantedScopes: [], addedAt: .now)
                 try await accounts.save(account)
+                try await accounts.save(second)
                 self.cache = cache
                 self.accounts = accounts
                 let outgoing = FileManager.default.temporaryDirectory.appending(path: "Tern-UIAudit-Outgoing", directoryHint: .isDirectory)
@@ -52,7 +56,10 @@ final class AppModel {
                 )
                 self.mailbox = mailbox
                 phase = .signedIn(account)
-                Task { await mailbox.start() }
+                Task {
+                    await mailbox.addAccount(second, gmail: AuditGmail())
+                    await mailbox.start()
+                }
                 return
             }
 #endif
