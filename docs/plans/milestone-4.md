@@ -1,6 +1,6 @@
 # Milestone 4 plan: integrations
 
-Status: approved 2026-10-29 after a plan review. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
+Status: approved 2026-10-29 after a plan review. Amended the same day to take forwarding filters and a formatted vacation message from milestone 5 (answered question 3); the amendment waits for your approval. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
 
 The milestone runs in two stages. Stage A adds library code in new files and changes no existing file except `Packages/Core/Package.swift`. Stage B wires that code into sign-in, the store, the sync engine, compose, the thread view and Settings. It starts only after you say milestones 2 and 3 are done.
 
@@ -9,7 +9,7 @@ The milestone runs in two stages. Stage A adds library code in new files and cha
 In scope:
 
 - A new-mail signal that starts the existing history sync early: IMAP IDLE on INBOX (answered question 1).
-- Gmail settings: list, add, change and delete filters; read and change the vacation responder; read send-as identities and edit the signature of the account's primary address.
+- Gmail settings: list, add, change and delete filters, including filters that forward to the account's verified forwarding addresses; read and change the vacation responder, with a formatted message; read send-as identities and edit the signature of the account's primary address.
 - Send-as in compose: a From menu with the account's verified addresses, and the matching signature in new messages.
 - Contact suggestions from the People API: saved contacts and "other contacts" synced locally, plus a live directory search for Google Workspace accounts, merged with milestone 2's suggestions from cached mail.
 - A calendar invitation banner at the top of the thread view, with Accept, Maybe and Decline for invitations sent to one of the account's addresses. Replies go out as emailed iTIP replies.
@@ -17,11 +17,10 @@ In scope:
 Out of scope:
 
 - `users.watch` push through Cloud Pub/Sub, which needs a server.
-- Adding, verifying or deleting send-as addresses, SMTP relay settings, delegates, forwarding addresses, auto-forwarding, and POP and IMAP settings.
-- Creating filters that forward mail, and editing existing ones that do. Tern shows their forward address and can delete them.
-- Writing contacts, contact photos and contact groups.
-- Adding events to a calendar, free/busy, counter-proposals, a note with an answer, and expanding recurrence rules. The banner says an event repeats and shows the first occurrence.
-- System notifications for new mail.
+- Adding, verifying or deleting send-as addresses and forwarding addresses, SMTP relay settings, delegates, account-wide auto-forwarding, and POP and IMAP settings.
+- Writing contacts. Contact photos and contact groups are milestone 5's.
+- Adding events to a calendar, free/busy, counter-proposals, a note with an answer, and expanding recurrence rules. The banner says an event repeats and shows the first occurrence. Showing the day's other events from the Mac's calendars is milestone 5's.
+- System notifications for new mail, which are milestone 5's.
 
 ## Google API facts this plan relies on
 
@@ -31,6 +30,8 @@ Gmail settings:
 
 - Filters have `create`, `delete`, `get` and `list`, and no `update` or `patch`. A filter is an `id`, `criteria` (`from`, `to`, `subject`, `query`, `negatedQuery`, `hasAttachment`, `excludeChats`, `size`, and `sizeComparison`: `unspecified`, `smaller` or `larger`) and an `action` (`addLabelIds`, `removeLabelIds`, `forward`). Filters act on messages, not threads, and only on mail that arrives after they exist.
 - `filters.create` and `filters.delete` accept only `gmail.settings.basic`. `filters.list` returns `{"filter": [...]}` with no paging and also accepts `gmail.modify`, `gmail.readonly` and `mail.google.com`. An account holds at most 1,000 filters. The delete page doesn't say what a missing ID returns.
+- Gmail's filter guide lists these actions as label changes: remove `INBOX` (skip the Inbox), remove `UNREAD` (mark as read), remove `SPAM` (never send to Spam), add or remove `IMPORTANT`, add `TRASH` (delete), add `STARRED`, and add a user label, with "Only one user-defined label is allowed per filter." It doesn't mention `CATEGORY_*` labels. It says filters can forward to a verified address, and the Filter reference describes `forward` as a redirect that keeps the original sender in From.
+- `settings.forwardingAddresses.list` returns `{"forwardingAddresses": [...]}`, each with `forwardingEmail` and `verificationStatus` (`accepted`, `pending` or unspecified), and accepts `gmail.modify`, `gmail.readonly`, `gmail.settings.basic` and `mail.google.com`. The forwarding guide says an owner must verify an address before it can be used, and Gmail sends the verification message itself.
 - `settings.getVacation` accepts `gmail.modify`. `settings.updateVacation` is a `PUT` of the whole resource and accepts only `gmail.settings.basic`. Fields: `enableAutoReply`, `responseSubject`, `responseBodyPlainText`, `responseBodyHtml` (used over the plain text when both are set; Gmail sanitizes it), `restrictToContacts`, `restrictToDomain` (Workspace only), and `startTime` and `endTime` as epoch milliseconds in strings, with the start before the end. An enabled reply needs a subject or a body. The page doesn't say whether omitted fields are cleared.
 - `sendAs.list` returns `{"sendAs": [...]}` with no paging and accepts `gmail.modify`. `sendAs.patch` and `sendAs.update` accept `gmail.settings.basic` or `gmail.settings.sharing`. Fields Tern reads: `sendAsEmail`, `displayName`, `replyToAddress`, `signature` (HTML that Gmail sanitizes, "added to new messages composed in the Gmail web UI. It does not apply to replies"), `isPrimary`, `isDefault`, `treatAsAlias` and `verificationStatus` (`accepted`, `pending` or unspecified). The update page says addresses other than the primary one "can only be updated by service account clients that have been delegated domain-wide authority". The patch page says nothing about it.
 - Quota units: `filters.create` and `filters.delete` 5, `filters.list` 1, `getVacation` 1, `updateVacation` 5, `sendAs.list` 1, `sendAs.update` 100 (`sendAs.patch` isn't listed), `history.list` 2, `labels.list` and `labels.get` 1. Limits: 6,000 units per user per minute and 1,200,000 per project per minute.
@@ -68,7 +69,7 @@ OAuth for installed apps:
 
 Scope classes, from the Gmail scopes page: `mail.google.com`, `gmail.readonly`, `gmail.compose`, `gmail.insert`, `gmail.modify`, `gmail.metadata`, `gmail.settings.basic` and `gmail.settings.sharing` are restricted. A public app with restricted scopes needs Google's verification, and "If you store restricted scope data on servers (or transmit), then you must go through a security assessment." Tern keeps data on the Mac and talks to Google directly.
 
-Not confirmed on the current pages, so checked in live testing (the plan works either way): the HTTP status of an expired People sync token (400 or 410 expected), the 403 reason for a missing scope (`insufficientPermissions` expected), what `filters.delete` returns for a missing ID, whether Gmail accepts a filter identical to an existing one and whether it rewrites criteria it stores, whether `sendAs.patch` works on an alias for an ordinary client, whether `updateVacation` clears omitted fields, the directory search error for personal accounts, Gmail's real IDLE timeout, whether IMAP can report new mail before `history.list` shows it, and the class of the contacts and directory scopes (the consent screen shows it when they're added).
+Not confirmed on the current pages, so checked in live testing (the plan works either way): the HTTP status of an expired People sync token (400 or 410 expected), the 403 reason for a missing scope (`insufficientPermissions` expected), what `filters.delete` returns for a missing ID, whether Gmail accepts a filter identical to an existing one and whether it rewrites criteria it stores, whether `sendAs.patch` works on an alias for an ordinary client, whether `updateVacation` clears omitted fields, whether `filters.create` accepts `CATEGORY_*` labels, what it returns for a forward address that isn't accepted and when a Workspace admin has blocked automatic forwarding, the directory search error for personal accounts, Gmail's real IDLE timeout, whether IMAP can report new mail before `history.list` shows it, and the class of the contacts and directory scopes (the consent screen shows it when they're added).
 
 ## Decisions
 
@@ -78,10 +79,12 @@ Not confirmed on the current pages, so checked in live testing (the plan works e
 |---|---|---|
 | Scope | Reading filters, vacation and identities uses `gmail.modify`, which Tern holds. The first edit asks for `gmail.settings.basic` | The Settings panes work for every account without a new consent screen |
 | Changing a filter | `replaceFilter` creates the new filter, records its ID in the queue row, then deletes the old one | Filters have no update. Deleting first would lose the filter if the create failed |
-| Retried creates | Before a create's first attempt, the row stores the IDs `filters.list` returns. A retry (`attempts > 1`, the rule milestone 2's compose lane uses) lists filters again and adopts one whose criteria and actions match after normalizing (trimmed text, sorted label IDs, defaults filled in) and whose ID isn't in the stored list. A 400 on a retried create goes through the same check | A crash between Gmail's answer and the write that records it would otherwise create the filter twice, and a duplicate applies its actions twice |
+| Retried creates | Before a create's first attempt, the row stores the IDs `filters.list` returns. A retry (`attempts > 1`, the rule milestone 2's compose lane uses) lists filters again and adopts one whose criteria and actions match after normalizing (trimmed text, sorted label IDs, a lowercased forward address, defaults filled in) and whose ID isn't in the stored list. A 400 on a retried create goes through the same check | A crash between Gmail's answer and the write that records it would otherwise create the filter twice, and a duplicate applies its actions twice |
 | Undo | Undo of a create or replace deletes the filter that matches the created content and isn't in the row's stored ID list, looked up with `filters.list` when the undo row runs. Undo of a replace then re-creates the old content, and undo of a delete re-creates the deleted filter | Undo can run before the create's answer is stored, and the original row may be gone by then |
 | Deletes | A 404 from `filters.delete` counts as done | Matches `deleteLabel`. A retried delete that already went through gets 404 |
-| Forwarding filters | Shown with their forward address. Deleting one asks for confirmation and can't be undone. Editing isn't offered | Re-creating one would re-create its forward, and Tern doesn't manage forwarding addresses |
+| Filter actions | The editor offers each action the filter guide lists: skip the Inbox, mark as read, star, apply one user label, never send to Spam, always or never mark important, and delete. It also offers categorize (add one `CATEGORY_*` label) once live testing shows `filters.create` takes it, and forward. Label changes on a filter made elsewhere that the editor doesn't offer are shown and kept on save | Gmail allows one user label per filter. A filter made in Gmail must not lose actions when it's edited in Tern |
+| Forwarding filters | The Forward menu lists the account's forwarding addresses with status `accepted`, read with `forwardingAddresses.list` when the Filters pane opens. Pending addresses are listed as waiting for verification and can't be picked. Adding and verifying addresses happens in Gmail, and the pane says so. A filter whose address is no longer accepted shows a warning, and saving it needs another address or no forward. Editing, deleting and undo work as for other filters | Gmail forwards only to verified addresses, and listing them needs only `gmail.modify`, which Tern holds |
+| Vacation message | Edited in the compose editor. Milestone 2's HTML importer loads `responseBodyHtml`, or the plain text when there is no HTML. Saving writes `responseBodyHtml` and a plain-text version of the same document to `responseBodyPlainText`. A message with formatting the importer can't keep stays read-only with a note to edit it in Gmail, as signatures do | Formatted replies stay editable in Tern. Gmail uses the HTML when both are set, and the two fields never disagree |
 | Vacation | A row stores only the fields the user changed and their previous values. When it runs, it fetches the current settings, applies the changes and sends the whole resource in the `PUT`. Undo applies the previous values the same way | Gmail may have changed other fields since the pane opened, and the page doesn't say what omitted fields do |
 | Signature editing | Offered for the primary address. Aliases show their signature read-only until live testing shows `sendAs.patch` works for them | The update page limits aliases to service accounts; the patch page is silent |
 | Signature editor | Milestone 2's HTML importer loads the signature into the compose editor. A signature with formatting the importer can't keep (tables, fonts, images) stays read-only with a note to edit it in Gmail | Saving through `ComposeDocument` would drop that formatting |
@@ -168,7 +171,7 @@ Faster, adaptive `history.list` polling was the alternative. It wasn't chosen (a
 
 | Feature | Reading | Changing | Scope class |
 |---|---|---|---|
-| Filters and vacation | `gmail.modify` (held) | `gmail.settings.basic` | Restricted |
+| Filters, forwarding addresses and vacation | `gmail.modify` (held) | `gmail.settings.basic` | Restricted |
 | Identities, From menu, signatures | `gmail.modify` | `gmail.settings.basic`, for signature edits only | Restricted |
 | Contact suggestions | `contacts.readonly`, `contacts.other.readonly`; `directory.readonly` for Workspace accounts | Nothing | Sensitive expected; the consent screen settles it |
 | Invitations | `gmail.modify` (message bodies) | `gmail.modify` (`drafts.send`) | No new scope |
@@ -200,13 +203,14 @@ Faster, adaptive `history.list` polling was the alternative. It wasn't chosen (a
 - Settings calls go through `Endpoint`. Its memberwise initializer covers the `PUT` for vacation.
 - `sendAs` paths carry an address, which `Endpoint.components()` would leave with a bare `+` or encode twice. Those calls take `Endpoint.components()`, set `percentEncodedPath` with the address percent-encoded once (`a+b@example.com` becomes `a%2Bb%40example.com`), and pass the `URLRequest` to the internal `send(_:forceRefresh:)`.
 - `PeopleClient` is a struct in `GmailAPI` that wraps a `GmailClient` built from the same token provider and transport, since `GmailClient` keeps both private. It builds its own `URLRequest`s for `people.googleapis.com`, repeats `Endpoint`'s `+` to `%2B` fix for query values, and sends through the wrapped client's `send(_:forceRefresh:)`, so the bearer token and the single refresh after a 401 are the same code. A separate target couldn't reach that internal API without changing `GmailClient.swift`, and a copy of the retry code would drift. Stage B moves the shared code into `GoogleSession`.
+- `forwardingAddresses.list` goes through `Endpoint` like the other settings reads. Its model reads `verificationStatus` the way `SendAsIdentity` does, with unknown values as unspecified.
 - `GmailError` stays as it is in stage A. A missing-scope check (`.http(status: 403, reason: "insufficientPermissions")`) is an extension in a new file.
 
 ## Flows
 
 ### Changing a filter
 
-1. The Filters pane lists `filters.list`, with label IDs shown as label names.
+1. The Filters pane lists `filters.list`, with label IDs shown as label names, and reads `forwardingAddresses.list` for the Forward menu.
 2. Saving an edited filter queues `replaceFilter` with the old ID and content and the new content. The pane shows the new content at once, marked as saving.
 3. The row's first attempt lists filters and stores their IDs in the payload, calls `filters.create` and writes the new ID into the payload. It then calls `filters.delete` on the old ID, where a 404 counts as done.
 4. A later attempt without a new ID in its payload first looks for a matching filter outside the stored IDs, as described under "Retried creates".
@@ -215,7 +219,7 @@ Faster, adaptive `history.list` polling was the alternative. It wasn't chosen (a
 
 ### Vacation
 
-The pane fetches the vacation settings when it opens. Save checks that the start comes before the end and that an enabled reply has a subject or a body, then queues `updateVacation` with the changed fields. The row fetches the current settings, applies its fields, checks the same rules again and sends the `PUT`. The response replaces the pane's copy.
+The pane fetches the vacation settings when it opens and loads the message into the compose editor. Save turns the edited document into the HTML and plain-text fields, checks that the start comes before the end and that an enabled reply has a subject or a body, then queues `updateVacation` with the changed fields. The row fetches the current settings, applies its fields, checks the same rules again and sends the `PUT`. The response replaces the pane's copy.
 
 ### Identities and signatures
 
@@ -248,8 +252,8 @@ A refresh calls `sendAs.list` and replaces the account's identity rows in one co
 - Settings:
   - The Accounts pane from milestone 3 gains a Connections list per account: Gmail Settings, Contacts and Inbox Updates. Each has a switch and a status line.
   - Signatures: each account's addresses, a sanitized preview of each signature, Edit for the primary address, and the "Add signature to replies and forwards" switch.
-  - Filters: each filter's criteria and actions in one line, Add, an editor sheet, and Delete with undo. Forwarding filters are read-only, and deleting one asks first. Add is disabled at 1,000 filters.
-  - Vacation: the switch, first and last day, subject, message (plain text; an HTML message the importer can't keep is read-only with a note), "Only send to people in my contacts", and for Workspace accounts "Only send to people in <domain>".
+  - Filters: each filter's criteria and actions in one line, Add, an editor sheet, and Delete with undo. The editor sheet has the actions listed under "Filter actions" and a Forward menu. Add is disabled at 1,000 filters.
+  - Vacation: the switch, first and last day, subject, message (in the compose editor; a message the importer can't keep is read-only with a note), "Only send to people in my contacts", and for Workspace accounts "Only send to people in <domain>".
   - Without `gmail.settings.basic`, edit controls are disabled and the pane says "Connect Gmail Settings to make changes", with a button that starts the authorization.
   - With more than one account, each pane has an account picker.
 - Compose: a From menu, the read-only signature block, and suggestions that show the name and address.
@@ -271,8 +275,9 @@ Checks: "App" is the Debug build (`xcodebuild -project Tern.xcodeproj -scheme Te
 | A3 | `MessageContent` invitations: iCalendar reader and writer, time zones, the invitation model and the payload part finder, the REPLY builder | `ICalendar.swift`, `ICalendarTimeZone.swift`, `Invitation.swift`, `InvitationReply.swift`, `InvitationTests.swift` (all new) | App |
 | A4a | The `IMAPIdle` target and its response parser | `Package.swift`; `IMAPResponseParser.swift`, `IMAPResponseParserTests.swift` (new) | App |
 | A4b | XOAUTH2, the session state machine, backoff and the monitor actor | `IdleSession.swift`, `InboxMonitor.swift`, `IdleSessionTests.swift` (all new) | App |
+| A5 | `GmailAPI` forwarding addresses: the model and `forwardingAddresses.list` | `GmailClient+Forwarding.swift`, `ForwardingAddressTests.swift` (both new) | App |
 
-A2 uses A1's test stubs, so it follows A1. A3 and A4 depend on neither. Stage A ends with `SESSION_HANDOFF.md`.
+A2 uses A1's test stubs, so it follows A1. A3 and A4 depend on neither. A5 came with the amendment, uses A1's stubs, and runs once you approve the amendment. Stage A ends with `SESSION_HANDOFF.md`.
 
 Until B1, the new `GmailAPI` test files use their own stubs (`RecordingTransport`, `CountingTokens`), since the ones in `GmailAPITests.swift` are private and stage A leaves that file alone. The A3 part finder has its own attachment check, since `MIMEParts.isAttachment` is private; B6a replaces it with the shared one.
 
@@ -293,7 +298,8 @@ Until B1, the new `GmailAPI` test files use their own stubs (`RecordingTransport
 | B8 | Compose: the From menu, the signature block, the reply default, suggestions merged with contacts and the directory | `ComposeModel.swift`, `ComposeView.swift`, `RecipientField.swift`, `Queries.swift`, a test file | Launch |
 | B9 | The invitation banner, with the newest version across the account | `ThreadView.swift`, `Queries.swift`; `InvitationBanner.swift`, `InvitationModel.swift` (new) | Launch |
 | B10a | Settings: Connections in the Accounts pane and the Signatures pane | `SettingsView.swift`; `SettingsModel.swift`, `ConnectionsView.swift`, `SignaturesPane.swift` (new) | Launch |
-| B10b | Settings: the Filters and Vacation panes | `SettingsView.swift`, `SettingsModel.swift`; `FiltersPane.swift`, `FilterEditorSheet.swift`, `VacationPane.swift` (new) | Launch |
+| B10b | Settings: the Filters pane, with every filter action and the Forward menu | `SettingsView.swift`, `SettingsModel.swift`; `FiltersPane.swift`, `FilterEditorSheet.swift` (new), a test file | Launch |
+| B10c | Settings: the Vacation pane, with the message in the compose editor. Gate C checks what the compose editor needs in order to work outside a compose window | `SettingsView.swift`, `SettingsModel.swift`; `VacationPane.swift` (new), a test file | Launch |
 | B11 | Review pass and fixes | As found | Full |
 
 The file lists in stage B follow milestone 3's plan and get checked against the merged code at Gate C. New engine calls sit behind their own protocols so `SyncEngineTests.swift` (over 1,100 lines) doesn't need to change.
@@ -311,6 +317,7 @@ Stage A:
   - Vacation times: epoch-millisecond strings decode to dates and encode back as strings. An update with the start after the end, or enabled with neither subject nor body, throws before any request. The update is a `PUT` with every field.
   - `sendAs.list` decodes verification status and flags. `updateSignature` sends `{"signature": …}` and nothing else. An address with `+` reaches the path as `%2B`, encoded once.
   - A 403 with reason `insufficientPermissions` reads as a missing scope.
+  - A5: `forwardingAddresses.list` decodes accepted, pending and unspecified addresses, an unknown status reads as unspecified, and a response without `forwardingAddresses` is an empty list.
 - People:
   - A full sync over two pages sends the same parameters on both, adds the page token on the second, and returns the sync token from the last page.
   - An incremental sync over two pages sends `syncToken` and `requestSyncToken` on both, deleted people come back marked as deleted, and the token comes from the last page.
@@ -337,7 +344,8 @@ Stage A:
 
 Stage B:
 
-- Settings queue: two vacation rows go out in order even when the first waits on a retry; an undo waits behind its change; a replace creates before it deletes, and a crash between the two leaves the new ID recorded; a retried create adopts the match outside the stored IDs instead of creating a second filter, and a 400 on a retry goes through the same check; an undo that runs before the create's answer was stored still deletes the created filter; a vacation change made in Gmail after the pane opened survives a Tern edit to another field; settings rows don't wait behind a compose upload; a missing-scope 403 fails the row without retrying.
+- Settings queue: two vacation rows go out in order even when the first waits on a retry; an undo waits behind its change; a replace creates before it deletes, and a crash between the two leaves the new ID recorded; a retried create adopts the match outside the stored IDs instead of creating a second filter, including a forwarding filter whose stored address differs only in case, and a 400 on a retry goes through the same check; an undo that runs before the create's answer was stored still deletes the created filter; a vacation change made in Gmail after the pane opened survives a Tern edit to another field; settings rows don't wait behind a compose upload; a missing-scope 403 fails the row without retrying.
+- Settings panes: the Forward menu offers only accepted addresses; label changes the editor doesn't offer survive an edit; saving a formatted vacation message sends HTML and the matching plain text; a message the importer can't keep stays read-only and is never sent back.
 - Feature authorization: a different `sub` or a grant without `gmail.modify` is rejected and the old session kept; a partial grant leaves the feature off; a broader granted scope counts; after the swap, the next token request uses the new grant.
 - Contacts: the sync token is stored only with the write that applies every page; changed fields drop the token; a 400 with a token counts as expiry only after 7 days; full syncs stay within one a day; deleted people disappear; deleting the account clears contact rows; a cached address the user writes to ranks above a saved contact with the same prefix; an address in both appears once with the contact's name; directory results don't reorder local ones.
 - `requestSync()`: one or several requests during a pass cause exactly one more pass, and an empty signalled pass runs once more after 5 seconds.
@@ -354,6 +362,7 @@ No UI snapshot tests.
   - Keep every account you'll test with on the test user list.
 - While the consent screen stays in Testing, refresh tokens expire after 7 days, so expect to sign in again each week. This already applies today.
 - For Workspace accounts, the admin must allow IMAP and directory sharing (for directory suggestions), and may need to trust the OAuth client if third-party apps are restricted.
+- To test forwarding filters, add a forwarding address in Gmail's settings and verify it from that mailbox.
 - For personal accounts, check that Gmail's "Forwarding and POP/IMAP" settings show IMAP as enabled.
 - After stage B, live testing covers the unconfirmed behaviors listed above, invitations from Google Calendar and from Outlook answered in Tern and checked on the organizer's side, and the user's own Google Calendar after a reply.
 
@@ -362,7 +371,8 @@ No UI snapshot tests.
 - IMAP: Google documents no IDLE timeout, so the 9-minute restart rests on RFC 2177 and one report. Sleep, network changes and firewalls that block port 993 drop the connection, and the poll stays as the fallback. Workspace admins can turn IMAP off, and IMAP being always on for personal accounts is unconfirmed.
 - The full mail scope: a leaked access token could permanently delete mail, which a `gmail.modify` token can't. Tokens stay in the Keychain and in memory.
 - Public release: `gmail.settings.basic` and `mail.google.com` are restricted, like `gmail.modify`, so each needs Google's verification. Whether Google also asks for the security assessment depends on how it reads "store or transmit on servers"; Tern doesn't do either.
-- A filter replace leaves two filters for a moment, so mail arriving then gets both sets of actions.
+- A filter replace leaves two filters for a moment, so mail arriving then gets both sets of actions. For a forwarding filter, that mail can be forwarded twice.
+- Forwarding filters send mail out of the account. Gmail forwards only to addresses whose owners verified them, and Tern can't add one. A Workspace admin can block automatic forwarding, and the error `filters.create` returns then is unconfirmed.
 - If Gmail rewrites the criteria it stores, the content match after an unclear create can miss, and a duplicate filter is left. Normalizing before comparing covers the expected cases; live testing checks what Gmail stores.
 - Emailed RSVPs: the organizer's calendar should take the reply, and live testing checks a Google Calendar and an Outlook organizer. The user's own Google Calendar copy may keep the old answer. Open question 1 covers the alternative.
 - A newer version of an invitation counts only once its message body is in the cache. Until then, an older copy can still show buttons, and an answer goes out for the version shown.
@@ -379,6 +389,7 @@ Answered on 2026-10-29:
 
 1. Inbox updates use IMAP IDLE behind `https://mail.google.com/`, asked for only when the user turns on Inbox Updates for an account. Stage A builds A4a and A4b. Adaptive polling isn't built.
 2. The stage A phases run back to back, each tested and committed.
+3. Of the five features milestone 5's plan lists next to this scope (its workstream J), forwarding filters and a formatted vacation message move into milestone 4. Contact photos, contact groups and the invitation agenda stay in milestone 5.
 
 ## Open questions
 
