@@ -16,9 +16,19 @@ struct RecipientField: NSViewRepresentable {
         Coordinator(self)
     }
 
-    func makeNSView(context: Context) -> NSTokenField {
+    /// The first line's baseline, measured once on a field nobody is typing in.
+    /// SwiftUI asks for a baseline during layout, and asking a field that is
+    /// being edited turns its typed text into tokens, which changes its layout
+    /// and asks again without end. Callers align on this value instead.
+    /// `sizeThatFits` avoids the edited field for a similar reason.
+    static let firstBaseline: CGFloat = {
+        let field = makeField()
+        field.sizeToFit()
+        return field.firstBaselineOffsetFromTop
+    }()
+
+    private static func makeField() -> NSTokenField {
         let field = NSTokenField()
-        field.delegate = context.coordinator
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -28,6 +38,12 @@ struct RecipientField: NSViewRepresentable {
         field.cell?.wraps = true
         field.cell?.isScrollable = false
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func makeNSView(context: Context) -> NSTokenField {
+        let field = Self.makeField()
+        field.delegate = context.coordinator
         field.setAccessibilityLabel(label)
         context.coordinator.field = field
         context.coordinator.show(addresses)
@@ -49,10 +65,12 @@ struct RecipientField: NSViewRepresentable {
         }
     }
 
+    /// Measures a copy of the field. Measuring a field that is being edited
+    /// lays out its field editor, which makes SwiftUI measure again, until
+    /// AppKit stops the loop by raising an exception.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView field: NSTokenField, context: Context) -> CGSize? {
-        guard let width = proposal.width, width > 0, let cell = field.cell else { return nil }
-        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
-        return CGSize(width: width, height: ceil(cell.cellSize(forBounds: bounds).height))
+        let size = context.coordinator.measure(width: proposal.width ?? .infinity)
+        return CGSize(width: proposal.width ?? size.width, height: size.height)
     }
 
     /// The text that edits an address, and that copying a token puts on the pasteboard.
@@ -83,14 +101,32 @@ struct RecipientField: NSViewRepresentable {
         /// are left out of its completion string, since a comma ends a token.
         private var completions: [String: EmailAddress] = [:]
         private var loadTask: Task<Void, Never>?
+        /// Never on screen or edited, so SwiftUI can measure it at any time.
+        private let sizingField = RecipientField.makeField()
+        private var sizedAddresses: [EmailAddress]?
 
         init(_ parent: RecipientField) {
             self.parent = parent
+            super.init()
+            sizingField.delegate = self
         }
 
         func show(_ addresses: [EmailAddress]) {
             shownAddresses = addresses
             field?.objectValue = addresses.map(Token.init)
+        }
+
+        /// The size of the shown addresses, wrapped at `width`. A width that
+        /// isn't positive and finite gives a single line.
+        func measure(width: CGFloat) -> CGSize {
+            if sizedAddresses != shownAddresses {
+                sizedAddresses = shownAddresses
+                sizingField.objectValue = shownAddresses.map(Token.init)
+            }
+            let wrapWidth = width.isFinite && width > 0 ? width : .greatestFiniteMagnitude
+            let bounds = NSRect(x: 0, y: 0, width: wrapWidth, height: .greatestFiniteMagnitude)
+            let size = sizingField.cell?.cellSize(forBounds: bounds) ?? .zero
+            return CGSize(width: ceil(size.width), height: ceil(size.height))
         }
 
         // MARK: NSTokenFieldDelegate
