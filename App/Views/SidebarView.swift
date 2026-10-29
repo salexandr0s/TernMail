@@ -11,6 +11,11 @@ struct SidebarView: View {
                     Label(box.title, systemImage: box.systemImage)
                         .badge(mailbox.label(id: box.id)?.threadsUnread ?? 0)
                         .tag(box.id as String?)
+                    if box.id == SystemLabel.draft, mailbox.showsOutbox {
+                        Label("Outbox", systemImage: "tray.and.arrow.up")
+                            .badge(mailbox.outbox.count)
+                            .tag(MailboxModel.outboxID as String?)
+                    }
                 }
             }
             if !mailbox.userLabels.isEmpty {

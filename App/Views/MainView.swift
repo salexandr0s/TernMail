@@ -13,8 +13,22 @@ struct MainView: View {
             SidebarView(mailbox: mailbox)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } content: {
-            ThreadListView(mailbox: mailbox)
-                .navigationSplitViewColumnWidth(min: 300, ideal: 380)
+            Group {
+                if mailbox.selectedLabelID == MailboxModel.outboxID {
+                    OutboxView(mailbox: mailbox)
+                } else {
+                    ThreadListView(mailbox: mailbox)
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 300, ideal: 380)
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: newMessage) {
+                        Label("New Message", systemImage: "square.and.pencil")
+                    }
+                    .help("New Message")
+                }
+            }
         } detail: {
             DetailView(mailbox: mailbox)
         }
@@ -56,6 +70,13 @@ struct MainView: View {
         }
     }
 
+    private func newMessage() {
+        Task {
+            guard let id = await mailbox.startCompose(.newMessage) else { return }
+            openWindow(id: ComposeWindow.sceneID, value: id)
+        }
+    }
+
     /// Undoing a send or a discard reopens the message's window.
     private func undo(_ undo: MailboxModel.Notice.Undo) {
         switch undo {
@@ -74,7 +95,13 @@ private struct DetailView: View {
 
     var body: some View {
         let ids = mailbox.selectedThreadIDs
-        if ids.count == 1, let id = ids.first {
+        if mailbox.selectedLabelID == MailboxModel.outboxID {
+            ContentUnavailableView(
+                "Outbox",
+                systemImage: "tray.and.arrow.up",
+                description: Text("Messages wait here until Gmail has them. Double-click one to open it.")
+            )
+        } else if ids.count == 1, let id = ids.first {
             ThreadView(threadID: id, mailbox: mailbox)
                 .id(id)
         } else if ids.count > 1 {

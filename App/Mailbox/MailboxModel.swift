@@ -33,6 +33,8 @@ final class MailboxModel {
 
     static let pageSize = 200
     static let undoLimit = 100
+    /// The sidebar's Outbox, which isn't a Gmail label.
+    static let outboxID = "TERN_OUTBOX"
 
     /// Where a compose window's draft comes from.
     enum ComposeStart: Equatable {
@@ -70,6 +72,8 @@ final class MailboxModel {
 
     private(set) var labels: [LabelRecord] = []
     private(set) var threads: [ThreadRecord] = []
+    /// Drafts and sends that haven't reached Gmail, or that Gmail refused.
+    private(set) var outbox: [DraftActivity] = []
     private(set) var syncStatus: SyncStatus = .idle
     private(set) var lastSyncedAt: Date?
     private(set) var hasSyncedOnce = false
@@ -115,17 +119,28 @@ final class MailboxModel {
         hasSyncedOnce = (try? await cache.syncState(accountID: account.id)) != nil
         guard !isStopped else { return }
         let labelStream = cache.labels(accountID: account.id)
+        let outboxStream = cache.outbox(accountID: account.id)
         let events = engine.events
         tasks.append(Task { [weak self] in
             do {
                 for try await labels in labelStream {
                     guard let self, !Task.isCancelled, !isStopped else { return }
                     self.labels = labels
-                    if let id = selectedLabelID,
+                    if let id = selectedLabelID, id != Self.outboxID,
                        !SystemMailbox.all.contains(where: { $0.id == id }),
                        !labels.contains(where: { $0.id == id }) {
                         selectedLabelID = SystemLabel.inbox
                     }
+                }
+            } catch {
+                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
+            }
+        })
+        tasks.append(Task { [weak self] in
+            do {
+                for try await outbox in outboxStream {
+                    guard let self, !Task.isCancelled, !isStopped else { return }
+                    self.outbox = outbox
                 }
             } catch {
                 self?.syncStatus = .failed("Tern couldn't read its mail cache.")
@@ -165,12 +180,18 @@ final class MailboxModel {
         labels.filter { !$0.isSystem }
     }
 
+    /// The Outbox stays in the sidebar while it is selected, even once empty.
+    var showsOutbox: Bool {
+        !outbox.isEmpty || selectedLabelID == Self.outboxID
+    }
+
     func label(id: String) -> LabelRecord? {
         labels.first { $0.id == id }
     }
 
     var selectedLabelTitle: String {
         guard let id = selectedLabelID else { return "Tern" }
+        if id == Self.outboxID { return "Outbox" }
         return SystemMailbox.all.first { $0.id == id }?.title ?? label(id: id)?.name ?? "Tern"
     }
 
@@ -397,7 +418,7 @@ final class MailboxModel {
 
     private func observeThreads() {
         threadsTask?.cancel()
-        guard let labelID = selectedLabelID else {
+        guard let labelID = selectedLabelID, labelID != Self.outboxID else {
             threads = []
             return
         }

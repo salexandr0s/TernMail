@@ -78,6 +78,28 @@ import Testing
         #expect(mailbox.retainedUndoCount == 0)
         #expect(!manager.canUndo)
     }
+
+    @Test func outboxStaysSelectedWhileLabelsLoadAndListsWaitingSends() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let outgoing = FileManager.default.temporaryDirectory.appending(path: "TernOutboxTests-\(UUID().uuidString)")
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)
+        mailbox.selectedLabelID = MailboxModel.outboxID
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && !mailbox.userLabels.isEmpty }
+        #expect(mailbox.selectedLabelID == MailboxModel.outboxID)
+        #expect(mailbox.threads.isEmpty)
+
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        try await mailbox.engine.sendDraft(id, delay: 60)
+        try await waitUntil { mailbox.outbox.map(\.id) == [id] }
+        #expect(await mailbox.undoSend(id))
+        try await waitUntil { mailbox.outbox.isEmpty }
+        #expect(mailbox.showsOutbox)
+        mailbox.selectedLabelID = SystemLabel.inbox
+        #expect(!mailbox.showsOutbox)
+        await mailbox.stop()
+    }
 }
 
 @MainActor
