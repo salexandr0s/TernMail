@@ -123,12 +123,17 @@ extension SyncEngine {
     public func sendWaitingDraftsNow() async -> Bool {
         let accountID = accountID
         let now = now()
+        let waiting: Set<String>
         do {
-            try await write { tx in
-                for var row in try tx.pendingActions(accountID: accountID) where row.kind == .sendDraft && row.state == .queued {
+            waiting = try await write { tx in
+                var drafts = Set<String>()
+                for var row in try tx.pendingActions(accountID: accountID) where row.kind == .sendDraft {
+                    if let id = row.localDraftID { drafts.insert(id) }
+                    guard row.state == .queued else { continue }
                     row.notBefore = min(row.notBefore, now)
                     try tx.updateAction(row)
                 }
+                return drafts
             }
         } catch {
             return false
@@ -139,7 +144,12 @@ extension SyncEngine {
                 try tx.pendingActions(accountID: accountID).filter { $0.kind == .sendDraft }
             }
             guard let rows else { return false }
-            if rows.isEmpty { return true }
+            if rows.isEmpty {
+                // A sent draft is deleted. A refused one leaves no row either,
+                // but goes back to editing.
+                let refused = try? await cache.read { tx in try waiting.contains { try tx.localDraft(id: $0) != nil } }
+                return refused == false
+            }
             if rows.contains(where: { $0.state == .queued && $0.lastError != nil }) { return false }
             // Another sender has the row; wait for it.
             try? await Task.sleep(for: .milliseconds(100))
@@ -199,8 +209,9 @@ extension SyncEngine {
 
     private func run(_ row: PendingAction) async {
         guard let localDraftID = row.localDraftID else { return }
-        draftRowInFlight = row.kind
-        defer { draftRowInFlight = nil }
+        let isSend = row.kind == .sendDraft
+        if isSend { sendsInFlight += 1 }
+        defer { if isSend { sendFinished() } }
         do {
             switch row.kind {
             case .saveDraft: try await upload(row, localDraftID: localDraftID)
@@ -214,10 +225,19 @@ extension SyncEngine {
         }
     }
 
+    /// Lets `stop()` go on once the last send under way has finished.
+    private func sendFinished() {
+        sendsInFlight -= 1
+        guard sendsInFlight == 0 else { return }
+        let waiters = sendWaiters
+        sendWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
     private func upload(_ row: PendingAction, localDraftID: String) async throws {
         guard let prepared = try await prepare(localDraftID) else { return try await drop(row) }
-        let target = try await target(for: prepared.draft, attempts: row.attempts)
-        _ = try await save(prepared, into: target, attempts: row.attempts)
+        let target = try await target(for: prepared.draft)
+        _ = try await save(prepared, into: target)
         let now = now()
         let notBefore = max(now, nextLargeSave[localDraftID] ?? now)
         try await write { tx in
@@ -234,13 +254,17 @@ extension SyncEngine {
         guard let prepared = try await prepare(localDraftID) else { return try await drop(row) }
         // A draft that never reached Gmail, or whose Gmail copy another app
         // changed, is saved first, so a retry finds it instead of creating another.
-        let target = try await target(for: prepared.draft, attempts: row.attempts)
-        let draftID = if let id = target.id { id } else { try await save(prepared, into: target, attempts: row.attempts).id }
+        let target = try await target(for: prepared.draft)
+        let draftID = if let id = target.id { id } else { try await save(prepared, into: target).id }
+        // Only a request that may have reached Gmail makes a missing draft
+        // count as sent. A row claimed before a quit may never have sent one.
+        let requestedBefore = prepared.draft.sendRequested
+        try await write { tx in try tx.markUploadStarted(localDraftID: localDraftID, sending: true) }
         let sent: GmailMessage
         do {
             sent = try await gmail.sendDraft(id: draftID, with: prepared.message)
-        } catch GmailError.notFound where row.attempts > 1 {
-            // drafts.send consumes its draft, so an earlier attempt went out.
+        } catch GmailError.notFound where requestedBefore {
+            // drafts.send consumes its draft, so an earlier request went out.
             return try await finishRemoving(localDraftID, sentMessageID: nil, sent: true)
         } catch GmailError.notFound {
             throw ComposeError.draftGone
@@ -252,7 +276,10 @@ extension SyncEngine {
         let accountID = accountID
         let draft = try await cache.read { tx in try tx.localDraft(id: localDraftID) }
         guard let draft, draft.accountID == accountID else { return try await drop(row) }
-        if let id = draft.gmailDraftID {
+        // A create whose answer was lost may have made a draft Tern has no ID for.
+        var gmailDraftID = draft.gmailDraftID
+        if gmailDraftID == nil, draft.hasUnrecordedUpload { gmailDraftID = try await findUnrecordedDraft(draft) }
+        if let id = gmailDraftID {
             do {
                 try await gmail.deleteDraft(id: id)
             } catch GmailError.notFound {
@@ -274,7 +301,7 @@ extension SyncEngine {
         var isCopy = false
     }
 
-    private func target(for draft: LocalDraft, attempts: Int) async throws -> Target {
+    private func target(for draft: LocalDraft) async throws -> Target {
         guard let id = draft.gmailDraftID else { return Target(id: nil) }
         let current: GmailDraft
         do {
@@ -283,12 +310,17 @@ extension SyncEngine {
             // The save creates a new draft, and a send reports it gone.
             return Target(id: id)
         }
-        guard let message = current.message, message.id != draft.savedMessageID else { return Target(id: id) }
-        // After an attempt whose answer was lost, the change may be our own
-        // upload, which carries our Message-ID.
-        let messageID = message.header("Message-ID").flatMap { OriginalMessage.messageIDs(in: $0).first }
-        if attempts > 1, messageID == draft.rfcMessageID { return Target(id: id) }
+        guard let message = current.message, !Self.isOwnUpload(message, of: draft) else { return Target(id: id) }
         return Target(id: nil, isCopy: true)
+    }
+
+    /// Whether `message`, which Gmail's copy of `draft` holds, came from Tern:
+    /// the save last recorded, or an upload whose answer was lost, which
+    /// carries the draft's Message-ID.
+    static func isOwnUpload(_ message: GmailMessage, of draft: LocalDraft) -> Bool {
+        if message.id == draft.savedMessageID { return true }
+        guard draft.hasUnrecordedUpload else { return false }
+        return message.header("Message-ID").flatMap { OriginalMessage.messageIDs(in: $0).first } == draft.rfcMessageID
     }
 
     /// The local draft and its encoded message, or nil when the draft is gone.
@@ -315,11 +347,13 @@ extension SyncEngine {
 
     /// Creates or updates the Gmail draft and records it, replacing the
     /// draft's earlier message in the cache.
-    private func save(_ prepared: Prepared, into target: Target, attempts: Int) async throws -> DraftRecord {
+    private func save(_ prepared: Prepared, into target: Target) async throws -> DraftRecord {
         var draftID = target.id
-        if draftID == nil, attempts > 1 {
+        if draftID == nil, prepared.draft.hasUnrecordedUpload {
             draftID = try await findUnrecordedDraft(prepared.draft)
         }
+        let localDraftID = prepared.draft.id
+        try await write { tx in try tx.markUploadStarted(localDraftID: localDraftID) }
         let saved: GmailDraft
         if let draftID {
             do {
@@ -346,7 +380,7 @@ extension SyncEngine {
         return record
     }
 
-    /// After an attempt whose answer was lost, the draft may exist without
+    /// After an upload whose answer was lost, the draft may exist without
     /// our knowing its ID. It carries our Message-ID, so search for it
     /// rather than create a second one.
     private func findUnrecordedDraft(_ draft: LocalDraft) async throws -> String? {
@@ -399,11 +433,15 @@ extension SyncEngine {
         let message = Self.failureMessage(for: error, kind: row.kind)
         let forget = error as? ComposeError == .draftGone
         do {
-            try await write { tx in
+            let reopened = try await write { tx -> Bool in
                 try tx.deleteAction(id: id)
+                // A save refused while a send or discard waits behind it leaves
+                // the draft to that row, which keeps its undo and reports its own outcome.
+                if row.kind == .saveDraft, try tx.localDraft(id: localDraftID)?.state != .editing { return false }
                 try tx.returnToEditing(localDraftID: localDraftID, sendError: message, forgettingGmailDraft: forget)
+                return true
             }
-            continuation.yield(.draftFailed(localDraftID: localDraftID, message: message))
+            if reopened { continuation.yield(.draftFailed(localDraftID: localDraftID, message: message)) }
         } catch {
             // The row stays claimed and is retried at the next start.
         }

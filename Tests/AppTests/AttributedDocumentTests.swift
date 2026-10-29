@@ -25,6 +25,18 @@ import Testing
         #expect(text.string.contains("\t2.\tTwo"))
     }
 
+    /// A list started on the empty line after a final line break goes on
+    /// that line, not the one above.
+    @Test func theEndOfTextEndingInALineBreakIsTheEmptyLastBlock() {
+        let text = NSAttributedString(string: "Shopping:\n")
+        let end = AttributedDocument.position(of: text.length, in: text)
+        #expect(end.block == 1 && end.offset == 0)
+        #expect(AttributedDocument.location(of: end, in: text) == text.length)
+        #expect(AttributedDocument.position(of: 3, in: text).block == 0)
+        let unbroken = NSAttributedString(string: "Shopping:")
+        #expect(AttributedDocument.position(of: unbroken.length, in: unbroken).block == 0)
+    }
+
     @Test func pasteKeepsOnlyFormattingTheMessageCanHold() throws {
         let storage = NSTextStorage(string: "Pasted text", attributes: [
             .font: try #require(NSFont(name: "Times New Roman Bold", size: 30)),

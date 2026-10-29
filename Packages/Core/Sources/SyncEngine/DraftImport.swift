@@ -112,7 +112,8 @@ extension SyncEngine {
     /// changes Gmail hasn't seen go on as a new draft.
     public func openDraft(id: String) async throws -> OpenedDraft {
         let accountID = accountID
-        let existing = try await cache.read { tx in try tx.localDraft(gmailDraftID: id, accountID: accountID) }
+        let lookup = { @Sendable (tx: CacheTransaction) in try tx.localDraft(gmailDraftID: id, accountID: accountID) }
+        let existing = try await cache.read(lookup)
         if let existing, existing.state != .editing { return OpenedDraft(draft: existing, droppedFormatting: false) }
         let fetched: GmailDraft
         do {
@@ -123,8 +124,14 @@ extension SyncEngine {
             throw ComposeError.draftGone
         }
         guard let message = fetched.message, !message.id.isEmpty else { throw GmailError.decoding("Draft message") }
-        if let existing, existing.savedMessageID == message.id { return OpenedDraft(draft: existing, droppedFormatting: false) }
-        return try await importDraft(id, message: message, replacing: existing)
+        // Read again, since a save may have started or finished during the
+        // fetch. Gmail's message may be Tern's own upload, still in flight
+        // or with its answer lost, rather than another app's change.
+        let current = try await cache.read(lookup)
+        if let current, current.state != .editing || Self.isOwnUpload(message, of: current) {
+            return OpenedDraft(draft: current, droppedFormatting: false)
+        }
+        return try await importDraft(id, message: message, replacing: current)
     }
 
     private func importDraft(_ gmailDraftID: String, message: GmailMessage, replacing existing: LocalDraft?) async throws -> OpenedDraft {

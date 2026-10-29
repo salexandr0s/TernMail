@@ -65,6 +65,8 @@ final class ComposeModel {
         }
     }
     var format = TextFormat()
+    /// The cursor is in the message, so formatting has something to apply to.
+    var isEditingMessage = false
     var showsCc = false
     var showsBcc = false
     /// The draft came from another app with formatting the editor can't keep.
@@ -105,6 +107,8 @@ final class ComposeModel {
     var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
 
     var isEditable: Bool { phase == .open && draft?.state == .editing }
+
+    var canFormat: Bool { isEditable && isEditingMessage }
 
     var title: String {
         let subject = content.subject.trimmingCharacters(in: .whitespaces)
