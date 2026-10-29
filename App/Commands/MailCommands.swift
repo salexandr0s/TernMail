@@ -1,3 +1,4 @@
+import MailStore
 import MessageContent
 import SwiftUI
 
@@ -111,6 +112,16 @@ struct MailCommands: Commands {
                 Button("Sign Out…") { app.isConfirmingSignOut = true }
                     .disabled(!app.canSignOut)
             }
+        }
+        CommandMenu("Go") {
+            // In the sidebar's order, so each number matches a row.
+            ForEach(Array(SystemMailbox.combined.enumerated()), id: \.element.id) { index, box in
+                Button(box.title) { mailbox?.go(to: box.id) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
+                    .disabled(mailbox == nil || compose != nil)
+            }
+            Button("All Mail") { mailbox?.go(to: SystemLabel.allMail) }
+                .disabled(mailbox == nil || compose != nil)
         }
         CommandMenu("Format") {
             Group {

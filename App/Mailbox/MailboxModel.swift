@@ -431,6 +431,19 @@ final class MailboxModel {
         return defaultAccount
     }
 
+    /// The Go menu: a system mailbox across accounts when the sidebar lists it
+    /// there, so ⌘1 to ⌘5 match the sidebar's first rows. All Mail stays in
+    /// the account in view, or the first account.
+    func go(to labelID: String) {
+        search.clear()
+        if hasSeveralAccounts, SystemMailbox.combined.contains(where: { $0.id == labelID }) {
+            selectedMailbox = .combined(labelID)
+        } else {
+            let accountID = if case .account(let id, _)? = selectedMailbox { id } else { defaultAccount.account.id }
+            selectedMailbox = .account(accountID, labelID)
+        }
+    }
+
     /// Reply and Forward in the menu bar answer one selected conversation.
     var canReply: Bool { selectedThreadIDs.count == 1 }
 
