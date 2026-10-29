@@ -710,6 +710,44 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
     }
 
+    @Test func movingANewMessageCopiesItToTheOtherAccountAndDiscardsTheOriginal() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let outgoing = await engine.outgoingDirectory
+        let otherGmail = FakeGmail()
+        let other = SyncEngine(
+            accountID: "second", sender: EmailAddress(address: "second@example.com"), outgoingDirectory: outgoing,
+            gmail: otherGmail, cache: cache, sendsAutomatically: false, now: clock.now
+        )
+        // A reply stays in its thread's account.
+        let reply = makeDraft()
+        try await engine.createDraft(reply)
+        #expect(try await engine.moveDraft(reply.id, content: reply.content, to: other) == nil)
+
+        let draft = try await engine.startMessage()
+        var content = DraftContent(subject: "Plan")
+        try await engine.saveDraft(draft.id, content: content)
+        #expect(await engine.sendDueDrafts() == 1)
+        _ = try #require(try await engine.attachData(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain", to: draft.id))
+        content.to = [EmailAddress(address: "pat@example.com")]
+
+        let moved = try #require(try await engine.moveDraft(draft.id, content: content, to: other))
+        #expect(moved.accountID == "second" && moved.id != draft.id && moved.rfcMessageID != draft.rfcMessageID)
+        #expect(moved.content == content && moved.hasUnsavedChanges && moved.gmailDraftID == nil)
+        let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: moved.id) }
+        let file = try #require(files.first)
+        #expect(files.count == 1 && file.filename == "agenda.txt" && file.path.hasPrefix("\(moved.id)/"))
+        #expect(try Data(contentsOf: outgoing.appending(path: file.path)) == Data("agenda".utf8))
+
+        // The original leaves Gmail and this Mac. Gmail held it, so the copy saves at once.
+        #expect(await engine.sendDueDrafts() == 1)
+        #expect(await gmail.draftCalls == ["create", "delete D1"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+        #expect(!FileManager.default.fileExists(atPath: outgoing.appending(path: draft.id).path))
+        #expect(await other.sendDueDrafts() == 1)
+        #expect(await otherGmail.draftCalls == ["create"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: moved.id) }?.gmailDraftID == "D1")
+    }
+
     @Test func aSaveRefusedWhileASendWaitsLeavesTheSendQueued() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         let draft = makeDraft()
