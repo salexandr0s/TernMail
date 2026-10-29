@@ -177,6 +177,8 @@ final class AppModel {
     private func removeAccountData(_ account: AccountRecord, from accounts: AccountStore) async throws {
         try await cache?.write { tx in try tx.deleteAccountData(accountID: account.id) }
         try await accounts.deleteAccount(id: account.id)
+        // Only one account at a time keeps downloaded attachments.
+        try? FileManager.default.removeItem(at: MailboxModel.defaultDownloadsDirectory)
     }
 
     private static func dataDirectory() throws -> URL {
