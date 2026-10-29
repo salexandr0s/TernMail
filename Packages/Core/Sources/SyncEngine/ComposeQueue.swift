@@ -412,11 +412,15 @@ extension SyncEngine {
         let message = Self.failureMessage(for: error, kind: row.kind)
         let forget = error as? ComposeError == .draftGone
         do {
-            try await write { tx in
+            let reopened = try await write { tx -> Bool in
                 try tx.deleteAction(id: id)
+                // A save refused while a send or discard waits behind it leaves
+                // the draft to that row, which keeps its undo and reports its own outcome.
+                if row.kind == .saveDraft, try tx.localDraft(id: localDraftID)?.state != .editing { return false }
                 try tx.returnToEditing(localDraftID: localDraftID, sendError: message, forgettingGmailDraft: forget)
+                return true
             }
-            continuation.yield(.draftFailed(localDraftID: localDraftID, message: message))
+            if reopened { continuation.yield(.draftFailed(localDraftID: localDraftID, message: message)) }
         } catch {
             // The row stays claimed and is retried at the next start.
         }

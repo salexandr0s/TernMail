@@ -710,6 +710,26 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
     }
 
+    @Test func aSaveRefusedWhileASendWaitsLeavesTheSendQueued() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await gmail.failNextDraftCall("create", with: .http(status: 400, reason: "invalidArgument"))
+        await gmail.holdNextChange()
+        let saving = Task { await engine.sendDueDrafts() }
+        while await !gmail.isHolding { await Task.yield() }
+        #expect(try await engine.sendDraft(draft.id, delay: 10))
+        await gmail.release()
+        await saving.value
+
+        let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(stored?.state == .sending)
+        #expect(try await pendingActions(cache).map(\.kind) == [.sendDraft])
+        // Undo still finds the send to cancel.
+        #expect(try await engine.undoSend(draft.id))
+    }
+
     @Test func aRefusedSendReturnsTheDraftToEditingWithAMessage() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         let draft = makeDraft()
