@@ -167,6 +167,7 @@ struct ComposeView: View {
                 TextField("Subject", text: $model.content.subject)
                     .textFieldStyle(.plain)
                     .labelsHidden()
+                    .accessibilityLabel("Subject")
                     .focused($focus, equals: .subject)
                     .padding(.vertical, Tokens.Space.s2)
             }
@@ -183,7 +184,9 @@ struct ComposeView: View {
     }
 
     private func recipientField(_ label: String, addresses: Binding<[EmailAddress]>, field: Field) -> some View {
-        RecipientField(
+        // Never ask the token field itself; see `RecipientField.firstBaseline`.
+        let baseline = RecipientField.firstBaseline
+        return RecipientField(
             label: label,
             addresses: addresses,
             requestsFocus: Binding(
@@ -194,6 +197,7 @@ struct ComposeView: View {
         ) { [model] text in
             await model.suggestions(for: text)
         }
+        .alignmentGuide(.firstTextBaseline) { _ in baseline }
     }
 
     private func reveal(_ field: Field) {
