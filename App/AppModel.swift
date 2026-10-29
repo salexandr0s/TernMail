@@ -28,6 +28,8 @@ final class AppModel {
     let auth = GoogleAuth(configuration: .fromBundle())
     private(set) var cache: MailCache?
     private var accounts: AccountStore?
+    /// Each signed-in account's tokens, by account ID.
+    private var sessions: [String: AccountSession] = [:]
     /// Copies of the files attached to drafts, kept until the draft is sent or discarded.
     private var outgoingDirectory: URL?
     /// Mailboxes still stopping, so data is deleted only after they finish.
@@ -62,10 +64,10 @@ final class AppModel {
             cache = try await Task.detached(priority: .userInitiated) { try MailCache.open(at: cacheURL) }.value
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
-            auth.onSignInRequired = { [weak self] in self?.sessionExpired() }
 
             if let account = try await accounts.accounts().first {
-                if auth.restore(accountID: account.id) {
+                if let session = AccountSession.restore(accountID: account.id) {
+                    adopt(session)
                     await openMailbox(for: account)
                 } else {
                     phase = .signInRequired(account)
@@ -84,7 +86,8 @@ final class AppModel {
         signInError = nil
         defer { isSigningIn = false }
         do {
-            let user = try await auth.signIn()
+            let returning: AccountRecord? = if case .signInRequired(let old) = phase { old } else { nil }
+            let user = try await auth.signIn(loginHint: returning?.email)
             let account = AccountRecord(
                 id: user.id,
                 email: user.email,
@@ -92,13 +95,20 @@ final class AppModel {
                 grantedScopes: user.grantedScopes,
                 addedAt: .now
             )
-            if case .signInRequired(let old) = phase, old.id != account.id {
+            if let returning, returning.id != account.id {
                 // Replacing the account would delete its drafts and unsent
-                // messages, so that takes Sign Out, which asks. Done before
-                // any await, so queued requests never get the other account's token.
-                auth.signOut()
-                signInError = "You signed in as \(account.email). Sign in as \(old.email) to keep its drafts and unsent messages, or sign out of it first."
+                // messages, so that takes Sign Out, which asks. The new
+                // session is dropped unsaved, so nothing gets its tokens.
+                signInError = "You signed in as \(account.email). Sign in as \(returning.email) to keep its drafts and unsent messages, or sign out of it first."
                 return
+            }
+            if let session = sessions[account.id] {
+                // Clients holding the session pick up the new tokens.
+                try session.replace(with: user.state)
+            } else {
+                let session = AccountSession(accountID: account.id, state: user.state)
+                try session.save()
+                adopt(session)
             }
             if let mailbox, mailbox.account.id == account.id {
                 // Back after the session expired: the open mailbox carries on.
@@ -110,6 +120,7 @@ final class AppModel {
             // One account for now: signing in after a sign-out replaces any data left.
             await closeMailbox()
             for old in try await accounts.accounts() where old.id != account.id {
+                sessions.removeValue(forKey: old.id)?.signOut()
                 try await removeAccountData(old, from: accounts)
             }
             try await accounts.save(account)
@@ -122,7 +133,8 @@ final class AppModel {
     func signOut() async {
         guard let accounts else { return }
         await closeMailbox()
-        auth.signOut()
+        sessions.values.forEach { $0.signOut() }
+        sessions = [:]
         do {
             for account in try await accounts.accounts() {
                 try await removeAccountData(account, from: accounts)
@@ -155,9 +167,15 @@ final class AppModel {
         }
     }
 
+    private func adopt(_ session: AccountSession) {
+        let accountID = session.accountID
+        session.onSignInRequired = { [weak self] in self?.sessionExpired(accountID) }
+        sessions[accountID] = session
+    }
+
     /// Saves, sends and label changes retry until the user signs in again.
-    private func sessionExpired() {
-        guard case .signedIn(let account) = phase else { return }
+    private func sessionExpired(_ accountID: String) {
+        guard case .signedIn(let account) = phase, account.id == accountID else { return }
         phase = .signInRequired(account)
     }
 
@@ -206,10 +224,10 @@ final class AppModel {
     }
 
     private func openMailbox(for account: AccountRecord) async {
-        guard let cache, let accounts, let outgoingDirectory else { return }
+        guard let cache, let accounts, let outgoingDirectory, let session = sessions[account.id] else { return }
         await closeMailbox()
         let mailbox = MailboxModel(
-            account: account, cache: cache, gmail: GmailClient(tokens: auth),
+            account: account, cache: cache, gmail: GmailClient(tokens: session),
             outgoingDirectory: outgoingDirectory, snoozeStore: accounts
         )
         self.mailbox = mailbox
@@ -233,6 +251,8 @@ final class AppModel {
     private func removeAccountData(_ account: AccountRecord, from accounts: AccountStore) async throws {
         try await cache?.write { tx in try tx.deleteAccountData(accountID: account.id) }
         try await accounts.deleteAccount(id: account.id)
+        // A session that failed to restore at launch can leave its item behind.
+        try? KeychainStore.delete(account: account.id)
         // Only one account at a time keeps downloaded attachments and the
         // files attached to its drafts.
         try? FileManager.default.removeItem(at: MailboxModel.defaultDownloadsDirectory)
