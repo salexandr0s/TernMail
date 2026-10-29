@@ -27,6 +27,7 @@ struct TernApp: App {
 
         Settings {
             SettingsView()
+                .environment(model)
         }
     }
 }
