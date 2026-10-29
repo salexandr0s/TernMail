@@ -115,26 +115,42 @@ private struct MailboxRows: View {
     }
 }
 
-/// An account's section title, which warns when its mail can't sync.
+/// An account's section title. It offers sign-in when Google ended the
+/// account's session, and otherwise warns when its mail can't sync.
 private struct AccountHeader: View {
+    @Environment(AppModel.self) private var app
     let mailbox: MailboxModel
     let owner: AccountMailbox
 
     var body: some View {
         let email = owner.account.email
-        HStack(spacing: Tokens.Space.s1) {
-            Text(email)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(email)
-            if case .failed(let message) = owner.syncStatus {
-                Image(systemName: "exclamationmark.triangle")
-                    .help(message)
-                    .accessibilityLabel(message)
+        let needsSignIn = app.accountsNeedingSignIn.contains(owner.account.id)
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            HStack(spacing: Tokens.Space.s1) {
+                Text(email)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(email)
+                if !needsSignIn, case .failed(let message) = owner.syncStatus {
+                    Image(systemName: "exclamationmark.triangle")
+                        .help(message)
+                        .accessibilityLabel(message)
+                }
+            }
+            if needsSignIn {
+                Button("Sign In Again") {
+                    Task { await app.signInAgain(to: owner.account.id) }
+                }
+                .buttonStyle(.link)
+                .disabled(app.isSigningIn)
+                .help("Google ended this account's session. Sign in to keep its mail up to date.")
+                .accessibilityLabel("Sign in again to \(email)")
             }
         }
         .contextMenu {
             Button("New Label…") { mailbox.showNewLabel(in: owner.account.id) }
+            Divider()
+            Button("Sign Out…") { app.accountToSignOut = owner.account }
         }
     }
 }
