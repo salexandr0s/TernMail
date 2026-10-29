@@ -282,6 +282,17 @@ enum Schema {
                 t.primaryKey(["accountID", "temporaryID"])
             }
         }
+
+        migrator.registerMigration("wake-v1") { db in
+            // A conversation a snooze brought back. It sorts by its wake time
+            // until it leaves the Inbox.
+            try db.create(table: "wokenThread") { t in
+                t.column("accountID", .text).notNull()
+                t.column("threadID", .text).notNull()
+                t.column("wokeAt", .datetime).notNull()
+                t.primaryKey(["accountID", "threadID"])
+            }
+        }
         return migrator
     }
 
@@ -294,6 +305,16 @@ enum Schema {
                 t.column("displayName", .text)
                 t.column("grantedScopes", .jsonText).notNull()
                 t.column("addedAt", .datetime).notNull()
+            }
+        }
+        migrator.registerMigration("snooze-v1") { db in
+            // The durable copy of each snooze, which outlives a cache reset.
+            try db.create(table: "snooze") { t in
+                t.column("accountID", .text).notNull().references("account", onDelete: .cascade)
+                t.column("threadID", .text).notNull()
+                t.column("wakeAt", .datetime).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.primaryKey(["accountID", "threadID"])
             }
         }
         return migrator

@@ -41,7 +41,7 @@ public struct CacheTransaction {
     public func deleteAccountData(accountID: String) throws {
         for table in [
             "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
-            "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias",
+            "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
         ] {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
         }
@@ -403,7 +403,10 @@ public struct CacheTransaction {
         for threadID in Set(threadIDs) {
             let messages = try messages(threadID: threadID, accountID: accountID).filter { !hidden.contains($0.id) }
             try ThreadRecord.deleteOne(db, key: ["accountID": accountID, "id": threadID])
-            guard let first = messages.first, let last = messages.last else { continue }
+            guard let first = messages.first, let last = messages.last else {
+                try forgetWake(threadID: threadID, accountID: accountID)
+                continue
+            }
 
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: actions)
             let threadLabels = ThreadRules.threadLabels(messageLabels: messages.map { labels[$0.id] ?? [] })
@@ -423,6 +426,9 @@ public struct CacheTransaction {
             try thread.insert(db)
             for labelID in threadLabels {
                 try ThreadLabelRecord(accountID: accountID, threadID: threadID, labelID: labelID, lastDate: last.date).insert(db)
+            }
+            if !threadLabels.contains(SystemLabel.inbox) {
+                try forgetWake(threadID: threadID, accountID: accountID)
             }
         }
     }

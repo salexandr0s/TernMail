@@ -53,15 +53,17 @@ extension MailCache {
         observe { db in try CacheTransaction(db: db).displayedLabels(accountID: accountID) }
     }
 
-    /// Threads listed under `labelID`, newest first.
+    /// Threads listed under `labelID`, newest first. A conversation a snooze
+    /// brought back counts as new from its wake time.
     public func threads(accountID: String, labelID: String, limit: Int) -> AsyncThrowingStream<[ThreadRecord], any Error> {
         observe { db in
             try ThreadRecord.fetchAll(db, sql: """
                 SELECT thread.*
                 FROM threadLabel
                 JOIN thread ON thread.accountID = threadLabel.accountID AND thread.id = threadLabel.threadID
+                LEFT JOIN wokenThread ON wokenThread.accountID = threadLabel.accountID AND wokenThread.threadID = threadLabel.threadID
                 WHERE threadLabel.accountID = ? AND threadLabel.labelID = ?
-                ORDER BY threadLabel.lastDate DESC, threadLabel.threadID
+                ORDER BY MAX(threadLabel.lastDate, COALESCE(wokenThread.wokeAt, threadLabel.lastDate)) DESC, threadLabel.threadID
                 LIMIT ?
                 """, arguments: [accountID, labelID, limit])
         }
