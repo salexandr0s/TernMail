@@ -209,8 +209,9 @@ extension SyncEngine {
 
     private func run(_ row: PendingAction) async {
         guard let localDraftID = row.localDraftID else { return }
-        draftRowInFlight = row.kind
-        defer { draftRowInFlight = nil }
+        let isSend = row.kind == .sendDraft
+        if isSend { sendsInFlight += 1 }
+        defer { if isSend { sendFinished() } }
         do {
             switch row.kind {
             case .saveDraft: try await upload(row, localDraftID: localDraftID)
@@ -221,6 +222,15 @@ extension SyncEngine {
         } catch {
             await finish(row, localDraftID: localDraftID, after: error)
         }
+    }
+
+    /// Lets `stop()` go on once the last send under way has finished.
+    private func sendFinished() {
+        sendsInFlight -= 1
+        guard sendsInFlight == 0 else { return }
+        let waiters = sendWaiters
+        sendWaiters = []
+        for waiter in waiters { waiter.resume() }
     }
 
     private func upload(_ row: PendingAction, localDraftID: String) async throws {

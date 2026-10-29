@@ -721,7 +721,7 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         while await !gmail.isHolding { await Task.yield() }
         #expect(try await engine.sendDraft(draft.id, delay: 10))
         await gmail.release()
-        await saving.value
+        _ = await saving.value
 
         let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
         #expect(stored?.state == .sending)
@@ -743,6 +743,25 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(stored?.state == .editing)
         #expect(stored?.sendError == "Gmail didn't send this message. Check the recipients and try again.")
         #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func stopWaitsForASendStartedWhenQuitting() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.sendDraft(draft.id, delay: 10)
+        await gmail.holdNextChange()
+        let quitting = Task { await engine.sendWaitingDraftsNow() }
+        while await !gmail.isHolding { await Task.yield() }
+        let stopping = Task { await engine.stop() }
+        while await !engine.isStoppingDrafts { await Task.yield() }
+        await gmail.release()
+        await stopping.value
+        _ = await quitting.value
+
+        // The send finished and was stored before stop returned.
+        #expect(await gmail.draftCalls == ["create", "send D1"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
     }
 }
 
