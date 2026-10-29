@@ -40,6 +40,32 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func searchListsLocalMatchesAndGmailsThenEscapeReturnsToTheMailbox() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 }
+        mailbox.selectedThreadIDs = ["t1"]
+
+        // Local matches come from every mailbox, and the selection stays inside the list.
+        mailbox.search.update("plans")
+        try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t2", "t3"] }
+        #expect(mailbox.selectedThreadIDs.isEmpty)
+
+        // Gmail alone answers this query, so its conversations make up the list.
+        mailbox.search.update("has:attachment")
+        try await waitUntil { mailbox.listedThreads.isEmpty }
+        mailbox.search.submit()
+        try await waitUntil { mailbox.search.gmail?.state == .finished }
+        try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t1", "t2", "t3", "t5"] }
+
+        mailbox.search.cancel()
+        #expect(!mailbox.search.isActive)
+        #expect(mailbox.listedThreads.map(\.id).sorted() == ["t1", "t2"])
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
