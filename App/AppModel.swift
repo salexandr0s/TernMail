@@ -54,7 +54,10 @@ final class AppModel {
 #endif
             let directory = try Self.dataDirectory()
             let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
-            cache = try MailCache.open(at: directory.appending(path: "cache.sqlite"))
+            // Off the main actor: the first open after an update can run a long
+            // migration, such as indexing every cached message for search.
+            let cacheURL = directory.appending(path: "cache.sqlite")
+            cache = try await Task.detached(priority: .userInitiated) { try MailCache.open(at: cacheURL) }.value
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
             auth.onSignInRequired = { [weak self] in self?.sessionExpired() }

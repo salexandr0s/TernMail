@@ -861,6 +861,13 @@ struct Change: Equatable, CustomStringConvertible {
     var description: String { "\(kind) \(ids) +\(add) -\(remove)" }
 }
 
+struct ThreadSearch: Equatable, Sendable {
+    let query: String?
+    let labelIDs: [String]
+    let includeSpamTrash: Bool
+    let pageToken: String?
+}
+
 /// A mailbox in memory: serves listings, metadata and history pages, and
 /// records every change sent to it.
 actor FakeGmail: GmailService {
@@ -980,6 +987,48 @@ actor FakeGmail: GmailService {
         return thread
     }
 
+    // MARK: Search
+
+    private(set) var threadSearches: [ThreadSearch] = []
+    /// The thread IDs of each batched `threads.get`, in order.
+    private(set) var threadRequests: [[String]] = []
+    private(set) var threadRequestHeaders: [String] = []
+    private var threadPages: [String: [[String]]] = [:]
+    private var holdsThreadList = false
+    private var heldThreadList: CheckedContinuation<Void, Never>?
+
+    /// `threads.list` pages for a query, or for a label ID when there's no
+    /// query. The page token is the next page's index.
+    func setThreadPages(_ key: String, _ pages: [[String]]) { threadPages[key] = pages }
+    func holdNextThreadList() { holdsThreadList = true }
+    var isHoldingThreadList: Bool { heldThreadList != nil }
+    func releaseThreadList() { heldThreadList?.resume(); heldThreadList = nil }
+
+    func listThreads(
+        query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int
+    ) async throws -> ThreadListPage {
+        threadSearches.append(ThreadSearch(query: query, labelIDs: labelIDs, includeSpamTrash: includeSpamTrash, pageToken: pageToken))
+        if holdsThreadList {
+            holdsThreadList = false
+            await withCheckedContinuation { heldThreadList = $0 }
+        }
+        let pages = threadPages[query ?? labelIDs.joined(separator: ",")] ?? []
+        let index = pageToken.flatMap(Int.init) ?? 0
+        let ids = index < pages.count ? pages[index] : []
+        let next = index + 1 < pages.count ? #""nextPageToken": "\#(index + 1)", "# : ""
+        let threads = ids.map { #"{"id": "\#($0)"}"# }.joined(separator: ",")
+        return try decode(ThreadListPage.self, #"{\#(next)"threads": [\#(threads)]}"#)
+    }
+
+    /// Answers from `setThread`, like `thread(id:format:)`.
+    func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailThread, GmailError>] {
+        threadRequests.append(ids)
+        threadRequestHeaders = metadataHeaders
+        return Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, threadsByID[id].map { .success($0) } ?? Result<GmailThread, GmailError>.failure(.notFound))
+        })
+    }
+
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage {
         if historyExpired { throw GmailError.notFound }
         guard !historyPages.isEmpty else { return try decode(HistoryPage.self, #"{"historyId": "\#(startHistoryID)"}"#) }
@@ -1003,6 +1052,75 @@ actor FakeGmail: GmailService {
 
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws {
         try await record(Change("batchModify", ids, add: addLabelIDs, remove: removeLabelIDs))
+    }
+
+    // MARK: Labels
+
+    /// Label calls in order, such as "create Trips", "patch Label_1" and "delete Label_1".
+    private(set) var labelCalls: [String] = []
+    private var labelCallErrors: [String: (error: GmailError, afterApplying: Bool)] = [:]
+    private var nextLabelID = 1
+
+    /// The next label call of `kind` ("create", "patch", "delete") fails with
+    /// `error`. With `afterApplying`, Gmail applies it first.
+    func failNextLabelCall(_ kind: String, with error: GmailError, afterApplying: Bool = false) {
+        labelCallErrors[kind] = (error, afterApplying)
+    }
+
+    private func labelCall(_ kind: String, _ call: String, apply: () throws -> Void) async throws {
+        if holdsNextChange {
+            holdsNextChange = false
+            await withCheckedContinuation { held = $0 }
+        }
+        labelCalls.append(call)
+        if let failure = labelCallErrors.removeValue(forKey: kind) {
+            if failure.afterApplying { try apply() }
+            throw failure.error
+        }
+        try apply()
+    }
+
+    /// Refuses a name already in use with 409, as Gmail does.
+    func createLabel(name: String, color: LabelColor?) async throws -> GmailLabel {
+        var created: GmailLabel?
+        try await labelCall("create", "create \(name)") {
+            guard !labelValues.contains(where: { $0.name.lowercased() == name.lowercased() }) else {
+                throw GmailError.http(status: 409, reason: nil)
+            }
+            let label = try userLabel(id: "Label_\(nextLabelID)", name: name, color: color)
+            nextLabelID += 1
+            labelValues.append(label)
+            created = label
+        }
+        guard let created else { throw GmailError.notFound }
+        return created
+    }
+
+    func patchLabel(id: String, name: String?, color: LabelColorChange?) async throws -> GmailLabel {
+        var patched: GmailLabel?
+        try await labelCall("patch", "patch \(id)") {
+            guard let index = labelValues.firstIndex(where: { $0.id == id }) else { throw GmailError.notFound }
+            let old = labelValues[index]
+            let oldColor = old.color.flatMap { color in
+                color.backgroundColor.flatMap { background in color.textColor.flatMap { LabelColor(backgroundColor: background, textColor: $0) } }
+            }
+            let newColor: LabelColor? = switch color {
+            case nil: oldColor
+            case .remove?: nil
+            case .set(let value)?: value
+            }
+            labelValues[index] = try userLabel(id: id, name: name ?? old.name, color: newColor)
+            patched = labelValues[index]
+        }
+        guard let patched else { throw GmailError.notFound }
+        return patched
+    }
+
+    /// A label that's already gone counts as deleted, as in `GmailClient`.
+    func deleteLabel(id: String) async throws {
+        try await labelCall("delete", "delete \(id)") {
+            labelValues.removeAll { $0.id == id }
+        }
     }
 
     // MARK: Drafts
@@ -1175,6 +1293,12 @@ private func encodedMessage(
 
 private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
     try JSONDecoder().decode(type, from: Data(json.utf8))
+}
+
+private func userLabel(id: String, name: String, color: LabelColor?) throws -> GmailLabel {
+    var json: [String: Any] = ["id": id, "name": name, "type": "user"]
+    if let color { json["color"] = ["backgroundColor": color.backgroundColor, "textColor": color.textColor] }
+    return try JSONDecoder().decode(GmailLabel.self, from: JSONSerialization.data(withJSONObject: json))
 }
 
 private func threadIDs(_ cache: MailCache, _ labelID: String) async throws -> [String] {

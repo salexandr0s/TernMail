@@ -17,8 +17,17 @@ actor AuditGmail: GmailService {
         var from = "River <river@example.invalid>"
     }
 
+    private struct UserLabel {
+        let id: String
+        var name: String
+        var color: LabelColor?
+    }
+
     private var drafts: [String: String] = [:]
     private var nextDraft = 1
+    private static let systemLabels = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"]
+    private var userLabels = [UserLabel(id: "Label_1", name: "Hiking")]
+    private var nextLabel = 2
 
     private var version = 200
     private let referenceDate = Date.now
@@ -37,10 +46,22 @@ actor AuditGmail: GmailService {
     }
 
     func labels() throws -> [GmailLabel] {
-        try (["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"] + ["Label_1"]).map { id in
-            let unread = Set(mail.filter { $0.labels.contains(id) && $0.labels.contains("UNREAD") }.map(\.thread)).count
-            return try decode(["id": id, "name": id == "Label_1" ? "Hiking" : id, "type": id == "Label_1" ? "user" : "system", "threadsUnread": unread])
+        let system = try Self.systemLabels.map { id in
+            try decode(["id": id, "name": id, "type": "system", "threadsUnread": unreadThreads(id)]) as GmailLabel
         }
+        return try system + userLabels.map(labelValue)
+    }
+
+    private func labelValue(_ label: UserLabel) throws -> GmailLabel {
+        var json: [String: Any] = ["id": label.id, "name": label.name, "type": "user", "threadsUnread": unreadThreads(label.id)]
+        if let color = label.color {
+            json["color"] = ["backgroundColor": color.backgroundColor, "textColor": color.textColor]
+        }
+        return try decode(json)
+    }
+
+    private func unreadThreads(_ labelID: String) -> Int {
+        Set(mail.filter { $0.labels.contains(labelID) && $0.labels.contains("UNREAD") }.map(\.thread)).count
     }
 
     func labels(ids: [String]) throws -> [String: Result<GmailLabel, GmailError>] {
@@ -66,11 +87,31 @@ actor AuditGmail: GmailService {
         return try decode(["id": id, "messages": messages.map(messageJSON)])
     }
 
+    /// Matches every plain word of `query` against subjects and text, and
+    /// ignores operators.
+    func listThreads(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) throws -> ThreadListPage {
+        let words = (query ?? "").lowercased().split(separator: " ").filter { !$0.contains(":") }
+        let selected = mail.filter { message in
+            let text = (message.subject + " " + message.text).lowercased()
+            return labelIDs.allSatisfy(message.labels.contains)
+                && (includeSpamTrash || message.labels.isDisjoint(with: ["TRASH", "SPAM"]))
+                && words.allSatisfy { text.contains($0) }
+        }
+        var seen = Set<String>()
+        return try decode(["threads": selected.map(\.thread).filter { seen.insert($0).inserted }.map { ["id": $0] }])
+    }
+
+    func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) -> [String: Result<GmailThread, GmailError>] {
+        Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, Result { try thread(id: id, format: format) }.mapError { $0 as? GmailError ?? .notFound })
+        })
+    }
+
     func attachment(messageID: String, attachmentID: String) throws -> Data { throw GmailError.notFound }
 
     func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
         let changed = mail.filter { $0.history > (Int(startHistoryID) ?? 0) }
-        let allLabels: Set<String> = ["INBOX", "UNREAD", "STARRED", "SENT", "SPAM", "TRASH", "Label_1"]
+        let allLabels = Set(Self.systemLabels + ["UNREAD"] + userLabels.map(\.id))
         return try decode(["historyId": String(version), "history": changed.map { message in
             ["id": String(message.history),
              "labelsAdded": [["message": ["id": message.id, "threadId": message.thread], "labelIds": Array(message.labels)]],
@@ -93,6 +134,34 @@ actor AuditGmail: GmailService {
 
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) {
         change(ids: ids, add: addLabelIDs, remove: removeLabelIDs)
+    }
+
+    // MARK: Labels
+
+    func createLabel(name: String, color: LabelColor?) throws -> GmailLabel {
+        guard !userLabels.contains(where: { $0.name.lowercased() == name.lowercased() }) else {
+            throw GmailError.http(status: 409, reason: nil)
+        }
+        let label = UserLabel(id: "Label_\(nextLabel)", name: name, color: color)
+        nextLabel += 1
+        userLabels.append(label)
+        return try labelValue(label)
+    }
+
+    func patchLabel(id: String, name: String?, color: LabelColorChange?) throws -> GmailLabel {
+        guard let index = userLabels.firstIndex(where: { $0.id == id }) else { throw GmailError.notFound }
+        if let name { userLabels[index].name = name }
+        switch color {
+        case .set(let value)?: userLabels[index].color = value
+        case .remove?: userLabels[index].color = nil
+        case nil: break
+        }
+        return try labelValue(userLabels[index])
+    }
+
+    func deleteLabel(id: String) {
+        userLabels.removeAll { $0.id == id }
+        change(ids: mail.filter { $0.labels.contains(id) }.map(\.id), add: [], remove: [id])
     }
 
     // MARK: Drafts
