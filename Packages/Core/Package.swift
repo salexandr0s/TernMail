@@ -7,14 +7,18 @@ let package = Package(
     products: [
         .library(name: "GmailAPI", targets: ["GmailAPI"]),
         .library(name: "MailStore", targets: ["MailStore"]),
+        .library(name: "MessageContent", targets: ["MessageContent"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.11.1"),
+        .package(url: "https://github.com/scinfu/SwiftSoup", exact: "2.14.3"),
     ],
     targets: [
         .target(name: "GmailAPI"),
         .target(name: "MailStore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
+        .target(name: "MessageContent", dependencies: ["GmailAPI", "SwiftSoup"]),
         .testTarget(name: "GmailAPITests", dependencies: ["GmailAPI"]),
         .testTarget(name: "MailStoreTests", dependencies: ["MailStore"]),
+        .testTarget(name: "MessageContentTests", dependencies: ["MessageContent"]),
     ]
 )
