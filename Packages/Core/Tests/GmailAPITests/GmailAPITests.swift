@@ -3,6 +3,22 @@ import Testing
 @testable import GmailAPI
 
 @Suite struct GmailClientTests {
+    @Test func unauthorizedBatchPartsRefreshOnceWithoutResendingSuccesses() async throws {
+        let transport = StubTransport([
+            batchResponse([(0, 200, #"{"id":"a","threadId":"t1"}"#), (1, 401, "{}")]),
+            batchResponse([(0, 401, "{}")]),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport, retryDelays: [.zero])
+        let results = try await client.messages(ids: ["a", "b"], format: .minimal)
+        #expect(try results["a"]?.get().id == "a")
+        #expect(results["b"].flatMap(failure) == .unauthorized)
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(requests.map { $0.value(forHTTPHeaderField: "Authorization") } == ["Bearer token-0", "Bearer token-1"])
+        let retryBody = String(decoding: requests.last?.httpBody ?? Data(), as: UTF8.self)
+        #expect(!retryBody.contains("/messages/a?"))
+    }
+
     @Test func batchUsesCompleteRequestLinesAndIgnoresBoundaryTextInJSON() async throws {
         let transport = StubTransport([batchResponse([
             (0, 200, #"{"id":"a","threadId":"t1","snippet":"text --resp inside JSON"}"#),
