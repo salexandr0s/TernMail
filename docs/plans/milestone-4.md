@@ -1,6 +1,6 @@
 # Milestone 4 plan: integrations
 
-Status: approved 2026-10-29 after a plan review. Amended the same day to take forwarding filters and a formatted vacation message from milestone 5 (answered question 3). You approved the amendment the same day. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
+Status: approved 2026-10-29 after a plan review. Amended the same day to take forwarding filters and a formatted vacation message from milestone 5 (answered question 3). You approved the amendment the same day. Gate C, the same day: `feat/milestone-3` merged at `c98d356`, with milestone 2 at `929eeb8` inside it, and you approved the file-list changes it found in B1, B2 and B10c. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
 
 The milestone runs in two stages. Stage A adds library code in new files and changes no existing file except `Packages/Core/Package.swift`. Stage B wires that code into sign-in, the store, the sync engine, compose, the thread view and Settings. It starts only after you say milestones 2 and 3 are done.
 
@@ -286,8 +286,8 @@ Until B1, the new `GmailAPI` test files use their own stubs (`RecordingTransport
 | # | Phase | Files | Check |
 |---|---|---|---|
 | Gate C | You confirm milestones 2 and 3 are done. With your approval, `refs/heads/feat/milestone-3` is merged, and `refs/heads/feat/milestone-2` too if it has moved past what milestone 3 merged. Then cleanup commits (workspace rule 9) for the files over 300 lines that stage B changes, listed at the gate | | Full |
-| B1 | `GoogleSession`: the bearer token, the 401 refresh, the transport and JSON coding move out of `GmailClient`; errors keep `details[].reason`; both clients use it; one set of test stubs | `GmailClient.swift`, `PeopleClient.swift`, `GmailAPITests.swift`, `TestSupport.swift`; `GoogleSession.swift` (new) | App |
-| B2 | Store: the five migrations, the new records and the `settingsChange` column, contact, identity and invitation queries, account deletion. No new action kind yet | `Schema.swift`, `Records.swift`, `MailCache.swift`; `IntegrationStore.swift`, a test file (new) | App |
+| B1 | `GoogleSession`: the bearer token, the 401 refresh, the transport and JSON coding move out of `GmailClient`; errors keep `details[].reason`; both clients use it; one set of test stubs | `GmailClient.swift`, `GmailError.swift`, `PeopleClient.swift`, `GmailAPITests.swift`, `TestSupport.swift`; `GoogleSession.swift` (new) | App |
+| B2 | Store: the five migrations, the new records and the `settingsChange` column, contact, identity and invitation queries, account deletion. No new action kind yet | `Schema.swift`, `Records.swift`, `Drafts.swift`, `MailCache.swift`; `IntegrationStore.swift`, a test file (new) | App |
 | B3 | Feature authorization: feature scopes and the granted-scope check (pure, in `GmailAPI`), re-authorization with `login_hint`, the `sub` and `gmail.modify` checks, the live swap, `hd` | `GoogleAuth.swift`, `AccountSession.swift`, `AppModel.swift`; `GoogleScopes.swift`, a test file (new) | Launch |
 | B4a | Settings kinds: the five kinds and the `.settings` lane, their claim keys, and the cases the exhaustive switches need. No settings row is queued yet | `Records.swift`, `MailCache.swift`, `ActionQueue.swift`, `ComposeQueue.swift`; a test file (new) | App |
 | B4b | Settings delivery: a `SettingsService` protocol that `GmailClient` adopts, delivery, the ID list and adoption on retries, vacation merging, undo, a fake in the new test file. `GmailService` and the existing fakes stay as they are | `SyncEngine.swift`, `AppModel.swift`; `SettingsQueue.swift`, `SettingsQueueTests.swift` (new) | App |
@@ -299,10 +299,10 @@ Until B1, the new `GmailAPI` test files use their own stubs (`RecordingTransport
 | B9 | The invitation banner, with the newest version across the account | `ThreadView.swift`, `Queries.swift`; `InvitationBanner.swift`, `InvitationModel.swift` (new) | Launch |
 | B10a | Settings: Connections in the Accounts pane and the Signatures pane | `SettingsView.swift`; `SettingsModel.swift`, `ConnectionsView.swift`, `SignaturesPane.swift` (new) | Launch |
 | B10b | Settings: the Filters pane, with every filter action and the Forward menu | `SettingsView.swift`, `SettingsModel.swift`; `FiltersPane.swift`, `FilterEditorSheet.swift` (new), a test file | Launch |
-| B10c | Settings: the Vacation pane, with the message in the compose editor. Gate C checks what the compose editor needs in order to work outside a compose window | `SettingsView.swift`, `SettingsModel.swift`; `VacationPane.swift` (new), a test file | Launch |
+| B10c | Settings: the Vacation pane, with the message in the compose editor. The format bar moves out of `ComposeView` into its own file, and the Format menu reaches whichever editor has focus | `SettingsView.swift`, `SettingsModel.swift`, `ComposeView.swift`, `MailCommands.swift`; `VacationPane.swift`, `FormatBar.swift` (new), a test file | Launch |
 | B11 | Review pass and fixes | As found | Full |
 
-The file lists in stage B follow milestone 3's plan and get checked against the merged code at Gate C. New engine calls sit behind their own protocols so `SyncEngineTests.swift` (over 1,100 lines) doesn't need to change.
+The file lists in stage B follow milestone 3's plan and were checked against the merged code at Gate C. New engine calls sit behind their own protocols so `SyncEngineTests.swift` (over 1,100 lines) doesn't need to change.
 
 ## Tests
 
