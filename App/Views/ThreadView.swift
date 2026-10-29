@@ -12,6 +12,7 @@ struct ThreadView: View {
     @State private var initializedExpansion = false
     @State private var blocker: WKContentRuleList?
     @State private var blockerReady = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
@@ -26,7 +27,8 @@ struct ThreadView: View {
                             MessageView(
                                 message: message,
                                 blocker: blocker,
-                                isExpanded: expanded.contains(message.id)
+                                isExpanded: expanded.contains(message.id),
+                                compose: compose
                             ) {
                                 if expanded.contains(message.id) {
                                     expanded.remove(message.id)
@@ -73,12 +75,21 @@ struct ThreadView: View {
             }
         }
     }
+
+    /// Opens a compose window once its draft exists. A failure shows as a notice.
+    private func compose(_ start: MailboxModel.ComposeStart) {
+        Task {
+            guard let id = await mailbox.startCompose(start) else { return }
+            openWindow(id: ComposeWindow.sceneID, value: id)
+        }
+    }
 }
 
 private struct MessageView: View {
     let message: MessageDetail
     let blocker: WKContentRuleList?
     let isExpanded: Bool
+    let compose: (MailboxModel.ComposeStart) -> Void
     let onToggle: () -> Void
 
     @State private var rendered: RenderedMessage?
@@ -96,6 +107,7 @@ private struct MessageView: View {
 
             if isExpanded {
                 content
+                actions
             }
         }
         .task(id: message.body?.fetchedAt) {
@@ -162,6 +174,19 @@ private struct MessageView: View {
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var actions: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            if message.labels.contains(SystemLabel.draft) {
+                Button("Edit Draft", systemImage: "pencil") { compose(.editDraft(messageID: message.id)) }
+            } else {
+                Button("Reply", systemImage: "arrowshape.turn.up.left") { compose(.reply(.reply, messageID: message.id)) }
+                Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { compose(.reply(.replyAll, messageID: message.id)) }
+                Button("Forward", systemImage: "arrowshape.turn.up.right") { compose(.reply(.forward, messageID: message.id)) }
+            }
+        }
+        .controlSize(.small)
     }
 
     private var senderName: String {

@@ -46,6 +46,11 @@ final class MailboxModel {
             threads = []
             threadLimit = Self.pageSize
             observeThreads()
+            if selectedLabelID == SystemLabel.draft {
+                // Drafts made in other apps since the last sync.
+                let engine = engine
+                Task { try? await engine.refreshDrafts() }
+            }
         }
     }
     var selectedThreadIDs: Set<String> = []
@@ -199,6 +204,22 @@ final class MailboxModel {
             notice = Notice(message: message, undo: nil, isError: true)
             return nil
         }
+    }
+
+    /// Reply and Forward in the menu bar answer one selected conversation.
+    var canReply: Bool { selectedThreadIDs.count == 1 }
+
+    /// The newest message in the selected conversation that isn't a draft.
+    func replyTargetMessageID() async -> String? {
+        guard canReply, let threadID = selectedThreadIDs.first else { return nil }
+        do {
+            for try await detail in cache.thread(accountID: account.id, threadID: threadID) {
+                return detail?.messages.last { !$0.labels.contains(SystemLabel.draft) }?.id
+            }
+        } catch {
+            notice = Notice(message: "Tern couldn't read this conversation.", undo: nil, isError: true)
+        }
+        return nil
     }
 
     /// Whether the draft's window should warn about formatting it can't keep. Asked once.

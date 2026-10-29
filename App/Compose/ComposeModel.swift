@@ -71,6 +71,9 @@ final class ComposeModel {
     var droppedFormatting = false
     /// A problem to show in an alert, such as a missing recipient.
     var alert: String?
+    /// Set by the toolbar or the menu bar to show the file picker or the link editor.
+    var isChoosingFiles = false
+    var isEditingLink = false
     private(set) var storeError: String?
     private(set) var hasPendingEdits = false
 

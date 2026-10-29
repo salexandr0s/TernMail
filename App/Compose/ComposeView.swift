@@ -2,6 +2,11 @@ import MailStore
 import MessageContent
 import SwiftUI
 
+extension FocusedValues {
+    /// The compose window in front, for the Format menu, Send and Attach Files.
+    @Entry var composeModel: ComposeModel?
+}
+
 /// A compose window's content: waits for the mailbox, then edits one draft.
 struct ComposeWindow: View {
     static let sceneID = "compose"
@@ -41,8 +46,6 @@ struct ComposeView: View {
 
     @State private var model: ComposeModel
     @State private var showsQuote = false
-    @State private var isEditingLink = false
-    @State private var isChoosingFiles = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
     /// The recipient field to move the cursor to. Token fields are AppKit
@@ -78,6 +81,7 @@ struct ComposeView: View {
             }
         }
         .onDisappear { model.windowClosed() }
+        .focusedSceneValue(\.composeModel, model)
     }
 
     private var form: some View {
@@ -116,7 +120,7 @@ struct ComposeView: View {
             model.attach(files.map(Attachable.file))
             return true
         }
-        .fileImporter(isPresented: $isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $model.isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
         }
     }
@@ -256,13 +260,13 @@ struct ComposeView: View {
                 }
             }
             Button {
-                isEditingLink = true
+                model.isEditingLink = true
             } label: {
                 Label(model.format.link ? "Edit Link" : "Add Link", systemImage: "link")
             }
             .help(model.format.link ? "Edit Link" : "Add Link")
             .disabled(!model.isEditable)
-            .popover(isPresented: $isEditingLink, arrowEdge: .bottom) {
+            .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
                 LinkEditor(hasLink: model.format.link, width: Self.linkFieldWidth) { url in
                     model.editor?.setLink(url)
                 }
@@ -270,7 +274,7 @@ struct ComposeView: View {
         }
         ToolbarItem {
             Button {
-                isChoosingFiles = true
+                model.isChoosingFiles = true
             } label: {
                 Label("Attach Files", systemImage: "paperclip")
             }
