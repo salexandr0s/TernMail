@@ -33,7 +33,8 @@ public actor SyncEngine {
     /// The threading headers let a reply answer a message without fetching it.
     static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"]
     static let inboxCap = 5000
-    static let recentQuery = "newer_than:30d"
+    /// Releasing a search hold keeps what this lists, so both use one window.
+    static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
     /// Metadata fetched per request group during a full sync.
     static let fullSyncChunk = 100
 
@@ -73,6 +74,9 @@ public actor SyncEngine {
     /// carries deletion knowledge into their Sendable closures. Gmail message
     /// IDs are never reused; forgetting one could resurrect deleted mail.
     let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
+    /// Conversations an open search or list shows. A lock, so the write that
+    /// releases expired holds reads the set as it is then.
+    let visibleThreadIDs = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// - Parameters:
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
@@ -191,12 +195,14 @@ public actor SyncEngine {
         let passStart = now()
         let accountID = accountID
         let state = try await cache.read { tx in try tx.syncState(accountID: accountID) }
-        guard let state else {
-            return try await fullSync(reset: false)
+        if let state {
+            if try await incrementalSync(from: state.historyID, passStart: passStart) == nil {
+                try await fullSync(reset: true)
+            }
+        } else {
+            try await fullSync(reset: false)
         }
-        if try await incrementalSync(from: state.historyID, passStart: passStart) == nil {
-            try await fullSync(reset: true)
-        }
+        try await releaseExpiredHolds()
     }
 
     /// Lists INBOX, the last 30 days and every draft and stores their metadata,
@@ -215,10 +221,14 @@ public actor SyncEngine {
         // Older drafts stay cached, so the Drafts label is complete.
         let drafts = try await listDrafts()
         let listed = (inbox + recent + drafts.map(\.messageID)).removingDuplicates()
-        // Messages pending actions target stay cached even when unlisted. Refetch
-        // them as well: their stored labels may predate changes the lost history held.
-        let targeted = try await cache.read { tx in try tx.messageIDsTargetedByPendingActions(accountID: accountID) }
-        var wanted = listed + targeted.subtracting(listed).sorted()
+        // Messages pending actions target and messages in held conversations
+        // stay cached even when unlisted. Refetch them as well: their stored
+        // labels may predate changes the lost history held, and a 404 means
+        // Gmail deleted the message.
+        let (targeted, held) = try await cache.read { tx in
+            (try tx.messageIDsTargetedByPendingActions(accountID: accountID), try tx.messageIDsInHeldThreads(accountID: accountID))
+        }
+        var wanted = listed + targeted.union(held).subtracting(listed).sorted()
 
         var gone = Set<String>()
         var fetchedIDs = Set<String>()

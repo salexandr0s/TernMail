@@ -6,8 +6,8 @@ import os
 import Testing
 @testable import SyncEngine
 
-private let account = "acct"
-private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
+let account = "acct"
+let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
     @Test func unreadableMutationResponsesKeepTheActionAndItsUndo() async throws {
@@ -1241,7 +1241,7 @@ struct TestClock: Sendable {
     }
 }
 
-private func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
+func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
     let cache = try MailCache.inMemory()
     let gmail = FakeGmail()
     let clock = TestClock()
@@ -1258,7 +1258,7 @@ private func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, Tes
 }
 
 /// Stores messages a minute apart, oldest first.
-private func seed(_ cache: MailCache, _ messages: [(id: String, thread: String, labels: [String])], cursor: Int64? = nil) async throws {
+func seed(_ cache: MailCache, _ messages: [(id: String, thread: String, labels: [String])], cursor: Int64? = nil) async throws {
     let updates = messages.enumerated().map { index, message in
         CacheTransaction.MessageUpdate(
             record: MessageRecord(
@@ -1279,7 +1279,7 @@ private func gmailMessage(_ id: String, thread: String, labels: [String], histor
     try decode(GmailMessage.self, try encodedMessage(id, thread: thread, labels: labels, historyID: historyID, minutes: minutes))
 }
 
-private func encodedMessage(
+func encodedMessage(
     _ id: String, thread: String, labels: [String] = [SystemLabel.inbox], historyID: Int = 100, minutes: Double = 0
 ) throws -> String {
     let milliseconds = Int(baseDate.addingTimeInterval(minutes * 60).timeIntervalSince1970 * 1000)
@@ -1291,7 +1291,7 @@ private func encodedMessage(
         """
 }
 
-private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
     try JSONDecoder().decode(type, from: Data(json.utf8))
 }
 

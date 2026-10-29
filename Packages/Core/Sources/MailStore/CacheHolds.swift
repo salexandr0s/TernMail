@@ -36,7 +36,7 @@ extension CacheTransaction {
     }
 
     /// Cached messages in held conversations, which full sync's prune keeps.
-    func messageIDsInHeldThreads(accountID: String) throws -> Set<String> {
+    public func messageIDsInHeldThreads(accountID: String) throws -> Set<String> {
         try String.fetchSet(db, sql: """
             SELECT message.id FROM message
             JOIN cacheHold ON cacheHold.accountID = message.accountID AND cacheHold.threadID = message.threadID
