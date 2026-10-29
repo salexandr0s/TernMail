@@ -22,12 +22,12 @@ import Testing
         let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
         await mailbox.start()
         try await waitUntil { mailbox.hasSyncedOnce && !mailbox.threads.isEmpty }
-        mailbox.selectedLabelID = SystemLabel.allMail
+        mailbox.selectedMailbox = .account("audit", SystemLabel.allMail)
         try await waitUntil { mailbox.threads.count == 4 }
         mailbox.selectedThreadIDs = keys("t1")
         await mailbox.perform(.archive)?.value
         #expect(mailbox.selectedThreadIDs == keys("t1"))
-        mailbox.selectedLabelID = SystemLabel.trash
+        mailbox.selectedMailbox = .account("audit", SystemLabel.trash)
         #expect(mailbox.threads.isEmpty)
         #expect(mailbox.selectedThreadIDs.isEmpty)
         try await waitUntil { mailbox.threads.map(\.id) == ["t4"] }
@@ -117,7 +117,7 @@ import Testing
         await snooze?.value
         try await waitUntil { mailbox.threads.map(\.id) == ["t2"] && mailbox.snoozed.map(\.id) == ["t1"] }
         #expect(try await accounts.snoozes(accountID: account.id).map(\.threadID) == ["t1"])
-        mailbox.selectedLabelID = MailboxModel.snoozedID
+        mailbox.selectedMailbox = .account("audit", MailboxModel.snoozedID)
         #expect(mailbox.threads.map(\.id) == ["t1"])
         #expect(mailbox.wakeTimes[key("t1")] != nil)
 
@@ -129,7 +129,7 @@ import Testing
         mailbox.undo(receipt)
         try await waitUntil { mailbox.snoozed.isEmpty && mailbox.threads.isEmpty }
         #expect(try await accounts.snoozes(accountID: account.id).isEmpty)
-        mailbox.selectedLabelID = SystemLabel.inbox
+        mailbox.selectedMailbox = .account("audit", SystemLabel.inbox)
         try await waitUntil { mailbox.threads.map(\.id).sorted() == ["t1", "t2"] }
         await mailbox.stop()
     }
@@ -178,7 +178,7 @@ import Testing
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
         let outgoing = FileManager.default.temporaryDirectory.appending(path: "TernOutboxTests-\(UUID().uuidString)")
         let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)
-        mailbox.selectedLabelID = MailboxModel.outboxID
+        mailbox.selectedMailbox = .account("audit", MailboxModel.outboxID)
         await mailbox.start()
         try await waitUntil { mailbox.hasSyncedOnce && !mailbox.userLabels.isEmpty }
         #expect(mailbox.selectedLabelID == MailboxModel.outboxID)
@@ -190,7 +190,7 @@ import Testing
         #expect(await mailbox.undoSend(id))
         try await waitUntil { mailbox.outbox.isEmpty }
         #expect(mailbox.showsOutbox)
-        mailbox.selectedLabelID = SystemLabel.inbox
+        mailbox.selectedMailbox = .account("audit", SystemLabel.inbox)
         #expect(!mailbox.showsOutbox)
         await mailbox.stop()
     }
