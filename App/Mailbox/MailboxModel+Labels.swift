@@ -185,6 +185,15 @@ extension MailboxModel {
         }
     }
 
+    /// A label chip's remove button: takes one conversation out of a user label.
+    @discardableResult
+    func removeLabel(_ labelID: String, from key: ThreadKey) -> Task<Void, Never>? {
+        if !search.isActive, selectedLabelID == labelID { selectThread(after: [key]) }
+        return queueUndoable("Remove Label", for: [key]) { owner, ids in
+            try await owner.engine.editLabels(threadIDs: ids, add: [], remove: [labelID])
+        }
+    }
+
     /// Moves the conversations Move to opened for, out of the mailbox shown.
     @discardableResult
     func move(to labelID: String) -> Task<Void, Never>? {
