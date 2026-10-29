@@ -57,8 +57,10 @@ public actor SyncEngine {
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     var drainTasks: [PendingAction.Lane: Task<Void, Never>] = [:]
     var wakeRequests = Set<PendingAction.Lane>()
-    /// The draft row being uploaded, so `stop()` can let a send finish.
-    var draftRowInFlight: PendingAction.Kind?
+    /// Sends under way, so `stop()` can let them finish. The drain task and
+    /// `sendWaitingDraftsNow()` can each be running one.
+    var sendsInFlight = 0
+    var sendWaiters: [CheckedContinuation<Void, Never>] = []
     /// Set by `stop()`: the compose lane starts no further rows.
     var isStoppingDrafts = false
     /// Earliest next save per local draft. Large messages save at most every
@@ -128,8 +130,8 @@ public actor SyncEngine {
     /// send that is already uploading finishes first, so its outcome is known.
     public func stop() async {
         isStoppingDrafts = true
-        if draftRowInFlight == .sendDraft, let compose = drainTasks[.compose] {
-            await compose.value
+        if sendsInFlight > 0 {
+            await withCheckedContinuation { sendWaiters.append($0) }
         }
         isStopped = true
         pollTask?.cancel()

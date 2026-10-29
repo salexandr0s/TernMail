@@ -68,6 +68,14 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     public var state: State
     /// Gmail's reason for refusing the last send, shown until the next send.
     public var sendError: String?
+    /// Set just before an upload and cleared when a save is recorded. While
+    /// set, Gmail may hold an upload whose answer was lost: a message in the
+    /// Gmail draft that `savedMessageID` doesn't name, or a whole draft whose
+    /// ID never came back. Either carries `rfcMessageID`.
+    public var hasUnrecordedUpload: Bool
+    /// Set just before Tern first asks Gmail to send the draft. `drafts.send`
+    /// consumes its draft, so a draft gone after that was sent.
+    public var sendRequested: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -76,7 +84,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         case to = "toAddresses", cc = "ccAddresses", bcc = "bccAddresses"
         case subject, body, quotedHTML, quotedPlainText, rfcMessageID, inReplyTo
         case references = "referencesHeader"
-        case revision, savedRevision, state, sendError, createdAt, updatedAt
+        case revision, savedRevision, state, sendError, hasUnrecordedUpload, sendRequested, createdAt, updatedAt
     }
 
     public init(
@@ -116,6 +124,8 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         savedRevision = 0
         state = .editing
         sendError = nil
+        hasUnrecordedUpload = false
+        sendRequested = false
         createdAt = now
         updatedAt = now
     }
@@ -249,6 +259,15 @@ extension CacheTransaction {
         return attachments
     }
 
+    /// Notes that an upload of the draft is about to go out, or with
+    /// `sending`, a send. Called before the request, since its answer can be lost.
+    public func markUploadStarted(localDraftID: String, sending: Bool = false) throws {
+        guard var draft = try localDraft(id: localDraftID) else { return }
+        draft.hasUnrecordedUpload = true
+        draft.sendRequested = draft.sendRequested || sending
+        try draft.update(db)
+    }
+
     private func raiseRevision(of draft: inout LocalDraft, now: Date) throws {
         draft.revision += 1
         draft.updatedAt = now
@@ -330,6 +349,7 @@ extension CacheTransaction {
             row.savedMessageID = draft.messageID
             row.threadID = draft.threadID
             row.savedRevision = max(row.savedRevision, revision)
+            row.hasUnrecordedUpload = false
             try row.update(db)
         }
         var threads = try deleteMessages(ids: replaced, accountID: draft.accountID)
@@ -410,6 +430,9 @@ extension CacheTransaction {
         let threads = try threadIDs(of: draft)
         draft.state = .editing
         draft.sendError = sendError
+        // The send didn't happen, so a later one that finds the draft gone
+        // doesn't count as sent.
+        draft.sendRequested = false
         if forgettingGmailDraft {
             if let id = draft.gmailDraftID { try deleteDraft(id: id, accountID: draft.accountID) }
             draft.gmailDraftID = nil
