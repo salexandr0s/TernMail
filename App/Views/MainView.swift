@@ -66,7 +66,16 @@ struct MainView: View {
                 Task { await app.signOut() }
             }
         } message: {
-            Text("Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet.")
+            Text(signOutMessage)
+        }
+    }
+
+    private var signOutMessage: String {
+        let deletes = "Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet"
+        switch mailbox.outbox.count {
+        case 0: return deletes + "."
+        case 1: return deletes + ", including 1 message in the Outbox."
+        case let count: return deletes + ", including \(count) messages in the Outbox."
         }
     }
 

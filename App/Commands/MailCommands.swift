@@ -5,8 +5,12 @@ import SwiftUI
 struct MailCommands: Commands {
     let app: AppModel
     // Tern has one mailbox window. Its commands remain available when focus
-    // moves between a list, WebKit and the menu bar.
-    var mailbox: MailboxModel? { app.mailbox }
+    // moves between a list, WebKit and the menu bar. While the session has
+    // expired the window shows sign-in, so they are off.
+    var mailbox: MailboxModel? {
+        guard case .signedIn = app.phase else { return nil }
+        return app.mailbox
+    }
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.composeModel) private var compose
 
