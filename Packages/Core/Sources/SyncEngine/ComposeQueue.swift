@@ -160,8 +160,7 @@ extension SyncEngine {
     private func attach(
         name: String, mimeType: String, to localDraftID: String, copy: (URL) throws -> Void
     ) async throws -> OutgoingAttachment? {
-        let ext = (name as NSString).pathExtension
-        let path = "\(localDraftID)/\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
+        let path = Self.outgoingPath(for: localDraftID, filename: name)
         let url = outgoingDirectory.appending(path: path)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try copy(url)
@@ -181,6 +180,13 @@ extension SyncEngine {
             try? FileManager.default.removeItem(at: url)
             throw error
         }
+    }
+
+    /// A new file's path under `outgoingDirectory`: one folder per draft,
+    /// and a unique name that keeps the file's extension.
+    static func outgoingPath(for localDraftID: String, filename: String) -> String {
+        let ext = (filename as NSString).pathExtension
+        return "\(localDraftID)/\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
     }
 
     /// The size of `bytes` once base64 encoded in lines of 76 characters.

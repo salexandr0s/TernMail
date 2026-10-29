@@ -247,8 +247,7 @@ extension SyncEngine {
                 } else {
                     throw GmailError.decoding("Attachment data")
                 }
-                let ext = (part.filename as NSString).pathExtension
-                let path = "\(localDraftID)/\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
+                let path = Self.outgoingPath(for: localDraftID, filename: part.filename)
                 let url = outgoingDirectory.appending(path: path)
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: url)
