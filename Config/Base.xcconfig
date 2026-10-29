@@ -1,0 +1,13 @@
+// Shared build settings for all configurations.
+// Local values (OAuth client, signing team) go in Secrets.xcconfig, which is git-ignored.
+
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// The OAuth client ID is <prefix>.apps.googleusercontent.com and its redirect
+// scheme is the reversed ID. Only the prefix is set locally.
+GOOGLE_CLIENT_ID_PREFIX =
+GOOGLE_CLIENT_ID = $(GOOGLE_CLIENT_ID_PREFIX).apps.googleusercontent.com
+GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.$(GOOGLE_CLIENT_ID_PREFIX)
+
+#include? "Secrets.xcconfig"
