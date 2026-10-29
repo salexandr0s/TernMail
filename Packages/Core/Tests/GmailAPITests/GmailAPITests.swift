@@ -3,6 +3,14 @@ import Testing
 @testable import GmailAPI
 
 @Suite struct GmailClientTests {
+    @Test func externalMessagePartUsesTheMessageScopedEndpointAndDecodesData() async throws {
+        let transport = StubTransport([.init(status: 200, body: #"{"data":"Y2Fmw6k","size":5}"#)])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let data = try await client.attachment(messageID: "m1", attachmentID: "part1")
+        #expect(String(data: data, encoding: .utf8) == "café")
+        #expect(await transport.requests.first?.url?.path == "/gmail/v1/users/me/messages/m1/attachments/part1")
+    }
+
     @Test func unauthorizedBatchPartsRefreshOnceWithoutResendingSuccesses() async throws {
         let transport = StubTransport([
             batchResponse([(0, 200, #"{"id":"a","threadId":"t1"}"#), (1, 401, "{}")]),

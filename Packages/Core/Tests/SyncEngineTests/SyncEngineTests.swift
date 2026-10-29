@@ -171,6 +171,25 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func textStoredAsAnAttachmentLoadsWithoutDownloadingAttachedFiles() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        await gmail.setThread(try decode(GmailThread.self, #"""
+            {"id":"t1","messages":[{"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
+            "payload":{"mimeType":"multipart/mixed","parts":[
+              {"mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=ISO-8859-1"}],"body":{"attachmentId":"body"}},
+              {"mimeType":"text/plain","filename":"notes.txt","body":{"attachmentId":"file"}}
+            ]}}]}
+            """#))
+        await gmail.setAttachment("body", data: try #require("Café".data(using: .isoLatin1)))
+        try await engine.openThread("t1")
+        for try await detail in cache.thread(accountID: account, threadID: "t1") {
+            #expect(detail?.messages.first?.body?.plainText == "Café")
+            break
+        }
+        #expect(await gmail.attachmentRequests == ["body"])
+    }
+
     @Test func emptyHistoryRefreshesLabelsAndFailedDetailsPreserveTheCache() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [], cursor: 100)
@@ -406,6 +425,8 @@ actor FakeGmail: GmailService {
     private var historyExpired = false
     private let profileHistoryID = "200"
     private var threadsByID: [String: GmailThread] = [:]
+    private var attachments: [String: Data] = [:]
+    private(set) var attachmentRequests: [String] = []
     private var nextChangeError: GmailError?
     private var changeErrors: [String: GmailError] = [:]
     private var holdsNextChange = false
@@ -427,6 +448,12 @@ actor FakeGmail: GmailService {
     func failLabelDetails(with error: GmailError) { labelError = error }
     func expireHistory() { historyExpired = true }
     func setThread(_ thread: GmailThread) { threadsByID[thread.id] = thread }
+    func setAttachment(_ id: String, data: Data) { attachments[id] = data }
+    func attachment(messageID: String, attachmentID: String) throws -> Data {
+        attachmentRequests.append(attachmentID)
+        guard let data = attachments[attachmentID] else { throw GmailError.notFound }
+        return data
+    }
 
     /// The next change is recorded, as if Gmail applied it, then fails with `error`.
     func failNextChange(with error: GmailError) { nextChangeError = error }

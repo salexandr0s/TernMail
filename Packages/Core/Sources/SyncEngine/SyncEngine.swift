@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MessageContent
 import os
 
 public enum SyncEvent: Sendable, Equatable {
@@ -372,9 +373,15 @@ public actor SyncEngine {
         var bodies: [MessageBodyRecord] = []
         guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
         for message in messages {
+            guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
             let update = try Mapping.message(message, accountID: accountID)
             updates.append(update)
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt))
+            var attachments: [String: Data] = [:]
+            for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
+                if isStopped || Task.isCancelled { throw CancellationError() }
+                attachments[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+            }
+            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: attachments))
         }
         try await write { [updates, bodies] tx in
             // Decide inside the same serialized write as ingestion, so a delete

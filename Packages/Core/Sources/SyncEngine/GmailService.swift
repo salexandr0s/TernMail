@@ -22,6 +22,7 @@ public protocol GmailService: Sendable {
         metadataHeaders: [String]
     ) async throws -> [String: Result<GmailMessage, GmailError>]
     func thread(id: String, format: MessageFormat) async throws -> GmailThread
+    func attachment(messageID: String, attachmentID: String) async throws -> Data
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
     func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError]
     func trashThreads(ids: [String]) async throws -> [String: GmailError]
@@ -65,8 +66,8 @@ enum Mapping {
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }
 
-    static func body(_ message: GmailMessage, accountID: String, fetchedAt: Date) -> MessageBodyRecord {
-        let body = MIMEParts.body(of: message)
+    static func body(_ message: GmailMessage, accountID: String, fetchedAt: Date, attachments: [String: Data] = [:]) -> MessageBodyRecord {
+        let body = MIMEParts.body(of: message, attachments: attachments)
         return MessageBodyRecord(
             accountID: accountID,
             messageID: message.id,

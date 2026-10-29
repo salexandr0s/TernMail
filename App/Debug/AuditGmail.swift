@@ -62,6 +62,8 @@ actor AuditGmail: GmailService {
         return try decode(["id": id, "messages": messages.map(messageJSON)])
     }
 
+    func attachment(messageID: String, attachmentID: String) throws -> Data { throw GmailError.notFound }
+
     func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
         let changed = mail.filter { $0.history > (Int(startHistoryID) ?? 0) }
         let allLabels: Set<String> = ["INBOX", "UNREAD", "STARRED", "SENT", "SPAM", "TRASH", "Label_1"]

@@ -94,6 +94,13 @@ public struct GmailClient: Sendable {
         try decode(await send(.get("threads/\(id)", [URLQueryItem(name: "format", value: format.rawValue)])))
     }
 
+    /// Gmail may store a readable text part outside the full message payload.
+    public func attachment(messageID: String, attachmentID: String) async throws -> Data {
+        let body: MessagePart.Body = try decode(await send(.get("messages/\(messageID)/attachments/\(attachmentID)")))
+        guard let data = body.decodedData else { throw GmailError.decoding("Message part data") }
+        return data
+    }
+
     /// One page of `history.list`. Gmail answers 404 when `startHistoryID` is too old.
     public func history(startHistoryID: String, pageToken: String? = nil) async throws -> HistoryPage {
         var items = [

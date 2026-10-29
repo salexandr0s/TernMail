@@ -19,13 +19,27 @@ public struct ExtractedBody: Sendable, Equatable {
 /// Gmail undoes the transfer encoding but leaves the bytes in the part's
 /// declared charset, so each part is decoded here.
 public enum MIMEParts {
-    public static func body(of message: GmailMessage) -> ExtractedBody {
+    public static func body(of message: GmailMessage, attachments: [String: Data] = [:]) -> ExtractedBody {
         guard let payload = message.payload else { return ExtractedBody() }
-        let found = collect(payload)
+        let found = collect(payload, attachments: attachments)
         return ExtractedBody(
             html: found.html.isEmpty ? nil : found.html.joined(separator: "\n"),
             plainText: found.plain.isEmpty ? nil : found.plain.joined(separator: "\n")
         )
+    }
+
+    /// Only readable body parts are requested. Attached documents stay excluded.
+    public static func requiredAttachmentIDs(of message: GmailMessage) -> Set<String> {
+        func collect(_ part: MessagePart) -> Set<String> {
+            guard !isAttachment(part) else { return [] }
+            if (part.mimeType ?? "").lowercased().hasPrefix("multipart/") {
+                return (part.parts ?? []).reduce(into: Set<String>()) { $0.formUnion(collect($1)) }
+            }
+            guard ["text/plain", "text/html"].contains((part.mimeType ?? "").lowercased()),
+                  part.body?.decodedData == nil, let id = part.body?.attachmentId else { return [] }
+            return [id]
+        }
+        return message.payload.map(collect) ?? []
     }
 
     private struct Found {
@@ -33,12 +47,12 @@ public enum MIMEParts {
         var plain: [String] = []
     }
 
-    private static func collect(_ part: MessagePart) -> Found {
+    private static func collect(_ part: MessagePart, attachments: [String: Data]) -> Found {
         guard !isAttachment(part) else { return Found() }
         let mimeType = (part.mimeType ?? "").lowercased()
 
         if mimeType.hasPrefix("multipart/") {
-            let children = (part.parts ?? []).map(collect)
+            let children = (part.parts ?? []).map { collect($0, attachments: attachments) }
             if mimeType == "multipart/alternative" {
                 // Alternatives are ordered plainest first; keep the richest of each kind.
                 var found = Found()
@@ -52,7 +66,7 @@ public enum MIMEParts {
             }
         }
 
-        guard let data = part.body?.decodedData else { return Found() }
+        guard let data = part.body?.decodedData ?? part.body?.attachmentId.flatMap({ attachments[$0] }) else { return Found() }
         let charset = part.header("Content-Type").flatMap { parameter("charset", in: $0) }
         switch mimeType {
         case "text/html": return Found(html: [decode(data, charset: charset)])
