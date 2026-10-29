@@ -31,7 +31,7 @@ struct RecipientField: NSViewRepresentable {
         let field = NSTokenField()
         field.isBordered = false
         field.drawsBackground = false
-        field.focusRingType = .none
+        field.focusRingType = .exterior
         field.font = NSFont.preferredFont(forTextStyle: .body)
         field.tokenizingCharacterSet = CharacterSet(charactersIn: ",;")
         field.completionDelay = 0.1

@@ -12,13 +12,21 @@ struct ThreadView: View {
     @State private var initializedExpansion = false
     @State private var blocker: WKContentRuleList?
     @State private var blockerReady = false
+    @State private var hasLoaded = false
+    @State private var loadFailed = false
+    @State private var loadAttempt = 0
     @Environment(\.openWindow) private var openWindow
+
+    private struct LoadIdentity: Equatable {
+        let key: ThreadKey
+        let attempt: Int
+    }
 
     var body: some View {
         Group {
             if let detail, blockerReady {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                         ThreadHeading(detail: detail, key: key, mailbox: mailbox)
                         ForEach(detail.messages) { message in
                             MessageView(
@@ -36,24 +44,44 @@ struct ThreadView: View {
                                     expanded.insert(message.id)
                                 }
                             }
-                            if message.id != detail.messages.last?.id {
-                                Divider()
-                            }
                         }
                     }
-                    .padding(Tokens.Space.s6)
+                    .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
+                    .padding(Tokens.Space.s2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            } else if loadFailed {
+                VStack(spacing: Tokens.Space.s4) {
+                    TernEmptyState(
+                        title: "Couldn't open this conversation",
+                        systemImage: "exclamationmark.bubble",
+                        message: "Tern couldn't read this conversation. Try opening it again.",
+                        fillsSpace: false
+                    )
+                    Button("Try Again") { loadAttempt += 1 }
+                        .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if hasLoaded, detail == nil {
+                TernEmptyState(
+                    title: "Conversation unavailable",
+                    systemImage: "envelope.badge",
+                    message: "This conversation is no longer available in this mailbox. Select another message to continue."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView()
+                ProgressView("Opening conversation…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background(Tokens.Surface.canvas)
         .task {
             blocker = await RemoteContentBlocker.ruleList()
             blockerReady = true
         }
-        .task(id: key) {
+        .task(id: LoadIdentity(key: key, attempt: loadAttempt)) {
+            loadFailed = false
+            hasLoaded = false
             var loading: Task<Void, Never>?
             defer { loading?.cancel() }
             do {
@@ -65,13 +93,16 @@ struct ThreadView: View {
                         initializedExpansion = true
                     }
                     self.detail = detail
+                    hasLoaded = true
                     // Capture initial unread expansion before opening marks read.
                     if loading == nil, detail != nil {
                         loading = Task { await mailbox.open(key) }
                     }
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 self.detail = nil
+                loadFailed = true
             }
         }
     }
@@ -100,16 +131,17 @@ private struct ThreadHeading: View {
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(chips, id: \.id) { label in
                 if label.id == SystemLabel.inbox {
-                    LabelChip(name: "Inbox", colors: nil, removeHelp: "Archive") {
+                    LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive") {
                         mailbox.perform(.archive, on: [key])
                     }
                 } else {
-                    LabelChip(name: label.name, colors: colors(of: label), removeHelp: "Remove Label") {
+                    LabelChip(name: label.name, tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label") {
                         mailbox.removeLabel(label.id, from: key)
                     }
                 }
             }
         }
+        .padding(.bottom, Tokens.Space.s0_5)
     }
 
     /// The Inbox, then user labels by name.
@@ -123,54 +155,46 @@ private struct ThreadHeading: View {
         return inbox + user
     }
 
-    private func colors(of label: LabelRecord) -> LabelChip.Colors? {
-        guard let background = Color(gmailHex: label.backgroundColor) else { return nil }
-        return LabelChip.Colors(background: background, text: Color(gmailHex: label.textColor) ?? .primary)
-    }
 }
 
 private struct LabelChip: View {
-    struct Colors {
-        let background: Color
-        let text: Color
-    }
-
     let name: String
-    /// Gmail's label colors. Without them the chip is outlined.
-    let colors: Colors?
+    var symbol = "tag.fill"
+    let tint: Color
     let removeHelp: String
     let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: Tokens.Space.s1) {
+            Image(systemName: symbol)
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
             Text(name)
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .help(name)
             Button(action: onRemove) {
                 Image(systemName: "xmark")
                     .font(.caption2.weight(.semibold))
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .help(removeHelp)
             .accessibilityLabel("\(removeHelp): \(name)")
         }
-        .font(.callout)
-        .foregroundStyle(colors?.text ?? .primary)
-        .padding(.horizontal, Tokens.Space.s1_5)
-        .padding(.vertical, Tokens.Space.s0_5)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-            if let colors {
-                shape.fill(colors.background)
-            } else {
-                shape.strokeBorder(.secondary)
-            }
-        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.primary)
+        .padding(.leading, Tokens.Space.s2)
+        .padding(.trailing, Tokens.Space.s0_5)
+        .background(Tokens.Surface.primary, in: Capsule())
+        .overlay(Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline))
     }
 }
 
-/// Places views left to right and starts a new row when the next one
-/// doesn't fit. Each row's views are centered vertically.
-private struct FlowLayout: Layout {
+/// Wraps labels and attachment cards at the available width. Each item can
+/// shrink to one row's width, including when it is narrower than a normal card.
+struct FlowLayout: Layout {
     var spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -232,82 +256,110 @@ private struct MessageView: View {
     @State private var height: CGFloat = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             header
 
             if isExpanded {
+                Divider()
                 content
                 if !message.attachments.isEmpty {
                     ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox)
                 }
             }
         }
+        .padding(Tokens.Space.s1_5)
+        .ternSurface()
+        .ternAnimation(value: isExpanded)
         .task(id: message.body?.fetchedAt) {
             await render()
         }
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            Button(action: onToggle) {
-                HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                    SenderAvatar(name: senderName, address: senderAddress)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                        Text(senderName)
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                        if isExpanded {
-                            recipients("To:", message.record.recipients)
-                            if let cc = message.record.cc, !cc.isEmpty {
-                                recipients("Cc:", cc)
-                            }
-                        } else {
-                            Text(message.record.snippet)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: Tokens.Space.s2)
-                }
-                .contentShape(Rectangle())
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+                senderHeader
+                    .frame(minWidth: Tokens.Space.s16 * 2)
+                messageMetadata
             }
-            .buttonStyle(.plain)
-            .help(message.record.sender)
-            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-            .accessibilityHint(isExpanded ? "Collapses this message" : "Expands this message")
-
-            VStack(alignment: .trailing, spacing: Tokens.Space.s1_5) {
-                Text(Self.dateFormatter.string(from: message.record.date))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if isExpanded {
-                    actions
-                } else if message.isStarred {
-                    Image(systemName: "star.fill")
-                        .imageScale(.small)
-                        .foregroundStyle(.yellow)
-                        .accessibilityLabel("Starred")
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                senderHeader
+                HStack {
+                    Spacer(minLength: 0)
+                    messageMetadata
                 }
             }
-            .fixedSize()
         }
+    }
+
+    private var senderHeader: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+                TernAvatar(name: senderName)
+                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                    Text(senderName)
+                        .font(.body.weight(.semibold))
+                        .lineLimit(1)
+                    if isExpanded {
+                        recipients("To:", message.record.recipients)
+                        if let cc = message.record.cc, !cc.isEmpty {
+                            recipients("Cc:", cc)
+                        }
+                    } else {
+                        Text(message.record.snippet)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .padding(.top, Tokens.Space.s1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(message.record.sender)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(isExpanded ? "Collapses this message" : "Expands this message")
+    }
+
+    private var messageMetadata: some View {
+        VStack(alignment: .trailing, spacing: Tokens.Space.s1_5) {
+            Text(ThreadDate.short(message.record.date))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help(Self.dateFormatter.string(from: message.record.date))
+            if isExpanded {
+                actions
+            } else if message.isStarred {
+                Image(systemName: "star.fill")
+                    .imageScale(.small)
+                    .foregroundStyle(.yellow)
+                    .accessibilityLabel("Starred")
+            }
+        }
+        .fixedSize()
     }
 
     private func recipients(_ title: String, _ header: String) -> some View {
         let names = EmailAddress.parseList(header).map { $0.name ?? $0.address }
         let list = names.isEmpty ? header : names.formatted(.list(type: .and, width: .narrow))
         return Text("\(title) \(Text(list).foregroundStyle(.secondary))")
-            .font(.callout)
+            .font(.caption)
             .lineLimit(2)
+            .help(header)
     }
 
     /// Star, the likelier reply, and the other replies in a menu.
     @ViewBuilder
     private var actions: some View {
         let accountID = message.record.accountID
-        HStack(spacing: Tokens.Space.s2) {
+        HStack(spacing: Tokens.Space.s1) {
             if message.labels.contains(SystemLabel.draft) {
                 Button("Edit Draft", systemImage: "pencil") {
                     compose(.editDraft(messageID: message.id, accountID: accountID))
@@ -317,6 +369,7 @@ private struct MessageView: View {
                 Button(action: onToggleStar) {
                     Label(isThreadStarred ? "Remove Star" : "Star", systemImage: isThreadStarred ? "star.fill" : "star")
                         .foregroundStyle(isThreadStarred ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 }
                 .help(isThreadStarred ? "Remove Star" : "Star")
 
@@ -324,6 +377,7 @@ private struct MessageView: View {
                 Button(kind == .replyAll ? "Reply All" : "Reply", systemImage: Self.symbol(kind)) {
                     compose(.reply(kind, messageID: message.id, accountID: accountID))
                 }
+                .frame(minWidth: Tokens.Control.iconButton, minHeight: Tokens.Control.iconButton)
                 .help(kind == .replyAll ? "Reply All" : "Reply")
 
                 Menu {
@@ -338,11 +392,13 @@ private struct MessageView: View {
                     }
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")
+                .accessibilityLabel("More message actions")
             }
         }
         .labelStyle(.iconOnly)
@@ -386,6 +442,9 @@ private struct MessageView: View {
                 Label("Remote content blocked to protect your privacy", systemImage: "eye.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(Tokens.Space.s2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
             MessageWebView(html: rendered.html, blocker: blocker, height: $height)
                 .frame(height: max(height, Tokens.Space.s8))
@@ -423,35 +482,5 @@ private struct MessageView: View {
         }.value
         rendered = result
         hasNoText = result == nil
-    }
-}
-
-/// The sender's initials on a color chosen from their address, so a
-/// sender keeps one color across conversations.
-private struct SenderAvatar: View {
-    let name: String
-    let address: String
-
-    var body: some View {
-        Text(initials)
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
-            .background(Circle().fill(color.gradient))
-            .accessibilityHidden(true)
-    }
-
-    private var initials: String {
-        let words = name.split(separator: " ").filter { $0.first?.isLetter == true }
-        let picked = words.count > 1 ? [words[0], words[words.count - 1]] : words
-        let letters = picked.compactMap(\.first)
-        return letters.isEmpty ? "?" : String(letters).uppercased()
-    }
-
-    private var color: Color {
-        let palette = AccountAppearance.palette
-        // A fixed sum rather than `hashValue`, which changes on every launch.
-        let sum = address.lowercased().unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
-        return palette[sum % palette.count]
     }
 }

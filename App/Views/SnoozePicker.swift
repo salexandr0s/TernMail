@@ -76,18 +76,46 @@ struct SnoozeDateSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            Text("Snooze Until")
-                .font(.headline)
-            DatePicker("Date", selection: $wakeAt, in: now..., displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-            DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
-            if isInPast {
-                Label("Choose a time later than now.", systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.red)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "moon.zzz")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: Tokens.Control.avatarLarge, height: Tokens.Control.avatarLarge)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text("Snooze Until")
+                        .font(.title3.weight(.semibold))
+                    Text("Return this conversation to your inbox later.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .padding(Tokens.Space.s6)
+
+            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                DatePicker("Date", selection: $wakeAt, in: now..., displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                Divider()
+                DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
+                    .accessibilityHint(isInPast ? "Choose a time later than now." : "Time to return to the Inbox")
+                if isInPast {
+                    Label("Choose a time later than now.", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(Tokens.Space.s4)
+            .ternSurface()
+            .padding(.horizontal, Tokens.Space.s6)
+            .padding(.bottom, Tokens.Space.s6)
+
+            Divider()
             HStack(spacing: Tokens.Space.s3) {
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
@@ -102,9 +130,12 @@ struct SnoozeDateSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(Tokens.Space.s5)
+            .background(Tokens.Surface.muted)
         }
-        .padding(Tokens.Space.s6)
-        .fixedSize()
+        .frame(width: Tokens.Sheet.smallWidth)
+        .fixedSize(horizontal: false, vertical: true)
         .onChange(of: wakeAt) { isInPast = false }
+        .ternAnimation(value: isInPast)
     }
 }

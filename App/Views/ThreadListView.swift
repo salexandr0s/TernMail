@@ -9,13 +9,14 @@ struct ThreadListView: View {
         content
             .safeAreaInset(edge: .top, spacing: 0) {
                 if mailbox.showsSnoozed {
-                    Text("Snoozes stay on this Mac and don't show in Gmail or on other devices.")
-                        .font(.callout)
+                    Label("Snoozed on this Mac", systemImage: "desktopcomputer")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Tokens.Space.s3)
                         .padding(.vertical, Tokens.Space.s2)
                         .background(.bar)
+                        .help("Snoozes stay on this Mac and don't show in Gmail or on other devices.")
                 }
             }
             .navigationTitle(mailbox.selectedLabelTitle)
@@ -48,23 +49,20 @@ struct ThreadListView: View {
                 }
             }
         } else if mailbox.selectedHaveSyncedOnce {
-            ContentUnavailableView {
-                Label("No Conversations", systemImage: "tray")
-            } description: {
-                Text(emptyDescription)
-            } actions: {
+            VStack(spacing: Tokens.Space.s4) {
+                TernEmptyState(title: "No conversations", systemImage: "tray", message: emptyDescription, fillsSpace: false)
                 if mailbox.offersOlderConversations {
                     GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if case .failed(let message) = mailbox.selectedSyncStatus {
-            ContentUnavailableView {
-                Label("Can't Download Your Mail", systemImage: "wifi.exclamationmark")
-            } description: {
-                Text(message)
-            } actions: {
+            VStack(spacing: Tokens.Space.s4) {
+                TernEmptyState(title: "Can't download your mail", systemImage: "wifi.exclamationmark", message: message, fillsSpace: false)
                 Button("Try Again") { mailbox.syncNow() }
+                    .buttonStyle(.bordered)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ProgressView {
                 Text("Downloading your mail…")
@@ -85,30 +83,32 @@ struct ThreadListView: View {
                 }
             }
         } else if search.readFailed {
-            ContentUnavailableView(
-                "Can't Search",
+            TernEmptyState(
+                title: "Can't search",
                 systemImage: "exclamationmark.magnifyingglass",
-                description: Text("Tern couldn't read its mail cache.")
+                message: "Tern couldn't read the mail saved on this Mac."
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if gmail == .loading {
             ProgressView {
                 Text("Searching Gmail…")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ContentUnavailableView {
-                Label("No Results", systemImage: "magnifyingglass")
-            } description: {
-                if gmail == .finished {
-                    Text("Nothing on this Mac or in Gmail matches your search.")
-                } else {
-                    Text("Nothing on this Mac matches your search.")
-                }
-            } actions: {
+            VStack(spacing: Tokens.Space.s4) {
+                TernEmptyState(
+                    title: "No results",
+                    systemImage: "magnifyingglass",
+                    message: gmail == .finished
+                        ? "Nothing on this Mac or in Gmail matches your search."
+                        : "Nothing on this Mac matches your search.",
+                    fillsSpace: false
+                )
                 if gmail != .finished {
                     GmailRow(kind: .search, state: gmail, action: search.askGmail)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -132,6 +132,7 @@ struct ThreadListView: View {
             }
             footer()
         }
+        .listStyle(.inset)
         .contextMenu(forSelectionType: ThreadKey.self) { ids in
             ThreadMenuItems(mailbox: mailbox, ids: ids)
         }
@@ -158,11 +159,13 @@ private struct GmailRow: View {
     let action: () -> Void
 
     var body: some View {
-        VStack(spacing: Tokens.Space.s1) {
+        VStack(spacing: Tokens.Space.s2) {
             switch state {
             case .ready, .more:
-                Button(buttonTitle, action: action)
-                    .buttonStyle(.link)
+                Button(action: action) {
+                    Label(buttonTitle, systemImage: kind == .search ? "magnifyingglass" : "arrow.down")
+                }
+                .buttonStyle(.bordered)
             case .loading:
                 HStack(spacing: Tokens.Space.s2) {
                     ProgressView()
@@ -175,14 +178,14 @@ private struct GmailRow: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 Button("Try Again", action: action)
-                    .buttonStyle(.link)
+                    .buttonStyle(.bordered)
             case .finished:
                 EmptyView()
             }
         }
         .font(.callout)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(Tokens.Space.s3)
     }
 
     private var buttonTitle: String {
@@ -213,22 +216,30 @@ struct ThreadRow: View {
     var accountName: String?
 
     var body: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s2) {
-            Circle()
-                .fill(.tint)
-                .frame(width: Tokens.Space.s2, height: Tokens.Space.s2)
-                .padding(.top, Tokens.Space.s1_5)
-                .opacity(thread.isUnread ? 1 : 0)
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            TernAvatar(name: thread.participants.isEmpty ? "?" : thread.participants)
+                .overlay(alignment: .bottomTrailing) {
+                    if thread.isUnread {
+                        Circle()
+                            .fill(.tint)
+                            .frame(width: Tokens.Space.s2, height: Tokens.Space.s2)
+                            .overlay(Circle().strokeBorder(Tokens.Surface.primary, lineWidth: Tokens.Border.hairline))
+                    }
+                }
 
-            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                     Text(thread.participants.isEmpty ? "No Sender" : thread.participants)
+                        .font(.body)
                         .fontWeight(thread.isUnread ? .semibold : .regular)
                         .lineLimit(1)
+                        .help(thread.participants)
                     if thread.messageCount > 1 {
                         Text("\(thread.messageCount)")
-                            .font(.caption)
+                            .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .padding(.horizontal, Tokens.Space.s1)
+                            .background(.quaternary, in: Capsule())
                     }
                     Spacer(minLength: Tokens.Space.s2)
                     if thread.isStarred {
@@ -241,38 +252,39 @@ struct ThreadRow: View {
                             .imageScale(.small)
                             .foregroundStyle(.tint)
                     }
-                    if let wakeAt {
-                        Label(ThreadDate.wake(wakeAt), systemImage: "clock")
-                            .labelStyle(.titleAndIcon)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(ThreadDate.short(thread.lastDate))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-                    Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
-                        .fontWeight(thread.isUnread ? .medium : .regular)
+                    Text(ThreadDate.short(thread.lastDate))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    if let accountName {
-                        Spacer(minLength: Tokens.Space.s2)
-                        Text(accountName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .layoutPriority(-1)
-                    }
+                        .fixedSize()
                 }
+                Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
+                    .font(.callout)
+                    .fontWeight(thread.isUnread ? .medium : .regular)
+                    .lineLimit(1)
+                    .help(thread.subject)
                 Text(thread.snippet)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                if let wakeAt {
+                    Label("Returns \(ThreadDate.wake(wakeAt))", systemImage: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help("Snoozed until \(ThreadDate.wake(wakeAt))")
+                }
+                if let accountName {
+                    Label(accountName, systemImage: "person.crop.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(accountName)
+                }
             }
         }
-        .padding(.vertical, Tokens.Space.s1)
+        .padding(.vertical, Tokens.Space.s2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
@@ -284,6 +296,7 @@ struct ThreadRow: View {
         if isWoken { parts.append("Back from snooze") }
         parts.append(thread.participants)
         parts.append(thread.subject.isEmpty ? "No Subject" : thread.subject)
+        if thread.messageCount > 1 { parts.append("\(thread.messageCount) messages") }
         if let wakeAt {
             parts.append("Snoozed until \(ThreadDate.wake(wakeAt))")
         } else {

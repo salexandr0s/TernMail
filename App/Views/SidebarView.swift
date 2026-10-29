@@ -56,6 +56,7 @@ struct SidebarView: View {
                 }
             }
         }
+        .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
             SyncStatusView(mailbox: mailbox)
         }
@@ -159,6 +160,7 @@ struct SidebarView: View {
 
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let box: SystemMailbox
     let title: String
     let color: Color
@@ -168,15 +170,19 @@ private struct MailboxRow: View {
     var isExpanded: Binding<Bool>?
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s1) {
+        HStack(spacing: Tokens.Space.s2) {
             if let isExpanded {
                 Button {
-                    withAnimation(.easeOut(duration: Tokens.Motion.fast)) { isExpanded.wrappedValue.toggle() }
+                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast)) {
+                        isExpanded.wrappedValue.toggle()
+                    }
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                        .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
                 .help(isExpanded.wrappedValue ? "Hide Accounts" : "Show Accounts")
@@ -184,11 +190,15 @@ private struct MailboxRow: View {
             }
             Label {
                 Text(title)
+                    .lineLimit(1)
             } icon: {
                 Image(systemName: box.systemImage)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(color)
+                    .frame(width: Tokens.Space.s5)
             }
         }
+        .padding(.vertical, Tokens.Space.s1)
         .badge(count)
     }
 }
@@ -248,6 +258,7 @@ private struct AccountHeader: View {
                     .foregroundStyle(color)
                     .accessibilityHidden(true)
                 Text(email)
+                    .font(.caption.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(email)
@@ -256,6 +267,15 @@ private struct AccountHeader: View {
                         .help(message)
                         .accessibilityLabel(message)
                 }
+                Spacer(minLength: Tokens.Space.s1)
+                Button {
+                    mailbox.showNewLabel(in: owner.account.id)
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("New Label")
+                .accessibilityLabel("New label for \(email)")
             }
             if needsSignIn {
                 Button("Sign In Again") {
@@ -277,7 +297,7 @@ private struct AccountHeader: View {
 
 /// A user label in the sidebar outline. Its tag is filled with Gmail's color
 /// and outlined when the label has none. A label Gmail hasn't created yet is
-/// dimmed and can't be selected.
+/// marked as pending and can't be selected.
 private struct LabelRow: View {
     let mailbox: MailboxModel
     let node: LabelNode
@@ -286,15 +306,24 @@ private struct LabelRow: View {
         let label = node.label
         let isPending = LabelRules.isTemporary(label.id)
         Label {
-            Text(node.title)
-                .help(label.name)
+            HStack(spacing: Tokens.Space.s1) {
+                Text(node.title)
+                    .lineLimit(1)
+                    .help(label.name)
+                if isPending {
+                    Image(systemName: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("Waiting for Gmail")
+                }
+            }
         } icon: {
             let color = Color(gmailHex: label.backgroundColor)
             Image(systemName: color == nil ? "tag" : "tag.fill")
                 .foregroundStyle(color ?? .secondary)
         }
+        .padding(.vertical, Tokens.Space.s1)
         .badge(label.threadsUnread ?? 0)
-        .opacity(isPending ? 0.5 : 1)
         .selectionDisabled(isPending)
         .tag(MailboxID.account(label.accountID, label.id) as MailboxID?)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
@@ -345,7 +374,7 @@ private struct SyncStatusView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             switch mailbox.syncStatus {
             case .syncing:
                 HStack(spacing: Tokens.Space.s2) {
@@ -355,18 +384,20 @@ private struct SyncStatusView: View {
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle")
                     .fixedSize(horizontal: false, vertical: true)
+                    .help(message)
                 Button("Try Again") { mailbox.syncNow() }
                     .buttonStyle(.link)
             case .idle:
                 if let date = mailbox.lastSyncedAt {
                     TimelineView(.periodic(from: .now, by: 30)) { _ in
-                        Text("Updated \(date.formatted(.relative(presentation: .named)))")
+                        Label("Updated \(date.formatted(.relative(presentation: .named)))", systemImage: "checkmark.circle")
+                            .lineLimit(2)
                     }
                 }
             }
             // With several accounts, the section titles name them.
             if !mailbox.hasSeveralAccounts {
-                Text(mailbox.account.email)
+                Label(mailbox.account.email, systemImage: "person.crop.circle")
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(mailbox.account.email)
@@ -376,6 +407,8 @@ private struct SyncStatusView: View {
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Tokens.Space.s3)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 }
 

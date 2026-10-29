@@ -13,7 +13,7 @@ struct TernApp: App {
                 .environment(model)
                 .task { await model.start() }
         }
-        .defaultSize(width: 1200, height: 760)
+        .defaultSize(width: Tokens.Layout.windowWidth, height: Tokens.Layout.windowHeight)
         .commands { MailCommands(app: model) }
 
         // One window per local draft. Opening a draft that has a window brings it forward.
@@ -22,6 +22,7 @@ struct TernApp: App {
                 .environment(model)
         }
         .defaultSize(width: 720, height: 600)
+        .windowResizability(.contentMinSize)
         // File > New Message replaces the New Window item this scene would add.
         .commandsRemoved()
 
@@ -44,6 +45,20 @@ struct TernApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+
+    #if DEBUG
+    /// Appearance checks affect only the synthetic audit app, never system preferences.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("--ui-audit") else { return }
+        let highContrast = arguments.contains("--ui-audit-contrast")
+        if arguments.contains("--ui-audit-light") {
+            NSApp.appearance = NSAppearance(named: highContrast ? .accessibilityHighContrastAqua : .aqua)
+        } else if arguments.contains("--ui-audit-dark") {
+            NSApp.appearance = NSAppearance(named: highContrast ? .accessibilityHighContrastDarkAqua : .darkAqua)
+        }
+    }
+    #endif
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
@@ -98,23 +113,33 @@ struct RootView: View {
     var body: some View {
         switch model.phase {
         case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            openingState
         case .signedOut, .signInRequired:
             SignInView()
         case .signedIn:
             if let mailbox = model.mailbox {
                 MainView(mailbox: mailbox)
             } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                openingState
             }
         case .failed(let message):
-            ContentUnavailableView(
-                "Tern Couldn't Open Its Data",
+            TernEmptyState(
+                title: "Couldn't open your mail",
                 systemImage: "exclamationmark.triangle",
-                description: Text(message)
+                message: message
             )
         }
+    }
+
+    private var openingState: some View {
+        VStack(spacing: Tokens.Space.s4) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Opening your mail…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Tokens.Surface.canvas)
     }
 }

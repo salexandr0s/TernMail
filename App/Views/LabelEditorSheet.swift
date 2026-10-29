@@ -56,10 +56,27 @@ struct LabelEditorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "tag")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: Tokens.Control.avatarLarge, height: Tokens.Control.avatarLarge)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(title).font(.title3.weight(.semibold))
+                    Text("Keep related conversations together.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding([.horizontal, .top], Tokens.Space.s6)
+
             Form {
                 Section {
                     TextField("Name", text: $draft.name)
                         .focused($isNameFocused)
+                        .accessibilityHint(problem ?? "Label name")
                     Picker("Nest under", selection: $draft.parent) {
                         Text("None").tag(String?.none)
                         ForEach(parentChoices, id: \.self) { name in
@@ -72,15 +89,24 @@ struct LabelEditorSheet: View {
                             .foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                } header: {
-                    Text(title).font(.headline)
                 }
-                Section("Color") {
+                Section {
                     LabelColorGrid(selection: $draft.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text("Color")
+                } footer: {
+                    Text("The label name and color also appear in Gmail.")
                 }
             }
             .formStyle(.grouped)
+            .frame(
+                minHeight: Tokens.Popover.maxListHeight,
+                idealHeight: Tokens.Sheet.smallWidth,
+                maxHeight: Tokens.Sheet.smallWidth
+            )
 
+            Divider()
             HStack(spacing: Tokens.Space.s3) {
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
@@ -89,11 +115,13 @@ struct LabelEditorSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(isNameEmpty || problem != nil)
             }
-            .padding([.horizontal, .bottom], Tokens.Space.s5)
+            .padding(Tokens.Space.s5)
+            .background(Tokens.Surface.muted)
         }
         .frame(width: Tokens.Sheet.smallWidth)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { isNameFocused = true }
+        .ternAnimation(value: problem)
     }
 }
 
@@ -106,7 +134,7 @@ struct LabelColorGrid: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             Grid(horizontalSpacing: Tokens.Space.s1, verticalSpacing: Tokens.Space.s1) {
                 ForEach(Self.rows.indices, id: \.self) { row in
                     GridRow {
@@ -144,12 +172,20 @@ struct LabelColorGrid: View {
                             .foregroundStyle(Color(gmailHex: color.textColor) ?? .primary)
                     }
                 }
-                .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .padding(Tokens.Space.s1)
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                            .strokeBorder(.tint, lineWidth: Tokens.Border.focus)
+                    }
+                }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .help(name)
         .accessibilityLabel(name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .ternAnimation(value: isSelected)
     }
 
     /// The first row is grays. In the other rows each column is a hue and each

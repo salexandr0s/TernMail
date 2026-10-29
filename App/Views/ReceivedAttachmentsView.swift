@@ -13,35 +13,39 @@ struct ReceivedAttachmentsView: View {
     @State private var previewURL: URL?
 
     var body: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: AttachmentChip<EmptyView>.width), spacing: Tokens.Space.s2, alignment: .leading)],
-            alignment: .leading,
-            spacing: Tokens.Space.s2
-        ) {
-            ForEach(attachments) { attachment in
-                AttachmentChip(
-                    filename: attachment.filename,
-                    size: attachment.size,
-                    isLoading: loading.contains(attachment.id),
-                    open: { preview(attachment) }
-                ) {
-                    Button {
-                        save(attachment)
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            Label(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments", systemImage: "paperclip")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            FlowLayout(spacing: Tokens.Space.s2) {
+                ForEach(attachments) { attachment in
+                    AttachmentChip(
+                        filename: attachment.filename,
+                        size: attachment.size,
+                        isLoading: loading.contains(attachment.id),
+                        open: { preview(attachment) }
+                    ) {
+                        Button {
+                            save(attachment)
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                                .foregroundStyle(.secondary)
+                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(loading.contains(attachment.id))
+                        .help("Save \(attachment.filename)")
+                        .accessibilityLabel("Save \(attachment.filename)")
                     }
-                    .buttonStyle(.borderless)
-                    .help("Save \(attachment.filename)")
-                    .accessibilityLabel("Save \(attachment.filename)")
-                }
-                .accessibilityHint("Opens in Quick Look")
-                .contextMenu {
-                    Button("Quick Look") { preview(attachment) }
-                    Button("Save…") { save(attachment) }
+                    .contextMenu {
+                        Button("Quick Look") { preview(attachment) }
+                        Button("Save…") { save(attachment) }
+                    }
                 }
             }
         }
+        .padding(.top, Tokens.Space.s1)
         .quickLookPreview($previewURL)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")

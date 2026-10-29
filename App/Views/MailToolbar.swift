@@ -7,6 +7,7 @@ import SwiftUI
 struct MailToolbar: ToolbarContent {
     @Bindable var mailbox: MailboxModel
     let reply: (ReplyKind) -> Void
+    var isCompact = false
 
     var body: some ToolbarContent {
         let ids = mailbox.selectedThreadIDs
@@ -82,23 +83,19 @@ struct MailToolbar: ToolbarContent {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { reply(.reply) } label: {
-                Label("Reply", systemImage: "arrowshape.turn.up.left")
+            if isCompact {
+                Menu {
+                    replyActions
+                } label: {
+                    Label("Reply or Forward", systemImage: "arrowshape.turn.up.left")
+                }
+                .menuIndicator(.visible)
+                .help("Reply or Forward")
+                .accessibilityLabel("Reply or Forward")
+                .disabled(!mailbox.canReply)
+            } else {
+                replyActions
             }
-            .help("Reply")
-            .disabled(!mailbox.canReply)
-
-            Button { reply(.replyAll) } label: {
-                Label("Reply All", systemImage: "arrowshape.turn.up.left.2")
-            }
-            .help("Reply All")
-            .disabled(!mailbox.canReply)
-
-            Button { reply(.forward) } label: {
-                Label("Forward", systemImage: "arrowshape.turn.up.right")
-            }
-            .help("Forward")
-            .disabled(!mailbox.canReply)
         }
 
         if #available(macOS 26, *) {
@@ -111,8 +108,34 @@ struct MailToolbar: ToolbarContent {
                 text: mailbox.search.text,
                 focusRequest: mailbox.search.fieldFocusRequest
             )
-            .frame(minWidth: 180, idealWidth: 320, maxWidth: 420)
+            .frame(
+                minWidth: Tokens.Layout.searchMinWidth,
+                idealWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth,
+                maxWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchMaxWidth
+            )
+            .help("Search mail (⌥⌘F). Press Return to search Gmail.")
         }
+    }
+
+    @ViewBuilder
+    private var replyActions: some View {
+        Button { reply(.reply) } label: {
+            Label("Reply", systemImage: "arrowshape.turn.up.left")
+        }
+        .help("Reply")
+        .disabled(!mailbox.canReply)
+
+        Button { reply(.replyAll) } label: {
+            Label("Reply All", systemImage: "arrowshape.turn.up.left.2")
+        }
+        .help("Reply All")
+        .disabled(!mailbox.canReply)
+
+        Button { reply(.forward) } label: {
+            Label("Forward", systemImage: "arrowshape.turn.up.right")
+        }
+        .help("Forward")
+        .disabled(!mailbox.canReply)
     }
 
     private var isEditingLabels: Binding<Bool> {
@@ -134,7 +157,9 @@ private struct SearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
-        field.placeholderString = "Search"
+        field.placeholderString = "Search mail"
+        field.setAccessibilityLabel("Search mail")
+        field.setAccessibilityHelp("Search saved mail as you type. Press Return to search Gmail, or Escape to clear.")
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
         field.delegate = context.coordinator

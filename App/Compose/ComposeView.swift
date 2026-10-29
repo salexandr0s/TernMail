@@ -24,7 +24,7 @@ struct ComposeWindow: View {
                     .id(id)
                     .id(ObjectIdentifier(mailbox))
             } else {
-                ProgressView()
+                ProgressView("Opening message…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -37,10 +37,8 @@ struct ComposeWindow: View {
 
 /// The header fields, message editor and quoted text of one draft.
 struct ComposeView: View {
-    static let minWidth: CGFloat = 480
-    static let minHeight: CGFloat = 360
-    private static let quoteHeight: CGFloat = 180
-    private static let linkFieldWidth: CGFloat = 280
+    static let minWidth = Tokens.Layout.composeMinWidth
+    static let minHeight = Tokens.Layout.composeMinHeight
 
     private enum Field: Hashable {
         case to, cc, bcc, subject
@@ -65,12 +63,13 @@ struct ComposeView: View {
     var body: some View {
         Group {
             if model.phase == .loading {
-                ProgressView()
+                ProgressView("Opening message…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 form
             }
         }
+        .background(Tokens.Surface.primary)
         .navigationTitle(model.title)
         .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
@@ -104,12 +103,16 @@ struct ComposeView: View {
                 Banner(systemImage: "exclamationmark.circle", text: status.text, isError: true)
             }
             header
+                .fixedSize(horizontal: false, vertical: true)
             Divider()
             RichTextEditor(
                 document: $model.content.body,
                 format: $model.format,
                 isEditable: model.isEditable
             ) { model.editor = $0 } onAttach: { model.attach($0) } onFocusChange: { model.isEditingMessage = $0 }
+            // Keep room to write when recipients, files and quoted text are visible.
+            // The native window minimum grows with the other controls' intrinsic sizes.
+            .frame(minHeight: Tokens.Space.s16 * 2)
             if !model.attachments.isEmpty {
                 AttachmentStrip(attachments: model.attachments, isEditable: model.isEditable) {
                     model.removeAttachment($0)
@@ -134,14 +137,13 @@ struct ComposeView: View {
     // MARK: Header
 
     private var header: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s2, verticalSpacing: 0) {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s3, verticalSpacing: 0) {
             if model.showsFrom {
                 GridRow {
                     fieldLabel("From:")
                     fromField
                         .padding(.vertical, Tokens.Space.s2)
                 }
-                Divider()
             }
             GridRow {
                 fieldLabel("To:")
@@ -149,10 +151,12 @@ struct ComposeView: View {
                     recipientField("To", addresses: $model.content.to, field: .to)
                     if !model.showsCc {
                         Button("Cc") { reveal(.cc) }
+                            .font(.caption.weight(.medium))
                             .help("Add Cc recipients")
                     }
                     if !model.showsBcc {
                         Button("Bcc") { reveal(.bcc) }
+                            .font(.caption.weight(.medium))
                             .help("Add Bcc recipients")
                     }
                 }
@@ -160,7 +164,6 @@ struct ComposeView: View {
                 .padding(.vertical, Tokens.Space.s2)
             }
             if model.showsCc {
-                Divider()
                 GridRow {
                     fieldLabel("Cc:")
                     recipientField("Cc", addresses: $model.content.cc, field: .cc)
@@ -168,7 +171,6 @@ struct ComposeView: View {
                 }
             }
             if model.showsBcc {
-                Divider()
                 GridRow {
                     fieldLabel("Bcc:")
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
@@ -180,14 +182,24 @@ struct ComposeView: View {
                 fieldLabel("Subject:")
                 TextField("Subject", text: $model.content.subject)
                     .textFieldStyle(.plain)
+                    .font(.body.weight(.medium))
                     .labelsHidden()
                     .accessibilityLabel("Subject")
                     .focused($focus, equals: .subject)
                     .padding(.vertical, Tokens.Space.s2)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(focus == .subject ? Color.accentColor : .clear)
+                            .frame(height: Tokens.Border.focus)
+                            .allowsHitTesting(false)
+                    }
             }
         }
         .disabled(!model.isEditable)
         .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s1)
+        .background(Tokens.Surface.primary)
+        .ternAnimation(value: focus)
     }
 
     /// A new message can move to another account. A reply or a Gmail draft
@@ -200,10 +212,14 @@ struct ComposeView: View {
                 }
             }
             .labelsHidden()
-            .fixedSize()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .lineLimit(1)
+            .help(model.fromEmail)
             .accessibilityLabel("From")
         } else {
             Text(model.fromEmail)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .help("Replies and drafts from Gmail stay in their own account.")
                 .accessibilityLabel("From \(model.fromEmail)")
         }
@@ -211,6 +227,7 @@ struct ComposeView: View {
 
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
+            .font(.callout.weight(.medium))
             .foregroundStyle(.secondary)
             .gridColumnAlignment(.trailing)
             .accessibilityHidden(true)
@@ -248,11 +265,26 @@ struct ComposeView: View {
         let noun = model.draft?.kind == .forward ? "Forwarded Message" : "Quoted Text"
         return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Divider()
-            Button(showsQuote ? "Hide \(noun)" : "Show \(noun)") {
-                withAnimation(Tokens.Motion.standard()) { showsQuote.toggle() }
+            Button {
+                showsQuote.toggle()
+            } label: {
+                HStack(spacing: Tokens.Space.s2) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(showsQuote ? 90 : 0))
+                    Text(noun)
+                        .font(.callout.weight(.medium))
+                    Spacer()
+                    Image(systemName: "text.quote")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, Tokens.Space.s1)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("It's sent below your message as it is.")
+            .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
+            .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
             .padding(.horizontal, Tokens.Space.s4)
             if showsQuote {
                 ScrollView {
@@ -262,11 +294,13 @@ struct ComposeView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Tokens.Space.s4)
                 }
-                .frame(maxHeight: Self.quoteHeight)
+                .frame(minHeight: Tokens.Space.s16, maxHeight: Tokens.Layout.quoteMaxHeight)
                 .transition(.opacity)
             }
         }
         .padding(.bottom, Tokens.Space.s2)
+        .background(Tokens.Surface.muted)
+        .ternAnimation(value: showsQuote)
     }
 
     // MARK: Toolbar
@@ -277,8 +311,10 @@ struct ComposeView: View {
             Button {
                 Task { await model.send() }
             } label: {
-                Label("Send", systemImage: "paperplane")
+                Label("Send", systemImage: "paperplane.fill")
             }
+            .labelStyle(.titleAndIcon)
+            .buttonStyle(.borderedProminent)
             .help("Send")
             .disabled(!model.isEditable)
         }
@@ -304,7 +340,7 @@ struct ComposeView: View {
             .help(model.format.link ? "Edit Link" : "Add Link")
             .disabled(!model.canFormat)
             .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
-                LinkEditor(hasLink: model.format.link, width: Self.linkFieldWidth) { url in
+                LinkEditor(hasLink: model.format.link, width: Tokens.Layout.linkEditorWidth) { url in
                     model.editor?.setLink(url)
                 }
             }
@@ -380,9 +416,10 @@ private struct Banner: View {
                 Button("OK", action: dismiss)
             }
         }
+        .font(.callout)
         .padding(.horizontal, Tokens.Space.s4)
         .padding(.vertical, Tokens.Space.s2)
-        .background(.fill.tertiary)
+        .background(Tokens.Surface.muted)
         .accessibilityElement(children: .combine)
     }
 }
@@ -393,13 +430,22 @@ private struct LinkEditor: View {
     let width: CGFloat
     let apply: (URL?) -> Void
     @State private var text = ""
+    @FocusState private var isFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            Label(hasLink ? "Edit Link" : "Add Link", systemImage: "link")
+                .font(.headline)
             TextField("Web or email address", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Link address")
                 .frame(width: width)
+                .focused($isFocused)
                 .onSubmit(add)
+            Text("Enter a website or an email address.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: Tokens.Space.s2) {
                 if hasLink {
                     Button("Remove Link") {
@@ -410,12 +456,13 @@ private struct LinkEditor: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Add Link", action: add)
+                Button(hasLink ? "Update Link" : "Add Link", action: add)
                     .keyboardShortcut(.defaultAction)
                     .disabled(ComposeModel.linkURL(from: text) == nil)
             }
         }
         .padding(Tokens.Space.s4)
+        .onAppear { isFocused = true }
     }
 
     private func add() {

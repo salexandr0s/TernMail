@@ -9,35 +9,33 @@ struct NoticeView: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            if notice.isError {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-            }
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            Image(systemName: notice.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.title3)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(notice.isError ? Color.orange : Color.accentColor)
+                .accessibilityHidden(true)
             Text(notice.message)
                 .font(.callout)
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, Tokens.Space.s0_5)
             Spacer(minLength: Tokens.Space.s2)
             if notice.undo != nil {
                 Button("Undo", action: onUndo)
+                    .controlSize(.small)
             }
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .imageScale(.small)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
             }
             .buttonStyle(.borderless)
             .help("Dismiss")
             .accessibilityLabel("Dismiss")
         }
         .padding(Tokens.Space.s4)
-        .frame(width: Tokens.Toast.width)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(.separator)
-        }
+        .frame(maxWidth: Tokens.Toast.width)
+        .ternSurface()
         .shadow(color: Tokens.Shadow.mdColor, radius: Tokens.Shadow.mdRadius, y: Tokens.Shadow.mdY)
         .onHover { isHovering = $0 }
         .task(id: isHovering) {

@@ -8,13 +8,18 @@ struct MainView: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
+    @State private var isCompactWindow = false
     let mailbox: MailboxModel
 
     var body: some View {
         @Bindable var app = app
         NavigationSplitView {
             SidebarView(mailbox: mailbox)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+                .navigationSplitViewColumnWidth(
+                    min: Tokens.Layout.sidebarMinWidth,
+                    ideal: Tokens.Layout.sidebarWidth,
+                    max: Tokens.Layout.sidebarMaxWidth
+                )
         } content: {
             Group {
                 if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
@@ -23,7 +28,7 @@ struct MainView: View {
                     ThreadListView(mailbox: mailbox)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 300, ideal: 380)
+            .navigationSplitViewColumnWidth(min: Tokens.Layout.listMinWidth, ideal: Tokens.Layout.listWidth)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button(action: newMessage) {
@@ -34,7 +39,8 @@ struct MainView: View {
             }
         } detail: {
             DetailView(mailbox: mailbox)
-                .toolbar { MailToolbar(mailbox: mailbox, reply: reply) }
+                .background(Tokens.Surface.canvas)
+                .toolbar { MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow) }
         }
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
@@ -58,12 +64,16 @@ struct MainView: View {
                 }
             }
             .padding(Tokens.Space.s4)
+            .ternAnimation(value: mailbox.notice)
+            .ternAnimation(value: mailbox.sendNotice)
         }
         .background {
             ShortcutMonitor(isEnabled: usesSingleKeys, perform: perform)
         }
-        .animation(Tokens.Motion.standard(), value: mailbox.notice)
-        .animation(Tokens.Motion.standard(), value: mailbox.sendNotice)
+        .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
+        .onGeometryChange(for: Bool.self) { geometry in
+            geometry.size.width < Tokens.Layout.compactToolbarWidth
+        } action: { isCompactWindow = $0 }
         .onAppear { mailbox.undoManager = undoManager }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()
@@ -181,18 +191,26 @@ private struct DetailView: View {
     var body: some View {
         let ids = mailbox.selectedThreadIDs
         if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
-            ContentUnavailableView(
-                "Outbox",
+            TernEmptyState(
+                title: "Outgoing messages",
                 systemImage: "tray.and.arrow.up",
-                description: Text("Messages wait here until Gmail has them. Double-click one to open it.")
+                message: "Messages wait in the Outbox until Gmail receives them. Double-click a message to open it."
             )
         } else if ids.count == 1, let key = ids.first {
             ThreadView(key: key, mailbox: mailbox)
                 .id(key)
         } else if ids.count > 1 {
-            ContentUnavailableView("\(ids.count) Conversations Selected", systemImage: "square.stack")
+            TernEmptyState(
+                title: "\(ids.count) conversations selected",
+                systemImage: "square.stack",
+                message: "Use the toolbar to organize these conversations together."
+            )
         } else {
-            ContentUnavailableView("No Conversation Selected", systemImage: "envelope")
+            TernEmptyState(
+                title: "Select a conversation",
+                systemImage: "envelope.open",
+                message: "Select a conversation to read it, or start a new message with ⌘N."
+            )
         }
     }
 }

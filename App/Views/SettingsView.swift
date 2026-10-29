@@ -4,7 +4,8 @@ import SwiftUI
 /// Tern > Settings.
 struct SettingsView: View {
     /// Both panes share it, so switching tabs doesn't change the window's width.
-    static let width: CGFloat = 460
+    static let width = Tokens.Sheet.smallWidth + Tokens.Space.s16
+    static let height = Tokens.Popover.maxListHeight + Tokens.Space.s16
 
     var body: some View {
         TabView {
@@ -13,6 +14,7 @@ struct SettingsView: View {
             AccountsSettings()
                 .tabItem { Label("Accounts", systemImage: "person.crop.circle") }
         }
+        .frame(width: Self.width, height: Self.height)
     }
 }
 
@@ -22,60 +24,83 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Picker("Undo send delay:", selection: $undoSendDelay) {
-                ForEach(UndoSendDelay.choices, id: \.self) { seconds in
-                    Text("\(seconds) seconds").tag(seconds)
+            Section {
+                Picker("Undo send delay", selection: $undoSendDelay) {
+                    ForEach(UndoSendDelay.choices, id: \.self) { seconds in
+                        Text("\(seconds) seconds").tag(seconds)
+                    }
                 }
+                .pickerStyle(.menu)
+            } header: {
+                Label("Sending", systemImage: "paperplane")
+            } footer: {
+                Text("Tern waits this long before sending, so you can undo.")
             }
-            .pickerStyle(.menu)
-            Text("Tern waits this long before sending, so you can undo.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle("Use single-key shortcuts", isOn: $usesSingleKeys)
-                .padding(.top, Tokens.Space.s3)
-            Text("Press E to archive, J or K for the next or previous conversation, and more. They work in the main window while you aren't typing. Help ▸ Keyboard Shortcuts lists them.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Section {
+                Toggle("Use single-key shortcuts", isOn: $usesSingleKeys)
+            } header: {
+                Label("Keyboard", systemImage: "keyboard")
+            } footer: {
+                Text("Press E to archive or J and K to move between conversations while you aren't typing. See Help ▸ Keyboard Shortcuts for the full list.")
+            }
         }
-        .padding(Tokens.Space.s6)
-        .frame(width: SettingsView.width)
-        .fixedSize(horizontal: false, vertical: true)
+        .formStyle(.grouped)
     }
 }
 
 /// The signed-in accounts, with Add Account, Sign In Again and Sign Out.
 private struct AccountsSettings: View {
-    private static let height: CGFloat = 300
-
     @Environment(AppModel.self) private var app
     /// Its own confirmation, since the main window's shows over that window.
     @State private var accountToSignOut: AccountRecord?
 
     var body: some View {
         Form {
-            if let mailbox = app.mailbox {
+            if let mailbox = app.mailbox, !mailbox.accounts.isEmpty {
                 Section {
                     ForEach(mailbox.accounts, id: \.account.id) { owner in
                         row(owner.account)
                     }
-                } footer: {
-                    HStack {
-                        Spacer()
-                        Button("Add Account…") {
-                            Task { await app.addAccount() }
-                        }
-                        .disabled(app.isSigningIn)
-                    }
+                } header: {
+                    Label("Google accounts", systemImage: "person.2")
                 }
             } else {
-                Text("No accounts. Sign in from the Tern window.")
-                    .foregroundStyle(.secondary)
+                Section {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Label("No accounts connected", systemImage: "person.crop.circle.badge.plus")
+                            .font(.headline)
+                        Text("Add a Google account to read and organize your Gmail.")
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, Tokens.Space.s2)
+                }
+            }
+            Section {
+                HStack(spacing: Tokens.Space.s2) {
+                    if app.isSigningIn {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel("Signing in")
+                    }
+                    Spacer()
+                    Button {
+                        Task { await app.addAccount() }
+                    } label: {
+                        Label("Add Account…", systemImage: "plus")
+                    }
+                    .disabled(app.isSigningIn || !app.auth.isConfigured)
+                }
+                if let error = app.signInError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !app.auth.isConfigured {
+                    Text("Google sign-in isn't available in this version of Tern.")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
-        .frame(width: SettingsView.width, height: Self.height)
         .confirmationDialog(
             "Sign out of \(accountToSignOut?.email ?? "this account")?",
             isPresented: Binding(get: { accountToSignOut != nil }, set: { if !$0 { accountToSignOut = nil } }),
@@ -90,25 +115,38 @@ private struct AccountsSettings: View {
     }
 
     private func row(_ account: AccountRecord) -> some View {
-        LabeledContent {
-            HStack(spacing: Tokens.Space.s2) {
-                if app.accountsNeedingSignIn.contains(account.id) {
-                    Button("Sign In Again") {
-                        Task { await app.signInAgain(to: account.id) }
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            TernAvatar(name: account.displayName ?? account.email)
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(account.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? account.email)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .help(account.displayName ?? account.email)
+                    if let name = account.displayName, !name.isEmpty {
+                        Text(account.email)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(account.email)
                     }
-                    .disabled(app.isSigningIn)
-                    .help("Google ended this account's session. Sign in to keep its mail up to date.")
                 }
-                Button("Sign Out…") { accountToSignOut = account }
-                    .accessibilityLabel("Sign out of \(account.email)")
+                HStack(spacing: Tokens.Space.s2) {
+                    if app.accountsNeedingSignIn.contains(account.id) {
+                        Button("Sign In Again") {
+                            Task { await app.signInAgain(to: account.id) }
+                        }
+                        .disabled(app.isSigningIn)
+                        .help("Google ended this account's session. Sign in to keep its mail up to date.")
+                    }
+                    Button("Sign Out…") { accountToSignOut = account }
+                        .accessibilityLabel("Sign out of \(account.email)")
+                }
+                .controlSize(.small)
             }
-        } label: {
-            Text(account.email)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let name = account.displayName, !name.isEmpty {
-                Text(name)
-            }
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, Tokens.Space.s2)
     }
 }

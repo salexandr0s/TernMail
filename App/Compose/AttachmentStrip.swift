@@ -10,8 +10,16 @@ struct AttachmentStrip: View {
     let remove: (OutgoingAttachment) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Divider()
+            HStack(spacing: Tokens.Space.s2) {
+                Label("Attachments", systemImage: "paperclip")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                TernBadge(text: "\(attachments.count)")
+            }
+            .padding(.horizontal, Tokens.Space.s4)
+            .padding(.top, Tokens.Space.s2)
             ScrollView(.horizontal) {
                 HStack(spacing: Tokens.Space.s2) {
                     ForEach(attachments) { attachment in
@@ -20,8 +28,10 @@ struct AttachmentStrip: View {
                                 Button {
                                     remove(attachment)
                                 } label: {
-                                    Image(systemName: "xmark.circle.fill")
+                                    Image(systemName: "xmark")
+                                        .font(.caption.weight(.semibold))
                                         .foregroundStyle(.secondary)
+                                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                                 }
                                 .buttonStyle(.borderless)
                                 .help("Remove \(attachment.filename)")
@@ -34,7 +44,9 @@ struct AttachmentStrip: View {
                 .padding(.vertical, Tokens.Space.s2)
             }
             .scrollIndicators(.automatic)
+            .fixedSize(horizontal: false, vertical: true)
         }
+        .background(Tokens.Surface.muted)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")
     }
@@ -43,13 +55,14 @@ struct AttachmentStrip: View {
 /// A file's icon, name and size, with a control after them. In a received
 /// message, clicking the icon or name opens the file.
 struct AttachmentChip<Accessory: View>: View {
-    static var width: CGFloat { 220 }
+    static var width: CGFloat { Tokens.Layout.attachmentWidth }
 
     let filename: String
     let size: Int
     let isLoading: Bool
     let open: (() -> Void)?
     let accessory: Accessory
+    @State private var isHovered = false
 
     init(
         filename: String,
@@ -66,23 +79,32 @@ struct AttachmentChip<Accessory: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s1_5) {
+        HStack(spacing: Tokens.Space.s2) {
             if let open {
                 Button(action: open) { label }
                     .buttonStyle(.plain)
+                    .help("Open in Quick Look")
+                    .accessibilityLabel("Open \(filename)")
+                    .accessibilityHint("Opens in Quick Look")
             } else {
                 label
             }
             accessory
         }
-        .padding(.horizontal, Tokens.Space.s2)
-        .padding(.vertical, Tokens.Space.s1_5)
+        .padding(Tokens.Space.s1)
         .frame(maxWidth: Self.width, alignment: .leading)
-        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .ternSurface()
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.lg, style: .continuous)
+                .strokeBorder(isHovered && open != nil ? Color.accentColor : .clear, lineWidth: Tokens.Border.hairline)
+                .allowsHitTesting(false)
+        }
+        .onHover { isHovered = $0 }
+        .ternAnimation(value: isHovered)
     }
 
     private var label: some View {
-        HStack(spacing: Tokens.Space.s1_5) {
+        HStack(spacing: Tokens.Space.s2) {
             Group {
                 if isLoading {
                     ProgressView()
@@ -92,12 +114,16 @@ struct AttachmentChip<Accessory: View>: View {
                         .resizable()
                 }
             }
-            .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
-            VStack(alignment: .leading, spacing: 0) {
+            .frame(width: Tokens.Control.avatar, height: Tokens.Control.avatar)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 Text(filename)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                    .help(filename)
+                Text(isLoading ? "Downloading…" : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

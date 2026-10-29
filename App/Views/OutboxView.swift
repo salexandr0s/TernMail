@@ -11,10 +11,10 @@ struct OutboxView: View {
     var body: some View {
         Group {
             if mailbox.selectedOutbox.isEmpty {
-                ContentUnavailableView(
-                    "Outbox Is Empty",
+                TernEmptyState(
+                    title: "Outbox Is Empty",
                     systemImage: "tray.and.arrow.up",
-                    description: Text("Gmail has every message you sent.")
+                    message: "Messages waiting to send appear here."
                 )
             } else {
                 List(selection: $selection) {
@@ -34,6 +34,7 @@ struct OutboxView: View {
                 }
             }
         }
+        .background(Tokens.Surface.primary)
         .navigationTitle("Outbox")
     }
 
@@ -59,27 +60,31 @@ private struct OutboxRow: View {
     var body: some View {
         let draft = activity.draft
         let status = Self.status(activity)
-        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                 Text(recipients)
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
+                    .help(recipients)
                 Spacer(minLength: Tokens.Space.s2)
                 Text(ThreadDate.short(draft.updatedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Text(draft.subject.isEmpty ? "No Subject" : draft.subject)
+                .font(.callout.weight(.medium))
                 .lineLimit(1)
-            Label {
-                Text(status.text)
-            } icon: {
-                Image(systemName: status.isError ? "exclamationmark.triangle" : "clock")
+                .help(draft.subject)
+            TernBadge(text: status.title, systemImage: status.icon, tint: status.tint)
+            if let detail = status.detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .help(detail)
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
         }
-        .padding(.vertical, Tokens.Space.s1)
+        .padding(.vertical, Tokens.Space.s2)
         .accessibilityElement(children: .combine)
     }
 
@@ -91,10 +96,16 @@ private struct OutboxRow: View {
         return names.isEmpty ? "No Recipients" : names.joined(separator: ", ")
     }
 
-    private static func status(_ activity: DraftActivity) -> (text: String, isError: Bool) {
-        if let error = activity.draft.sendError { return (error, true) }
-        if activity.isWaitingToRetry { return ("Can't reach Gmail. Tern will keep trying.", false) }
-        if activity.rows.contains(where: { $0.kind == .sendDraft && $0.state == .sending }) { return ("Sending…", false) }
-        return ("Waiting to send", false)
+    private static func status(_ activity: DraftActivity) -> (title: String, detail: String?, icon: String, tint: Color) {
+        if let error = activity.draft.sendError {
+            return ("Not Sent", error, "exclamationmark.triangle", .red)
+        }
+        if activity.isWaitingToRetry {
+            return ("Retrying", "Can't reach Gmail. Tern will keep trying.", "arrow.clockwise", .orange)
+        }
+        if activity.rows.contains(where: { $0.kind == .sendDraft && $0.state == .sending }) {
+            return ("Sending…", nil, "paperplane", .accentColor)
+        }
+        return ("Waiting to Send", nil, "clock", .secondary)
     }
 }

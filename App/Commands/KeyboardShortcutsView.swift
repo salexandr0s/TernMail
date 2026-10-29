@@ -3,8 +3,6 @@ import SwiftUI
 /// Help ▸ Keyboard Shortcuts: the menu shortcuts and the single keys.
 struct KeyboardShortcutsView: View {
     static let sceneID = "keyboard-shortcuts"
-    private static let width: CGFloat = 420
-    private static let height: CGFloat = 560
 
     /// Menu items with shortcuts, by their menu titles.
     private static let menuShortcuts: [(title: String, keys: String)] = [
@@ -34,15 +32,15 @@ struct KeyboardShortcutsView: View {
         Form {
             Section("Menu shortcuts") {
                 ForEach(Self.menuShortcuts, id: \.title) { shortcut in
-                    LabeledContent(shortcut.title, value: shortcut.keys)
+                    shortcutRow(shortcut.title, keys: shortcut.keys)
                 }
             }
             Section {
                 ForEach(SingleKeyShortcuts.keys, id: \.title) { key in
-                    LabeledContent(key.title, value: key.label)
+                    shortcutRow(key.title, keys: key.label)
                 }
                 ForEach(SingleKeyShortcuts.destinationKeys, id: \.title) { key in
-                    LabeledContent(key.title, value: "g then \(key.label)")
+                    shortcutRow(key.title, keys: "g then \(key.label)")
                 }
             } header: {
                 Text("Single keys")
@@ -53,6 +51,25 @@ struct KeyboardShortcutsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: Self.width, height: Self.height)
+        .frame(width: Tokens.Layout.shortcutsWidth, height: Tokens.Layout.shortcutsHeight)
+    }
+
+    private func shortcutRow(_ title: String, keys: String) -> some View {
+        LabeledContent {
+            Text(keys)
+                .font(.callout.monospaced().weight(.medium))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s1)
+                .frame(minWidth: Tokens.Space.s16)
+                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                        .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
+                }
+        } label: {
+            Text(title)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

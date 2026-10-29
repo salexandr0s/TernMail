@@ -85,6 +85,12 @@ struct EditLabelsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Label("Edit Labels", systemImage: "tag")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding([.horizontal, .top], Tokens.Space.s3)
             FilteredLabelList(
                 choices: labels,
                 mark: { .check(selection.state(of: $0.id)) },
@@ -95,11 +101,12 @@ struct EditLabelsView: View {
             HStack {
                 Spacer()
                 Button("Apply") { onApply(selection.change) }
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(selection.change.isEmpty)
                     .help("Apply (⌘Return)")
             }
-            .padding(Tokens.Space.s2)
+            .padding(Tokens.Space.s3)
         }
         .frame(width: Tokens.Popover.width)
     }
@@ -111,8 +118,16 @@ struct MoveToView: View {
     let onMove: (String) -> Void
 
     var body: some View {
-        FilteredLabelList(choices: targets, mark: { _ in .none }, onPick: { onMove($0.id) }, onCreate: nil)
-            .frame(width: Tokens.Popover.width)
+        VStack(spacing: 0) {
+            HStack {
+                Label("Move To", systemImage: "folder")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding([.horizontal, .top], Tokens.Space.s3)
+            FilteredLabelList(choices: targets, mark: { _ in .none }, onPick: { onMove($0.id) }, onCreate: nil)
+        }
+        .frame(width: Tokens.Popover.width)
     }
 }
 
@@ -176,11 +191,13 @@ private struct FilteredLabelList: View {
                     move(by: -1, count: items.count)
                     return .handled
                 }
-                .padding(Tokens.Space.s2)
+                .padding(Tokens.Space.s3)
             Divider()
             if items.isEmpty {
-                Text("No labels")
+                Label("No matching labels", systemImage: "magnifyingglass")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Tokens.Space.s4)
             } else {
                 list(items)
@@ -231,7 +248,9 @@ private struct FilteredLabelList: View {
                         .accessibilityHidden(true)
                 }
                 Image(systemName: choice.systemImage)
-                    .foregroundStyle(Color(gmailHex: choice.backgroundColor) ?? .secondary)
+                    .symbolVariant(.fill)
+                    .foregroundStyle(isHighlighted ? textColor : (Color(gmailHex: choice.backgroundColor) ?? .secondary))
+                    .frame(width: Tokens.Control.icon)
                     .accessibilityHidden(true)
                 Text(choice.name)
                     .lineLimit(1)
@@ -243,12 +262,13 @@ private struct FilteredLabelList: View {
                 Text("Create Label “\(name)”")
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help("Create Label “\(name)”")
             }
             Spacer(minLength: 0)
         }
         .foregroundStyle(textColor)
         .padding(.horizontal, Tokens.Space.s3)
-        .padding(.vertical, Tokens.Space.s1_5)
+        .padding(.vertical, Tokens.Space.s2)
         .background {
             if isHighlighted {
                 RoundedRectangle(cornerRadius: Tokens.Radius.sm)
