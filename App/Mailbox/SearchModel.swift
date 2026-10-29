@@ -5,7 +5,7 @@ import MessageContent
 import Observation
 import SyncEngine
 
-/// The search field's query and its results across every account. Local
+/// The search field's query and its results in the accounts it searches. Local
 /// matches update as the user types. Gmail is asked on Return, or a second
 /// after typing stops once the query has three characters, and its
 /// conversations join the list. Search terms are never logged or stored.
@@ -27,7 +27,8 @@ final class SearchModel {
     private(set) var results: [ThreadRecord] = []
     /// Gmail's side of the current query. Nil while the field is empty.
     private(set) var gmail: GmailPager?
-    private(set) var readFailed = false
+    /// Reading the cache failed for an account being searched.
+    var readFailed: Bool { !failedAccountIDs.isEmpty }
     /// Changes when ⌥⌘F or / asks the toolbar field for focus.
     private(set) var fieldFocusRequest = 0
     /// Changes when Escape hands focus back to the list.
@@ -44,6 +45,7 @@ final class SearchModel {
     @ObservationIgnored private var limit = pageSize
     /// Each account's latest results for the current query.
     @ObservationIgnored private var found: [String: [ThreadRecord]] = [:]
+    private var failedAccountIDs: Set<String> = []
     @ObservationIgnored private var resultsTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var delayTask: Task<Void, Never>?
 
@@ -115,12 +117,13 @@ final class SearchModel {
         delayTask?.cancel()
         gmail?.cancel()
         gmail = nil
+        // Results for another query or other accounts no longer count.
+        found = [:]
+        failedAccountIDs = []
         guard isActive else {
             resultsTasks.forEach { $0.cancel() }
             resultsTasks = []
-            found = [:]
             results = []
-            readFailed = false
             onResultsChange?()
             return
         }
@@ -138,9 +141,11 @@ final class SearchModel {
         }
     }
 
+    /// Watches each account's matches. An account keeps its last results
+    /// until new ones arrive, so a Gmail page or a longer list doesn't drop
+    /// another account's conversations, or the selection among them.
     private func observeResults() {
         resultsTasks.forEach { $0.cancel() }
-        found = [:]
         let query = query
         resultsTasks = sources.map { source in
             let accountID = source.accountID
@@ -153,23 +158,30 @@ final class SearchModel {
                     for try await threads in stream {
                         guard let self, !Task.isCancelled, self.query == query else { return }
                         found[accountID] = threads
+                        failedAccountIDs.remove(accountID)
                         publish()
                     }
                 } catch {
-                    guard !Task.isCancelled else { return }
-                    self?.readFailed = true
+                    guard let self, !Task.isCancelled, self.query == query else { return }
+                    found[accountID] = nil
+                    failedAccountIDs.insert(accountID)
+                    publish()
                 }
             }
         }
     }
 
-    /// Merges the accounts' results in the order each account's list uses.
+    /// Merges the accounts' results in the order each account's list uses,
+    /// once every account has answered the query, so the list never shows
+    /// one account's matches alone while another's are on the way.
     private func publish() {
+        guard sources.allSatisfy({ found[$0.accountID] != nil || failedAccountIDs.contains($0.accountID) }) else {
+            return
+        }
         let merged = found.values.joined().sorted { lhs, rhs in
             lhs.lastDate != rhs.lastDate ? lhs.lastDate > rhs.lastDate : lhs.key < rhs.key
         }
         results = Array(merged.prefix(limit))
-        readFailed = false
         onResultsChange?()
     }
 }

@@ -79,18 +79,18 @@ struct ThreadListView: View {
     private var searchResults: some View {
         let search = mailbox.search
         let gmail = search.gmail?.state ?? .ready
-        if search.readFailed {
-            ContentUnavailableView(
-                "Can't Search",
-                systemImage: "exclamationmark.magnifyingglass",
-                description: Text("Tern couldn't read its mail cache.")
-            )
-        } else if !search.results.isEmpty {
+        if !search.results.isEmpty {
             list(search.results, onEnd: search.loadMoreResults) {
                 if gmail != .finished {
                     GmailRow(kind: .search, state: gmail, action: search.askGmail)
                 }
             }
+        } else if search.readFailed {
+            ContentUnavailableView(
+                "Can't Search",
+                systemImage: "exclamationmark.magnifyingglass",
+                description: Text("Tern couldn't read its mail cache.")
+            )
         } else if gmail == .loading {
             ProgressView {
                 Text("Searching Gmail…")
