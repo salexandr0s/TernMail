@@ -174,6 +174,14 @@ public struct CacheTransaction {
         try String.fetchSet(db, sql: "SELECT id FROM message WHERE accountID = ?", arguments: [accountID])
     }
 
+    public func message(id: String, accountID: String) throws -> MessageRecord? {
+        try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": id])
+    }
+
+    public func body(messageID: String, accountID: String) throws -> MessageBodyRecord? {
+        try MessageBodyRecord.fetchOne(db, key: ["accountID": accountID, "messageID": messageID])
+    }
+
     public func messages(threadID: String, accountID: String) throws -> [MessageRecord] {
         try MessageRecord
             .filter(Column("accountID") == accountID && Column("threadID") == threadID)

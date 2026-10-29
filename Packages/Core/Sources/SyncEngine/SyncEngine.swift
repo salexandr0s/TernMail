@@ -196,9 +196,9 @@ public actor SyncEngine {
         }
     }
 
-    /// Lists INBOX and the last 30 days and stores their metadata, then deletes
-    /// cached messages the listings did not return. That covers both an expired
-    /// cursor (`reset`) and a first sync that quit partway through.
+    /// Lists INBOX, the last 30 days and every draft and stores their metadata,
+    /// then deletes cached messages the listings did not return. That covers
+    /// both an expired cursor (`reset`) and a first sync that quit partway through.
     private func fullSync(reset: Bool) async throws {
         let passStart = now()
         let accountID = accountID
@@ -209,7 +209,9 @@ public actor SyncEngine {
 
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
-        let listed = (inbox + recent).removingDuplicates()
+        // Older drafts stay cached, so the Drafts label is complete.
+        let drafts = try await listDrafts()
+        let listed = (inbox + recent + drafts.map(\.messageID)).removingDuplicates()
         // Messages pending actions target stay cached even when unlisted. Refetch
         // them as well: their stored labels may predate changes the lost history held.
         let targeted = try await cache.read { tx in try tx.messageIDsTargetedByPendingActions(accountID: accountID) }
@@ -234,6 +236,7 @@ public actor SyncEngine {
                 let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
                 guard remaining.isEmpty else { return remaining }
                 try tx.replaceLabels(labels, accountID: accountID)
+                try tx.replaceDrafts(drafts, accountID: accountID)
                 deleted.withLock { $0.formUnion(gone) }
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
                 var threads = try tx.upsertMessages(live)
@@ -339,6 +342,29 @@ public actor SyncEngine {
         return limit.map { Array(ids.prefix($0)) } ?? ids
     }
 
+    /// Every Gmail draft, with the message it holds.
+    func listDrafts() async throws -> [DraftRecord] {
+        var drafts: [DraftRecord] = []
+        var pageToken: String?
+        repeat {
+            let page = try await gmail.drafts(query: nil, pageToken: pageToken, maxResults: 500)
+            for draft in page.drafts ?? [] {
+                guard let message = draft.message else { throw GmailError.decoding("Draft message") }
+                drafts.append(DraftRecord(accountID: accountID, id: draft.id, messageID: message.id, threadID: message.threadId))
+            }
+            pageToken = page.nextPageToken
+        } while pageToken != nil
+        return drafts
+    }
+
+    /// Relists Gmail's drafts, so a draft made in another app can be opened.
+    public func refreshDrafts() async throws {
+        if isStopped || Task.isCancelled { throw CancellationError() }
+        let drafts = try await listDrafts()
+        let accountID = accountID
+        try await write { tx in try tx.replaceDrafts(drafts, accountID: accountID) }
+    }
+
     /// Metadata for `ids`, plus the IDs Gmail no longer has. Any other failed
     /// part fails the pass.
     func fetchMetadata(
@@ -407,25 +433,30 @@ public actor SyncEngine {
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
+        var attachments: [String: [AttachmentRecord]] = [:]
         guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
         for message in messages {
             guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
             let update = try Mapping.message(message, accountID: accountID)
             updates.append(update)
-            var attachments: [String: Data] = [:]
+            var textParts: [String: Data] = [:]
             for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
                 if isStopped || Task.isCancelled { throw CancellationError() }
-                attachments[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+                textParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: attachments))
+            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: textParts))
+            attachments[message.id] = Mapping.attachments(message, accountID: accountID)
         }
-        try await write { [updates, bodies] tx in
+        try await write { [updates, bodies, attachments] tx in
             // Decide inside the same serialized write as ingestion, so a delete
             // committed while this request was awaiting cannot be overwritten.
             let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
             let liveIDs = Set(live.map(\.record.id))
             let threads = try tx.upsertMessages(live)
             try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) })
+            for (messageID, records) in attachments where liveIDs.contains(messageID) {
+                try tx.replaceAttachments(records, messageID: messageID, accountID: accountID)
+            }
             try tx.rebuildThreads(threads, accountID: accountID)
         }
     }

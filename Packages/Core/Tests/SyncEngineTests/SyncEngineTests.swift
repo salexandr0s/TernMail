@@ -294,13 +294,15 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
             {"id":"t1","messages":[{"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
             "payload":{"mimeType":"multipart/mixed","parts":[
               {"mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=ISO-8859-1"}],"body":{"attachmentId":"body"}},
-              {"mimeType":"text/plain","filename":"notes.txt","body":{"attachmentId":"file"}}
+              {"partId":"1","mimeType":"text/plain","filename":"notes.txt","body":{"attachmentId":"file","size":5}}
             ]}}]}
             """#))
         await gmail.setAttachment("body", data: try #require("Café".data(using: .isoLatin1)))
         try await engine.openThread("t1")
         for try await detail in cache.thread(accountID: account, threadID: "t1") {
             #expect(detail?.messages.first?.body?.plainText == "Café")
+            // The file is listed for Quick Look and Save, but not downloaded.
+            #expect(detail?.messages.first?.attachments.map(\.filename) == ["notes.txt"])
             break
         }
         #expect(await gmail.attachmentRequests == ["body"])
@@ -335,6 +337,15 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         await gmail.add(try gmailMessage("tail", thread: "tail", labels: [], historyID: 150))
         try await engine.sync()
         #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["tail"])
+    }
+
+    @Test func fullSyncKeepsDraftsOutsideTheListedMail() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.add(try gmailMessage("old-draft", thread: "t9", labels: [SystemLabel.draft], historyID: 150))
+        await gmail.addDraft("D9", messageID: "old-draft", threadID: "t9")
+        try await engine.sync()
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["old-draft"])
+        #expect(try await cache.read { tx in try tx.draft(messageID: "old-draft", accountID: account) }?.id == "D9")
     }
 
     @Test func stopWaitsForDatabaseWritesAlreadyInFlight() async throws {
@@ -841,6 +852,7 @@ actor FakeGmail: GmailService {
     }
     private var draftErrorsAfterApplying = false
 
+    func addDraft(_ id: String, messageID: String, threadID: String) { draftsByID[id] = (messageID, threadID) }
     func deleteDraftElsewhere(_ id: String) { draftsByID[id] = nil }
     func setDraftSearch(_ query: String, ids: [String]) { draftListings[query] = ids }
 

@@ -76,6 +76,22 @@ enum Mapping {
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }
 
+    /// The files a `full`-format message carries, in payload order.
+    static func attachments(_ message: GmailMessage, accountID: String) -> [AttachmentRecord] {
+        MIMEParts.attachments(of: message).map { part in
+            AttachmentRecord(
+                accountID: accountID,
+                messageID: message.id,
+                partID: part.partID,
+                attachmentID: part.attachmentID,
+                filename: part.filename,
+                mimeType: part.mimeType,
+                size: part.size,
+                isInline: part.isInline
+            )
+        }
+    }
+
     static func body(_ message: GmailMessage, accountID: String, fetchedAt: Date, attachments: [String: Data] = [:]) -> MessageBodyRecord {
         let body = MIMEParts.body(of: message, attachments: attachments)
         return MessageBodyRecord(
