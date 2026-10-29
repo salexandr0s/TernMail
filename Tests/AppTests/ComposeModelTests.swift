@@ -136,7 +136,9 @@ import Testing
         // Typed, and not yet stored on this Mac.
         model.content.subject = "Plan"
         model.move(to: "second")
-        try await waitUntil { model.phase != .open }
+        // Nothing can change while the copy is made.
+        #expect(model.phase == .moving && !model.isEditable)
+        try await waitUntil { model.phase != .moving }
         guard case .moved(let movedID) = model.phase else {
             Issue.record("The message didn't move")
             return
