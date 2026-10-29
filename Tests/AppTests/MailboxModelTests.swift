@@ -200,6 +200,38 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func searchKeepsEachAccountsResultsAndCoversTheAccountsInView() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.addAccount(second, gmail: AuditGmail())
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 4 }
+        let otherT3 = ThreadKey(accountID: "second", threadID: "t3")
+
+        // A combined mailbox searches every account.
+        mailbox.search.update("plans")
+        try await waitUntil { mailbox.listedThreads.count == 4 }
+        mailbox.selectedThreadIDs = [otherT3]
+        // Gmail's pages make each account read its results again. Until the
+        // second account answers, its earlier results and the selection stay.
+        mailbox.search.submit()
+        try await waitUntil { mailbox.search.gmail?.state == .finished }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(mailbox.selectedThreadIDs == [otherT3])
+        #expect(mailbox.listedThreads.count == 4)
+
+        // One account's mailbox searches that account alone.
+        mailbox.selectedMailbox = .account("second", SystemLabel.inbox)
+        mailbox.search.update("plans")
+        try await waitUntil { mailbox.listedThreads.count == 2 }
+        #expect(Set(mailbox.listedThreads.map(\.accountID)) == ["second"])
+        #expect(!mailbox.listMixesAccounts)
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
