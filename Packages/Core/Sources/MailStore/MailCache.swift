@@ -287,6 +287,9 @@ public struct CacheTransaction {
             let threads = try threadIDs(of: action)
             if action.state == .queued, action.notBefore <= now, busyThreads.isDisjoint(with: threads) {
                 action.state = .sending
+                // A crash may happen after Gmail applies this attempt but before
+                // its reply is saved. Undo must compensate after recovery.
+                action.attempts += 1
                 try action.update(db)
                 claimed.append(action)
             }
@@ -304,7 +307,7 @@ public struct CacheTransaction {
             arguments: [accountID, PendingAction.State.undone.rawValue]
         )
         try db.execute(
-            sql: "UPDATE pendingAction SET state = ? WHERE accountID = ? AND state = ?",
+            sql: "UPDATE pendingAction SET state = ?, attempts = MAX(attempts, 1) WHERE accountID = ? AND state = ?",
             arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
         )
     }

@@ -9,6 +9,20 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func undoAfterCrashCompensatesAnInterruptedFirstSend() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        let action = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
+        clock.advance(3)
+        // Claiming is durable; the process can quit after Gmail sees this send.
+        let date = clock.now()
+        _ = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: date) }
+        try await cache.write { tx in try tx.requeueInterruptedActions(accountID: account) }
+        try await engine.undo(action)
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [Change("batchModify", ["m1"], add: [SystemLabel.inbox])])
+    }
+
     @Test func undoDuringTheHoldSendsNothing() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])

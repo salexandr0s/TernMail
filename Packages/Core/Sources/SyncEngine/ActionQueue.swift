@@ -211,7 +211,6 @@ extension SyncEngine {
             row.lastError = nil
         case .retry(let reason):
             row.state = .queued
-            row.attempts += 1
             row.lastError = reason
             row.notBefore = now.addingTimeInterval(min(pow(2, Double(row.attempts)), 300))
         case .failed:
