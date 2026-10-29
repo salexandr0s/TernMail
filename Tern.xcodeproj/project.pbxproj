@@ -12,7 +12,10 @@
 		08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */; };
 		22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96214EE63FDC52A0940F4105 /* MessageWebView.swift */; };
 		2C5D3D7718C073EF6FC3B4EB /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
+		3C4C4E7AE93BF4735A855D07 /* SingleKeyShortcutsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */; };
+		3F1EA6952687324D1314CDEF /* SingleKeyShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */; };
 		44C15A8C7042454C99FD8246 /* MessageContent in Frameworks */ = {isa = PBXBuildFile; productRef = 1D2F537B3CC39297117479CF /* MessageContent */; };
+		4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */; };
 		4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2664304C0271DB6260097A /* MessageWebViewTests.swift */; };
 		60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F78C5270B0AE64BD13220AD /* MainView.swift */; };
 		6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4463F25A316147E854AB475E /* Tokens.swift */; };
@@ -30,6 +33,7 @@
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
 		F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9ECAA922136B06A807EEDB /* MailboxModel.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
+		FEBB2860AF8110BD3AE2079E /* SnoozeSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,10 +58,14 @@
 		5497ADD358BEE4C53246A55C /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		59D9ED8DE6505A59716158D2 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		5E9ECAA922136B06A807EEDB /* MailboxModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxModel.swift; sourceTree = "<group>"; };
+		815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleKeyShortcuts.swift; sourceTree = "<group>"; };
+		8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozeSchedule.swift; sourceTree = "<group>"; };
+		8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleKeyShortcutsTests.swift; sourceTree = "<group>"; };
 		96214EE63FDC52A0940F4105 /* MessageWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageWebView.swift; sourceTree = "<group>"; };
 		969FF5980D41DC77A747FDB9 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		9CF7592F8975F73FEA1842BC /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		AE2664304C0271DB6260097A /* MessageWebViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageWebViewTests.swift; sourceTree = "<group>"; };
+		B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozeScheduleTests.swift; sourceTree = "<group>"; };
 		BE892D00A83688026D463D87 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxModelTests.swift; sourceTree = "<group>"; };
 		C6B1962F97D1AE340138E9E8 /* Tern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tern.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -130,6 +138,8 @@
 			children = (
 				C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */,
 				AE2664304C0271DB6260097A /* MessageWebViewTests.swift */,
+				8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */,
+				B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */,
 			);
 			path = AppTests;
 			sourceTree = "<group>";
@@ -147,6 +157,7 @@
 			isa = PBXGroup;
 			children = (
 				5E9ECAA922136B06A807EEDB /* MailboxModel.swift */,
+				8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */,
 			);
 			path = Mailbox;
 			sourceTree = "<group>";
@@ -196,6 +207,7 @@
 			isa = PBXGroup;
 			children = (
 				50BC5CC58387671AC6A5DD09 /* MailCommands.swift */,
+				815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */,
 			);
 			path = Commands;
 			sourceTree = "<group>";
@@ -308,6 +320,8 @@
 			files = (
 				C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */,
 				4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */,
+				3C4C4E7AE93BF4735A855D07 /* SingleKeyShortcutsTests.swift in Sources */,
+				4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -326,6 +340,8 @@
 				89DA04EFCFC5C677096729A7 /* NoticeView.swift in Sources */,
 				08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */,
 				A2DFB3214AD23A2BE8631B27 /* SignInView.swift in Sources */,
+				3F1EA6952687324D1314CDEF /* SingleKeyShortcuts.swift in Sources */,
+				FEBB2860AF8110BD3AE2079E /* SnoozeSchedule.swift in Sources */,
 				D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */,
 				CE5838DB32E85E4BC42F3C83 /* ThreadListView.swift in Sources */,
 				8A7FEC940FEFE0241F30C670 /* ThreadView.swift in Sources */,
