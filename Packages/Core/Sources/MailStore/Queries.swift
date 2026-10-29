@@ -179,7 +179,7 @@ extension MailCache {
         try await writer.read { db in try SyncStateRecord.fetchOne(db, key: accountID) }
     }
 
-    private func observe<T: Sendable>(
+    func observe<T: Sendable>(
         _ fetch: @escaping @Sendable (Database) throws -> T
     ) -> AsyncThrowingStream<T, any Error> {
         let values = ValueObservation.tracking(fetch).values(in: writer)

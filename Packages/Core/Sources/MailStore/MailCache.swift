@@ -36,11 +36,12 @@ public struct CacheTransaction {
     let db: Database
 
     /// Removes everything cached for an account, including unsent actions and
-    /// drafts. Outgoing attachment rows go with their local drafts.
+    /// drafts. Outgoing attachment rows go with their local drafts, and search
+    /// text with its messages.
     public func deleteAccountData(accountID: String) throws {
         for table in [
             "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
-            "pendingAction", "syncState", "draft", "localDraft",
+            "pendingAction", "syncState", "draft", "localDraft", "cacheHold",
         ] {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
         }
@@ -207,9 +208,11 @@ public struct CacheTransaction {
         try LabelRecord.filter(Column("accountID") == accountID).fetchAll(db)
     }
 
+    /// Stores bodies and their text for search, the only path that writes either.
     public func saveBodies(_ bodies: [MessageBodyRecord]) throws {
         for body in bodies {
             try body.upsert(db)
+            try indexBody(body)
         }
     }
 
