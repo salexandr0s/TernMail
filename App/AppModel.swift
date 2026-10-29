@@ -87,6 +87,14 @@ final class AppModel {
                 grantedScopes: user.grantedScopes,
                 addedAt: .now
             )
+            if case .signInRequired(let old) = phase, old.id != account.id {
+                // Replacing the account would delete its drafts and unsent
+                // messages, so that takes Sign Out, which asks. Done before
+                // any await, so queued requests never get the other account's token.
+                auth.signOut()
+                signInError = "You signed in as \(account.email). Sign in as \(old.email) to keep its drafts and unsent messages, or sign out of it first."
+                return
+            }
             if let mailbox, mailbox.account.id == account.id {
                 // Back after the session expired: the open mailbox carries on.
                 try await accounts.save(account)
@@ -94,7 +102,7 @@ final class AppModel {
                 mailbox.syncNow()
                 return
             }
-            // One account for now: a different Google account replaces the old one.
+            // One account for now: signing in after a sign-out replaces any data left.
             await closeMailbox()
             for old in try await accounts.accounts() where old.id != account.id {
                 try await removeAccountData(old, from: accounts)
@@ -117,6 +125,22 @@ final class AppModel {
             phase = .signedOut
         } catch {
             phase = .failed(error.localizedDescription)
+        }
+    }
+
+    var canSignOut: Bool {
+        switch phase {
+        case .signedIn, .signInRequired: true
+        case .loading, .signedOut, .failed: false
+        }
+    }
+
+    var signOutMessage: String {
+        let deletes = "Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet"
+        switch mailbox?.outbox.count ?? 0 {
+        case 0: return deletes + "."
+        case 1: return deletes + ", including 1 message in the Outbox."
+        case let count: return deletes + ", including \(count) messages in the Outbox."
         }
     }
 
@@ -182,8 +206,10 @@ final class AppModel {
     private func removeAccountData(_ account: AccountRecord, from accounts: AccountStore) async throws {
         try await cache?.write { tx in try tx.deleteAccountData(accountID: account.id) }
         try await accounts.deleteAccount(id: account.id)
-        // Only one account at a time keeps downloaded attachments.
+        // Only one account at a time keeps downloaded attachments and the
+        // files attached to its drafts.
         try? FileManager.default.removeItem(at: MailboxModel.defaultDownloadsDirectory)
+        if let outgoingDirectory { try? FileManager.default.removeItem(at: outgoingDirectory) }
     }
 
     private static func dataDirectory() throws -> URL {

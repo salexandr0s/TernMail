@@ -105,6 +105,8 @@ final class MailboxModel {
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
     /// Drafts opened from another app with formatting the editor drops, until their window warns.
     @ObservationIgnored private var droppedFormatting = Set<String>()
+    /// A draft Gmail refused, whose window the mailbox window reopens.
+    var draftToReopen: String?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
@@ -493,6 +495,8 @@ final class MailboxModel {
         case .draftFailed(let id, let message):
             finishSend(id)
             notice = Notice(message: message, isError: true)
+            // The window shows Gmail's message and lets the person fix the draft.
+            draftToReopen = id
         case .draftCopied:
             notice = Notice(message: "Another app changed this draft, so Tern kept both versions.")
         case .draftSent(let id):

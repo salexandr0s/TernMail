@@ -66,16 +66,12 @@ struct MainView: View {
                 Task { await app.signOut() }
             }
         } message: {
-            Text(signOutMessage)
+            Text(app.signOutMessage)
         }
-    }
-
-    private var signOutMessage: String {
-        let deletes = "Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet"
-        switch mailbox.outbox.count {
-        case 0: return deletes + "."
-        case 1: return deletes + ", including 1 message in the Outbox."
-        case let count: return deletes + ", including \(count) messages in the Outbox."
+        .onChange(of: mailbox.draftToReopen) { _, id in
+            guard let id else { return }
+            mailbox.draftToReopen = nil
+            openWindow(id: ComposeWindow.sceneID, value: id)
         }
     }
 

@@ -24,8 +24,10 @@ struct MailCommands: Commands {
                 .disabled(!canEdit)
         }
         CommandGroup(after: .undoRedo) {
+            // Compose windows can still send while the session has expired,
+            // and the mailbox window, showing sign-in, has no Undo then.
             Button("Undo Send") { undoSend() }
-                .disabled(mailbox?.undoableSendID == nil)
+                .disabled(app.mailbox?.undoableSendID == nil)
         }
         CommandMenu("Message") {
             Button("Send") { Task { await compose?.send() } }
@@ -44,10 +46,11 @@ struct MailCommands: Commands {
             Divider()
             Button("Archive") { mailbox?.perform(.archive) }
                 .keyboardShortcut("a", modifiers: [.control, .command])
-                .disabled(!(mailbox?.canArchive ?? false))
+                .disabled(compose != nil || !(mailbox?.canArchive ?? false))
+            // In a compose window ⌘⌫ deletes to the start of the line instead.
             Button("Move to Trash") { mailbox?.perform(.trash) }
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled(!(mailbox?.canTrash ?? false))
+                .disabled(compose != nil || !(mailbox?.canTrash ?? false))
             Divider()
             Button(isRead ? "Mark as Unread" : "Mark as Read") { mailbox?.toggleRead() }
                 .keyboardShortcut("u", modifiers: [.shift, .command])
@@ -62,7 +65,7 @@ struct MailCommands: Commands {
                 .disabled(mailbox == nil)
             Divider()
             Button("Sign Out…") { app.isConfirmingSignOut = true }
-                .disabled(mailbox == nil)
+                .disabled(!app.canSignOut)
         }
         CommandMenu("Format") {
             Group {
@@ -103,7 +106,7 @@ struct MailCommands: Commands {
 
     /// Stops the newest send and reopens its window.
     private func undoSend() {
-        guard let mailbox, let id = mailbox.undoableSendID else { return }
+        guard let mailbox = app.mailbox, let id = mailbox.undoableSendID else { return }
         Task {
             if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) }
         }
@@ -118,8 +121,9 @@ struct MailCommands: Commands {
         }
     }
 
+    /// Conversations are selected in the mailbox window, which is in front.
     private var hasSelection: Bool {
-        !(mailbox?.selectedThreadIDs.isEmpty ?? true)
+        compose == nil && !(mailbox?.selectedThreadIDs.isEmpty ?? true)
     }
 
     private var isRead: Bool {
