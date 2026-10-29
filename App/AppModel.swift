@@ -83,14 +83,15 @@ final class AppModel {
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
 
-            let signedIn = try await accounts.accounts()
-            try await removeLeftovers(keeping: Set(signedIn.map(\.id)))
+            let stored = try await accounts.accounts()
+            try await removeLeftovers(keeping: Set(stored.map(\.id)))
+            for account in stored {
+                adopt(AccountSession.restore(accountID: account.id) ?? AccountSession(accountID: account.id))
+            }
+            let signedIn = try await correctGrants(of: stored, in: accounts)
             guard let first = signedIn.first else {
                 phase = .signedOut
                 return
-            }
-            for account in signedIn {
-                adopt(AccountSession.restore(accountID: account.id) ?? AccountSession(accountID: account.id))
             }
             let expired = signedIn.filter { sessions[$0.id]?.isSignedIn != true }
             if signedIn.count == 1, !expired.isEmpty {
@@ -124,13 +125,20 @@ final class AppModel {
     }
 
     private func signIn(as returning: AccountRecord?) async {
-        guard !isSigningIn, accounts != nil else { return }
+        guard !isSigningIn, let accounts else { return }
         isSigningIn = true
         signInError = nil
         defer { isSigningIn = false }
+        // The store, not the window's copy, has features turned on since the
+        // window opened. The new grant has to cover them to keep them on.
+        let stored = try? await accounts.accounts().first { $0.id == returning?.id }
         let user: GoogleAuth.SignedInUser
         do {
-            user = try await auth.signIn(loginHint: returning?.email)
+            user = try await auth.signIn(
+                loginHint: returning?.email,
+                features: AccountFeature.named(stored?.enabledFeatures ?? []),
+                isWorkspace: stored?.hostedDomain != nil
+            )
         } catch is CancellationError {
             return
         } catch {
@@ -143,37 +151,51 @@ final class AppModel {
     private func finishSignIn(as user: GoogleAuth.SignedInUser, returning: AccountRecord?) async {
         guard let accounts else { return }
         do {
-            let account = AccountRecord(
-                id: user.id,
-                email: user.email,
-                displayName: user.displayName,
-                grantedScopes: user.grantedScopes,
-                addedAt: .now
-            )
-            if let returning, returning.id != account.id {
+            if let returning, returning.id != user.id {
                 // Replacing the account would delete its drafts and unsent
                 // messages, so that takes Sign Out, which asks. The new
                 // session is dropped unsaved, so nothing gets its tokens.
-                reportSignInError("You signed in as \(account.email). Sign in as \(returning.email) to keep its drafts and unsent messages, or sign out of it first.")
+                reportSignInError("You signed in as \(user.email). Sign in as \(returning.email) to keep its drafts and unsent messages, or sign out of it first.")
                 return
             }
-            if let returning, try await !accounts.accounts().contains(where: { $0.id == returning.id }) {
+            let stored = try await accounts.accounts().first { $0.id == user.id }
+            if returning != nil, stored == nil {
                 // Signed out while Google's page was open. The new session
                 // is dropped unsaved.
                 return
             }
             let session: AccountSession
-            if let existing = sessions[account.id] {
+            if let existing = sessions[user.id] {
                 // Clients holding the session pick up the new tokens.
                 try existing.replace(with: user.state)
                 session = existing
             } else {
-                session = AccountSession(accountID: account.id, state: user.state)
+                session = AccountSession(accountID: user.id, state: user.state)
                 try session.save()
                 adopt(session)
             }
-            try await accounts.save(account)
+            let (email, displayName, granted, hostedDomain) = (user.email, user.displayName, user.grantedScopes, user.hostedDomain)
+            let account: AccountRecord
+            if stored != nil, let updated = try await accounts.updateAccount(id: user.id, { account in
+                // The account keeps when it was added and its settings.
+                // Features the new grant doesn't cover turn off.
+                account.email = email
+                account.displayName = displayName
+                account.grantedScopes = granted
+                account.hostedDomain = hostedDomain
+                account.enabledFeatures = AccountFeature.names(of: GoogleScopes.covered(account.enabledFeatures, by: granted))
+            }) {
+                account = updated
+            } else {
+                account = AccountRecord(
+                    id: user.id, email: email, displayName: displayName, grantedScopes: granted,
+                    addedAt: .now, hostedDomain: hostedDomain
+                )
+                try await accounts.save(account)
+            }
             accountsNeedingSignIn.remove(account.id)
+            let turnedOff = AccountFeature.named(stored?.enabledFeatures ?? []).subtracting(AccountFeature.named(account.enabledFeatures))
+            defer { if !turnedOff.isEmpty { reportTurnedOff(turnedOff, for: account) } }
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
                 return
@@ -198,13 +220,119 @@ final class AppModel {
 
     /// Runs `change` after the account changes already started.
     private func changeAccounts(_ change: @escaping @MainActor () async -> Void) async {
+        _ = try? await changeAccounts(returning: change)
+    }
+
+    /// `changeAccounts(_:)` for a change with a result or an error.
+    private func changeAccounts<Value: Sendable>(
+        returning change: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
         let previous = accountChange
         let task = Task {
             await previous?.value
-            await change()
+            return try await change()
         }
-        accountChange = task
-        await task.value
+        accountChange = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
+    /// Tells the window which features a sign-in turned off.
+    private func reportTurnedOff(_ features: Set<AccountFeature>, for account: AccountRecord) {
+        let names = ListFormatter.localizedString(
+            byJoining: AccountFeature.allCases.filter(features.contains).map(\.displayName)
+        )
+        let message = features.count == 1
+            ? "\(names) is off for \(account.email) because Google didn't grant the access it needs. Turn it on again in Settings."
+            : "\(names) are off for \(account.email) because Google didn't grant the access they need. Turn them on again in Settings."
+        mailbox?.notice = MailboxModel.Notice(message: message)
+    }
+
+    // MARK: Features
+
+    /// Turns on `feature` for a signed-in account. Google's page asks for it
+    /// together with the features already on, and the account's session
+    /// switches to the new grant. Returns what the grant covers, which names
+    /// any permission the user unticked. Nil when nothing changed: the user
+    /// closed Google's page, another sign-in was running, or the account
+    /// signed out or lost its session meanwhile.
+    ///
+    /// - Throws: `GoogleAuth.AuthError.otherAccount` or
+    ///   `.gmailAccessNotGranted`, with the old session kept, and errors from
+    ///   Google's page or storing the session.
+    func enableFeature(_ feature: AccountFeature, for accountID: String) async throws -> FeatureGrant? {
+        guard !isSigningIn, let accounts, let session = sessions[accountID], session.isSignedIn else { return nil }
+        isSigningIn = true
+        defer { isSigningIn = false }
+        guard let stored = try await accounts.accounts().first(where: { $0.id == accountID }) else { return nil }
+        let user: GoogleAuth.SignedInUser
+        do {
+            user = try await auth.signIn(
+                loginHint: accountID, accountID: accountID,
+                features: AccountFeature.named(stored.enabledFeatures).union([feature]),
+                isWorkspace: stored.hostedDomain != nil
+            )
+        } catch is CancellationError {
+            return nil
+        }
+        return try await changeAccounts(returning: { [self] in
+            // A sign-out, or a new sign-in that replaced the session, wins.
+            guard sessions[accountID] === session, session.isSignedIn else { return nil }
+            try session.replace(with: user.state)
+            let (granted, hostedDomain) = (user.grantedScopes, user.hostedDomain)
+            try await accounts.updateAccount(id: accountID) { account in
+                // Features turned off while Google's page was open stay off.
+                let wanted = AccountFeature.named(account.enabledFeatures).union([feature])
+                account.grantedScopes = granted
+                account.hostedDomain = hostedDomain
+                account.enabledFeatures = AccountFeature.names(of: wanted.filter { GoogleScopes.isCovered($0, by: granted) })
+            }
+            return user.grant
+        })
+    }
+
+    /// Turns `feature` off and deletes what it kept. The grant keeps its
+    /// scopes until the user removes Tern on their Google Account's
+    /// permissions page.
+    func disableFeature(_ feature: AccountFeature, for accountID: String) async throws {
+        try await changeAccounts(returning: { [self] in
+            guard let accounts, let cache else { return }
+            try await accounts.updateAccount(id: accountID) { account in
+                account.enabledFeatures.removeAll { $0 == feature.rawValue }
+            }
+            if feature == .contacts {
+                try await cache.write { tx in try tx.deleteContacts(accountID: accountID) }
+            }
+        })
+    }
+
+    /// Corrects each record from its account's stored authorization: an
+    /// account added before Tern kept `hd`, or one whose Keychain item was
+    /// written but not its record.
+    private func correctGrants(of records: [AccountRecord], in accounts: AccountStore) async throws -> [AccountRecord] {
+        var corrected: [AccountRecord] = []
+        for record in records {
+            guard let session = sessions[record.id], let granted = session.grantedScopes else {
+                corrected.append(record)
+                continue
+            }
+            // The last token response may carry no ID token, which leaves
+            // the stored domain as it was.
+            let hostedDomain = session.idTokenHostedDomain ?? record.hostedDomain
+            let features = AccountFeature.names(of: GoogleScopes.covered(record.enabledFeatures, by: granted))
+            guard Set(granted) != Set(record.grantedScopes) || hostedDomain != record.hostedDomain
+                    || features != record.enabledFeatures
+            else {
+                corrected.append(record)
+                continue
+            }
+            let updated = try await accounts.updateAccount(id: record.id) { account in
+                account.grantedScopes = granted
+                account.hostedDomain = hostedDomain
+                account.enabledFeatures = features
+            }
+            corrected.append(updated ?? record)
+        }
+        return corrected
     }
 
     /// The sign-in screen shows the error, or the window when it's open.
@@ -456,5 +584,16 @@ final class AppModel {
         let directory = support.appending(path: "Tern", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+}
+
+extension AccountFeature {
+    /// The feature's name in Settings.
+    var displayName: String {
+        switch self {
+        case .gmailSettings: "Gmail Settings"
+        case .contacts: "Contacts"
+        case .inboxUpdates: "Inbox Updates"
+        }
     }
 }
