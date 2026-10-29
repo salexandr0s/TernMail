@@ -109,6 +109,18 @@ import Testing
         #expect(mailbox.labelEdit == nil)
         mailbox.showEditLabels(for: keys("t2"))
         try await waitUntil { mailbox.labelEdit?.applied.first?.contains("Label_1") == true }
+
+        // Create Label applies the boxes already changed, then opens New Label.
+        await mailbox.createLabel(named: "Trips", after: LabelSelection.Change(remove: ["Label_1"]))?.value
+        #expect(mailbox.labelEdit == nil)
+        guard case .new(let applyingTo)? = mailbox.labelEditor?.kind else {
+            Issue.record("Create Label didn't open New Label")
+            return
+        }
+        #expect(applyingTo == keys("t2"))
+        mailbox.labelEditor = nil
+        mailbox.showEditLabels(for: keys("t2"))
+        try await waitUntil { mailbox.labelEdit?.applied.first?.contains("Label_1") == false }
         mailbox.labelEdit = nil
 
         // Moving out of the Inbox selects the next conversation.
