@@ -17,10 +17,18 @@ final class MailboxModel {
 
     /// A short message at the bottom of the window, with Undo when it can be reverted.
     struct Notice: Identifiable, Equatable {
+        enum Undo: Equatable {
+            case action(ActionReceipt)
+            case send(localDraftID: String)
+            case discard(localDraftID: String)
+        }
+
         let id = UUID()
         let message: String
-        let undo: ActionReceipt?
+        var undo: Undo?
         var isError = false
+        /// How long it stays up. Nil uses the toast default for its kind.
+        var duration: Duration?
     }
 
     static let pageSize = 200
@@ -55,6 +63,10 @@ final class MailboxModel {
     }
     var selectedThreadIDs: Set<String> = []
     var notice: Notice?
+    /// The newest send's notice, above `notice` so other actions don't replace it.
+    var sendNotice: Notice?
+    /// The newest send still inside its undo delay, for Edit > Undo Send.
+    private(set) var undoableSendID: String?
 
     private(set) var labels: [LabelRecord] = []
     private(set) var threads: [ThreadRecord] = []
@@ -76,6 +88,7 @@ final class MailboxModel {
     @ObservationIgnored private var undoEntries: [UUID: UndoEntry] = [:]
     @ObservationIgnored private var undoOrder: [UUID] = []
     @ObservationIgnored private var actionTask: Task<Void, Never>?
+    @ObservationIgnored private var undoSendTimer: Task<Void, Never>?
 
     /// The retained targets are bounded along with UndoManager's history.
     var retainedUndoCount: Int { undoEntries.count }
@@ -132,6 +145,7 @@ final class MailboxModel {
         tasks = []
         threadsTask?.cancel()
         actionTask?.cancel()
+        undoSendTimer?.cancel()
         for entry in undoEntries.values {
             undoManager?.removeAllActions(withTarget: entry)
         }
@@ -171,7 +185,7 @@ final class MailboxModel {
         } catch {
             // Switching conversations cancels the load, which isn't a failure.
             guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return }
-            notice = Notice(message: "Tern couldn't load this conversation. Check your connection.", undo: nil, isError: true)
+            notice = Notice(message: "Tern couldn't load this conversation. Check your connection.", isError: true)
         }
     }
 
@@ -201,7 +215,7 @@ final class MailboxModel {
         } catch {
             guard !isStopped, !(error is CancellationError) else { return nil }
             let message = (error as? ComposeError)?.errorDescription ?? Self.composeFailure(start)
-            notice = Notice(message: message, undo: nil, isError: true)
+            notice = Notice(message: message, isError: true)
             return nil
         }
     }
@@ -217,7 +231,7 @@ final class MailboxModel {
                 return detail?.messages.last { !$0.labels.contains(SystemLabel.draft) }?.id
             }
         } catch {
-            notice = Notice(message: "Tern couldn't read this conversation.", undo: nil, isError: true)
+            notice = Notice(message: "Tern couldn't read this conversation.", isError: true)
         }
         return nil
     }
@@ -225,6 +239,55 @@ final class MailboxModel {
     /// Whether the draft's window should warn about formatting it can't keep. Asked once.
     func takeDroppedFormatting(_ localDraftID: String) -> Bool {
         droppedFormatting.remove(localDraftID) != nil
+    }
+
+    /// Shows the send's notice with Undo Send for as long as the send waits.
+    func didQueueSend(_ localDraftID: String, delay: TimeInterval) {
+        sendNotice = Notice(message: "Sending message", undo: .send(localDraftID: localDraftID), duration: .seconds(delay))
+        undoableSendID = localDraftID
+        undoSendTimer?.cancel()
+        undoSendTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, self?.undoableSendID == localDraftID else { return }
+            self?.undoableSendID = nil
+        }
+    }
+
+    func didQueueDiscard(_ localDraftID: String, hold: TimeInterval) {
+        notice = Notice(message: "Draft discarded", undo: .discard(localDraftID: localDraftID), duration: .seconds(hold))
+    }
+
+    /// Puts a waiting send back to editing. True means the caller reopens its window.
+    func undoSend(_ localDraftID: String) async -> Bool {
+        do {
+            let undone = try await engine.undoSend(localDraftID)
+            guard !isStopped else { return false }
+            finishSend(localDraftID)
+            if !undone { sendNotice = Notice(message: "Too late to undo. Tern has started sending this message.") }
+            return undone
+        } catch {
+            guard !isStopped else { return false }
+            sendNotice = Notice(message: "Tern couldn't stop this message.", isError: true)
+            return false
+        }
+    }
+
+    /// Keeps a discarded draft. True means the caller reopens its window.
+    func undoDiscard(_ localDraftID: String) async -> Bool {
+        do {
+            let undone = try await engine.undoDiscard(localDraftID)
+            guard !isStopped else { return false }
+            if !undone {
+                notice = Notice(message: "Too late to undo. Tern has already discarded this draft.")
+            } else if notice?.undo == .discard(localDraftID: localDraftID) {
+                notice = nil
+            }
+            return undone
+        } catch {
+            guard !isStopped else { return false }
+            notice = Notice(message: "Tern couldn't keep this draft.", isError: true)
+            return false
+        }
     }
 
     private static func composeFailure(_ start: ComposeStart) -> String {
@@ -261,12 +324,12 @@ final class MailboxModel {
                 if entry.undoRequested {
                     await requestUndo(entry)?.value
                 } else if let message = Self.confirmation(action, count: ids.count) {
-                    notice = Notice(message: message, undo: row)
+                    notice = Notice(message: message, undo: .action(row))
                 }
             } catch {
                 removeUndo(entry)
                 guard !isStopped else { return }
-                notice = Notice(message: "Tern couldn't save that change.", undo: nil, isError: true)
+                notice = Notice(message: "Tern couldn't save that change.", isError: true)
             }
         }
         actionTask = task
@@ -290,13 +353,13 @@ final class MailboxModel {
             do {
                 try await engine.undo(row)
                 removeUndo(entry)
-                if notice?.undo?.id == row.id { notice = nil }
+                if notice?.undo == .action(row) { notice = nil }
             } catch {
                 guard !isStopped else { return }
                 entry.isApplying = false
                 entry.undoRequested = false
                 registerUndo(entry)
-                notice = Notice(message: "Tern couldn't undo that change. Try again.", undo: row, isError: true)
+                notice = Notice(message: "Tern couldn't undo that change. Try again.", undo: .action(row), isError: true)
             }
         }
     }
@@ -363,13 +426,25 @@ final class MailboxModel {
             hasSyncedOnce = true
         case .syncFailed(let message):
             syncStatus = .failed(message)
-        case .actionFailed(let message), .draftFailed(_, let message):
-            notice = Notice(message: message, undo: nil, isError: true)
+        case .actionFailed(let message):
+            notice = Notice(message: message, isError: true)
+        case .draftFailed(let id, let message):
+            finishSend(id)
+            notice = Notice(message: message, isError: true)
         case .draftCopied:
-            notice = Notice(message: "Another app changed this draft, so Tern kept both versions.", undo: nil, isError: false)
-        case .draftSent:
-            break
+            notice = Notice(message: "Another app changed this draft, so Tern kept both versions.")
+        case .draftSent(let id):
+            finishSend(id)
+            // A newer send keeps its notice and its Undo Send.
+            if case .send = sendNotice?.undo { return }
+            sendNotice = Notice(message: "Message sent")
         }
+    }
+
+    /// Ends the draft's undo window and removes its notice.
+    private func finishSend(_ localDraftID: String) {
+        if undoableSendID == localDraftID { undoableSendID = nil }
+        if sendNotice?.undo == .send(localDraftID: localDraftID) { sendNotice = nil }
     }
 
     /// Moves the selection to the thread below the ones leaving the list, or above if none is below.

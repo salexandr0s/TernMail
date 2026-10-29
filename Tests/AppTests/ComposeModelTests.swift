@@ -26,7 +26,10 @@ import Testing
         #expect(await model.send())
         #expect(model.phase == .closed)
         #expect(try await cache.read { try $0.localDraft(id: id) }?.state == .sending)
-        #expect(try await mailbox.engine.undoSend(id))
+        #expect(mailbox.undoableSendID == id)
+        #expect(await mailbox.undoSend(id))
+        #expect(mailbox.sendNotice == nil && mailbox.undoableSendID == nil)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.state == .editing)
         await mailbox.stop()
     }
 

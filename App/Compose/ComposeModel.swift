@@ -165,15 +165,19 @@ final class ComposeModel {
         cancelTimers()
         let engine = mailbox.engine
         let id = localDraftID
+        let delay = UndoSendDelay.current
         let queued = await serially { [self] in
             do {
-                return try await engine.sendDraft(id, content: content, delay: UndoSendDelay.current)
+                return try await engine.sendDraft(id, content: content, delay: delay)
             } catch {
                 storeError = "Tern couldn't send this message."
                 return false
             }
         }.value
-        if queued { close() }
+        if queued {
+            mailbox.didQueueSend(id, delay: delay)
+            close()
+        }
         return queued
     }
 
@@ -187,7 +191,10 @@ final class ComposeModel {
         let queued = await serially {
             (try? await engine.discardDraft(id, hold: Self.discardHold)) ?? false
         }.value
-        if queued { close() }
+        if queued {
+            mailbox.didQueueDiscard(id, hold: Self.discardHold)
+            close()
+        }
         return queued
     }
 

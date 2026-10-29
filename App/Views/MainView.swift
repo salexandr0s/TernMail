@@ -4,6 +4,7 @@ import SwiftUI
 struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.openWindow) private var openWindow
     let mailbox: MailboxModel
 
     var body: some View {
@@ -18,18 +19,30 @@ struct MainView: View {
             DetailView(mailbox: mailbox)
         }
         .overlay(alignment: .bottomTrailing) {
-            if let notice = mailbox.notice {
-                NoticeView(notice: notice) {
-                    if let row = notice.undo { mailbox.undo(row) }
-                } onDismiss: {
-                    if mailbox.notice?.id == notice.id { mailbox.notice = nil }
+            VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
+                if let notice = mailbox.sendNotice {
+                    NoticeView(notice: notice) {
+                        if let undo = notice.undo { self.undo(undo) }
+                    } onDismiss: {
+                        if mailbox.sendNotice?.id == notice.id { mailbox.sendNotice = nil }
+                    }
+                    .transition(.opacity)
+                    .id(notice.id)
                 }
-                .padding(Tokens.Space.s4)
-                .transition(.opacity)
-                .id(notice.id)
+                if let notice = mailbox.notice {
+                    NoticeView(notice: notice) {
+                        if let undo = notice.undo { self.undo(undo) }
+                    } onDismiss: {
+                        if mailbox.notice?.id == notice.id { mailbox.notice = nil }
+                    }
+                    .transition(.opacity)
+                    .id(notice.id)
+                }
             }
+            .padding(Tokens.Space.s4)
         }
         .animation(Tokens.Motion.standard(), value: mailbox.notice)
+        .animation(Tokens.Motion.standard(), value: mailbox.sendNotice)
         .onAppear { mailbox.undoManager = undoManager }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()
@@ -40,6 +53,18 @@ struct MainView: View {
             }
         } message: {
             Text("Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet.")
+        }
+    }
+
+    /// Undoing a send or a discard reopens the message's window.
+    private func undo(_ undo: MailboxModel.Notice.Undo) {
+        switch undo {
+        case .action(let row):
+            mailbox.undo(row)
+        case .send(let id):
+            Task { if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
+        case .discard(let id):
+            Task { if await mailbox.undoDiscard(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
         }
     }
 }

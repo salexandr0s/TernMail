@@ -19,6 +19,10 @@ struct MailCommands: Commands {
                 .keyboardShortcut("a", modifiers: [.shift, .command])
                 .disabled(!canEdit)
         }
+        CommandGroup(after: .undoRedo) {
+            Button("Undo Send") { undoSend() }
+                .disabled(mailbox?.undoableSendID == nil)
+        }
         CommandMenu("Message") {
             Button("Send") { Task { await compose?.send() } }
                 .keyboardShortcut("d", modifiers: [.shift, .command])
@@ -90,6 +94,14 @@ struct MailCommands: Commands {
         Task {
             guard let messageID = await mailbox.replyTargetMessageID() else { return }
             open(.reply(kind, messageID: messageID))
+        }
+    }
+
+    /// Stops the newest send and reopens its window.
+    private func undoSend() {
+        guard let mailbox, let id = mailbox.undoableSendID else { return }
+        Task {
+            if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) }
         }
     }
 

@@ -42,7 +42,7 @@ struct NoticeView: View {
         .onHover { isHovering = $0 }
         .task(id: isHovering) {
             guard !isHovering else { return }
-            try? await Task.sleep(for: notice.isError ? Tokens.Toast.error : Tokens.Toast.info)
+            try? await Task.sleep(for: notice.duration ?? (notice.isError ? Tokens.Toast.error : Tokens.Toast.info))
             if !Task.isCancelled { onDismiss() }
         }
         .onAppear {
