@@ -887,6 +887,27 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(kept?.subject == "Plans, mine")
         #expect(try await pendingActions(cache).map(\.kind) == [.saveDraft])
     }
+
+    @Test func reopeningADraftWhoseSaveLostItsAnswerKeepsTheOpenCopy() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        var content = draft.content
+        content.subject = "Re: Lunch on Friday"
+        await gmail.failNextDraftCall("update", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id, content: content)
+        await engine.sendDueDrafts()
+        // Edit Draft on the message Gmail made from that save.
+        let opened = try await engine.openDraft(messageID: "msg2")
+        clock.advance(10)
+        await engine.sendDueDrafts()
+
+        #expect(opened.draft.id == draft.id)
+        #expect(try await cache.read { tx in try tx.localDrafts(accountID: account) }.map(\.id) == [draft.id])
+        #expect(await gmail.draftCalls == ["create", "update D1", "update D1"])
+    }
 }
 
 /// A `drafts.get` response in full format with an HTML body.
