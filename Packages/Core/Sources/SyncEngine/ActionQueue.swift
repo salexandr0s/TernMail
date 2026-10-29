@@ -11,84 +11,112 @@ public enum MailAction: Sendable, Equatable {
     case unstar
 }
 
+/// One user command can affect several threads. Each target has its own
+/// durable queue row, while undo still treats the command as one operation.
+public struct ActionReceipt: Sendable, Equatable {
+    public let actions: [PendingAction]
+    public var id: Int64? { actions.first?.id }
+}
+
 extension SyncEngine {
     /// Applies `action` to the cache at once and queues it for Gmail after the
     /// undo hold. Keep the returned row to undo it.
     @discardableResult
-    public func perform(_ action: MailAction, threadIDs: [String]) async throws -> PendingAction? {
+    public func perform(_ action: MailAction, threadIDs: [String]) async throws -> ActionReceipt? {
         try await enqueue(action, threadIDs: threadIDs, hold: undoHold)
     }
 
     /// Reverts an action. A row Gmail has never seen is deleted. One that may
     /// have reached Gmail gets an inverse built from its recorded diff, which
     /// goes out after any request for the row that is still in flight.
-    public func undo(_ action: PendingAction) async throws {
+    public func undo(_ receipt: ActionReceipt) async throws {
+        let actions = receipt.actions.filter { action in
+            action.id.map { !unavailableUndoIDs.contains($0) } ?? false
+        }
+        let ids = Set(actions.compactMap(\.id))
+        guard !ids.isEmpty else { return }
+        // Reserve before awaiting so concurrent notice/menu undos cannot duplicate it.
+        unavailableUndoIDs.formUnion(ids)
         let accountID = accountID
         let now = now()
-        try await write { tx in
-            guard let id = action.id, let stored = try tx.action(id: id) else {
-                try Self.enqueueInverse(of: action, accountID: accountID, now: now, in: tx)
-                return
-            }
-            switch stored.state {
-            case .queued:
-                try tx.deleteAction(id: id)
-                // A failed attempt may still have reached Gmail.
-                if stored.attempts > 0 {
-                    try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+        do {
+            try await write { tx in
+                for action in actions {
+                    try Self.undo(action, accountID: accountID, now: now, in: tx)
                 }
-            case .sending:
-                var row = stored
-                row.state = .undone
-                try tx.updateAction(row)
-                try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
-            case .sent:
-                try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
-            case .undone:
-                return
             }
+        } catch {
+            unavailableUndoIDs.subtract(ids)
+            throw error
         }
         scheduleSending()
     }
 
+    private static func undo(_ action: PendingAction, accountID: String, now: Date, in tx: CacheTransaction) throws {
+        guard let id = action.id, let stored = try tx.action(id: id) else {
+            try Self.enqueueInverse(of: action, accountID: accountID, now: now, in: tx)
+            return
+        }
+        switch stored.state {
+        case .queued:
+            try tx.deleteAction(id: id)
+            // A failed attempt may still have reached Gmail.
+            if stored.attempts > 0 {
+                try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+            }
+        case .sending:
+            var row = stored
+            row.state = .undone
+            try tx.updateAction(row)
+            try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+        case .sent:
+            try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+        case .undone:
+            return
+        }
+    }
+
     @discardableResult
-    func enqueue(_ action: MailAction, threadIDs: [String], hold: TimeInterval) async throws -> PendingAction? {
+    func enqueue(_ action: MailAction, threadIDs: [String], hold: TimeInterval) async throws -> ActionReceipt? {
         guard !threadIDs.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
         let notBefore = now.addingTimeInterval(hold)
-        let row = try await write { tx -> PendingAction in
-            func modify(add: [String] = [], remove: [String] = []) throws -> PendingAction {
-                try tx.enqueue(
-                    .modifyThreads, accountID: accountID, threadIDs: threadIDs,
-                    add: add, remove: remove, now: now, notBefore: notBefore
-                )
-            }
-            switch action {
-            case .archive:
-                return try modify(remove: [SystemLabel.inbox])
-            case .markRead:
-                return try modify(remove: [SystemLabel.unread])
-            case .markUnread:
-                return try modify(add: [SystemLabel.unread])
-            case .unstar:
-                return try modify(remove: [SystemLabel.starred])
-            case .trash:
-                return try tx.enqueue(
-                    .trashThreads, accountID: accountID, threadIDs: threadIDs,
-                    add: [SystemLabel.trash], now: now, notBefore: notBefore
-                )
-            case .star:
-                // Gmail stars a message, not a thread. Star the newest one, as Gmail's own apps do.
-                let newest = try threadIDs.compactMap { try tx.messages(threadID: $0, accountID: accountID).last?.id }
-                return try tx.enqueue(
-                    .modifyMessages, accountID: accountID, messageIDs: newest,
-                    add: [SystemLabel.starred], now: now, notBefore: notBefore
-                )
+        let rows = try await write { tx -> [PendingAction] in
+            try threadIDs.removingDuplicates().sorted().map { threadID in
+                let threadIDs = [threadID]
+                func modify(add: [String] = [], remove: [String] = []) throws -> PendingAction {
+                    try tx.enqueue(
+                        .modifyThreads, accountID: accountID, threadIDs: threadIDs,
+                        add: add, remove: remove, now: now, notBefore: notBefore
+                    )
+                }
+                switch action {
+                case .archive:
+                    return try modify(remove: [SystemLabel.inbox])
+                case .markRead:
+                    return try modify(remove: [SystemLabel.unread])
+                case .markUnread:
+                    return try modify(add: [SystemLabel.unread])
+                case .unstar:
+                    return try modify(remove: [SystemLabel.starred])
+                case .trash:
+                    return try tx.enqueue(
+                        .trashThreads, accountID: accountID, threadIDs: threadIDs,
+                        add: [SystemLabel.trash], now: now, notBefore: notBefore
+                    )
+                case .star:
+                    // Gmail stars a message, not a thread. Star the newest one, as Gmail's own apps do.
+                    let newest = try threadIDs.compactMap { try tx.messages(threadID: $0, accountID: accountID).last?.id }
+                    return try tx.enqueue(
+                        .modifyMessages, accountID: accountID, messageIDs: newest,
+                        add: [SystemLabel.starred], now: now, notBefore: notBefore
+                    )
+                }
             }
         }
         scheduleSending()
-        return row
+        return ActionReceipt(actions: rows)
     }
 
     /// Queues the reverse of `action` with no hold.
@@ -229,6 +257,7 @@ extension SyncEngine {
             return failed
         }
         if reported == true {
+            unavailableUndoIDs.insert(id)
             continuation.yield(.actionFailed("Gmail didn't accept a change, so Tern put the conversation back."))
         }
     }

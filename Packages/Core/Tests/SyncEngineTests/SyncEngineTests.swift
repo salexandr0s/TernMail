@@ -9,6 +9,28 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func partialFailuresKeepIndependentRetriesAndUndoOnlyAcceptedTargets() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [
+            ("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox]), ("m3", "t3", [SystemLabel.inbox]),
+        ])
+        await gmail.setChangeErrors(["t1": .rateLimited, "t2": .http(status: 403, reason: "forbidden")])
+        let action = try #require(try await engine.perform(.archive, threadIDs: ["t1", "t2", "t3"]))
+        clock.advance(3)
+        await engine.sendDueActions()
+        let rows = try await pendingActions(cache)
+        #expect(rows.map(\.threadIDs) == [["t1"], ["t3"]])
+        #expect(rows.map(\.state) == [.queued, .sent])
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t2"])
+        try await engine.undo(action)
+        await engine.sendDueActions()
+        let inverses = await gmail.changes.filter { $0.kind == "batchModify" }
+        #expect(inverses.map(\.ids) == [["m1"], ["m3"]])
+        // A repeated undo cannot enqueue another inverse after confirmation.
+        try await engine.undo(action)
+        #expect(try await pendingActions(cache).filter { $0.state == .queued }.isEmpty)
+    }
+
     @Test func undoAfterCrashCompensatesAnInterruptedFirstSend() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
@@ -228,6 +250,7 @@ actor FakeGmail: GmailService {
     private let profileHistoryID = "200"
     private var threadsByID: [String: GmailThread] = [:]
     private var nextChangeError: GmailError?
+    private var changeErrors: [String: GmailError] = [:]
     private var holdsNextChange = false
     private var held: CheckedContinuation<Void, Never>?
 
@@ -242,6 +265,7 @@ actor FakeGmail: GmailService {
 
     /// The next change is recorded, as if Gmail applied it, then fails with `error`.
     func failNextChange(with error: GmailError) { nextChangeError = error }
+    func setChangeErrors(_ errors: [String: GmailError]) { changeErrors = errors }
 
     /// The next change waits until `release()`.
     func holdNextChange() { holdsNextChange = true }
@@ -295,7 +319,7 @@ actor FakeGmail: GmailService {
 
     func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError] {
         try await record(Change("modifyThreads", ids, add: addLabelIDs, remove: removeLabelIDs))
-        return [:]
+        return changeErrors.filter { ids.contains($0.key) }
     }
 
     func trashThreads(ids: [String]) async throws -> [String: GmailError] {

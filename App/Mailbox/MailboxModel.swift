@@ -19,7 +19,7 @@ final class MailboxModel {
     struct Notice: Identifiable, Equatable {
         let id = UUID()
         let message: String
-        let undo: PendingAction?
+        let undo: ActionReceipt?
         var isError = false
     }
 
@@ -163,7 +163,7 @@ final class MailboxModel {
     }
 
     /// Reverts an action, from the notice, a menu or Edit > Undo.
-    func undo(_ row: PendingAction) {
+    func undo(_ row: ActionReceipt) {
         if let id = row.id {
             guard undoneActionIDs.insert(id).inserted else { return }
             // Undone from somewhere else: drop its Edit > Undo entry so the menu stays in step.
@@ -254,7 +254,7 @@ final class MailboxModel {
         selectedThreadIDs = (below ?? above).map { [$0.id] } ?? []
     }
 
-    private func registerUndo(_ row: PendingAction, name: String) {
+    private func registerUndo(_ row: ActionReceipt, name: String) {
         guard let undoManager, let id = row.id else { return }
         let entry = UndoEntry()
         undoEntries[id] = entry

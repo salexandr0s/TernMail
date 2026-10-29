@@ -39,6 +39,9 @@ public actor SyncEngine {
     private var pollTask: Task<Void, Never>?
     var drainTask: Task<Void, Never>?
     var wakeRequested = false
+    /// Undo receipts exist only for this engine's lifetime. Remember rejected
+    /// and consumed row IDs even after history has removed the queue rows.
+    var unavailableUndoIDs = Set<Int64>()
     private(set) var isStopped = false
     /// Messages recent passes deleted, so a slow thread load can't bring them back.
     private var deletedMessageIDs = Set<String>()
