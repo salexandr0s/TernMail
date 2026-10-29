@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import os
 
 public enum SyncEvent: Sendable, Equatable {
     case syncStarted
@@ -43,8 +44,10 @@ public actor SyncEngine {
     /// and consumed row IDs even after history has removed the queue rows.
     var unavailableUndoIDs = Set<Int64>()
     private(set) var isStopped = false
-    /// Messages recent passes deleted, so a slow thread load can't bring them back.
-    private var deletedMessageIDs = Set<String>()
+    /// Accessed only inside the cache's serialized writes. The lock safely
+    /// carries deletion knowledge into their Sendable closures. Gmail message
+    /// IDs are never reused; forgetting one could resurrect deleted mail.
+    private let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// - Parameters:
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
@@ -153,6 +156,7 @@ public actor SyncEngine {
     private func fullSync(reset: Bool) async throws {
         let passStart = now()
         let accountID = accountID
+        let deleted = deletedMessageIDs
         let profile = try await gmail.profile()
         guard let historyID = Int64(profile.historyId) else { throw SyncError.invalidHistoryID }
         try await refreshLabels()
@@ -171,14 +175,15 @@ public actor SyncEngine {
             let (updates, missing) = try await fetchMetadata(chunk)
             gone.formUnion(missing)
             try await write { tx in
-                try tx.rebuildThreads(try tx.upsertMessages(updates), accountID: accountID)
+                let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+                try tx.rebuildThreads(try tx.upsertMessages(live), accountID: accountID)
             }
         }
 
-        rememberDeleted(gone)
         let kept = Set(listed)
         let finishedAt = now()
         try await write { [gone] tx in
+            deleted.withLock { $0.formUnion(gone) }
             var threads = try tx.deleteMessages(ids: gone, accountID: accountID)
             threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID))
             try tx.rebuildThreads(threads, accountID: accountID)
@@ -208,10 +213,12 @@ public actor SyncEngine {
         let accountID = accountID
         let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
         let changes = HistoryChanges(records: records, cachedMessageIDs: cached)
-        let (fetched, _) = try await fetchMetadata(changes.messagesToFetch)
+        let (fetched, missing) = try await fetchMetadata(changes.messagesToFetch)
+        let gone = changes.deletedIDs.union(missing)
+        let deleted = deletedMessageIDs
 
-        rememberDeleted(changes.deletedIDs)
         try await write { [latest] tx in
+            deleted.withLock { $0.formUnion(gone) }
             var threads = Set<String>()
             for change in changes.labelChanges {
                 if let threadID = try tx.applyLabelChange(
@@ -221,8 +228,9 @@ public actor SyncEngine {
                     threads.insert(threadID)
                 }
             }
-            threads.formUnion(try tx.deleteMessages(ids: changes.deletedIDs, accountID: accountID))
-            threads.formUnion(try tx.upsertMessages(fetched))
+            threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
+            let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
+            threads.formUnion(try tx.upsertMessages(live))
             // Store the cursor even when nothing changed, so the next pass starts later.
             try tx.saveCursor(historyID: latest, accountID: accountID)
             try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
@@ -282,17 +290,13 @@ public actor SyncEngine {
         return (updates, missing)
     }
 
-    private func rememberDeleted(_ ids: Set<String>) {
-        if deletedMessageIDs.count > 10_000 { deletedMessageIDs.removeAll() }
-        deletedMessageIDs.formUnion(ids)
-    }
-
     // MARK: Opening a thread
 
     /// Fetches bodies the cache lacks for a thread the user opened, and marks
     /// the thread read.
     public func openThread(_ threadID: String) async throws {
         let accountID = accountID
+        let deleted = deletedMessageIDs
         let (missing, isUnread) = try await cache.read { tx in
             (
                 try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID),
@@ -304,19 +308,32 @@ public actor SyncEngine {
         }
         guard !missing.isEmpty else { return }
 
-        let thread = try await gmail.thread(id: threadID, format: .full)
+        let thread: GmailThread
+        do {
+            thread = try await gmail.thread(id: threadID, format: .full)
+        } catch GmailError.notFound {
+            try await write { tx in
+                let ids = try tx.messages(threadID: threadID, accountID: accountID).map(\.id)
+                deleted.withLock { $0.formUnion(ids) }
+                try tx.rebuildThreads(try tx.deleteMessages(ids: ids, accountID: accountID), accountID: accountID)
+            }
+            return
+        }
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
-        // A pass may have deleted messages while the fetch was in flight.
-        for message in thread.messages ?? [] where !deletedMessageIDs.contains(message.id) {
+        for message in thread.messages ?? [] {
             guard let update = Mapping.message(message, accountID: accountID) else { continue }
             updates.append(update)
             bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt))
         }
         try await write { [updates, bodies] tx in
-            let threads = try tx.upsertMessages(updates)
-            try tx.saveBodies(bodies)
+            // Decide inside the same serialized write as ingestion, so a delete
+            // committed while this request was awaiting cannot be overwritten.
+            let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+            let liveIDs = Set(live.map(\.record.id))
+            let threads = try tx.upsertMessages(live)
+            try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) })
             try tx.rebuildThreads(threads, accountID: accountID)
         }
     }

@@ -212,12 +212,32 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
             """))
         try await engine.sync()
 
+        // Tombstones must survive a large deletion pass and subsequent empty polls.
+        let deletions = (0...10_000).map { #"{"message":{"id":"gone-\#($0)","threadId":"gone"}}"# }.joined(separator: ",")
+        await gmail.queueHistory(try decode(HistoryPage.self, """
+            {"historyId":"140","history":[{"id":"130","messagesDeleted":[\(deletions)]}]}
+            """))
+        try await engine.sync()
+        try await engine.sync()
+
         // A thread response from before the deletion arrives afterwards.
         await gmail.setThread(try decode(GmailThread.self, """
             {"id": "t1", "messages": [\(try encodedMessage("m1", thread: "t1")), \(try encodedMessage("m2", thread: "t1"))]}
             """))
         try await engine.openThread("t1")
         #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1"])
+    }
+
+    @Test func missingMetadataAndMissingThreadsRemoveCachedMessages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
+        await gmail.queueHistory(try decode(HistoryPage.self, """
+            {"historyId":"120","history":[{"id":"110","messagesAdded":[{"message":{"id":"m1","threadId":"t1"}}]}]}
+            """))
+        try await engine.sync()
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m2"])
+        try await engine.openThread("t2")
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) }.isEmpty)
     }
 }
 
