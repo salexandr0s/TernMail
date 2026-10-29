@@ -163,13 +163,8 @@ public actor SyncEngine {
         guard let state else {
             return try await fullSync(reset: false)
         }
-        switch try await incrementalSync(from: state.historyID, passStart: passStart) {
-        case nil:
+        if try await incrementalSync(from: state.historyID, passStart: passStart) == nil {
             try await fullSync(reset: true)
-        case true?:
-            try await refreshLabels()
-        case false?:
-            break
         }
     }
 
@@ -182,7 +177,7 @@ public actor SyncEngine {
         let deleted = deletedMessageIDs
         let profile = try await gmail.profile()
         guard let historyID = Int64(profile.historyId), historyID > 0 else { throw SyncError.invalidHistoryID }
-        try await refreshLabels()
+        let labels = try await fetchLabels()
 
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
@@ -210,6 +205,7 @@ public actor SyncEngine {
                 // thread loads can have added protected targets while we awaited.
                 let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
                 guard remaining.isEmpty else { return remaining }
+                try tx.replaceLabels(labels, accountID: accountID)
                 deleted.withLock { $0.formUnion(gone) }
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
                 var threads = try tx.upsertMessages(live)
@@ -252,8 +248,11 @@ public actor SyncEngine {
         let (fetched, missing) = try await fetchMetadata(changes.messagesToFetch)
         let gone = changes.deletedIDs.union(missing)
         let deleted = deletedMessageIDs
+        // Labels can change without any message history (for example a rename).
+        let labels = try await fetchLabels()
 
         try await write { [latest] tx in
+            try tx.replaceLabels(labels, accountID: accountID)
             deleted.withLock { $0.formUnion(gone) }
             var threads = Set<String>()
             for change in changes.labelChanges {
@@ -275,16 +274,24 @@ public actor SyncEngine {
         return !records.isEmpty
     }
 
-    /// Replaces the label list, with counts from `labels.get`.
-    private func refreshLabels() async throws {
+    /// Fetches a complete label snapshot before the pass commits anything.
+    private func fetchLabels() async throws -> [LabelRecord] {
         let accountID = accountID
         let list = try await gmail.labels()
         let detailed = try await gmail.labels(ids: list.map(\.id))
-        let records = list.map { label in
-            let full = (try? detailed[label.id]?.get()) ?? label
-            return Mapping.label(full, accountID: accountID)
+        return try list.compactMap { label in
+            switch detailed[label.id] {
+            case .success(let full)?:
+                guard full.id == label.id else { throw GmailError.decoding("Label identity") }
+                return Mapping.label(full, accountID: accountID)
+            case .failure(.notFound)?:
+                return nil // Deleted after labels.list, before labels.get.
+            case .failure(let error)?:
+                throw error
+            case nil:
+                throw GmailError.missingBatchPart
+            }
         }
-        try await write { tx in try tx.replaceLabels(records, accountID: accountID) }
     }
 
     private func listMessageIDs(labelIDs: [String], query: String?, includeSpamTrash: Bool, limit: Int? = nil) async throws -> [String] {

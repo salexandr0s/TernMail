@@ -144,6 +144,23 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func emptyHistoryRefreshesLabelsAndFailedDetailsPreserveTheCache() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [], cursor: 100)
+        let label = try decode(GmailLabel.self, #"{"id":"label1","name":"Renamed","type":"user","threadsUnread":3}"#)
+        await gmail.setLabels([label])
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"120"}"#))
+        try await engine.sync()
+        let saved = try await cache.read { tx in try tx.labels(accountID: account) }
+        #expect(saved.first?.name == "Renamed")
+        #expect(saved.first?.threadsUnread == 3)
+        await gmail.failLabelDetails(with: .rateLimited)
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"130"}"#))
+        await #expect(throws: GmailError.rateLimited) { try await engine.sync() }
+        #expect(try await cache.read { tx in try tx.labels(accountID: account) } == saved)
+        #expect(try await cache.syncState(accountID: account)?.historyID == 120)
+    }
+
     @Test func recentListingContinuesPastTheInboxCap() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         var pages: [MessageListPage] = []
@@ -356,6 +373,8 @@ actor FakeGmail: GmailService {
     private var messagesByID: [String: GmailMessage] = [:]
     private var inboxIDs: [String] = []
     private var historyPages: [HistoryPage] = []
+    private var labelValues: [GmailLabel] = []
+    private var labelError: GmailError?
     private var recentPages: [MessageListPage] = []
     private var historyExpired = false
     private let profileHistoryID = "200"
@@ -377,6 +396,8 @@ actor FakeGmail: GmailService {
 
     func queueHistory(_ page: HistoryPage) { historyPages.append(page) }
     func setRecentPages(_ pages: [MessageListPage]) { recentPages = pages }
+    func setLabels(_ labels: [GmailLabel]) { labelValues = labels }
+    func failLabelDetails(with error: GmailError) { labelError = error }
     func expireHistory() { historyExpired = true }
     func setThread(_ thread: GmailThread) { threadsByID[thread.id] = thread }
 
@@ -413,8 +434,12 @@ actor FakeGmail: GmailService {
         try decode(GmailProfile.self, #"{"emailAddress": "me@example.com", "historyId": "\#(profileHistoryID)"}"#)
     }
 
-    func labels() async throws -> [GmailLabel] { [] }
-    func labels(ids: [String]) async throws -> [String: Result<GmailLabel, GmailError>] { [:] }
+    func labels() async throws -> [GmailLabel] { labelValues }
+    func labels(ids: [String]) async throws -> [String: Result<GmailLabel, GmailError>] {
+        Dictionary(uniqueKeysWithValues: labelValues.filter { ids.contains($0.id) }.map { label in
+            (label.id, labelError.map { .failure($0) } ?? Result<GmailLabel, GmailError>.success(label))
+        })
+    }
 
     func listMessages(
         query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int
