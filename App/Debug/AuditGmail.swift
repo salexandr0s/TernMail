@@ -15,7 +15,11 @@ actor AuditGmail: GmailService {
         var labels: Set<String>
         var history = 200
         var from = "River <river@example.invalid>"
+        /// The name of a small text file the message carries.
+        var attachment: String?
     }
+
+    private static let attachmentData = Data("Synthetic attachment for the UI audit.\n".utf8)
 
     private var drafts: [String: String] = [:]
     private var nextDraft = 1
@@ -25,7 +29,7 @@ actor AuditGmail: GmailService {
     private var mail: [Message] = [
         Message(id: "m1", thread: "t1", subject: "Field notes", text: "<p>Today’s field notes.</p><img src='https://example.invalid/pixel'><p><a href='https://example.com/'>Example link</a></p><div style='width:900px;background:#eef'>Wide message, right edge →</div>" + String(repeating: "<p>Another paragraph of synthetic mail.</p>", count: 18), html: true, labels: ["INBOX", "UNREAD"]),
         Message(id: "m2", thread: "t2", subject: "Weekend plans", text: "The earlier message.", html: false, labels: ["INBOX"]),
-        Message(id: "m3", thread: "t2", subject: "Weekend plans", text: "The latest reply. See https://example.com/ for details.", html: false, labels: ["INBOX", "UNREAD", "STARRED"]),
+        Message(id: "m3", thread: "t2", subject: "Weekend plans", text: "The latest reply. See https://example.com/ for details.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], attachment: "Trail map.txt"),
         Message(id: "m4", thread: "t3", subject: "Trail plans", text: "Archived mail with a custom label.", html: false, labels: ["Label_1", "UNREAD"]),
         Message(id: "m5", thread: "t4", subject: "Discarded draft notes", text: "Synthetic trash message.", html: false, labels: ["TRASH"]),
         Message(id: "m6", thread: "t5", subject: "Sent confirmation", text: "Synthetic sent message.", html: false, labels: ["SENT"]),
@@ -66,7 +70,10 @@ actor AuditGmail: GmailService {
         return try decode(["id": id, "messages": messages.map(messageJSON)])
     }
 
-    func attachment(messageID: String, attachmentID: String) throws -> Data { throw GmailError.notFound }
+    func attachment(messageID: String, attachmentID: String) throws -> Data {
+        guard mail.contains(where: { $0.id == messageID && $0.attachment != nil }) else { throw GmailError.notFound }
+        return Self.attachmentData
+    }
 
     func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
         let changed = mail.filter { $0.history > (Int(startHistoryID) ?? 0) }
@@ -165,10 +172,19 @@ actor AuditGmail: GmailService {
         let ageHours = message.id == "m2" ? 3 : Double(index)
         return ["id": message.id, "threadId": message.thread, "labelIds": Array(message.labels),
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
-                "snippet": "Synthetic mail for the UI audit", "payload": [
-                    "mimeType": message.html ? "text/html" : "text/plain",
-                    "headers": [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]],
-                    "body": ["data": Data(message.text.utf8).base64EncodedString()]]]
+                "snippet": "Synthetic mail for the UI audit", "payload": payload(message)]
+    }
+
+    private func payload(_ message: Message) -> [String: Any] {
+        let headers = [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]]
+        let text: [String: Any] = ["mimeType": message.html ? "text/html" : "text/plain", "body": ["data": Data(message.text.utf8).base64EncodedString()]]
+        guard let name = message.attachment else { return text.merging(["headers": headers]) { $1 } }
+        let file: [String: Any] = [
+            "partId": "1", "mimeType": "text/plain", "filename": name,
+            "headers": [["name": "Content-Disposition", "value": "attachment; filename=\"\(name)\""]],
+            "body": ["attachmentId": "a-\(message.id)", "size": Self.attachmentData.count],
+        ]
+        return ["mimeType": "multipart/mixed", "headers": headers, "parts": [text.merging(["partId": "0"]) { $1 }, file]]
     }
 
     private func decode<T: Decodable>(_ json: [String: Any]) throws -> T {
