@@ -220,6 +220,20 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func staleThreadNotFoundDoesNotDeleteMessagesIngestedDuringTheRequest() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.holdNextThread()
+        let loading = Task { try await engine.openThread("t1") }
+        while await !gmail.isHoldingThread { await Task.yield() }
+        await gmail.add(try gmailMessage("m2", thread: "t1", labels: [SystemLabel.inbox], historyID: 150))
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"160","history":[{"id":"150","messagesAdded":[{"message":{"id":"m2","threadId":"t1"}}]}]}"#))
+        try await engine.sync()
+        await gmail.releaseThread()
+        try await loading.value
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m2"])
+    }
+
     @Test func threadLoadPreservesLaterUnreadIntentAndConcurrentDeletions() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread]), ("m2", "t1", [SystemLabel.inbox])], cursor: 100)
@@ -589,11 +603,12 @@ actor FakeGmail: GmailService {
     }
 
     func thread(id: String, format: MessageFormat) async throws -> GmailThread {
-        guard let thread = threadsByID[id] else { throw GmailError.notFound }
+        let response = threadsByID[id]
         if holdsThread {
             holdsThread = false
             await withCheckedContinuation { heldThread = $0 }
         }
+        guard let thread = response else { throw GmailError.notFound }
         return thread
     }
 

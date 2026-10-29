@@ -347,8 +347,9 @@ public actor SyncEngine {
         let accountID = accountID
         let deleted = deletedMessageIDs
         let openedAt = now()
-        let missing = try await write { tx in
+        let opened = try await write { tx in
             let missing = try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)
+            let versions = Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) })
             if try tx.thread(id: threadID, accountID: accountID)?.isUnread == true {
                 // Reading state and recording mark-read are one transaction, so
                 // a user command cannot land between them and be overwritten.
@@ -357,10 +358,10 @@ public actor SyncEngine {
                     remove: [SystemLabel.unread], now: openedAt, notBefore: openedAt
                 )
             }
-            return missing
+            return (missing: missing, versions: versions)
         }
         scheduleSending()
-        guard !missing.isEmpty else { return }
+        guard !opened.missing.isEmpty else { return }
         if isStopped || Task.isCancelled { throw CancellationError() }
 
         let thread: GmailThread
@@ -368,7 +369,10 @@ public actor SyncEngine {
             thread = try await gmail.thread(id: threadID, format: .full)
         } catch GmailError.notFound {
             try await write { tx in
-                let ids = try tx.messages(threadID: threadID, accountID: accountID).map(\.id)
+                // A slow 404 describes the request's starting state. Preserve
+                // messages that a newer sync or thread response has since stored.
+                let ids = try tx.messages(threadID: threadID, accountID: accountID)
+                    .filter { opened.versions[$0.id] == $0.historyID }.map(\.id)
                 deleted.withLock { $0.formUnion(ids) }
                 try tx.rebuildThreads(try tx.deleteMessages(ids: ids, accountID: accountID), accountID: accountID)
             }
