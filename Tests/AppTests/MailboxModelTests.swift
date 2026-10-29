@@ -134,6 +134,34 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func aCombinedInboxKeepsSameIDsApartAndOneUndoRevertsAMixedArchive() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        // Both fake accounts hold the same thread IDs.
+        await mailbox.addAccount(second, gmail: AuditGmail())
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        await mailbox.start()
+        let otherT1 = ThreadKey(accountID: "second", threadID: "t1")
+        let otherT2 = ThreadKey(accountID: "second", threadID: "t2")
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 4 }
+        #expect(Set(mailbox.threads.map(\.key)) == keys("t1", "t2").union([otherT1, otherT2]))
+
+        // One archive across both accounts, then one Undo for both.
+        mailbox.selectedThreadIDs = [key("t1"), otherT1]
+        await mailbox.perform(.archive)?.value
+        try await waitUntil { Set(mailbox.threads.map(\.key)) == [key("t2"), otherT2] }
+        guard case .action(let receipt)? = mailbox.notice?.undo else {
+            Issue.record("Archive left no notice with Undo")
+            return
+        }
+        mailbox.undo(receipt)
+        try await waitUntil { mailbox.threads.count == 4 }
+        #expect(Set(mailbox.threads.map(\.key)) == keys("t1", "t2").union([otherT1, otherT2]))
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
