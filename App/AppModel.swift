@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MailStore
 import Observation
 
@@ -19,6 +20,9 @@ final class AppModel {
     private(set) var phase: Phase = .loading
     private(set) var isSigningIn = false
     private(set) var signInError: String?
+    /// The open mailbox while signed in.
+    private(set) var mailbox: MailboxModel?
+    var isConfirmingSignOut = false
 
     let auth = GoogleAuth(configuration: .fromBundle())
     private(set) var cache: MailCache?
@@ -34,7 +38,11 @@ final class AppModel {
             auth.onSignInRequired = { [weak self] in self?.sessionExpired() }
 
             if let account = try await accounts.accounts().first {
-                phase = auth.restore(accountID: account.id) ? .signedIn(account) : .signInRequired(account)
+                if auth.restore(accountID: account.id) {
+                    openMailbox(for: account)
+                } else {
+                    phase = .signInRequired(account)
+                }
             } else {
                 phase = .signedOut
             }
@@ -62,7 +70,7 @@ final class AppModel {
                 try await removeAccountData(old, from: accounts)
             }
             try await accounts.save(account)
-            phase = .signedIn(account)
+            openMailbox(for: account)
         } catch {
             signInError = error.localizedDescription
         }
@@ -70,6 +78,7 @@ final class AppModel {
 
     func signOut() async {
         guard let accounts else { return }
+        closeMailbox()
         auth.signOut()
         do {
             for account in try await accounts.accounts() {
@@ -83,8 +92,23 @@ final class AppModel {
 
     private func sessionExpired() {
         if case .signedIn(let account) = phase {
+            closeMailbox()
             phase = .signInRequired(account)
         }
+    }
+
+    private func openMailbox(for account: AccountRecord) {
+        guard let cache else { return }
+        closeMailbox()
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: GmailClient(tokens: auth))
+        self.mailbox = mailbox
+        phase = .signedIn(account)
+        Task { await mailbox.start() }
+    }
+
+    private func closeMailbox() {
+        mailbox?.stop()
+        mailbox = nil
     }
 
     private func removeAccountData(_ account: AccountRecord, from accounts: AccountStore) async throws {

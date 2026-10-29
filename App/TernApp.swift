@@ -11,6 +11,7 @@ struct TernApp: App {
                 .task { await model.start() }
         }
         .defaultSize(width: 1200, height: 760)
+        .commands { MailCommands(app: model) }
     }
 }
 
@@ -26,7 +27,9 @@ struct RootView: View {
         case .signedOut, .signInRequired:
             SignInView()
         case .signedIn:
-            MainView()
+            if let mailbox = model.mailbox {
+                MainView(mailbox: mailbox)
+            }
         case .failed(let message):
             ContentUnavailableView(
                 "Tern Couldn't Open Its Data",

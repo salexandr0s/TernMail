@@ -54,5 +54,9 @@ targets:
         product: GmailAPI
       - package: Core
         product: MailStore
+      - package: Core
+        product: MessageContent
+      - package: Core
+        product: SyncEngine
       - package: AppAuth
         product: AppAuth

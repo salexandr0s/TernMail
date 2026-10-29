@@ -22,6 +22,20 @@ enum Tokens {
         static let lg: CGFloat = 14
     }
 
+    /// `shadow.md`: 0 8px 20px rgba(0,0,0,0.10). SwiftUI's radius is about half the CSS blur.
+    enum Shadow {
+        static let mdColor = Color.black.opacity(0.10)
+        static let mdRadius: CGFloat = 10
+        static let mdY: CGFloat = 8
+    }
+
+    /// `components/toast.yaml`.
+    enum Toast {
+        static let width: CGFloat = 360
+        static let info: Duration = .milliseconds(3500)
+        static let error: Duration = .milliseconds(6000)
+    }
+
     enum Motion {
         static let fast: Double = 0.12
         static let base: Double = 0.16
