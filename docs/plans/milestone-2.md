@@ -115,7 +115,7 @@ The user approves this plan before phase 1 starts. Each phase touches at most fi
 | # | Phase | Check |
 |---|---|---|
 | 1 | `GmailAPI`: drafts and attachment calls, the upload base path, multipart and resumable upload | `swift test` |
-| 2 | `MessageContent`: `ComposeDocument`, HTML and plain text output, HTML import, MIME writer and reader, reply and forward builders, attachment listing | `swift test` |
+| 2 | `MessageContent`: `ComposeDocument`, HTML and plain text output, HTML import, MIME writer and reader, reply and forward builders, attachment listing. Built as 2a (addresses, MIME writer and reader, attachment listing) and 2b (the rest) to stay within five files each | `swift test` |
 | Gate | The milestone 1 audit finishes and, with your approval, `fix/milestone-1-audit` is merged into this branch. Then a cleanup commit for the files over 300 lines that phases 3 and 4 change (dead code, unused imports and exports, debug logs), as workspace rule 9 requires | Full build and tests |
 | 3 | `MailStore`: `compose-v1` migration, draft and attachment tables, header columns, claiming by draft, hiding drafts being sent or discarded | `swift test` |
 | 4a | `SyncEngine`: save, send and discard rows, revisions, the compose lane, 404 handling, undo send | `swift test` |
