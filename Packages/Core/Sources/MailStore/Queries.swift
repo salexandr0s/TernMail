@@ -56,16 +56,25 @@ extension MailCache {
     /// Threads listed under `labelID`, newest first. A conversation a snooze
     /// brought back counts as new from its wake time.
     public func threads(accountID: String, labelID: String, limit: Int) -> AsyncThrowingStream<[ThreadRecord], any Error> {
-        observe { db in
+        threads(accountIDs: [accountID], labelID: labelID, limit: limit)
+    }
+
+    /// Threads listed under `labelID` in any of the accounts, as one list for
+    /// a combined mailbox.
+    public func threads(accountIDs: [String], labelID: String, limit: Int) -> AsyncThrowingStream<[ThreadRecord], any Error> {
+        let placeholders = Array(repeating: "?", count: accountIDs.count).joined(separator: ", ")
+        let arguments = StatementArguments(accountIDs) + [labelID, limit]
+        return observe { db in
             try ThreadRecord.fetchAll(db, sql: """
                 SELECT thread.*
                 FROM threadLabel
                 JOIN thread ON thread.accountID = threadLabel.accountID AND thread.id = threadLabel.threadID
                 LEFT JOIN wokenThread ON wokenThread.accountID = threadLabel.accountID AND wokenThread.threadID = threadLabel.threadID
-                WHERE threadLabel.accountID = ? AND threadLabel.labelID = ?
-                ORDER BY MAX(threadLabel.lastDate, COALESCE(wokenThread.wokeAt, threadLabel.lastDate)) DESC, threadLabel.threadID
+                WHERE threadLabel.accountID IN (\(placeholders)) AND threadLabel.labelID = ?
+                ORDER BY MAX(threadLabel.lastDate, COALESCE(wokenThread.wokeAt, threadLabel.lastDate)) DESC,
+                    threadLabel.threadID, threadLabel.accountID
                 LIMIT ?
-                """, arguments: [accountID, labelID, limit])
+                """, arguments: arguments)
         }
     }
 

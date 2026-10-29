@@ -31,6 +31,25 @@ private let account = "acct"
         #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
     }
 
+    @Test func aCombinedListKeepsTheSameThreadIDFromTwoAccountsApart() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m1", thread: "t1", labels: [SystemLabel.inbox]),
+                update("m1", thread: "t1", labels: [SystemLabel.inbox], minutes: 5, in: "other"),
+                update("m2", thread: "t2", labels: [SystemLabel.sent], minutes: 10, in: "other"),
+            ])
+            try tx.rebuildThreads(["t1"], accountID: account)
+            try tx.rebuildThreads(["t1", "t2"], accountID: "other")
+        }
+        let combined = try #require(try await first(
+            cache.threads(accountIDs: [account, "other"], labelID: SystemLabel.inbox, limit: 10)
+        ))
+        #expect(combined.map { "\($0.accountID)/\($0.id)" } == ["other/t1", "\(account)/t1"])
+        let one = try #require(try await first(cache.threads(accountIDs: [account], labelID: SystemLabel.inbox, limit: 10)))
+        #expect(one.map(\.accountID) == [account])
+    }
+
     @Test func trashedMessagesListTheirThreadOnlyUnderTrash() async throws {
         let cache = try MailCache.inMemory()
         try await cache.write { tx in
@@ -279,10 +298,11 @@ private func update(
     thread: String,
     labels: [String],
     minutes: Double = 0,
-    historyID: Int64 = 100
+    historyID: Int64 = 100,
+    in accountID: String = account
 ) -> CacheTransaction.MessageUpdate {
     let record = MessageRecord(
-        accountID: account, id: id, threadID: thread, historyID: historyID,
+        accountID: accountID, id: id, threadID: thread, historyID: historyID,
         date: Date(timeIntervalSince1970: 1_800_000_000 + minutes * 60),
         snippet: "", sender: "Sender <s@example.com>", recipients: "r@example.com",
         cc: nil, subject: "Subject", sizeEstimate: 1
