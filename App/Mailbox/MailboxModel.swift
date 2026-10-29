@@ -66,6 +66,7 @@ final class MailboxModel {
             guard selectedMailbox != oldValue else { return }
             // Choosing another mailbox leaves search.
             search.clear()
+            updateSearchSources()
             selectedThreadIDs = []
             threads = []
             threadLimit = Self.pageSize
@@ -285,7 +286,14 @@ final class MailboxModel {
     /// Whether the list can show conversations from more than one account,
     /// so each row names its account.
     var listMixesAccounts: Bool {
-        hasSeveralAccounts && (search.isActive || selectedAccounts.count > 1)
+        searchedAccounts.count > 1
+    }
+
+    /// The accounts search covers: the one in view, or every account in a
+    /// combined mailbox or while no mailbox is selected. The list shows the
+    /// same accounts when a mailbox is selected.
+    private var searchedAccounts: [AccountMailbox] {
+        selectedMailbox.map(owners(of:)) ?? accounts
     }
 
     /// The account under the list's title when there are several.
@@ -795,10 +803,14 @@ final class MailboxModel {
         account.onEvent = { [weak self] in self?.handle($0) }
     }
 
-    /// Search covers every account, and a combined mailbox lists them all.
+    /// Keeps search and a combined mailbox's list in step with the accounts.
     private func accountsChanged() {
-        search.setSources(accounts.map { .init(accountID: $0.account.id, engine: $0.engine) })
+        updateSearchSources()
         if case .combined? = selectedMailbox { observeThreads() }
+    }
+
+    private func updateSearchSources() {
+        search.setSources(searchedAccounts.map { .init(accountID: $0.account.id, engine: $0.engine) })
     }
 
     /// Keeps the selection inside the list, and tells the engine what the
