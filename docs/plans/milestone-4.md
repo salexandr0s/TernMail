@@ -1,6 +1,6 @@
 # Milestone 4 plan: integrations
 
-Status: approved 2026-10-29 after a plan review. Amended the same day to take forwarding filters and a formatted vacation message from milestone 5 (answered question 3); the amendment waits for your approval. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
+Status: approved 2026-10-29 after a plan review. Amended the same day to take forwarding filters and a formatted vacation message from milestone 5 (answered question 3). You approved the amendment the same day. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
 
 The milestone runs in two stages. Stage A adds library code in new files and changes no existing file except `Packages/Core/Package.swift`. Stage B wires that code into sign-in, the store, the sync engine, compose, the thread view and Settings. It starts only after you say milestones 2 and 3 are done.
 
@@ -277,7 +277,7 @@ Checks: "App" is the Debug build (`xcodebuild -project Tern.xcodeproj -scheme Te
 | A4b | XOAUTH2, the session state machine, backoff and the monitor actor | `IdleSession.swift`, `InboxMonitor.swift`, `IdleSessionTests.swift` (all new) | App |
 | A5 | `GmailAPI` forwarding addresses: the model and `forwardingAddresses.list` | `GmailClient+Forwarding.swift`, `ForwardingAddressTests.swift` (both new) | App |
 
-A2 uses A1's test stubs, so it follows A1. A3 and A4 depend on neither. A5 came with the amendment, uses A1's stubs, and runs once you approve the amendment. Stage A ends with `SESSION_HANDOFF.md`.
+A2 uses A1's test stubs, so it follows A1. A3 and A4 depend on neither. A5 came with the amendment and uses A1's stubs. Stage A ends with `SESSION_HANDOFF.md`.
 
 Until B1, the new `GmailAPI` test files use their own stubs (`RecordingTransport`, `CountingTokens`), since the ones in `GmailAPITests.swift` are private and stage A leaves that file alone. The A3 part finder has its own attachment check, since `MIMEParts.isAttachment` is private; B6a replaces it with the shared one.
 
