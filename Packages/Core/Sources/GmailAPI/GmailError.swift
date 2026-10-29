@@ -12,11 +12,14 @@ public enum GmailError: Error, Sendable, Equatable {
     case decoding(String)
     case transport(URLError.Code)
     case invalidRequest(String)
+    /// A resumable upload session ended before Gmail stored the message.
+    /// Uploading again starts a new session.
+    case uploadSessionLost
 
     /// Whether the same request may succeed later without any change.
     public var isRetryable: Bool {
         switch self {
-        case .rateLimited, .server, .transport, .missingBatchPart:
+        case .rateLimited, .server, .transport, .missingBatchPart, .uploadSessionLost:
             true
         case .unauthorized, .notFound, .http, .decoding, .invalidRequest:
             false

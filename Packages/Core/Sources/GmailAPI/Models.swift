@@ -109,6 +109,18 @@ public struct GmailThread: Decodable, Sendable, Equatable {
     public let messages: [GmailMessage]?
 }
 
+public struct GmailDraft: Decodable, Sendable, Equatable {
+    public let id: String
+    /// On `drafts.list` and after a save, only the message's ID, thread ID and labels.
+    public let message: GmailMessage?
+}
+
+public struct DraftListPage: Decodable, Sendable {
+    public let drafts: [GmailDraft]?
+    public let nextPageToken: String?
+    public let resultSizeEstimate: Int?
+}
+
 public struct HistoryPage: Decodable, Sendable {
     public let history: [HistoryRecord]?
     public let nextPageToken: String?

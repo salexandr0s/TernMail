@@ -97,6 +97,119 @@ import Testing
     }
 }
 
+@Suite struct DraftUploadTests {
+    private let draftJSON = #"{"id":"d1","message":{"id":"m1","threadId":"t1","labelIds":["DRAFT"]}}"#
+
+    @Test func smallDraftsUploadAsMultipartRelated() async throws {
+        let transport = StubTransport([.init(status: 200, body: draftJSON)])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let raw = Data("Subject: Hi\r\n\r\nBody\r\n".utf8)
+
+        let draft = try await client.createDraft(OutgoingMessage(raw: raw, threadID: "t1"))
+
+        #expect(draft.id == "d1")
+        #expect(draft.message?.id == "m1")
+        let request = try #require(await transport.requests.first)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/upload/gmail/v1/users/me/drafts")
+        #expect(request.url?.query == "uploadType=multipart")
+        let contentType = try #require(request.value(forHTTPHeaderField: "Content-Type"))
+        let boundary = try #require(contentType.split(separator: "=").last.map(String.init))
+        #expect(contentType == "multipart/related; boundary=\(boundary)")
+        let expected = "--\(boundary)\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
+            + #"{"message":{"threadId":"t1"}}"#
+            + "\r\n--\(boundary)\r\nContent-Type: message/rfc822\r\n\r\n"
+            + "Subject: Hi\r\n\r\nBody\r\n"
+            + "\r\n--\(boundary)--\r\n"
+        #expect(request.httpBody == Data(expected.utf8))
+    }
+
+    @Test func updateAndSendCarryTheDraftID() async throws {
+        let sent = #"{"id":"m2","threadId":"t1","labelIds":["SENT"]}"#
+        let transport = StubTransport([
+            .init(status: 200, body: draftJSON),
+            .init(status: 200, body: sent),
+            .init(status: 200, body: sent),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let message = OutgoingMessage(raw: Data("Subject: Hi\r\n\r\nBody\r\n".utf8))
+
+        _ = try await client.updateDraft(id: "d1", with: message)
+        _ = try await client.sendDraft(id: "d1", with: message)
+        #expect(try await client.sendDraft(id: "d1").labelIds == ["SENT"])
+
+        let requests = await transport.requests
+        #expect(requests.map(\.httpMethod) == ["PUT", "POST", "POST"])
+        #expect(requests.map { $0.url?.path } == [
+            "/upload/gmail/v1/users/me/drafts/d1",
+            "/upload/gmail/v1/users/me/drafts/send",
+            "/gmail/v1/users/me/drafts/send",
+        ])
+        for request in requests.prefix(2) {
+            let body = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+            #expect(body.contains(#""id":"d1""#))
+            #expect(body.contains(#""message":{}"#))
+        }
+        #expect(requests[2].httpBody == Data(#"{"id":"d1"}"#.utf8))
+    }
+
+    @Test func largeDraftsUseAResumableSession() async throws {
+        let session = "https://gmail.googleapis.com/upload/gmail/v1/users/me/drafts?uploadType=resumable&upload_id=abc"
+        let transport = StubTransport([
+            .init(status: 200, headers: ["Location": session], body: ""),
+            .init(status: 200, body: draftJSON),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let raw = Data(repeating: UInt8(ascii: "a"), count: GmailClient.multipartUploadLimit + 1)
+
+        #expect(try await client.createDraft(OutgoingMessage(raw: raw)).id == "d1")
+
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(requests[0].httpMethod == "POST")
+        #expect(requests[0].url?.query == "uploadType=resumable")
+        #expect(requests[0].value(forHTTPHeaderField: "X-Upload-Content-Type") == "message/rfc822")
+        #expect(requests[0].value(forHTTPHeaderField: "X-Upload-Content-Length") == String(raw.count))
+        #expect(requests[0].httpBody == Data(#"{"message":{}}"#.utf8))
+        #expect(requests[1].httpMethod == "PUT")
+        #expect(requests[1].url?.absoluteString == session)
+        #expect(requests[1].httpBody == raw)
+    }
+
+    @Test func resumableSessionsOutsideGoogleAreRefused() async throws {
+        let transport = StubTransport([
+            .init(status: 200, headers: ["Location": "https://uploads.example.com/session"], body: ""),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let raw = Data(count: GmailClient.multipartUploadLimit + 1)
+
+        await #expect(throws: GmailError.self) { try await client.createDraft(OutgoingMessage(raw: raw)) }
+        #expect(await transport.requests.count == 1)
+    }
+
+    @Test func aLostUploadSessionIsRetryableNotAMissingDraft() async throws {
+        let transport = StubTransport([
+            .init(status: 200, headers: ["Location": "https://gmail.googleapis.com/upload/session"], body: ""),
+            .init(status: 404, body: "{}"),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let raw = Data(count: GmailClient.multipartUploadLimit + 1)
+
+        await #expect(throws: GmailError.uploadSessionLost) {
+            try await client.sendDraft(id: "d1", with: OutgoingMessage(raw: raw))
+        }
+        #expect(GmailError.uploadSessionLost.isRetryable)
+    }
+
+    @Test func attachmentsDecodeFromBase64URL() async throws {
+        let transport = StubTransport([.init(status: 200, body: #"{"size":3,"data":"-_8"}"#)])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+
+        #expect(try await client.attachment(messageID: "m1", attachmentID: "a1") == Data([0xFB, 0xFF]))
+        #expect(await transport.requests.first?.url?.path == "/gmail/v1/users/me/messages/m1/attachments/a1")
+    }
+}
+
 // MARK: Helpers
 
 private func failure<T>(_ result: Result<T, GmailError>) -> GmailError? {

@@ -104,6 +104,13 @@ public struct GmailClient: Sendable {
         return try decode(await send(.get("history", items)))
     }
 
+    /// The bytes of one attachment. `attachmentID` is a part's `body.attachmentId`.
+    public func attachment(messageID: String, attachmentID: String) async throws -> Data {
+        let body: MessagePart.Body = try decode(await send(.get("messages/\(messageID)/attachments/\(attachmentID)")))
+        guard let data = body.decodedData else { throw GmailError.decoding("attachment data") }
+        return data
+    }
+
     // MARK: Changes
 
     /// Adds and removes labels on whole threads, including messages outside the
@@ -142,13 +149,13 @@ public struct GmailClient: Sendable {
 
     // MARK: Transport
 
-    private func send(_ endpoint: Endpoint) async throws -> Data {
+    func send(_ endpoint: Endpoint) async throws -> Data {
         try await send(endpoint.urlRequest()).data
     }
 
     /// Sends a request with a bearer token. A 401 is retried once with a
     /// forced token refresh; any other non-2xx status throws.
-    private func send(_ request: URLRequest) async throws -> (data: Data, response: HTTPURLResponse) {
+    func send(_ request: URLRequest) async throws -> (data: Data, response: HTTPURLResponse) {
         var forceRefresh = false
         while true {
             var authorized = request
@@ -251,7 +258,7 @@ public struct GmailClient: Sendable {
         return failures
     }
 
-    private func decode<T: Decodable>(_ data: Data) throws -> T {
+    func decode<T: Decodable>(_ data: Data) throws -> T {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
@@ -259,7 +266,7 @@ public struct GmailClient: Sendable {
         }
     }
 
-    private func encode(_ value: some Encodable) throws -> Data {
+    func encode(_ value: some Encodable) throws -> Data {
         do {
             return try JSONEncoder().encode(value)
         } catch {
@@ -279,15 +286,23 @@ private struct BatchModifyRequest: Encodable {
     let removeLabelIds: [String]
 }
 
-/// One Gmail API call, relative to `/gmail/v1/users/me/`.
+/// One Gmail API call, relative to `/gmail/v1/users/me/`, or to
+/// `/upload/gmail/v1/users/me/` for calls that upload a message.
 struct Endpoint: Sendable {
-    static let host = "gmail.googleapis.com"
-    static let basePath = "/gmail/v1/users/me/"
+    enum Base: String, Sendable {
+        case api = "/gmail/v1/users/me/"
+        case upload = "/upload/gmail/v1/users/me/"
+    }
 
+    static let host = "gmail.googleapis.com"
+
+    var base = Base.api
     let method: String
     let path: String
     let query: [URLQueryItem]
     let body: Data?
+    var contentType = "application/json"
+    var headers: [String: String] = [:]
 
     static func get(_ path: String, _ query: [URLQueryItem] = []) -> Endpoint {
         Endpoint(method: "GET", path: path, query: query, body: nil)
@@ -295,6 +310,10 @@ struct Endpoint: Sendable {
 
     static func post(_ path: String, body: Data? = nil) -> Endpoint {
         Endpoint(method: "POST", path: path, query: [], body: body)
+    }
+
+    static func delete(_ path: String) -> Endpoint {
+        Endpoint(method: "DELETE", path: path, query: [], body: nil)
     }
 
     static func batchRequest() throws -> URLRequest {
@@ -312,7 +331,7 @@ struct Endpoint: Sendable {
         var components = URLComponents()
         components.scheme = "https"
         components.host = Self.host
-        components.path = Self.basePath + path
+        components.path = base.rawValue + path
         if !query.isEmpty {
             components.queryItems = query
             // URLComponents leaves "+" as is, and Google decodes it as a space.
@@ -328,7 +347,10 @@ struct Endpoint: Sendable {
         request.httpMethod = method
         if let body {
             request.httpBody = body
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
         }
         return request
     }
