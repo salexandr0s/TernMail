@@ -1,5 +1,6 @@
 import Foundation
 import GmailAPI
+import JavaScriptCore
 import Testing
 @testable import MessageContent
 
@@ -69,6 +70,39 @@ import Testing
         #expect(page.contains("&lt;b&gt;hi&lt;/b&gt;"))
         #expect(page.contains("<a href=\"https://example.com/a?b=1&amp;c=2\">https://example.com/a?b=1&amp;c=2</a>"))
         #expect(HTMLEntities.decode("Tom&#39;s &amp; Jerry") == "Tom's & Jerry")
+    }
+
+    @Test func darkModeKeepsCommonMailColorsReadable() throws {
+        let context = try #require(JSContext())
+        let palette = try #require(context.evaluateScript(MessageDocument.darkModeScript))
+        try #require(context.exception == nil)
+        let colors = try #require(palette.call(withArguments: [[30, 30, 30], [255, 255, 255]]))
+        func adapt(_ method: String, _ arguments: [Any]) throws -> [Int] {
+            let value = try #require(colors.invokeMethod(method, withArguments: arguments))
+            try #require(context.exception == nil)
+            let rgb = try #require(value.toArray() as? [Int])
+            try #require(rgb.count == 3)
+            return rgb
+        }
+
+        let page = try adapt("background", [[255, 255, 255]])
+        #expect(zip(page, [30, 30, 30]).allSatisfy { abs($0 - $1) <= 1 }, "white became \(page)")
+        #expect(try adapt("background", [[26, 115, 232]]) == [26, 115, 232], "a saturated button keeps its color")
+        #expect(try adapt("background", [[30, 30, 30]]) == [30, 30, 30], "a dark background stays dark")
+
+        // Text over background: body text, muted text, a link, a highlight, a button label.
+        let pairs = [
+            ([0, 0, 0], [255, 255, 255]), ([51, 51, 51], [244, 244, 244]), ([102, 102, 102], [255, 255, 255]),
+            ([17, 85, 204], [255, 255, 255]), ([0, 0, 0], [255, 255, 0]), ([255, 255, 255], [26, 115, 232]),
+        ]
+        for (text, background) in pairs {
+            let darkBackground = try adapt("background", [background])
+            let darkText = try adapt("text", [text, 1, darkBackground])
+            let contrast = try #require(colors.invokeMethod("contrast", withArguments: [darkText, darkBackground]))
+            try #require(context.exception == nil)
+            let ratio = contrast.toDouble()
+            #expect(ratio >= 4.5, "\(text) on \(background) became \(darkText) on \(darkBackground)")
+        }
     }
 }
 

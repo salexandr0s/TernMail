@@ -1,11 +1,12 @@
 import AppKit
+import MessageContent
 import SwiftUI
 import WebKit
 
 /// Shows one rendered message. Page scripts are off, every network load is
 /// blocked by a content rule list (on top of the page's CSP), links open in
-/// the default browser, and the view grows to fit its content so the thread
-/// scrolls as one page.
+/// the default browser, HTML mail follows dark mode, and the view grows to fit
+/// its content so the thread scrolls as one page.
 struct MessageWebView: NSViewRepresentable {
     let html: String
     let blocker: WKContentRuleList?
@@ -20,6 +21,9 @@ struct MessageWebView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: MessageDocument.darkModeScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient
+        ))
         if let blocker {
             configuration.userContentController.add(blocker)
         }

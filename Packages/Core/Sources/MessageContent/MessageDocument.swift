@@ -50,20 +50,21 @@ public enum MessageDocument {
         return RenderedMessage(html: page, blockedRemoteContent: 0)
     }
 
-    // The values below mirror Tokens.Space.s4 (16) and the macOS body size (13).
+    // The native message card supplies the inset. Type matches the macOS body size (13).
 
-    /// HTML mail is designed for a white page, so it keeps one in dark mode.
+    /// HTML mail is designed for a white page, so the page starts white and
+    /// `darkModeScript` adapts its colors in dark mode.
     private static let htmlStyle = """
         :root{color-scheme:light}\
         html{background:#fff;color:#000}\
-        body{margin:0;padding:16px;font:13px -apple-system,system-ui,sans-serif;overflow-wrap:break-word}\
+        body{margin:0;padding:0;font:13px -apple-system,system-ui,sans-serif;overflow-wrap:break-word}\
         img{max-width:100%;height:auto}
         """
 
     private static let plainTextStyle = """
         :root{color-scheme:light dark}\
         html{background:Canvas;color:CanvasText}\
-        body{margin:0;padding:16px;font:13px -apple-system,system-ui,sans-serif}\
+        body{margin:0;padding:0;font:13px -apple-system,system-ui,sans-serif}\
         .tern-plain{white-space:pre-wrap;overflow-wrap:anywhere}
         """
 
