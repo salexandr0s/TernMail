@@ -39,13 +39,22 @@ public struct CacheTransaction {
     /// drafts. Outgoing attachment rows go with their local drafts, and search
     /// text with its messages.
     public func deleteAccountData(accountID: String) throws {
-        for table in [
-            "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
-            "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
-        ] {
+        for table in Self.accountTables {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
         }
     }
+
+    /// Every account with rows in the cache, so a launch can remove the rows
+    /// of accounts that were signed out.
+    public func cachedAccountIDs() throws -> Set<String> {
+        let union = Self.accountTables.map { "SELECT accountID FROM \($0)" }.joined(separator: " UNION ")
+        return try Set(String.fetchAll(db, sql: union))
+    }
+
+    private static let accountTables = [
+        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
+        "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
+    ]
 
     // MARK: Labels
 
