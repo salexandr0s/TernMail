@@ -160,14 +160,27 @@ final class AppModel {
         await mailbox?.prepareToQuit()
     }
 
-    /// Sends waiting out their undo delay or a retry, which quitting sends at once.
-    var waitingSendCount: Int {
-        mailbox?.outbox.filter(\.isSending).count ?? 0
+    /// Drafts whose send waits out its undo delay or a retry, which quitting
+    /// sends at once. Read from the cache, since the Outbox can lag behind a
+    /// send that just changed.
+    func sendingDraftIDs() async -> Set<String> {
+        Set(await localDrafts().filter { $0.state == .sending }.map(\.id))
+    }
+
+    /// How many of `ids` Gmail refused to send, which returns them to editing.
+    func refusedDraftCount(among ids: Set<String>) async -> Int {
+        await localDrafts().filter { ids.contains($0.id) && $0.state == .editing }.count
+    }
+
+    private func localDrafts() async -> [LocalDraft] {
+        guard let cache, let accountID = mailbox?.account.id else { return [] }
+        return (try? await cache.read { tx in try tx.localDrafts(accountID: accountID) }) ?? []
     }
 
     /// Sends every waiting message now. False when one of them couldn't
-    /// reach Gmail, or `timeout` passed first. A send still running after the
-    /// timeout keeps going, and the next launch finishes one cut off by quitting.
+    /// reach Gmail or Gmail refused it, or `timeout` passed first. A send still
+    /// running after the timeout keeps going, and the next launch finishes one
+    /// cut off by quitting.
     func sendWaitingMessages(timeout: Duration = .seconds(10)) async -> Bool {
         guard let engine = mailbox?.engine else { return true }
         let (outcome, continuation) = AsyncStream.makeStream(of: Bool.self)
