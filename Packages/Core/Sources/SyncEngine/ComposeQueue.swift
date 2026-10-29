@@ -4,16 +4,19 @@ import MailStore
 import MessageContent
 
 /// Why a draft can't be uploaded at all. Shown to the user as is.
-enum ComposeError: Error, Equatable, LocalizedError {
+public enum ComposeError: Error, Equatable, LocalizedError {
     case missingAttachment(String)
     case tooLarge
+    case draftGone
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .missingAttachment(let name):
             "Tern can't find the attachment “\(name)”. Remove it and attach it again."
         case .tooLarge:
             "This message is larger than Gmail accepts. Remove some attachments and try again."
+        case .draftGone:
+            "This draft was sent or deleted in another app."
         }
     }
 }
@@ -159,7 +162,8 @@ extension SyncEngine {
 
     private func upload(_ row: PendingAction, localDraftID: String) async throws {
         guard let prepared = try await prepare(localDraftID) else { return try await drop(row) }
-        _ = try await save(prepared, attempts: row.attempts)
+        let target = try await target(for: prepared.draft, attempts: row.attempts)
+        _ = try await save(prepared, into: target, attempts: row.attempts)
         let now = now()
         let notBefore = max(now, nextLargeSave[localDraftID] ?? now)
         try await write { tx in
@@ -174,11 +178,10 @@ extension SyncEngine {
 
     private func deliver(_ row: PendingAction, localDraftID: String) async throws {
         guard let prepared = try await prepare(localDraftID) else { return try await drop(row) }
-        // A draft that never reached Gmail is saved first, so a retry finds
-        // it instead of creating another.
-        var draftID = prepared.draft.gmailDraftID
-        if draftID == nil { draftID = try await save(prepared, attempts: row.attempts).id }
-        guard let draftID else { return }
+        // A draft that never reached Gmail, or whose Gmail copy another app
+        // changed, is saved first, so a retry finds it instead of creating another.
+        let target = try await target(for: prepared.draft, attempts: row.attempts)
+        let draftID = if let id = target.id { id } else { try await save(prepared, into: target, attempts: row.attempts).id }
         let sent: GmailMessage
         do {
             sent = try await gmail.sendDraft(id: draftID, with: prepared.message)
@@ -186,7 +189,7 @@ extension SyncEngine {
             // drafts.send consumes its draft, so an earlier attempt went out.
             return try await finishRemoving(localDraftID, sentMessageID: nil, sent: true)
         } catch GmailError.notFound {
-            throw DraftGone()
+            throw ComposeError.draftGone
         }
         try await finishRemoving(localDraftID, sentMessageID: sent.id, sent: true)
     }
@@ -210,7 +213,29 @@ extension SyncEngine {
         let message: OutgoingMessage
     }
 
-    private struct DraftGone: Error {}
+    /// The Gmail draft a save or send replaces. Nil `id` means a new one.
+    private struct Target {
+        var id: String?
+        /// Another app changed the draft, so this one goes on as a copy.
+        var isCopy = false
+    }
+
+    private func target(for draft: LocalDraft, attempts: Int) async throws -> Target {
+        guard let id = draft.gmailDraftID else { return Target(id: nil) }
+        let current: GmailDraft
+        do {
+            current = try await gmail.draft(id: id, format: .metadata)
+        } catch GmailError.notFound {
+            // The save creates a new draft, and a send reports it gone.
+            return Target(id: id)
+        }
+        guard let message = current.message, message.id != draft.savedMessageID else { return Target(id: id) }
+        // After an attempt whose answer was lost, the change may be our own
+        // upload, which carries our Message-ID.
+        let messageID = message.header("Message-ID").flatMap { OriginalMessage.messageIDs(in: $0).first }
+        if attempts > 1, messageID == draft.rfcMessageID { return Target(id: id) }
+        return Target(id: nil, isCopy: true)
+    }
 
     /// The local draft and its encoded message, or nil when the draft is gone.
     private func prepare(_ localDraftID: String) async throws -> Prepared? {
@@ -236,8 +261,8 @@ extension SyncEngine {
 
     /// Creates or updates the Gmail draft and records it, replacing the
     /// draft's earlier message in the cache.
-    private func save(_ prepared: Prepared, attempts: Int) async throws -> DraftRecord {
-        var draftID = prepared.draft.gmailDraftID
+    private func save(_ prepared: Prepared, into target: Target, attempts: Int) async throws -> DraftRecord {
+        var draftID = target.id
         if draftID == nil, attempts > 1 {
             draftID = try await findUnrecordedDraft(prepared.draft)
         }
@@ -263,6 +288,7 @@ extension SyncEngine {
             let replaced = try tx.recordDraftSave(record, localDraftID: prepared.draft.id, revision: revision, message: metadata)
             deleted.withLock { $0.formUnion(replaced) }
         }
+        if target.isCopy { continuation.yield(.draftCopied(localDraftID: prepared.draft.id)) }
         return record
     }
 
@@ -273,7 +299,8 @@ extension SyncEngine {
         let messageID = draft.rfcMessageID.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
         let page = try await gmail.drafts(query: "rfc822msgid:\(messageID)", pageToken: nil, maxResults: 10)
         let accountID = accountID
-        for candidate in page.drafts ?? [] {
+        // A copy never adopts the draft it was copied from.
+        for candidate in page.drafts ?? [] where candidate.id != draft.gmailDraftID {
             let owner = try await cache.read { tx in try tx.localDraft(gmailDraftID: candidate.id, accountID: accountID) }
             if owner == nil || owner?.id == draft.id { return candidate.id }
         }
@@ -316,7 +343,7 @@ extension SyncEngine {
             return
         }
         let message = Self.failureMessage(for: error, kind: row.kind)
-        let forget = error is DraftGone
+        let forget = error as? ComposeError == .draftGone
         do {
             try await write { tx in
                 try tx.deleteAction(id: id)
@@ -330,7 +357,7 @@ extension SyncEngine {
 
     private static func shouldRetryDraft(_ error: any Error) -> Bool {
         switch error {
-        case is ComposeError, is DraftGone:
+        case is ComposeError:
             false
         case let error as GmailError:
             // A retry finds a draft created by a lost response through its
@@ -343,7 +370,6 @@ extension SyncEngine {
 
     private static func failureMessage(for error: any Error, kind: PendingAction.Kind) -> String {
         if let error = error as? ComposeError { return error.errorDescription ?? "" }
-        if error is DraftGone { return "This draft was sent or deleted in another app." }
         switch kind {
         case .sendDraft: return "Gmail didn't send this message. Check the recipients and try again."
         case .discardDraft: return "Tern couldn't discard this draft."

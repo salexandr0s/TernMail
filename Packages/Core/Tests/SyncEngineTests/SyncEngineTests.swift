@@ -656,6 +656,130 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
     }
 }
 
+@Suite struct DraftImportTests {
+    @Test func replyBuildsOnTheCachedMessage() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let original = MessageRecord(
+            accountID: account, id: "m1", threadID: "t1", historyID: 1, date: baseDate, snippet: "",
+            sender: "Ana <ana@example.com>", recipients: "Me <me@example.com>", cc: nil, subject: "Lunch",
+            sizeEstimate: 0, rfcMessageID: "<lunch@example.com>"
+        )
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: original, labelIDs: [SystemLabel.inbox])]), accountID: account)
+            try tx.saveBodies([MessageBodyRecord(accountID: account, messageID: "m1", html: nil, plainText: "Friday?", fetchedAt: baseDate)])
+        }
+        let draft = try await engine.startReply(.reply, to: "m1")
+
+        #expect(draft.to.map(\.address) == ["ana@example.com"])
+        #expect(draft.subject == "Re: Lunch")
+        #expect(draft.threadID == "t1")
+        #expect(draft.inReplyTo == "<lunch@example.com>")
+        #expect(draft.references == ["<lunch@example.com>"])
+        #expect(draft.quotedPlainText?.contains("Friday?") == true)
+        #expect(await gmail.metadataRequests.isEmpty)
+    }
+
+    @Test func forwardFetchesTheOriginalAndCopiesItsFiles() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.add(try decode(GmailMessage.self, #"""
+            {"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
+            "payload":{"mimeType":"multipart/mixed","headers":[
+              {"name":"From","value":"Ana <ana@example.com>"},{"name":"Subject","value":"Agenda"},
+              {"name":"Message-ID","value":"<agenda@example.com>"}],
+            "parts":[
+              {"partId":"0","mimeType":"text/plain","body":{"data":"U2VlIGF0dGFjaGVk"}},
+              {"partId":"1","mimeType":"text/plain","filename":"agenda.txt","body":{"attachmentId":"a1","size":5}}
+            ]}}
+            """#))
+        await gmail.setAttachment("a1", data: Data("items".utf8))
+        let draft = try await engine.startReply(.forward, to: "m1")
+
+        #expect(draft.subject == "Fwd: Agenda")
+        #expect(draft.to.isEmpty)
+        #expect(draft.quotedPlainText?.contains("See attached") == true)
+        let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: draft.id) }
+        #expect(files.map(\.filename) == ["agenda.txt"])
+        let folder = await engine.outgoingDirectory
+        #expect(try Data(contentsOf: folder.appending(path: try #require(files.first).path)) == Data("items".utf8))
+    }
+
+    @Test func openingADraftFromAnotherAppImportsItAsSaved() async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        await gmail.addDraft("D7", messageID: "m7", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m7", subject: "Plans", html: #"<p>Hi <b>there</b></p><div class="gmail_quote">Ana wrote:<blockquote>Hello</blockquote></div>"#))
+        // The draft table doesn't have it yet, so opening relists Gmail's drafts.
+        let opened = try await engine.openDraft(messageID: "m7")
+        let draft = opened.draft
+
+        #expect(draft.kind == .edit)
+        #expect(draft.gmailDraftID == "D7")
+        #expect(draft.subject == "Plans")
+        #expect(draft.to.map(\.address) == ["ana@example.com"])
+        #expect(draft.body.plainText() == "Hi there")
+        #expect(draft.quotedHTML?.contains("gmail_quote") == true)
+        #expect(!draft.hasUnsavedChanges)
+        #expect(!opened.droppedFormatting)
+        #expect(try await engine.openDraft(messageID: "m7").draft == draft)
+    }
+
+    @Test func aSaveAfterAnotherAppChangedTheDraftKeepsBothVersions() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.addDraft("D7", messageID: "m7", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m7", subject: "Plans", html: "<p>Hi</p>"))
+        let draft = try await engine.openDraft(messageID: "m7").draft
+        await gmail.addDraft("D7", messageID: "m8", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m8", subject: "Plans for Friday", html: "<p>Hi all</p>"))
+        var content = draft.content
+        content.subject = "Plans, mine"
+        try await engine.saveDraft(draft.id, content: content)
+        await engine.sendDueDrafts()
+
+        // A new draft instead of "update D7", which would overwrite the other app's version.
+        #expect(await gmail.draftCalls == ["create"])
+        let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(stored?.gmailDraftID == "D1")
+        #expect(try await cache.read { tx in try tx.draft(id: "D7", accountID: account) } != nil)
+        await engine.stop()
+        var events: [SyncEvent] = []
+        for await event in engine.events { events.append(event) }
+        #expect(events == [.draftCopied(localDraftID: draft.id)])
+    }
+
+    @Test func reopeningAChangedDraftWithUnsavedEditsImportsGmailsCopyBesideIt() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.addDraft("D7", messageID: "m7", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m7", subject: "Plans", html: "<p>Hi</p>"))
+        let draft = try await engine.openDraft(messageID: "m7").draft
+        var content = draft.content
+        content.subject = "Plans, mine"
+        try await engine.updateDraft(draft.id, content: content)
+        await gmail.addDraft("D7", messageID: "m8", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m8", subject: "Plans for Friday", html: "<p>Hi all</p>"))
+        let reopened = try await engine.openDraft(id: "D7").draft
+
+        #expect(reopened.id != draft.id)
+        #expect(reopened.gmailDraftID == "D7")
+        #expect(reopened.subject == "Plans for Friday")
+        let kept = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(kept?.gmailDraftID == nil)
+        #expect(kept?.subject == "Plans, mine")
+        #expect(try await pendingActions(cache).map(\.kind) == [.saveDraft])
+    }
+}
+
+/// A `drafts.get` response in full format with an HTML body.
+private func draftJSON(messageID: String, subject: String, html: String) -> String {
+    let data = Data(html.utf8).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+    return #"""
+        {"id":"D7","message":{"id":"\#(messageID)","threadId":"t7","historyId":"300","labelIds":["DRAFT"],
+        "payload":{"mimeType":"text/html","headers":[
+          {"name":"To","value":"Ana <ana@example.com>"},{"name":"Subject","value":"\#(subject)"},
+          {"name":"Message-ID","value":"<\#(messageID)@example.com>"}],
+        "body":{"data":"\#(data)"}}}}
+        """#
+}
+
 private func makeDraft() -> LocalDraft {
     LocalDraft(
         accountID: account,
@@ -854,6 +978,9 @@ actor FakeGmail: GmailService {
 
     func addDraft(_ id: String, messageID: String, threadID: String) { draftsByID[id] = (messageID, threadID) }
     func deleteDraftElsewhere(_ id: String) { draftsByID[id] = nil }
+    /// `drafts.get` answers with this JSON for `id` instead of a bare message.
+    func setDraftJSON(_ id: String, _ json: String) { draftJSONByID[id] = json }
+    private var draftJSONByID: [String: String] = [:]
     func setDraftSearch(_ query: String, ids: [String]) { draftListings[query] = ids }
 
     private func draftCall(_ kind: String, _ call: String, apply: () -> Void) async throws {
@@ -885,6 +1012,7 @@ actor FakeGmail: GmailService {
     }
 
     func draft(id: String, format: MessageFormat) throws -> GmailDraft {
+        if let json = draftJSONByID[id] { return try decode(GmailDraft.self, json) }
         guard let stored = draftsByID[id], let message = messagesByID[stored.messageID] else { throw GmailError.notFound }
         return try decode(GmailDraft.self, #"{"id":"\#(id)","message":\#(try encodedMessage(message.id, thread: message.threadId, labels: message.labelIds ?? []))}"#)
     }

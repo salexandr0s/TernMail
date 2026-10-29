@@ -294,6 +294,8 @@ final class MailboxModel {
             syncStatus = .failed(message)
         case .actionFailed(let message), .draftFailed(_, let message):
             notice = Notice(message: message, undo: nil, isError: true)
+        case .draftCopied:
+            notice = Notice(message: "Another app changed this draft, so Tern kept both versions.", undo: nil, isError: false)
         case .draftSent:
             break
         }

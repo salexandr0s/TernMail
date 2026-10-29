@@ -15,6 +15,9 @@ public enum SyncEvent: Sendable, Equatable {
     /// Gmail refused a draft, or it was sent or deleted in another app. The
     /// draft is back to editing, and its window shows `message`.
     case draftFailed(localDraftID: String, message: String)
+    /// Another app changed the draft's Gmail copy, so Tern kept that one and
+    /// saves this draft as a new one.
+    case draftCopied(localDraftID: String)
 }
 
 enum SyncError: Error, Equatable {
