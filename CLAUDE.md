@@ -16,6 +16,7 @@ Native macOS Gmail client, codename Tern. It is built clean-room from Google's p
 - `Packages/Core/`: logic, testable without the app.
   - `GmailAPI`: REST client and models. Imports only Foundation.
   - `MailStore`: GRDB schema, migrations and queries.
+  - `MessageContent`: MIME part extraction, HTML sanitizing and the message page with its CSP.
   - `SyncEngine`: initial sync, history sync and the action queue.
 - `docs/plans/`: milestone plans.
 
@@ -28,6 +29,8 @@ xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug -derivedDat
 ```
 
 Run `xcodegen generate` after editing `project.yml` and commit the regenerated `Tern.xcodeproj`.
+
+`xcodebuild` adds the app's AppAuth pin to `Packages/Core/Package.resolved` and `swift test` removes it again. Commit the file only as `swift test` leaves it.
 
 ## Conventions
 

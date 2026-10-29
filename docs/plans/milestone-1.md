@@ -51,7 +51,7 @@ Packages/Core/
 - `message_body`: account, message ID, raw HTML and plain text parts (decoded to UTF-8), fetched date.
 - `sync_state`: account, history ID, last full sync date.
 
-`thread` and `thread_label` are derived. They are rebuilt from `message_label` with unconfirmed pending actions overlaid, so a revert or an undo before send is "delete the row, rebuild". Threads with any message in TRASH or SPAM appear only under those labels. All Mail is a virtual view: every thread not in TRASH or SPAM.
+`thread` and `thread_label` are derived. They are rebuilt from `message_label` with unconfirmed pending actions overlaid, so a revert or an undo before send is "delete the row, rebuild". A message in TRASH or SPAM lists its thread only under that label; every other message lists the thread under its own labels and All Mail. So a thread with one trashed reply shows in both Inbox and Trash. All Mail is virtual: every thread with a message outside TRASH and SPAM.
 
 `config.sqlite` holds `account` (Google user ID, email, display name, granted scopes). The OAuth state lives in the Keychain.
 
