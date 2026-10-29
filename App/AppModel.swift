@@ -66,6 +66,7 @@ final class AppModel {
                 )
                 self.mailbox = mailbox
                 phase = .signedIn(account)
+                AccountProfileImages.shared.setAuditImage(SenderAccountLabel.auditImage, for: account.id)
                 if ProcessInfo.processInfo.arguments.contains("--ui-audit-reauth") {
                     accountsNeedingSignIn.insert(second.id)
                 }
@@ -93,7 +94,9 @@ final class AppModel {
                 return
             }
             for account in signedIn {
-                adopt(AccountSession.restore(accountID: account.id) ?? AccountSession(accountID: account.id))
+                let session = AccountSession.restore(accountID: account.id) ?? AccountSession(accountID: account.id)
+                adopt(session)
+                if session.isSignedIn { AccountProfileImages.shared.refresh(accountID: account.id, tokens: session) }
             }
             let expired = signedIn.filter { sessions[$0.id]?.isSignedIn != true }
             if signedIn.count == 1, !expired.isEmpty {
@@ -176,6 +179,7 @@ final class AppModel {
                 adopt(session)
             }
             try await accounts.save(account)
+            AccountProfileImages.shared.refresh(accountID: account.id, tokens: session)
             accountsNeedingSignIn.remove(account.id)
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
@@ -226,6 +230,7 @@ final class AppModel {
     private func signOutOfEveryAccount() async {
         guard let accounts else { return }
         signInError = nil
+        AccountProfileImages.shared.removeAll()
         await closeMailbox()
         let signedOut = sessions
         sessions = [:]
@@ -259,6 +264,7 @@ final class AppModel {
         }
         let account = owner.account
         signInError = nil
+        AccountProfileImages.shared.remove(accountID: accountID)
         await mailbox.removeAccount(id: accountID)
         let session = sessions.removeValue(forKey: accountID)
         accountsNeedingSignIn.remove(accountID)

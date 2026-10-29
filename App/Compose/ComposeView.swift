@@ -219,20 +219,20 @@ struct ComposeView: View {
         if model.canChangeAccount {
             Picker("From", selection: Binding(get: { model.draft?.accountID ?? "" }, set: { model.move(to: $0) })) {
                 ForEach(model.accountChoices, id: \.id) { account in
-                    Text(account.email).tag(account.id)
+                    SenderAccountLabel(account: account).tag(account.id)
                 }
             }
             .pickerStyle(.menu)
             .controlSize(.small)
             .labelsHidden()
+            .frame(maxWidth: Tokens.Popover.width, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .lineLimit(1)
             .help(model.fromEmail)
             .accessibilityLabel("From")
-        } else {
-            Text(model.fromEmail)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            .accessibilityValue(model.fromEmail)
+        } else if let account = model.accountChoices.first(where: { $0.id == model.draft?.accountID }) {
+            SenderAccountLabel(account: account)
                 .help("Replies and Gmail drafts stay with their original account.")
                 .accessibilityLabel("From \(model.fromEmail)")
         }
