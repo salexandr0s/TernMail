@@ -4,7 +4,7 @@ import SwiftUI
 import WebKit
 
 struct ThreadView: View {
-    let threadID: String
+    let key: ThreadKey
     let mailbox: MailboxModel
 
     @State private var detail: ThreadDetail?
@@ -54,11 +54,11 @@ struct ThreadView: View {
             blocker = await RemoteContentBlocker.ruleList()
             blockerReady = true
         }
-        .task(id: threadID) {
+        .task(id: key) {
             var loading: Task<Void, Never>?
             defer { loading?.cancel() }
             do {
-                for try await detail in mailbox.threadDetail(threadID) {
+                for try await detail in mailbox.threadDetail(key) {
                     guard !Task.isCancelled else { return }
                     if !initializedExpansion, let last = detail?.messages.last {
                         // Older messages start collapsed; unread ones stay open.
@@ -68,7 +68,7 @@ struct ThreadView: View {
                     self.detail = detail
                     // Capture initial unread expansion before opening marks read.
                     if loading == nil, detail != nil {
-                        loading = Task { await mailbox.open(threadID) }
+                        loading = Task { await mailbox.open(key) }
                     }
                 }
             } catch {

@@ -224,7 +224,6 @@ final class MailboxModel {
     var outbox: [DraftActivity] { accounts.flatMap(\.outbox) }
     /// Every account's snoozed conversations, the soonest to wake first.
     var snoozed: [SnoozedThread] { accounts.flatMap(\.snoozed).sorted { $0.wakeAt < $1.wakeAt } }
-    var wokenThreadIDs: Set<String> { defaultAccount.wokenThreadIDs }
     var snoozeKeeper: SnoozeKeeper? { currentAccount.snoozeKeeper }
     /// A failure in any account first, then syncing if any account is.
     var syncStatus: AccountMailbox.SyncStatus {
@@ -265,14 +264,15 @@ final class MailboxModel {
         return SystemMailbox.all.first { $0.id == id }?.title ?? label(id: id)?.name ?? "Tern"
     }
 
-    func threadDetail(_ threadID: String) -> AsyncThrowingStream<ThreadDetail?, any Error> {
-        cache.thread(accountID: account.id, threadID: threadID)
+    func threadDetail(_ key: ThreadKey) -> AsyncThrowingStream<ThreadDetail?, any Error> {
+        cache.thread(accountID: key.accountID, threadID: key.threadID)
     }
 
     /// Loads missing bodies and marks the thread read.
-    func open(_ threadID: String) async {
+    func open(_ key: ThreadKey) async {
+        guard let owner = account(id: key.accountID) else { return }
         do {
-            try await engine.openThread(threadID)
+            try await owner.engine.openThread(key.threadID)
         } catch {
             // Switching conversations cancels the load, which isn't a failure.
             guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return }
@@ -502,21 +502,6 @@ final class MailboxModel {
     ) -> Task<Void, Never>? {
         let step = UndoStep(account: owner) { try await change(owner.engine) }
         return queueUndoable(name, confirmation: confirmation, steps: [step], revert: revert)
-    }
-
-    /// Until label and snooze commands pick their accounts: the current account.
-    @discardableResult
-    func queueUndoable(
-        _ name: String,
-        confirmation: String? = nil,
-        revert: (@Sendable (ActionReceipt) async throws -> Void)? = nil,
-        _ change: @escaping @Sendable (SyncEngine) async throws -> ActionReceipt?
-    ) -> Task<Void, Never>? {
-        var accountRevert: Revert?
-        if let revert {
-            accountRevert = { _, row in try await revert(row) }
-        }
-        return queueUndoable(name, confirmation: confirmation, in: currentAccount, revert: accountRevert, change)
     }
 
     /// Queues the steps with Undo, in order after earlier commands. The undo

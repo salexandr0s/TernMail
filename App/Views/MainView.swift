@@ -117,7 +117,7 @@ private struct DetailView: View {
                 description: Text("Messages wait here until Gmail has them. Double-click one to open it.")
             )
         } else if ids.count == 1, let key = ids.first {
-            ThreadView(threadID: key.threadID, mailbox: mailbox)
+            ThreadView(key: key, mailbox: mailbox)
                 .id(key)
         } else if ids.count > 1 {
             ContentUnavailableView("\(ids.count) Conversations Selected", systemImage: "square.stack")
