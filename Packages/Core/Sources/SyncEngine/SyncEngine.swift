@@ -184,7 +184,7 @@ public actor SyncEngine {
         guard let historyID = Int64(profile.historyId), historyID > 0 else { throw SyncError.invalidHistoryID }
         try await refreshLabels()
 
-        let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false)
+        let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
         let listed = (inbox + recent).removingDuplicates()
         // Messages pending actions target stay cached even when unlisted. Refetch
@@ -287,7 +287,7 @@ public actor SyncEngine {
         try await write { tx in try tx.replaceLabels(records, accountID: accountID) }
     }
 
-    private func listMessageIDs(labelIDs: [String], query: String?, includeSpamTrash: Bool) async throws -> [String] {
+    private func listMessageIDs(labelIDs: [String], query: String?, includeSpamTrash: Bool, limit: Int? = nil) async throws -> [String] {
         var ids: [String] = []
         var pageToken: String?
         repeat {
@@ -300,8 +300,8 @@ public actor SyncEngine {
             )
             ids += (page.messages ?? []).map(\.id)
             pageToken = page.nextPageToken
-        } while pageToken != nil && ids.count < Self.inboxCap
-        return Array(ids.prefix(Self.inboxCap))
+        } while pageToken != nil && (limit.map { ids.count < $0 } ?? true)
+        return limit.map { Array(ids.prefix($0)) } ?? ids
     }
 
     /// Metadata for `ids`, plus the IDs Gmail no longer has. Any other failed

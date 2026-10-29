@@ -144,6 +144,20 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func recentListingContinuesPastTheInboxCap() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        var pages: [MessageListPage] = []
+        for page in 0..<10 {
+            let refs = (0..<500).map { #"{"id":"old-\#(page)-\#($0)","threadId":"old"}"# }.joined(separator: ",")
+            pages.append(try decode(MessageListPage.self, #"{"messages":[\#(refs)],"nextPageToken":"next"}"#))
+        }
+        pages.append(try decode(MessageListPage.self, #"{"messages":[{"id":"tail","threadId":"tail"}]}"#))
+        await gmail.setRecentPages(pages)
+        await gmail.add(try gmailMessage("tail", thread: "tail", labels: [], historyID: 150))
+        try await engine.sync()
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["tail"])
+    }
+
     @Test func stopWaitsForDatabaseWritesAlreadyInFlight() async throws {
         let (engine, cache, _, _) = try await makeEngine()
         let (entered, signal) = AsyncStream.makeStream(of: Void.self)
@@ -342,6 +356,7 @@ actor FakeGmail: GmailService {
     private var messagesByID: [String: GmailMessage] = [:]
     private var inboxIDs: [String] = []
     private var historyPages: [HistoryPage] = []
+    private var recentPages: [MessageListPage] = []
     private var historyExpired = false
     private let profileHistoryID = "200"
     private var threadsByID: [String: GmailThread] = [:]
@@ -361,6 +376,7 @@ actor FakeGmail: GmailService {
     }
 
     func queueHistory(_ page: HistoryPage) { historyPages.append(page) }
+    func setRecentPages(_ pages: [MessageListPage]) { recentPages = pages }
     func expireHistory() { historyExpired = true }
     func setThread(_ thread: GmailThread) { threadsByID[thread.id] = thread }
 
@@ -403,6 +419,7 @@ actor FakeGmail: GmailService {
     func listMessages(
         query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int
     ) async throws -> MessageListPage {
+        if query != nil, !recentPages.isEmpty { return recentPages.removeFirst() }
         let ids = labelIDs.contains(SystemLabel.inbox) ? inboxIDs : []
         let refs = ids.compactMap { messagesByID[$0] }.map { #"{"id": "\#($0.id)", "threadId": "\#($0.threadId)"}"# }
         return try decode(MessageListPage.self, #"{"messages": [\#(refs.joined(separator: ","))]}"#)
