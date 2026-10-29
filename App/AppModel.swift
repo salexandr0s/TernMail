@@ -128,6 +128,11 @@ final class AppModel {
 
     // MARK: Quitting
 
+    /// Stores what open compose windows show, so quitting loses no typing.
+    func prepareToQuit() async {
+        await mailbox?.prepareToQuit()
+    }
+
     /// Sends waiting out their undo delay or a retry, which quitting sends at once.
     var waitingSendCount: Int {
         mailbox?.outbox.filter(\.isSending).count ?? 0

@@ -105,6 +105,8 @@ final class MailboxModel {
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
     /// Drafts opened from another app with formatting the editor drops, until their window warns.
     @ObservationIgnored private var droppedFormatting = Set<String>()
+    /// Open compose windows, so quitting can store what they show.
+    @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
     /// `outgoingDirectory` holds copies of the files attached to drafts.
     init(
@@ -294,6 +296,17 @@ final class MailboxModel {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, self?.undoableSendID == localDraftID else { return }
             self?.undoableSendID = nil
+        }
+    }
+
+    func composeOpened(_ model: ComposeModel) {
+        composeModels.add(model)
+    }
+
+    /// Stores the drafts of open compose windows before the app quits.
+    func prepareToQuit() async {
+        for model in composeModels.allObjects {
+            await model.prepareToQuit()
         }
     }
 
