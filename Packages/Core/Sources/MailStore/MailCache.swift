@@ -1,8 +1,9 @@
 import Foundation
 import GRDB
 
-/// The disposable message cache (`cache.sqlite`). Deleting the file loses
-/// nothing that a full sync cannot restore, except unsent pending actions.
+/// The message cache (`cache.sqlite`). A full sync can restore the mail in it,
+/// but not local drafts or pending actions: resyncs keep those, and deleting
+/// the file loses unsent work.
 public struct MailCache: Sendable {
     let writer: any DatabaseWriter
 
@@ -34,9 +35,13 @@ public struct MailCache: Sendable {
 public struct CacheTransaction {
     let db: Database
 
-    /// Removes everything cached for an account, including unsent actions.
+    /// Removes everything cached for an account, including unsent actions and
+    /// drafts. Outgoing attachment rows go with their local drafts.
     public func deleteAccountData(accountID: String) throws {
-        for table in ["threadLabel", "thread", "messageBody", "messageLabel", "message", "label", "pendingAction", "syncState"] {
+        for table in [
+            "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
+            "pendingAction", "syncState", "draft", "localDraft",
+        ] {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
         }
     }
@@ -279,16 +284,16 @@ public struct CacheTransaction {
         try PendingAction.fetchOne(db, key: id)
     }
 
-    /// Marks due actions as `sending` and returns them, so two senders never pick
-    /// up the same row. Changes to one thread reach Gmail in the order they were
-    /// made: a row waits while an older unsent row touches the same thread,
-    /// even one held back by a retry.
-    public func claimDueActions(accountID: String, now: Date) throws -> [PendingAction] {
-        var busyThreads = Set<String>()
+    /// Marks due actions in `lane` as `sending` and returns them, so two senders
+    /// never pick up the same row. Changes reach Gmail in the order they were
+    /// made: a row waits while an older unsent row touches the same thread, or
+    /// the same local draft, even one held back by a retry.
+    public func claimDueActions(accountID: String, now: Date, lane: PendingAction.Lane = .labels) throws -> [PendingAction] {
+        var busy = Set<String>()
         var claimed: [PendingAction] = []
-        for var action in try pendingActions(accountID: accountID) where action.state != .sent {
-            let threads = try threadIDs(of: action)
-            if action.state == .queued, action.notBefore <= now, busyThreads.isDisjoint(with: threads) {
+        for var action in try pendingActions(accountID: accountID) where action.state != .sent && action.kind.lane == lane {
+            let keys: Set<String> = try action.localDraftID.map { [$0] } ?? threadIDs(of: action)
+            if action.state == .queued, action.notBefore <= now, busy.isDisjoint(with: keys) {
                 action.state = .sending
                 // A crash may happen after Gmail applies this attempt but before
                 // its reply is saved. Undo must compensate after recovery.
@@ -296,7 +301,7 @@ public struct CacheTransaction {
                 try action.update(db)
                 claimed.append(action)
             }
-            busyThreads.formUnion(threads)
+            busy.formUnion(keys)
         }
         return claimed
     }
@@ -354,12 +359,13 @@ public struct CacheTransaction {
     // MARK: Threads
 
     /// Rebuilds the derived `thread` and `threadLabel` rows from server labels
-    /// with pending actions overlaid.
+    /// with pending actions overlaid. Draft messages on their way out are left out.
     public func rebuildThreads(_ threadIDs: some Collection<String>, accountID: String) throws {
         guard !threadIDs.isEmpty else { return }
         let actions = try pendingActions(accountID: accountID)
+        let hidden = try hiddenDraftMessageIDs(accountID: accountID)
         for threadID in Set(threadIDs) {
-            let messages = try messages(threadID: threadID, accountID: accountID)
+            let messages = try messages(threadID: threadID, accountID: accountID).filter { !hidden.contains($0.id) }
             try ThreadRecord.deleteOne(db, key: ["accountID": accountID, "id": threadID])
             guard let first = messages.first, let last = messages.last else { continue }
 
@@ -407,7 +413,7 @@ public struct CacheTransaction {
         Set(action.threadIDs).union(try threadIDsOf(messageIDs: action.messageIDs, accountID: action.accountID))
     }
 
-    private func threadIDsOf(messageIDs: [String], accountID: String) throws -> Set<String> {
+    func threadIDsOf(messageIDs: [String], accountID: String) throws -> Set<String> {
         guard !messageIDs.isEmpty else { return [] }
         return try Set(MessageRecord
             .filter(Column("accountID") == accountID && messageIDs.contains(Column("id")))
@@ -426,6 +432,8 @@ enum ThreadRules {
                 targets = action.threadIDs.contains(threadID) ? Array(labels.keys) : []
             case .modifyMessages:
                 targets = action.messageIDs.filter { labels[$0] != nil }
+            case .saveDraft, .sendDraft, .discardDraft:
+                targets = []
             }
             for messageID in targets {
                 labels[messageID]?.formUnion(action.addLabelIDs)

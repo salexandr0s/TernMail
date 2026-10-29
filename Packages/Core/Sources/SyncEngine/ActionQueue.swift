@@ -167,6 +167,9 @@ extension SyncEngine {
                 .trashThreads, accountID: accountID, threadIDs: action.threadIDs,
                 add: [SystemLabel.trash], now: now, notBefore: now
             )
+        case .saveDraft, .sendDraft, .discardDraft:
+            // Draft rows have no inverse. Undo send cancels the row instead.
+            return
         case .modifyThreads, .modifyMessages:
             // Restore each message exactly: archiving a thread removed INBOX only
             // from the messages that had it, so only those get it back.
@@ -200,7 +203,9 @@ extension SyncEngine {
         while !Task.isCancelled {
             wakeRequested = false
             let next = try? await cache.read { tx in
-                try tx.pendingActions(accountID: accountID).filter { $0.state == .queued }.map(\.notBefore).min()
+                try tx.pendingActions(accountID: accountID)
+                    .filter { $0.state == .queued && $0.kind.lane == .labels }
+                    .map(\.notBefore).min()
             }
             guard let next = next ?? nil else {
                 // A row queued while the read was in flight sets the flag again.
@@ -224,7 +229,7 @@ extension SyncEngine {
     public func sendDueActions() async -> Int {
         let accountID = accountID
         let now = now()
-        guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now) }) else {
+        guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now, lane: .labels) }) else {
             return 0
         }
         let groups = Dictionary(grouping: due, by: DeliveryKey.init).values.sorted {
@@ -386,6 +391,9 @@ extension SyncEngine {
             try await gmail.batchModifyMessages(
                 ids: action.messageIDs, addLabelIDs: action.addLabelIDs, removeLabelIDs: action.removeLabelIDs
             )
+            return [:]
+        case .saveDraft, .sendDraft, .discardDraft:
+            // Claimed only by the compose lane, never batched with label changes.
             return [:]
         }
     }

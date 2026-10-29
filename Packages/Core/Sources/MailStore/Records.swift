@@ -140,7 +140,8 @@ public struct SyncStateRecord: Codable, Sendable, Equatable, FetchableRecord, Pe
     public var lastFullSyncAt: Date
 }
 
-/// A label change made locally and not yet confirmed by a history pass.
+/// A change made locally and not yet confirmed by Gmail: a label change, or a
+/// draft save, send or discard.
 public struct PendingAction: Codable, Sendable, Equatable, Identifiable, FetchableRecord, MutablePersistableRecord {
     public static let databaseTableName = "pendingAction"
 
@@ -151,6 +152,25 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         case modifyMessages
         case trashThreads
         case untrashThreads
+        /// Uploads a local draft's newest revision with `drafts.create` or `drafts.update`.
+        case saveDraft
+        /// Sends a local draft with `drafts.send`, saving it first if Gmail lacks it.
+        case sendDraft
+        /// Deletes a local draft, and its Gmail draft when one was saved.
+        case discardDraft
+
+        /// Draft rows drain apart from label changes, so a large upload
+        /// doesn't hold up archive or star.
+        public var lane: Lane {
+            switch self {
+            case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads: .labels
+            case .saveDraft, .sendDraft, .discardDraft: .compose
+            }
+        }
+    }
+
+    public enum Lane: Sendable {
+        case labels, compose
     }
 
     public enum State: String, Codable, Sendable {

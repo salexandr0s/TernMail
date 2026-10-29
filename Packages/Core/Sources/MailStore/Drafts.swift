@@ -338,6 +338,147 @@ extension CacheTransaction {
         return replaced
     }
 
+    // MARK: Queue rows
+
+    /// The queue rows for one local draft, oldest first.
+    public func composeRows(localDraftID: String) throws -> [PendingAction] {
+        try PendingAction.filter(Column("localDraftID") == localDraftID).order(Column("id")).fetchAll(db)
+    }
+
+    /// Queues a save, first storing `content` when given. Returns nil when a
+    /// queued save will upload the newest revision anyway, or when the draft
+    /// can't be saved.
+    @discardableResult
+    public func enqueueSave(localDraftID: String, content: DraftContent? = nil, now: Date, notBefore: Date) throws -> PendingAction? {
+        if let content { try updateLocalDraft(id: localDraftID, content: content, now: now) }
+        guard let draft = try localDraft(id: localDraftID), draft.state == .editing else { return nil }
+        let waiting = try composeRows(localDraftID: localDraftID).contains { $0.kind == .saveDraft && $0.state == .queued }
+        guard !waiting else { return nil }
+        return try insertComposeRow(.saveDraft, for: draft, now: now, notBefore: notBefore)
+    }
+
+    /// Queues a send for `notBefore`, the end of the undo send delay, first
+    /// storing `content` when given. The draft stops taking edits, waiting
+    /// saves go since the send uploads the newest revision, and the draft's
+    /// message leaves its thread.
+    public func enqueueSend(localDraftID: String, content: DraftContent? = nil, now: Date, notBefore: Date) throws -> PendingAction? {
+        try enqueueExit(.sendDraft, state: .sending, localDraftID: localDraftID, content: content, now: now, notBefore: notBefore)
+    }
+
+    /// Queues a discard for `notBefore`, while its notice offers undo.
+    public func enqueueDiscard(localDraftID: String, content: DraftContent? = nil, now: Date, notBefore: Date) throws -> PendingAction? {
+        try enqueueExit(.discardDraft, state: .discarding, localDraftID: localDraftID, content: content, now: now, notBefore: notBefore)
+    }
+
+    private func enqueueExit(
+        _ kind: PendingAction.Kind, state: LocalDraft.State, localDraftID: String,
+        content: DraftContent?, now: Date, notBefore: Date
+    ) throws -> PendingAction? {
+        if let content { try updateLocalDraft(id: localDraftID, content: content, now: now) }
+        guard var draft = try localDraft(id: localDraftID), draft.state == .editing else { return nil }
+        try PendingAction
+            .filter(Column("localDraftID") == localDraftID && Column("kind") == PendingAction.Kind.saveDraft.rawValue)
+            .filter(Column("state") == PendingAction.State.queued.rawValue)
+            .deleteAll(db)
+        draft.state = state
+        draft.sendError = nil
+        try draft.update(db)
+        let row = try insertComposeRow(kind, for: draft, now: now, notBefore: notBefore)
+        try rebuildThreads(try threadIDs(of: draft), accountID: draft.accountID)
+        return row
+    }
+
+    /// Undoes a send or discard whose request hasn't started, and returns the
+    /// draft to editing. Returns false once Gmail may have seen it.
+    public func cancelExit(localDraftID: String) throws -> Bool {
+        guard let draft = try localDraft(id: localDraftID), draft.state != .editing else { return false }
+        let kind: PendingAction.Kind = draft.state == .sending ? .sendDraft : .discardDraft
+        guard let row = try composeRows(localDraftID: localDraftID).first(where: { $0.kind == kind }),
+              row.state == .queued, row.attempts == 0
+        else { return false }
+        _ = try row.delete(db)
+        try returnToEditing(localDraftID: localDraftID)
+        return true
+    }
+
+    /// Returns a draft whose send or discard didn't happen to editing, so its
+    /// message shows in its thread again. `sendError` is Gmail's reason, if
+    /// any. `forgettingGmailDraft` drops a Gmail draft that no longer exists,
+    /// so the next save creates one.
+    public func returnToEditing(localDraftID: String, sendError: String? = nil, forgettingGmailDraft: Bool = false) throws {
+        guard var draft = try localDraft(id: localDraftID) else { return }
+        let threads = try threadIDs(of: draft)
+        draft.state = .editing
+        draft.sendError = sendError
+        if forgettingGmailDraft {
+            if let id = draft.gmailDraftID { try deleteDraft(id: id, accountID: draft.accountID) }
+            draft.gmailDraftID = nil
+            draft.savedMessageID = nil
+            draft.savedRevision = 0
+        }
+        try draft.update(db)
+        try rebuildThreads(threads, accountID: draft.accountID)
+    }
+
+    /// Removes a draft that has left Gmail, by sending or discarding: the local
+    /// draft and its rows, its Gmail draft and its message. `sentMessage` is
+    /// the sent message's metadata, when it could be fetched. Returns the
+    /// outgoing attachments, whose files the caller removes, and the removed
+    /// message IDs, which the caller keeps slow loads from restoring.
+    public func removeFinishedDraft(
+        localDraftID: String,
+        sentMessage: MessageUpdate?
+    ) throws -> (attachments: [OutgoingAttachment], removedMessageIDs: Set<String>) {
+        guard let draft = try localDraft(id: localDraftID) else { return ([], []) }
+        var removed = Set([draft.savedMessageID].compactMap { $0 })
+        if let id = draft.gmailDraftID {
+            if let record = try self.draft(id: id, accountID: draft.accountID) { removed.insert(record.messageID) }
+            try deleteDraft(id: id, accountID: draft.accountID)
+        }
+        if let sent = sentMessage?.record.id { removed.remove(sent) }
+        try PendingAction.filter(Column("localDraftID") == localDraftID).deleteAll(db)
+        let attachments = try deleteLocalDraft(id: localDraftID)
+        var threads = try deleteMessages(ids: removed, accountID: draft.accountID)
+        if let sentMessage { threads.formUnion(try upsertMessages([sentMessage])) }
+        try rebuildThreads(threads, accountID: draft.accountID)
+        return (attachments, removed)
+    }
+
+    /// Draft messages that a queued send or discard is about to remove.
+    /// Threads leave them out, so the draft shows only in the Outbox.
+    func hiddenDraftMessageIDs(accountID: String) throws -> Set<String> {
+        try String.fetchSet(db, sql: """
+            SELECT message.id
+            FROM localDraft
+            LEFT JOIN draft ON draft.accountID = localDraft.accountID AND draft.id = localDraft.gmailDraftID
+            JOIN message ON message.accountID = localDraft.accountID
+                AND (message.id = localDraft.savedMessageID OR message.id = draft.messageID)
+            JOIN messageLabel ON messageLabel.accountID = message.accountID
+                AND messageLabel.messageID = message.id AND messageLabel.labelID = ?
+            WHERE localDraft.accountID = ? AND localDraft.state != ?
+            """, arguments: [SystemLabel.draft, accountID, LocalDraft.State.editing.rawValue])
+    }
+
+    /// The threads that hold a local draft's Gmail messages.
+    private func threadIDs(of draft: LocalDraft) throws -> Set<String> {
+        var messageIDs = [draft.savedMessageID].compactMap { $0 }
+        if let id = draft.gmailDraftID, let record = try self.draft(id: id, accountID: draft.accountID) {
+            messageIDs.append(record.messageID)
+        }
+        return try threadIDsOf(messageIDs: messageIDs, accountID: draft.accountID)
+    }
+
+    private func insertComposeRow(_ kind: PendingAction.Kind, for draft: LocalDraft, now: Date, notBefore: Date) throws -> PendingAction {
+        var row = PendingAction(
+            id: nil, accountID: draft.accountID, kind: kind,
+            threadIDs: [], messageIDs: [], addLabelIDs: [], removeLabelIDs: [], diff: [:],
+            state: .queued, attempts: 0, lastError: nil,
+            createdAt: now, notBefore: notBefore, sentAt: nil, localDraftID: draft.id
+        )
+        try row.insert(db)
+        return row
+    }
+
     // MARK: Received attachments
 
     public func attachments(messageID: String, accountID: String) throws -> [AttachmentRecord] {

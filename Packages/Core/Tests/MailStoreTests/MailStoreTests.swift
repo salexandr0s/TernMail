@@ -166,6 +166,73 @@ private let account = "acct"
         let drafts = try await cache.read { tx in try DraftRecord.order(Column("id")).fetchAll(tx.db).map(\.id) }
         #expect(drafts == ["D1", "D9"])
     }
+
+    @Test func aQueuedSendHidesTheDraftUntilUndoneAndThenUntilItIsSent() async throws {
+        let cache = try MailCache.inMemory()
+        let edit = DraftContent(subject: "Final words")
+        try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m1", thread: "t1", labels: [SystemLabel.inbox]),
+                update("d1", thread: "t1", labels: [SystemLabel.draft], minutes: 1),
+            ])
+            try tx.replaceDrafts([DraftRecord(accountID: account, id: "D1", messageID: "d1", threadID: "t1")], accountID: account)
+            try tx.insertLocalDraft(LocalDraft(id: "L1", accountID: account, kind: .reply, rfcMessageID: "<a@example.com>", gmailDraftID: "D1", savedMessageID: "d1", threadID: "t1", now: .now))
+            try tx.rebuildThreads(["t1"], accountID: account)
+            #expect(try tx.enqueueSave(localDraftID: "L1", now: .now, notBefore: .now) != nil)
+            #expect(try tx.enqueueSave(localDraftID: "L1", now: .now, notBefore: .now) == nil)
+            #expect(try tx.enqueueSend(localDraftID: "L1", content: edit, now: .now, notBefore: .now) != nil)
+        }
+        #expect(try await composeKinds(cache) == [.sendDraft])
+        #expect(try await threadIDs(cache, SystemLabel.draft).isEmpty)
+        #expect(try await cache.read { tx in try tx.thread(id: "t1", accountID: account)?.messageCount } == 1)
+        #expect(try await cache.read { tx in try tx.localDraft(id: "L1")?.subject } == "Final words")
+
+        let undone = try await cache.write { tx in
+            #expect(try tx.updateLocalDraft(id: "L1", content: DraftContent(), now: .now) == nil)
+            return try tx.cancelExit(localDraftID: "L1")
+        }
+        #expect(undone)
+        #expect(try await composeKinds(cache).isEmpty)
+        #expect(try await threadIDs(cache, SystemLabel.draft) == ["t1"])
+
+        // Once the send has been claimed, undo is too late.
+        let sent = update("s1", thread: "t1", labels: [SystemLabel.sent], minutes: 2)
+        let finished = try await cache.write { tx in
+            _ = try tx.enqueueSend(localDraftID: "L1", now: .now, notBefore: .now)
+            #expect(try tx.claimDueActions(accountID: account, now: .now, lane: .compose).map(\.kind) == [.sendDraft])
+            #expect(try !tx.cancelExit(localDraftID: "L1"))
+            return try tx.removeFinishedDraft(localDraftID: "L1", sentMessage: sent)
+        }
+        #expect(finished.removedMessageIDs == ["d1"])
+        let after = try await cache.read { tx in
+            (try tx.messages(threadID: "t1", accountID: account).map(\.id), try tx.localDraft(id: "L1"), try tx.draft(id: "D1", accountID: account))
+        }
+        #expect(after.0 == ["m1", "s1"])
+        #expect(after.1 == nil && after.2 == nil)
+        #expect(try await pendingKinds(cache).isEmpty)
+    }
+
+    @Test func draftRowsClaimInTheirOwnLaneAndInOrderPerDraft() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([update("m1", thread: "t1", labels: [SystemLabel.inbox])])
+            try tx.rebuildThreads(["t1"], accountID: account)
+            for id in ["L1", "L2"] {
+                try tx.insertLocalDraft(LocalDraft(id: id, accountID: account, kind: .new, rfcMessageID: "<\(id)@example.com>", now: .now))
+            }
+            _ = try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now)
+            try tx.enqueueSave(localDraftID: "L1", now: .now, notBefore: .now)
+            #expect(try tx.claimDueActions(accountID: account, now: .now, lane: .compose).map(\.localDraftID) == ["L1"])
+            // A send queued while the save uploads waits for it.
+            _ = try tx.enqueueSend(localDraftID: "L1", now: .now, notBefore: .now)
+            try tx.enqueueSave(localDraftID: "L2", now: .now, notBefore: .now)
+        }
+
+        let compose = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: .now, lane: .compose) }
+        let labels = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: .now) }
+        #expect(compose.map(\.localDraftID) == ["L2"])
+        #expect(labels.map(\.kind) == [.modifyThreads])
+    }
 }
 
 // MARK: Helpers
@@ -200,4 +267,12 @@ private func serverLabels(_ cache: MailCache, _ messageID: String) async throws 
             SELECT labelID FROM messageLabel WHERE accountID = ? AND messageID = ?
             """, arguments: [account, messageID])
     }
+}
+
+private func pendingKinds(_ cache: MailCache) async throws -> [PendingAction.Kind] {
+    try await cache.read { tx in try tx.pendingActions(accountID: account).map(\.kind) }
+}
+
+private func composeKinds(_ cache: MailCache) async throws -> [PendingAction.Kind] {
+    try await cache.read { tx in try tx.composeRows(localDraftID: "L1").map(\.kind) }
 }
