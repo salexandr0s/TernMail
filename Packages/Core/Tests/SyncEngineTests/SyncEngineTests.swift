@@ -748,6 +748,25 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await cache.read { tx in try tx.localDraft(id: moved.id) }?.gmailDraftID == "D1")
     }
 
+    @Test func aMoveToAnAccountBeingRemovedIsRefusedAndLeavesNothing() async throws {
+        let (engine, cache, _, clock) = try await makeEngine()
+        let outgoing = await engine.outgoingDirectory
+        let other = SyncEngine(
+            accountID: "second", sender: EmailAddress(address: "second@example.com"), outgoingDirectory: outgoing,
+            gmail: FakeGmail(), cache: cache, sendsAutomatically: false, now: clock.now
+        )
+        let draft = try await engine.startMessage()
+        _ = try #require(try await engine.attachData(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain", to: draft.id))
+        await other.stop()
+
+        await #expect(throws: CancellationError.self) {
+            try await engine.moveDraft(draft.id, content: DraftContent(subject: "Plan"), to: other)
+        }
+        #expect(try await cache.read { tx in try tx.localDrafts(accountID: "second") }.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) }?.state == .editing)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outgoing.path) == [draft.id])
+    }
+
     @Test func aSaveRefusedWhileASendWaitsLeavesTheSendQueued() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         let draft = makeDraft()
