@@ -15,6 +15,7 @@
 		2C5D3D7718C073EF6FC3B4EB /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
 		38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */; };
 		44C15A8C7042454C99FD8246 /* MessageContent in Frameworks */ = {isa = PBXBuildFile; productRef = 1D2F537B3CC39297117479CF /* MessageContent */; };
+		4B20118A95316BC74E36653B /* RecipientField.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */; };
 		4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2664304C0271DB6260097A /* MessageWebViewTests.swift */; };
 		60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F78C5270B0AE64BD13220AD /* MainView.swift */; };
 		6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4463F25A316147E854AB475E /* Tokens.swift */; };
@@ -71,6 +72,7 @@
 		C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModelTests.swift; sourceTree = "<group>"; };
 		C6B1962F97D1AE340138E9E8 /* Tern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tern.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientField.swift; sourceTree = "<group>"; };
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
 		F07C7F388D831253FD5749C5 /* NoticeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeView.swift; sourceTree = "<group>"; };
 		F0EB3C8158C8A6AFF45439BC /* TernApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TernApp.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 			children = (
 				028FE485D145D5610D43A3DB /* ComposeModel.swift */,
 				57378F029EEBF791E78C1170 /* ComposeView.swift */,
+				D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */,
 				FF0C93981EA52DD5F7C918F3 /* RichTextEditor.swift */,
 			);
 			path = Compose;
@@ -351,6 +354,7 @@
 				60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */,
 				22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */,
 				89DA04EFCFC5C677096729A7 /* NoticeView.swift in Sources */,
+				4B20118A95316BC74E36653B /* RecipientField.swift in Sources */,
 				0A05B210B67A37E8DD8DC160 /* RichTextEditor.swift in Sources */,
 				08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */,
 				A2DFB3214AD23A2BE8631B27 /* SignInView.swift in Sources */,

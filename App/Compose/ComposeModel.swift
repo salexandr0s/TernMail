@@ -119,6 +119,15 @@ final class ComposeModel {
         }
     }
 
+    /// Addresses from stored mail for a recipient being typed, leaving out
+    /// this account and the recipients already added.
+    func suggestions(for text: String) async -> [EmailAddress] {
+        let account = mailbox.account
+        let excluded = Set((content.to + content.cc + content.bcc).map(\.normalized) + [account.email.lowercased()])
+        let found = try? await mailbox.cache.addressSuggestions(accountID: account.id, matching: text, excluding: excluded)
+        return found ?? []
+    }
+
     // MARK: Actions
 
     /// Queues the message to send after the undo delay. Returns true when the

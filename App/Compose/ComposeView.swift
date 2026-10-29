@@ -44,6 +44,9 @@ struct ComposeView: View {
     @State private var isEditingLink = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
+    /// The recipient field to move the cursor to. Token fields are AppKit
+    /// views, which `focus` can't reach.
+    @State private var recipientFocus: Field?
     @Environment(\.dismiss) private var dismiss
 
     init(localDraftID: String, mailbox: MailboxModel) {
@@ -109,8 +112,7 @@ struct ComposeView: View {
             GridRow {
                 fieldLabel("To:")
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-                    AddressField(label: "To", addresses: $model.content.to)
-                        .focused($focus, equals: .to)
+                    recipientField("To", addresses: $model.content.to, field: .to)
                     if !model.showsCc {
                         Button("Cc") { reveal(.cc) }
                             .help("Add Cc recipients")
@@ -127,8 +129,7 @@ struct ComposeView: View {
                 Divider()
                 GridRow {
                     fieldLabel("Cc:")
-                    AddressField(label: "Cc", addresses: $model.content.cc)
-                        .focused($focus, equals: .cc)
+                    recipientField("Cc", addresses: $model.content.cc, field: .cc)
                         .padding(.vertical, Tokens.Space.s2)
                 }
             }
@@ -136,8 +137,7 @@ struct ComposeView: View {
                 Divider()
                 GridRow {
                     fieldLabel("Bcc:")
-                    AddressField(label: "Bcc", addresses: $model.content.bcc)
-                        .focused($focus, equals: .bcc)
+                    recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
                         .padding(.vertical, Tokens.Space.s2)
                 }
             }
@@ -162,13 +162,27 @@ struct ComposeView: View {
             .accessibilityHidden(true)
     }
 
+    private func recipientField(_ label: String, addresses: Binding<[EmailAddress]>, field: Field) -> some View {
+        RecipientField(
+            label: label,
+            addresses: addresses,
+            requestsFocus: Binding(
+                get: { recipientFocus == field },
+                set: { if !$0, recipientFocus == field { recipientFocus = nil } }
+            ),
+            isEditable: model.isEditable
+        ) { [model] text in
+            await model.suggestions(for: text)
+        }
+    }
+
     private func reveal(_ field: Field) {
         switch field {
         case .cc: model.showsCc = true
         case .bcc: model.showsBcc = true
         case .to, .subject: break
         }
-        Task { focus = field }
+        recipientFocus = field
     }
 
     // MARK: Quoted text
@@ -272,40 +286,12 @@ struct ComposeView: View {
         // Let the fields and editor join the window first.
         await Task.yield()
         if draft.to.isEmpty && draft.cc.isEmpty && draft.bcc.isEmpty {
-            focus = .to
+            recipientFocus = .to
         } else if draft.subject.isEmpty {
             focus = .subject
         } else {
             model.editor?.focus()
         }
-    }
-}
-
-/// A line of addresses typed as text, such as `Pat <pat@example.com>, sam@example.com`.
-private struct AddressField: View {
-    let label: String
-    @Binding var addresses: [EmailAddress]
-    @State private var text = ""
-
-    var body: some View {
-        TextField(label, text: $text)
-            .textFieldStyle(.plain)
-            .labelsHidden()
-            .onAppear { text = Self.format(addresses) }
-            .onChange(of: text) { addresses = EmailAddress.parseList(text) }
-            .onChange(of: addresses) {
-                // Changed elsewhere, as when Gmail's copy of the draft replaces this one.
-                if EmailAddress.parseList(text) != addresses { text = Self.format(addresses) }
-            }
-    }
-
-    private static func format(_ addresses: [EmailAddress]) -> String {
-        addresses.map { address in
-            guard let name = address.name else { return address.address }
-            let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-            return "\"\(escaped)\" <\(address.address)>"
-        }
-        .joined(separator: ", ")
     }
 }
 

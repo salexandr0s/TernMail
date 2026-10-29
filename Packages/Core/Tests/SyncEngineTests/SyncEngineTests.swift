@@ -532,6 +532,7 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(await engine.sendDueDrafts() == 1)
         var content = draft.content
         content.subject = "Re: Lunch on Friday"
+        content.cc = [EmailAddress(address: "Pat")]
         try await engine.saveDraft(draft.id, content: content)
         #expect(await engine.sendDueDrafts() == 1)
 
@@ -545,6 +546,8 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         let raw = String(decoding: try #require(await gmail.uploads.last).raw, as: UTF8.self)
         #expect(raw.contains("Subject: Re: Lunch on Friday"))
         #expect(raw.contains("In-Reply-To: <original@example.com>"))
+        #expect(!raw.contains("Cc:"))
+        #expect(stored.cc == content.cc)
         #expect(try await pendingActions(cache).isEmpty)
     }
 

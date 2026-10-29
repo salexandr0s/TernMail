@@ -433,9 +433,11 @@ extension SyncEngine {
     /// The draft as an RFC 5322 message: the new text, then the quote.
     static func message(for draft: LocalDraft, attachments: [MIMEMessage.Attachment], sender: EmailAddress, date: Date) -> MIMEMessage {
         var message = MIMEMessage(from: sender)
-        message.to = draft.to
-        message.cc = draft.cc
-        message.bcc = draft.bcc
+        // A recipient still being typed stays in the local draft. Gmail would
+        // refuse the whole upload over it.
+        message.to = draft.to.filter(\.isValid)
+        message.cc = draft.cc.filter(\.isValid)
+        message.bcc = draft.bcc.filter(\.isValid)
         message.subject = draft.subject
         message.date = date
         message.messageID = draft.rfcMessageID
