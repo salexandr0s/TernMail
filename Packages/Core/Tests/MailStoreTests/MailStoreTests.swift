@@ -20,7 +20,7 @@ private let account = "acct"
         let action = try await cache.write { tx in
             try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now)
         }
-        #expect(action.diff == ["m1": .init(added: [], removed: [SystemLabel.inbox])])
+        #expect(action.diff == ["m1": .init(added: [], removed: [SystemLabel.inbox]), "m2": .init(added: [], removed: [])])
         #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
         #expect(try await threadIDs(cache, SystemLabel.allMail) == ["t1"])
         #expect(try await serverLabels(cache, "m1") == [SystemLabel.inbox, SystemLabel.unread])

@@ -47,6 +47,7 @@ public actor SyncEngine {
     /// Undo receipts exist only for this engine's lifetime. Remember rejected
     /// and consumed row IDs even after history has removed the queue rows.
     var unavailableUndoIDs = Set<Int64>()
+    var undoReceipts: [Int64: WeakActionReceipt] = [:]
     private(set) var isStopped = false
     /// Accessed only inside the cache's serialized writes. The lock safely
     /// carries deletion knowledge into their Sendable closures. Gmail message

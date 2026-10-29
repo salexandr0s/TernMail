@@ -9,6 +9,24 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func undoAfterConfirmationRestoresUncachedMessagesFromTheSendSnapshot() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.setThread(try decode(GmailThread.self, """
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1")),\(try encodedMessage("m2", thread: "t1")),\(try encodedMessage("m3", thread: "t1", labels: [SystemLabel.sent]))]}
+            """))
+        let receipt = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
+        clock.advance(3)
+        await engine.sendDueActions()
+        clock.advance(1)
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"250"}"#))
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+        try await engine.undo(receipt)
+        await engine.sendDueActions()
+        #expect(await gmail.changes.last == Change("batchModify", ["m1", "m2"], add: [SystemLabel.inbox]))
+    }
+
     @Test func undoTrashKeepsMessagesThatWereAlreadyInTrash() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t1", [SystemLabel.trash])])

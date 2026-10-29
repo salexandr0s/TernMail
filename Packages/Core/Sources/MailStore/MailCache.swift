@@ -245,7 +245,7 @@ public struct CacheTransaction {
         var alreadyTrashed: [String] = []
         for threadID in affectedThreads {
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: existing)
-            let targets = threadIDs.contains(threadID) ? Array(labels.keys) : messageIDs.filter { labels[$0] != nil }
+            let targets = kind == .modifyMessages ? messageIDs.filter { labels[$0] != nil } : Array(labels.keys)
             for messageID in targets {
                 let current = labels[messageID] ?? []
                 if kind == .trashThreads, current.contains(SystemLabel.trash) { alreadyTrashed.append(messageID) }
@@ -253,9 +253,9 @@ public struct CacheTransaction {
                     added: add.filter { !current.contains($0) }.sorted(),
                     removed: remove.filter { current.contains($0) }.sorted()
                 )
-                if !change.added.isEmpty || !change.removed.isEmpty {
-                    diff[messageID] = change
-                }
+                // Empty diffs still record which messages were known when the
+                // command was made, so a later send snapshot won't rewrite them.
+                diff[messageID] = change
             }
         }
 

@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import os
 
 public enum MailAction: Sendable, Equatable {
     case archive
@@ -13,14 +14,37 @@ public enum MailAction: Sendable, Equatable {
 
 /// One user command can affect several threads. Each target has its own
 /// durable queue row, while undo still treats the command as one operation.
-public struct ActionReceipt: Sendable, Equatable {
-    public let actions: [PendingAction]
-    public var id: Int64? { actions.first?.id }
+public final class ActionReceipt: Sendable, Equatable {
+    public let id: Int64?
+    // The engine enriches rows before sending; UI undo can read them safely
+    // after history has removed the durable rows. All access holds this lock.
+    private let rows: OSAllocatedUnfairLock<[PendingAction]>
+    public var actions: [PendingAction] { rows.withLock { $0 } }
+
+    init(actions: [PendingAction]) {
+        id = actions.first?.id
+        rows = OSAllocatedUnfairLock(initialState: actions)
+    }
+
+    func update(_ action: PendingAction) {
+        rows.withLock { rows in
+            if let index = rows.firstIndex(where: { $0.id == action.id }) { rows[index] = action }
+        }
+    }
+
+    public static func == (lhs: ActionReceipt, rhs: ActionReceipt) -> Bool { lhs === rhs }
+}
+
+/// The registry is confined to SyncEngine. The UI's bounded undo history owns
+/// receipts; the engine's weak references cannot keep expired history alive.
+final class WeakActionReceipt {
+    weak var value: ActionReceipt?
+    init(_ value: ActionReceipt) { self.value = value }
 }
 
 extension SyncEngine {
     /// Applies `action` to the cache at once and queues it for Gmail after the
-    /// undo hold. Keep the returned row to undo it.
+    /// undo hold. Keep the returned receipt to undo it.
     @discardableResult
     public func perform(_ action: MailAction, threadIDs: [String]) async throws -> ActionReceipt? {
         try await enqueue(action, threadIDs: threadIDs, hold: undoHold)
@@ -116,7 +140,12 @@ extension SyncEngine {
             }
         }
         scheduleSending()
-        return ActionReceipt(actions: rows)
+        let receipt = ActionReceipt(actions: rows)
+        undoReceipts = undoReceipts.filter { $0.value.value != nil }
+        for row in rows {
+            if let id = row.id { undoReceipts[id] = WeakActionReceipt(receipt) }
+        }
+        return receipt
     }
 
     /// Queues the reverse of `action` with no hold.
@@ -144,9 +173,9 @@ extension SyncEngine {
             let groups = Dictionary(grouping: action.diff, by: \.value)
                 .map { (diff: $0.key, messageIDs: $0.value.map(\.key).sorted()) }
                 .sorted { $0.messageIDs.first ?? "" < $1.messageIDs.first ?? "" }
-            for group in groups {
+            for group in groups where !group.diff.added.isEmpty || !group.diff.removed.isEmpty {
                 _ = try tx.enqueue(
-                    .modifyMessages, accountID: accountID, messageIDs: group.messageIDs,
+                    .modifyMessages, accountID: accountID, threadIDs: action.threadIDs, messageIDs: group.messageIDs,
                     add: group.diff.removed, remove: group.diff.added, now: now, notBefore: now
                 )
             }
@@ -210,6 +239,36 @@ extension SyncEngine {
         case failed
     }
 
+    /// Complete the original label snapshot before any whole-thread mutation.
+    /// Existing diffs survive retries; only newly discovered messages are added.
+    private func prepare(_ action: PendingAction) async throws -> PendingAction? {
+        guard action.kind != .modifyMessages, let id = action.id else { return action }
+        var snapshots: [GmailMessage] = []
+        for threadID in action.threadIDs {
+            let thread: GmailThread
+            do {
+                thread = try await gmail.thread(id: threadID, format: .metadata)
+            } catch GmailError.notFound { continue }
+            guard thread.id == threadID, let messages = thread.messages,
+                  messages.allSatisfy({ $0.threadId == threadID }) else { throw GmailError.decoding("Thread snapshot") }
+            snapshots += messages
+        }
+        return try await write { [snapshots] tx in
+            guard var row = try tx.action(id: id), row.state == .sending else { return nil }
+            for message in snapshots where row.diff[message.id] == nil {
+                let labels = Set(message.labelIds ?? [])
+                row.diff[message.id] = PendingAction.LabelDiff(
+                    added: row.addLabelIDs.filter { !labels.contains($0) }.sorted(),
+                    removed: row.removeLabelIDs.filter(labels.contains).sorted()
+                )
+                if row.kind == .trashThreads, labels.contains(SystemLabel.trash) { row.messageIDs.append(message.id) }
+            }
+            row.messageIDs = row.messageIDs.removingDuplicates().sorted()
+            try tx.updateAction(row)
+            return row
+        }
+    }
+
     private func send(_ action: PendingAction) async {
         guard !isStopped, !Task.isCancelled else { return }
         guard let id = action.id else { return }
@@ -222,8 +281,15 @@ extension SyncEngine {
         guard !isStopped, !Task.isCancelled else { return }
 
         let outcome: Outcome
+        var row = current
         do {
-            let failures = try await deliver(action).values.filter { $0 != .notFound }
+            guard let prepared = try await prepare(row) else {
+                _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
+                return
+            }
+            row = prepared
+            undoReceipts[id]?.value?.update(row)
+            let failures = try await deliver(row).values.filter { $0 != .notFound }
             if failures.isEmpty {
                 outcome = .sent
             } else if failures.allSatisfy({ $0.isRetryable || $0 == .unauthorized }) {
@@ -240,7 +306,6 @@ extension SyncEngine {
             outcome = .retry(String(describing: type(of: error)))
         }
 
-        var row = current
         let now = now()
         switch outcome {
         case .sent:
