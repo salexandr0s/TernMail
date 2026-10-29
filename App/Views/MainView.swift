@@ -15,10 +15,15 @@ struct MainView: View {
         @Bindable var app = app
         NavigationSplitView {
             SidebarView(mailbox: mailbox)
+                .padding(.trailing, Tokens.Space.s3)
+                .overlay(alignment: .trailing) {
+                    SplitDividerHandle()
+                        .frame(width: Tokens.Space.s3)
+                }
                 .navigationSplitViewColumnWidth(
-                    min: Tokens.Layout.sidebarMinWidth,
-                    ideal: Tokens.Layout.sidebarWidth,
-                    max: Tokens.Layout.sidebarMaxWidth
+                    min: Tokens.Layout.sidebarMinWidth + Tokens.Space.s3,
+                    ideal: Tokens.Layout.sidebarWidth + Tokens.Space.s3,
+                    max: Tokens.Layout.sidebarMaxWidth + Tokens.Space.s3
                 )
         } content: {
             Group {
@@ -28,7 +33,15 @@ struct MainView: View {
                     ThreadListView(mailbox: mailbox)
                 }
             }
-            .navigationSplitViewColumnWidth(min: Tokens.Layout.listMinWidth, ideal: Tokens.Layout.listWidth)
+            .padding(.trailing, Tokens.Space.s3)
+            .overlay(alignment: .trailing) {
+                SplitDividerHandle()
+                    .frame(width: Tokens.Space.s3)
+            }
+            .navigationSplitViewColumnWidth(
+                min: Tokens.Layout.listMinWidth + Tokens.Space.s3,
+                ideal: Tokens.Layout.listWidth + Tokens.Space.s3
+            )
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button(action: newMessage) {

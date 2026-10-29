@@ -48,6 +48,8 @@ struct SidebarView: View {
                             mailbox.showNewLabel(in: owner.account.id)
                         } label: {
                             Image(systemName: "plus")
+                                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
                         .help("New Label")
@@ -160,33 +162,23 @@ struct SidebarView: View {
 
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let box: SystemMailbox
     let title: String
     let color: Color
     /// Unread conversations, or the Outbox's messages. Zero shows no badge.
     let count: Int
-    /// Set on a row listing every account, for its button that shows a row per account.
-    var isExpanded: Binding<Bool>?
+    /// Set on a row listing every account to show its disclosure state.
+    var isExpanded: Bool?
 
     var body: some View {
         HStack(spacing: Tokens.Space.s2) {
             if let isExpanded {
-                Button {
-                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast)) {
-                        isExpanded.wrappedValue.toggle()
-                    }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
-                        .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .help(isExpanded.wrappedValue ? "Hide Accounts" : "Show Accounts")
-                .accessibilityLabel(isExpanded.wrappedValue ? "Collapse \(box.title)" : "Expand \(box.title)")
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
+                    .accessibilityHidden(true)
             }
             Label {
                 Text(title)
@@ -198,7 +190,9 @@ private struct MailboxRow: View {
                     .frame(width: Tokens.Space.s5)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, Tokens.Space.s1)
+        .contentShape(Rectangle())
         .badge(count)
     }
 }
@@ -207,6 +201,7 @@ private struct MailboxRow: View {
 /// it's expanded. The total moves to the account rows then. These are plain
 /// rows because a disclosure group's own row can't be selected on macOS.
 private struct CombinedMailboxRows: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let mailbox: MailboxModel
     let box: SystemMailbox
     let colors: [String: Color]
@@ -217,9 +212,13 @@ private struct CombinedMailboxRows: View {
         let combinedID = MailboxID.combined(box.id)
         MailboxRow(
             box: box, title: box.title, color: box.color,
-            count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: $isExpanded
+            count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: isExpanded
         )
         .tag(combinedID as MailboxID?)
+        .onTapGesture(perform: selectAndToggle)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(isExpanded ? "Hides accounts" : "Shows accounts")
+        .accessibilityAction(.default, selectAndToggle)
         if isExpanded {
             ForEach(mailbox.accounts, id: \.account.id) { owner in
                 let boxID = MailboxID.account(owner.account.id, box.id)
@@ -235,6 +234,13 @@ private struct CombinedMailboxRows: View {
                     .tag(boxID as MailboxID?)
                 }
             }
+        }
+    }
+
+    private func selectAndToggle() {
+        mailbox.selectedMailbox = .combined(box.id)
+        withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast)) {
+            isExpanded.toggle()
         }
     }
 }
@@ -272,6 +278,8 @@ private struct AccountHeader: View {
                     mailbox.showNewLabel(in: owner.account.id)
                 } label: {
                     Image(systemName: "plus")
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
                 .help("New Label")
@@ -288,9 +296,11 @@ private struct AccountHeader: View {
             }
         }
         .contextMenu {
-            Button("New Label…") { mailbox.showNewLabel(in: owner.account.id) }
+            Button("New Label…", systemImage: "tag") { mailbox.showNewLabel(in: owner.account.id) }
+                .labelStyle(.titleAndIcon)
             Divider()
-            Button("Sign Out…") { app.accountToSignOut = owner.account }
+            Button("Sign Out…", systemImage: "rectangle.portrait.and.arrow.right") { app.accountToSignOut = owner.account }
+                .labelStyle(.titleAndIcon)
         }
     }
 }
@@ -328,8 +338,10 @@ private struct LabelRow: View {
         .tag(MailboxID.account(label.accountID, label.id) as MailboxID?)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {
-            Button("Edit Label…") { mailbox.showEditLabel(label) }
-            Button("Delete Label…") { mailbox.labelToDelete = label }
+            Button("Edit Label…", systemImage: "pencil") { mailbox.showEditLabel(label) }
+                .labelStyle(.titleAndIcon)
+            Button("Delete Label…", systemImage: "trash") { mailbox.labelToDelete = label }
+                .labelStyle(.titleAndIcon)
         }
     }
 }
