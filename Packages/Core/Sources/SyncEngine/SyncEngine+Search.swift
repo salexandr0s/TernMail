@@ -81,7 +81,7 @@ extension SyncEngine {
 
     /// Metadata for every message in `threadIDs`, plus the conversations Gmail
     /// no longer has. Any other failed part fails the request.
-    private func fetchThreadMetadata(
+    func fetchThreadMetadata(
         _ threadIDs: [String]
     ) async throws -> (updates: [CacheTransaction.MessageUpdate], missing: Set<String>) {
         guard !threadIDs.isEmpty else { return ([], []) }

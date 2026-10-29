@@ -53,6 +53,12 @@ extension CacheTransaction {
         )
     }
 
+    /// Each cached message's labels in the conversation, with queued changes
+    /// applied. Empty when the cache has none of its messages.
+    public func currentLabels(threadID: String, accountID: String) throws -> [String: Set<String>] {
+        try effectiveLabels(threadID: threadID, accountID: accountID, actions: try pendingActions(accountID: accountID))
+    }
+
     /// Sorts a woken conversation by `wokeAt` until it leaves the Inbox.
     public func recordWake(threadID: String, at wokeAt: Date, accountID: String) throws {
         try db.execute(
