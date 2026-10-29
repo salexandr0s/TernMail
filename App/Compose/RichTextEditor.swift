@@ -25,6 +25,8 @@ protocol RichTextEditing: AnyObject {
     /// Links the selection, or inserts the address as linked text when nothing
     /// is selected. Nil removes links from the selection.
     func setLink(_ url: URL?)
+    /// Puts the cursor in the message, at its start.
+    func focus()
 }
 
 /// The message body editor: an `NSTextView`, since SwiftUI's rich text
@@ -101,7 +103,8 @@ struct RichTextEditor: NSViewRepresentable {
             storage.setAttributedString(AttributedDocument.string(from: document))
             textView.typingAttributes = AttributedDocument.baseAttributes
             textView.undoManager?.removeAllActions(withTarget: storage)
-            updateFormat()
+            // Loading happens while SwiftUI updates views, which mustn't change state.
+            Task { @MainActor [weak self] in self?.updateFormat() }
         }
 
         // MARK: NSTextViewDelegate
@@ -133,6 +136,13 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         // MARK: RichTextEditing
+
+        func focus() {
+            guard let textView else { return }
+            textView.window?.makeFirstResponder(textView)
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+            textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        }
 
         func toggleBold() { toggle(.boldFontMask) }
         func toggleItalic() { toggle(.italicFontMask) }

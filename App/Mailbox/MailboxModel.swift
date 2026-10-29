@@ -26,9 +26,18 @@ final class MailboxModel {
     static let pageSize = 200
     static let undoLimit = 100
 
+    /// Where a compose window's draft comes from.
+    enum ComposeStart: Equatable {
+        case newMessage
+        case reply(ReplyKind, messageID: String)
+        /// A Gmail draft shown in a thread.
+        case editDraft(messageID: String)
+    }
+
     let account: AccountRecord
-    private let cache: MailCache
-    private let engine: SyncEngine
+    /// Compose windows read and edit their drafts through these directly.
+    let cache: MailCache
+    let engine: SyncEngine
 
     var selectedLabelID: String? = SystemLabel.inbox {
         didSet {
@@ -68,6 +77,8 @@ final class MailboxModel {
     @ObservationIgnored private var isStopped = false
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
+    /// Drafts opened from another app with formatting the editor drops, until their window warns.
+    @ObservationIgnored private var droppedFormatting = Set<String>()
 
     /// `outgoingDirectory` holds copies of the files attached to drafts.
     init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL) {
@@ -163,6 +174,45 @@ final class MailboxModel {
         guard threads.count >= threadLimit else { return }
         threadLimit += Self.pageSize
         observeThreads()
+    }
+
+    // MARK: Compose
+
+    /// Makes the local draft for a compose window and returns its ID, or nil
+    /// after showing why it couldn't.
+    func startCompose(_ start: ComposeStart) async -> String? {
+        guard !isStopped else { return nil }
+        do {
+            switch start {
+            case .newMessage:
+                return try await engine.startMessage().id
+            case .reply(let kind, let messageID):
+                return try await engine.startReply(kind, to: messageID).id
+            case .editDraft(let messageID):
+                let opened = try await engine.openDraft(messageID: messageID)
+                if opened.droppedFormatting { droppedFormatting.insert(opened.draft.id) }
+                return opened.draft.id
+            }
+        } catch {
+            guard !isStopped, !(error is CancellationError) else { return nil }
+            let message = (error as? ComposeError)?.errorDescription ?? Self.composeFailure(start)
+            notice = Notice(message: message, undo: nil, isError: true)
+            return nil
+        }
+    }
+
+    /// Whether the draft's window should warn about formatting it can't keep. Asked once.
+    func takeDroppedFormatting(_ localDraftID: String) -> Bool {
+        droppedFormatting.remove(localDraftID) != nil
+    }
+
+    private static func composeFailure(_ start: ComposeStart) -> String {
+        switch start {
+        case .newMessage: "Tern couldn't start a new message."
+        case .reply(.forward, _): "Tern couldn't load the message to forward. Check your connection."
+        case .reply: "Tern couldn't load the message to reply to. Check your connection."
+        case .editDraft: "Tern couldn't open this draft. Check your connection."
+        }
     }
 
     // MARK: Actions
