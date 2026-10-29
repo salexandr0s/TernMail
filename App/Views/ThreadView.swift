@@ -182,13 +182,22 @@ private struct MessageView: View {
     }
 
     private var actions: some View {
-        HStack(spacing: Tokens.Space.s2) {
+        let accountID = message.record.accountID
+        return HStack(spacing: Tokens.Space.s2) {
             if message.labels.contains(SystemLabel.draft) {
-                Button("Edit Draft", systemImage: "pencil") { compose(.editDraft(messageID: message.id)) }
+                Button("Edit Draft", systemImage: "pencil") {
+                    compose(.editDraft(messageID: message.id, accountID: accountID))
+                }
             } else {
-                Button("Reply", systemImage: "arrowshape.turn.up.left") { compose(.reply(.reply, messageID: message.id)) }
-                Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { compose(.reply(.replyAll, messageID: message.id)) }
-                Button("Forward", systemImage: "arrowshape.turn.up.right") { compose(.reply(.forward, messageID: message.id)) }
+                Button("Reply", systemImage: "arrowshape.turn.up.left") {
+                    compose(.reply(.reply, messageID: message.id, accountID: accountID))
+                }
+                Button("Reply All", systemImage: "arrowshape.turn.up.left.2") {
+                    compose(.reply(.replyAll, messageID: message.id, accountID: accountID))
+                }
+                Button("Forward", systemImage: "arrowshape.turn.up.right") {
+                    compose(.reply(.forward, messageID: message.id, accountID: accountID))
+                }
             }
         }
         .controlSize(.small)

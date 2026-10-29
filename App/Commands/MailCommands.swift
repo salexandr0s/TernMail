@@ -144,8 +144,8 @@ struct MailCommands: Commands {
     private func reply(_ kind: ReplyKind) {
         guard let mailbox else { return }
         Task {
-            guard let messageID = await mailbox.replyTargetMessageID() else { return }
-            open(.reply(kind, messageID: messageID))
+            guard let start = await mailbox.replyStart(kind) else { return }
+            open(start)
         }
     }
 

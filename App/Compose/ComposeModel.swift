@@ -104,6 +104,12 @@ final class ComposeModel {
 
     var draft: LocalDraft? { activity?.draft }
 
+    /// The draft's account, whose engine stores, saves and sends it. Nil
+    /// until the draft loads, or once its account signs out.
+    private var owner: AccountMailbox? {
+        draft.flatMap { mailbox.account(id: $0.accountID) }
+    }
+
     var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
 
     var isEditable: Bool { phase == .open && draft?.state == .editing }
@@ -152,7 +158,7 @@ final class ComposeModel {
     /// Addresses from stored mail for a recipient being typed, leaving out
     /// this account and the recipients already added.
     func suggestions(for text: String) async -> [EmailAddress] {
-        let account = mailbox.account
+        guard let account = owner?.account else { return [] }
         let excluded = Set((content.to + content.cc + content.bcc).map(\.normalized) + [account.email.lowercased()])
         let found = try? await mailbox.cache.addressSuggestions(accountID: account.id, matching: text, excluding: excluded)
         return found ?? []
@@ -174,8 +180,8 @@ final class ComposeModel {
             alert = "“\(invalid.address)” isn't a valid email address."
             return false
         }
+        guard let engine = owner?.engine else { return false }
         cancelTimers()
-        let engine = mailbox.engine
         let id = localDraftID
         let delay = UndoSendDelay.current
         let queued = await serially { [self] in
@@ -197,8 +203,8 @@ final class ComposeModel {
     @discardableResult
     func discard() async -> Bool {
         guard isEditable else { return false }
+        guard let engine = owner?.engine else { return false }
         cancelTimers()
-        let engine = mailbox.engine
         let id = localDraftID
         // Stores the last edits too, so Undo brings them back.
         let queued = await serially { [self] in
@@ -215,7 +221,7 @@ final class ComposeModel {
     func attach(_ items: [Attachable]) {
         guard isEditable, !items.isEmpty else { return }
         markChanged()
-        let engine = mailbox.engine
+        guard let engine = owner?.engine else { return }
         let id = localDraftID
         for item in items {
             attachmentsInProgress += 1
@@ -241,7 +247,7 @@ final class ComposeModel {
     func removeAttachment(_ attachment: OutgoingAttachment) {
         guard isEditable, let rowID = attachment.id else { return }
         markChanged()
-        let engine = mailbox.engine
+        guard let engine = owner?.engine else { return }
         serially { [self] in
             do {
                 try await engine.removeAttachment(id: rowID)
@@ -283,7 +289,7 @@ final class ComposeModel {
         let untouched = draft.revision == 0 && !isTouched
         if draft.gmailDraftID == nil, untouched || isBlank {
             cancelTimers()
-            let engine = mailbox.engine
+            guard let engine = owner?.engine else { return }
             let id = localDraftID
             serially { _ = try? await engine.discardDraft(id, hold: 0) }
         } else if changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges {
@@ -295,7 +301,7 @@ final class ComposeModel {
         cancelTimers()
         unsavedSince = nil
         changedSinceSave = false
-        let engine = mailbox.engine
+        guard let engine = owner?.engine else { return }
         let id = localDraftID
         serially { [self] in
             let content = content
@@ -394,7 +400,7 @@ final class ComposeModel {
     }
 
     private func store() {
-        let engine = mailbox.engine
+        guard let engine = owner?.engine else { return }
         let id = localDraftID
         serially { [self] in
             let content = content

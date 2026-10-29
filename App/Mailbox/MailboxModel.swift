@@ -35,16 +35,17 @@ final class MailboxModel {
     /// Received attachments, downloaded when opened. Signing out deletes them.
     static let defaultDownloadsDirectory = URL.cachesDirectory.appending(path: "Tern/Attachments", directoryHint: .isDirectory)
 
-    /// Where a compose window's draft comes from.
+    /// Where a compose window's draft comes from. Replies and Gmail drafts
+    /// stay in their message's account.
     enum ComposeStart: Equatable {
+        /// A new message from `composeAccount`.
         case newMessage
-        case reply(ReplyKind, messageID: String)
+        case reply(ReplyKind, messageID: String, accountID: String)
         /// A Gmail draft shown in a thread.
-        case editDraft(messageID: String)
+        case editDraft(messageID: String, accountID: String)
     }
 
-    /// The first signed-in account. New messages from a combined mailbox,
-    /// and for now compose windows, use it.
+    /// The first signed-in account. New messages from a combined mailbox use it.
     private(set) var defaultAccount: AccountMailbox
     /// The accounts added after the first.
     private(set) var otherAccounts: [AccountMailbox] = []
@@ -405,11 +406,13 @@ final class MailboxModel {
         do {
             switch start {
             case .newMessage:
-                return try await engine.startMessage().id
-            case .reply(let kind, let messageID):
-                return try await engine.startReply(kind, to: messageID).id
-            case .editDraft(let messageID):
-                let opened = try await engine.openDraft(messageID: messageID)
+                return try await composeAccount.engine.startMessage().id
+            case .reply(let kind, let messageID, let accountID):
+                guard let owner = account(id: accountID) else { return nil }
+                return try await owner.engine.startReply(kind, to: messageID).id
+            case .editDraft(let messageID, let accountID):
+                guard let owner = account(id: accountID) else { return nil }
+                let opened = try await owner.engine.openDraft(messageID: messageID)
                 if opened.droppedFormatting { droppedFormatting.insert(opened.draft.id) }
                 return opened.draft.id
             }
@@ -421,15 +424,23 @@ final class MailboxModel {
         }
     }
 
+    /// The account a new message starts in: the selected mailbox's, or the
+    /// default account in a combined mailbox.
+    var composeAccount: AccountMailbox {
+        if case .account(let accountID, _)? = selectedMailbox, let owner = account(id: accountID) { return owner }
+        return defaultAccount
+    }
+
     /// Reply and Forward in the menu bar answer one selected conversation.
     var canReply: Bool { selectedThreadIDs.count == 1 }
 
-    /// The newest message in the selected conversation that isn't a draft.
-    func replyTargetMessageID() async -> String? {
+    /// A reply to the newest message in the selected conversation that isn't a draft.
+    func replyStart(_ kind: ReplyKind) async -> ComposeStart? {
         guard canReply, let key = selectedThreadIDs.first else { return nil }
         do {
             for try await detail in cache.thread(accountID: key.accountID, threadID: key.threadID) {
-                return detail?.messages.last { !$0.labels.contains(SystemLabel.draft) }?.id
+                let target = detail?.messages.last { !$0.labels.contains(SystemLabel.draft) }
+                return target.map { .reply(kind, messageID: $0.id, accountID: key.accountID) }
             }
         } catch {
             notice = Notice(message: "Tern couldn't read this conversation.", isError: true)
@@ -472,7 +483,8 @@ final class MailboxModel {
     /// Puts a waiting send back to editing. True means the caller reopens its window.
     func undoSend(_ localDraftID: String) async -> Bool {
         do {
-            let undone = try await engine.undoSend(localDraftID)
+            guard let owner = try await owner(ofDraft: localDraftID) else { return false }
+            let undone = try await owner.engine.undoSend(localDraftID)
             guard !isStopped else { return false }
             finishSend(localDraftID)
             if undone {
@@ -492,7 +504,8 @@ final class MailboxModel {
     /// Keeps a discarded draft. True means the caller reopens its window.
     func undoDiscard(_ localDraftID: String) async -> Bool {
         do {
-            let undone = try await engine.undoDiscard(localDraftID)
+            guard let owner = try await owner(ofDraft: localDraftID) else { return false }
+            let undone = try await owner.engine.undoDiscard(localDraftID)
             guard !isStopped else { return false }
             if !undone {
                 notice = Notice(message: "Too late to undo. Tern has already discarded this draft.")
@@ -507,10 +520,16 @@ final class MailboxModel {
         }
     }
 
+    /// The account a local draft belongs to. Draft IDs are unique across accounts.
+    private func owner(ofDraft localDraftID: String) async throws -> AccountMailbox? {
+        let accountID = try await cache.read { tx in try tx.localDraft(id: localDraftID)?.accountID }
+        return accountID.flatMap { account(id: $0) }
+    }
+
     private static func composeFailure(_ start: ComposeStart) -> String {
         switch start {
         case .newMessage: "Tern couldn't start a new message."
-        case .reply(.forward, _): "Tern couldn't load the message to forward. Check your connection."
+        case .reply(.forward, _, _): "Tern couldn't load the message to forward. Check your connection."
         case .reply: "Tern couldn't load the message to reply to. Check your connection."
         case .editDraft: "Tern couldn't open this draft. Check your connection."
         }
