@@ -1,10 +1,13 @@
 import AppKit
+import MailStore
+import MessageContent
 import SwiftUI
 
 struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     let mailbox: MailboxModel
 
     var body: some View {
@@ -65,6 +68,9 @@ struct MainView: View {
             }
             .padding(Tokens.Space.s4)
         }
+        .background {
+            ShortcutMonitor(isEnabled: usesSingleKeys, perform: perform)
+        }
         .animation(Tokens.Motion.standard(), value: mailbox.notice)
         .animation(Tokens.Motion.standard(), value: mailbox.sendNotice)
         .onAppear { mailbox.undoManager = undoManager }
@@ -100,6 +106,50 @@ struct MainView: View {
         Task {
             guard let id = await mailbox.startCompose(.newMessage) else { return }
             openWindow(id: ComposeWindow.sceneID, value: id)
+        }
+    }
+
+    /// A single-key shortcut does what its menu command does, when that is enabled.
+    private func perform(_ action: SingleKeyShortcuts.Action) {
+        let hasSelection = !mailbox.selectedThreadIDs.isEmpty
+        switch action {
+        case .nextConversation: mailbox.selectAdjacentThread(1)
+        case .previousConversation: mailbox.selectAdjacentThread(-1)
+        case .openConversation: if !hasSelection { mailbox.selectAdjacentThread(1) }
+        case .archive: if mailbox.canArchive { mailbox.perform(.archive) }
+        case .trash: if mailbox.canTrash { mailbox.perform(.trash) }
+        case .toggleStar: if hasSelection { mailbox.toggleStar() }
+        case .markRead: if hasSelection { mailbox.perform(.markRead) }
+        case .markUnread: if hasSelection { mailbox.perform(.markUnread) }
+        case .editLabels: if hasSelection { mailbox.showEditLabels() }
+        case .moveTo: if hasSelection { mailbox.showMoveTo() }
+        case .snooze: if mailbox.canSnooze { mailbox.showSnoozeDate() }
+        case .search: mailbox.search.focusField()
+        case .newMessage: newMessage()
+        case .reply: reply(.reply)
+        case .replyAll: reply(.replyAll)
+        case .forward: reply(.forward)
+        case .undo: if undoManager?.canUndo == true { undoManager?.undo() }
+        case .showShortcuts: openWindow(id: KeyboardShortcutsView.sceneID)
+        case .go(let destination): mailbox.go(to: Self.labelID(of: destination))
+        }
+    }
+
+    private func reply(_ kind: ReplyKind) {
+        Task {
+            guard let start = await mailbox.replyStart(kind), let id = await mailbox.startCompose(start) else { return }
+            openWindow(id: ComposeWindow.sceneID, value: id)
+        }
+    }
+
+    private static func labelID(of destination: SingleKeyShortcuts.Destination) -> String {
+        switch destination {
+        case .inbox: SystemLabel.inbox
+        case .starred: SystemLabel.starred
+        case .snoozed: MailboxModel.snoozedID
+        case .drafts: SystemLabel.draft
+        case .sent: SystemLabel.sent
+        case .allMail: SystemLabel.allMail
         }
     }
 

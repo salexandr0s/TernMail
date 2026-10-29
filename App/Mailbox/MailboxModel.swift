@@ -841,6 +841,22 @@ final class MailboxModel {
         if sendNotice?.undo == .send(localDraftID: localDraftID) { sendNotice = nil }
     }
 
+    /// The j and k keys: selects the conversation below or above the
+    /// selection, stopping at the ends, or the first one when none is selected.
+    func selectAdjacentThread(_ offset: Int) {
+        let threads = listedThreads
+        guard !threads.isEmpty else { return }
+        let selected = threads.indices.filter { selectedThreadIDs.contains(threads[$0].key) }
+        let index = if offset > 0, let last = selected.last {
+            min(last + offset, threads.count - 1)
+        } else if offset < 0, let first = selected.first {
+            max(first + offset, 0)
+        } else {
+            0
+        }
+        selectedThreadIDs = [threads[index].key]
+    }
+
     /// Moves the selection to the thread below the ones leaving the list, or above if none is below.
     func selectThread(after leaving: Set<ThreadKey>) {
         let threads = listedThreads

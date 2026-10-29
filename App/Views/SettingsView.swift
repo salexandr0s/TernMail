@@ -3,6 +3,9 @@ import SwiftUI
 
 /// Tern > Settings.
 struct SettingsView: View {
+    /// Both panes share it, so switching tabs doesn't change the window's width.
+    static let width: CGFloat = 460
+
     var body: some View {
         TabView {
             GeneralSettings()
@@ -15,6 +18,7 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @AppStorage(UndoSendDelay.key) private var undoSendDelay = UndoSendDelay.defaultSeconds
+    @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
 
     var body: some View {
         Form {
@@ -28,15 +32,21 @@ private struct GeneralSettings: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Toggle("Use single-key shortcuts", isOn: $usesSingleKeys)
+                .padding(.top, Tokens.Space.s3)
+            Text("Press E to archive, J or K for the next or previous conversation, and more. They work in the main window while you aren't typing. Help ▸ Keyboard Shortcuts lists them.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(Tokens.Space.s6)
-        .fixedSize()
+        .frame(width: SettingsView.width)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 /// The signed-in accounts, with Add Account, Sign In Again and Sign Out.
 private struct AccountsSettings: View {
-    private static let width: CGFloat = 460
     private static let height: CGFloat = 300
 
     @Environment(AppModel.self) private var app
@@ -65,7 +75,7 @@ private struct AccountsSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: Self.width, height: Self.height)
+        .frame(width: SettingsView.width, height: Self.height)
         .confirmationDialog(
             "Sign out of \(accountToSignOut?.email ?? "this account")?",
             isPresented: Binding(get: { accountToSignOut != nil }, set: { if !$0 { accountToSignOut = nil } }),
