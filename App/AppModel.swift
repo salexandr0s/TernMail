@@ -45,7 +45,9 @@ final class AppModel {
                 self.cache = cache
                 self.accounts = accounts
                 let outgoing = FileManager.default.temporaryDirectory.appending(path: "Tern-UIAudit-Outgoing", directoryHint: .isDirectory)
-                let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)
+                let mailbox = MailboxModel(
+                    account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing, snoozeStore: accounts
+                )
                 self.mailbox = mailbox
                 phase = .signedIn(account)
                 Task { await mailbox.start() }
@@ -140,10 +142,16 @@ final class AppModel {
 
     var signOutMessage: String {
         let deletes = "Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet"
-        switch mailbox?.outbox.count ?? 0 {
-        case 0: return deletes + "."
-        case 1: return deletes + ", including 1 message in the Outbox."
-        case let count: return deletes + ", including \(count) messages in the Outbox."
+        let message = switch mailbox?.outbox.count ?? 0 {
+        case 0: deletes + "."
+        case 1: deletes + ", including 1 message in the Outbox."
+        case let count: deletes + ", including \(count) messages in the Outbox."
+        }
+        // Snoozes live on this Mac, so signing out ends them where they are.
+        return switch mailbox?.snoozed.count ?? 0 {
+        case 0: message
+        case 1: message + " 1 snoozed conversation stays archived and won't return to the Inbox."
+        case let count: message + " \(count) snoozed conversations stay archived and won't return to the Inbox."
         }
     }
 
@@ -198,9 +206,12 @@ final class AppModel {
     }
 
     private func openMailbox(for account: AccountRecord) async {
-        guard let cache, let outgoingDirectory else { return }
+        guard let cache, let accounts, let outgoingDirectory else { return }
         await closeMailbox()
-        let mailbox = MailboxModel(account: account, cache: cache, gmail: GmailClient(tokens: auth), outgoingDirectory: outgoingDirectory)
+        let mailbox = MailboxModel(
+            account: account, cache: cache, gmail: GmailClient(tokens: auth),
+            outgoingDirectory: outgoingDirectory, snoozeStore: accounts
+        )
         self.mailbox = mailbox
         phase = .signedIn(account)
         Task { await mailbox.start() }

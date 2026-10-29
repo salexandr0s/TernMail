@@ -1,4 +1,5 @@
 import Accessibility
+import AppKit
 import Foundation
 import MailStore
 import MessageContent
@@ -36,6 +37,8 @@ final class MailboxModel {
     static let undoLimit = 100
     /// The sidebar's Outbox, which isn't a Gmail label.
     static let outboxID = "TERN_OUTBOX"
+    /// The sidebar's Snoozed, which Tern keeps itself since Gmail's API has none.
+    nonisolated static let snoozedID = "TERN_SNOOZED"
     /// Received attachments, downloaded when opened. Signing out deletes them.
     static let defaultDownloadsDirectory = URL.cachesDirectory.appending(path: "Tern/Attachments", directoryHint: .isDirectory)
 
@@ -123,16 +126,28 @@ final class MailboxModel {
     var labelEditor: LabelEditorRequest?
     /// The label whose deletion waits for confirmation.
     var labelToDelete: LabelRecord?
+    /// Wakes this account's snoozes. Nil when the mailbox has no config store.
+    @ObservationIgnored let snoozeKeeper: SnoozeKeeper?
+    /// Snoozed conversations, the soonest to wake first.
+    private(set) var snoozed: [SnoozedThread] = []
+    /// Conversations a snooze brought back that are still in the Inbox.
+    private(set) var wokenThreadIDs: Set<String> = []
+    /// Choose Date & Time, open for these conversations while set.
+    var snoozeDateTargets: Set<String>?
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
     /// `outgoingDirectory` holds copies of the files attached to drafts.
+    /// `snoozeStore` keeps the durable copy of snoozes; without it the
+    /// mailbox can't snooze.
     init(
         account: AccountRecord,
         cache: MailCache,
         gmail: any GmailService,
         outgoingDirectory: URL,
-        downloadsDirectory: URL = MailboxModel.defaultDownloadsDirectory
+        downloadsDirectory: URL = MailboxModel.defaultDownloadsDirectory,
+        snoozeStore: AccountStore? = nil
     ) {
         self.account = account
         self.cache = cache
@@ -145,6 +160,7 @@ final class MailboxModel {
             cache: cache
         )
         self.engine = engine
+        snoozeKeeper = snoozeStore.map { SnoozeKeeper(engine: engine, accounts: $0) }
         search = SearchModel(accountID: account.id, cache: cache, engine: engine)
         search.onResultsChange = { [weak self] in self?.listChanged() }
     }
@@ -154,6 +170,8 @@ final class MailboxModel {
         guard !isStopped else { return }
         let labelStream = cache.labels(accountID: account.id)
         let outboxStream = cache.outbox(accountID: account.id)
+        let snoozedStream = cache.snoozedThreads(accountID: account.id)
+        let wokenStream = cache.wokenThreadIDs(accountID: account.id)
         let events = engine.events
         tasks.append(Task { [weak self] in
             do {
@@ -181,15 +199,59 @@ final class MailboxModel {
             }
         })
         tasks.append(Task { [weak self] in
+            do {
+                for try await snoozed in snoozedStream {
+                    guard let self, !Task.isCancelled, !isStopped else { return }
+                    self.snoozed = snoozed
+                    if selectedLabelID == Self.snoozedID {
+                        threads = snoozed.map(\.thread)
+                        listChanged()
+                    }
+                }
+            } catch {
+                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
+            }
+        })
+        tasks.append(Task { [weak self] in
+            do {
+                var isFirst = true
+                for try await woken in wokenStream {
+                    guard let self, !Task.isCancelled, !isStopped else { return }
+                    let back = woken.subtracting(wokenThreadIDs).count
+                    wokenThreadIDs = woken
+                    if !isFirst, back > 0 {
+                        let subject = back == 1 ? "A snoozed conversation is" : "\(back) snoozed conversations are"
+                        AccessibilityNotification.Announcement("\(subject) back in the Inbox").post()
+                    }
+                    isFirst = false
+                }
+            } catch {
+                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
+            }
+        })
+        tasks.append(Task { [weak self] in
             for await event in events { self?.handle(event) }
         })
+        // Snoozes that came due while the Mac slept wake when it does.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Delivered on the main queue, as requested above.
+            MainActor.assumeIsolated { self?.checkSnoozes() }
+        }
         observeThreads()
         await engine.start()
+        guard !isStopped else { return }
+        await snoozeKeeper?.start()
     }
 
     /// Returns once the engine has stopped writing to the cache.
     func stop() async {
         isStopped = true
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
+        // The keeper writes through the engine, so it stops first.
+        await snoozeKeeper?.stop()
         tasks.forEach { $0.cancel() }
         tasks = []
         threadsTask?.cancel()
@@ -275,7 +337,7 @@ final class MailboxModel {
     /// nothing more for this mailbox, and Gmail may. The cache holds all of
     /// the Inbox and Drafts.
     var offersOlderConversations: Bool {
-        guard let id = selectedLabelID, ![SystemLabel.inbox, SystemLabel.draft, Self.outboxID].contains(id),
+        guard let id = selectedLabelID, ![SystemLabel.inbox, SystemLabel.draft, Self.outboxID, Self.snoozedID].contains(id),
               threads.count < threadLimit
         else { return false }
         return older?.state != .finished
@@ -437,15 +499,17 @@ final class MailboxModel {
     /// Queues a change with Undo, in order after earlier changes. The undo
     /// entry is registered inside the initiating event, so it can remember
     /// an undo requested before the engine returns the durable queue rows.
-    /// `confirmation` shows in a notice with Undo.
+    /// `confirmation` shows in a notice with Undo. `revert` replaces the
+    /// engine's undo for changes that keep more than queue rows.
     @discardableResult
     func queueUndoable(
         _ name: String,
         confirmation: String? = nil,
+        revert: (@Sendable (ActionReceipt) async throws -> Void)? = nil,
         _ change: @escaping @Sendable (SyncEngine) async throws -> ActionReceipt?
     ) -> Task<Void, Never>? {
         guard !isStopped else { return nil }
-        let entry = UndoEntry(name: name)
+        let entry = UndoEntry(name: name, revert: revert)
         registerUndo(entry)
         let previous = actionTask
         let engine = engine
@@ -487,9 +551,15 @@ final class MailboxModel {
         if !((undoManager?.isUndoing) ?? false) { undoManager?.removeAllActions(withTarget: entry) }
         guard let row = entry.receipt, !entry.isApplying else { return nil }
         entry.isApplying = true
+        let engine = engine
+        let revert = entry.revert
         return Task {
             do {
-                try await engine.undo(row)
+                if let revert {
+                    try await revert(row)
+                } else {
+                    try await engine.undo(row)
+                }
                 removeUndo(entry)
                 if notice?.undo == .action(row) { notice = nil }
             } catch {
@@ -548,6 +618,12 @@ final class MailboxModel {
             threads = []
             return
         }
+        if labelID == Self.snoozedID {
+            // The snoozed stream fills it.
+            threads = snoozed.map(\.thread)
+            listChanged()
+            return
+        }
         let stream = cache.threads(accountID: account.id, labelID: labelID, limit: threadLimit)
         threadsTask = Task { [weak self] in
             do {
@@ -579,6 +655,8 @@ final class MailboxModel {
             syncStatus = .idle
             lastSyncedAt = date
             hasSyncedOnce = true
+            // A pass can bring new mail that ends a snooze early.
+            checkSnoozes()
         case .syncFailed(let message):
             syncStatus = .failed(message)
         case .actionFailed(let message):
@@ -669,14 +747,19 @@ final class MailboxModel {
 private final class UndoEntry {
     let id = UUID()
     let name: String
+    /// Undoes the change instead of the engine. Nil uses the engine.
+    let revert: (@Sendable (ActionReceipt) async throws -> Void)?
     var receipt: ActionReceipt?
     var undoRequested = false
     var isApplying = false
 
-    init(name: String) { self.name = name }
+    init(name: String, revert: (@Sendable (ActionReceipt) async throws -> Void)? = nil) {
+        self.name = name
+        self.revert = revert
+    }
 }
 
-/// Gmail's system labels in sidebar order.
+/// The sidebar's mailboxes in order: Gmail's system labels and Tern's Snoozed.
 struct SystemMailbox: Identifiable {
     let id: String
     let title: String
@@ -685,6 +768,7 @@ struct SystemMailbox: Identifiable {
     static let all = [
         SystemMailbox(id: SystemLabel.inbox, title: "Inbox", systemImage: "tray"),
         SystemMailbox(id: SystemLabel.starred, title: "Starred", systemImage: "star"),
+        SystemMailbox(id: MailboxModel.snoozedID, title: "Snoozed", systemImage: "clock"),
         SystemMailbox(id: SystemLabel.sent, title: "Sent", systemImage: "paperplane"),
         SystemMailbox(id: SystemLabel.draft, title: "Drafts", systemImage: "doc"),
         SystemMailbox(id: SystemLabel.allMail, title: "All Mail", systemImage: "archivebox"),

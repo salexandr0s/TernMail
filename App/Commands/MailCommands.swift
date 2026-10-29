@@ -70,6 +70,25 @@ struct MailCommands: Commands {
             Button("Move to…") { mailbox?.showMoveTo() }
                 .keyboardShortcut("m", modifiers: [.control, .command])
                 .disabled(!hasSelection)
+            Divider()
+            Menu("Snooze") {
+                let schedule = SnoozeSchedule()
+                SnoozeMenuItems(
+                    options: schedule.options(now: .now),
+                    calendar: schedule.calendar,
+                    onSnooze: { mailbox?.snooze(until: $0) },
+                    onChooseDate: { mailbox?.showSnoozeDate() }
+                )
+            }
+            .disabled(!canSnooze)
+            // A shortcut can't open the submenu, so it opens Choose Date & Time.
+            Button("Snooze…") { mailbox?.showSnoozeDate() }
+                .keyboardShortcut("b", modifiers: [.control, .command])
+                .disabled(!canSnooze)
+            if mailbox?.showsSnoozed ?? false {
+                Button("Unsnooze") { mailbox?.unsnooze() }
+                    .disabled(!hasSelection)
+            }
         }
         CommandMenu("Mailbox") {
             Button("Check for New Mail") { mailbox?.syncNow() }
@@ -139,6 +158,10 @@ struct MailCommands: Commands {
     /// Conversations are selected in the mailbox window, which is in front.
     private var hasSelection: Bool {
         compose == nil && !(mailbox?.selectedThreadIDs.isEmpty ?? true)
+    }
+
+    private var canSnooze: Bool {
+        compose == nil && (mailbox?.canSnooze ?? false)
     }
 
     private var isRead: Bool {

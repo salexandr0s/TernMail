@@ -7,9 +7,34 @@ struct ThreadListView: View {
 
     var body: some View {
         content
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if mailbox.showsSnoozed {
+                    Text("Snoozes stay on this Mac and don't show in Gmail or on other devices.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, Tokens.Space.s3)
+                        .padding(.vertical, Tokens.Space.s2)
+                        .background(.bar)
+                }
+            }
             .navigationTitle(mailbox.selectedLabelTitle)
             .toolbar { ThreadToolbar(mailbox: mailbox) }
             .onChange(of: mailbox.search.listFocusRequest) { listFocused = true }
+            .sheet(isPresented: isChoosingSnoozeDate) {
+                if let ids = mailbox.snoozeDateTargets {
+                    SnoozeDateSheet(
+                        initial: SnoozeSchedule().wakeTime(for: .tomorrow, now: .now) ?? .now.addingTimeInterval(3600),
+                        now: .now,
+                        onSnooze: { mailbox.snooze(ids, until: $0) },
+                        onCancel: { mailbox.snoozeDateTargets = nil }
+                    )
+                }
+            }
+    }
+
+    private var isChoosingSnoozeDate: Binding<Bool> {
+        Binding(get: { mailbox.snoozeDateTargets != nil }, set: { if !$0 { mailbox.snoozeDateTargets = nil } })
     }
 
     @ViewBuilder
@@ -90,9 +115,14 @@ struct ThreadListView: View {
     private func list(
         _ threads: [ThreadRecord], onEnd: @escaping () -> Void, @ViewBuilder footer: () -> some View
     ) -> some View {
-        List(selection: $mailbox.selectedThreadIDs) {
+        let wakeTimes = mailbox.showsSnoozed ? mailbox.wakeTimes : [:]
+        return List(selection: $mailbox.selectedThreadIDs) {
             ForEach(threads) { thread in
-                ThreadRow(thread: thread)
+                ThreadRow(
+                    thread: thread,
+                    wakeAt: wakeTimes[thread.id],
+                    isWoken: mailbox.wokenThreadIDs.contains(thread.id)
+                )
                     .onAppear {
                         if thread.id == threads.last?.id { onEnd() }
                     }
@@ -107,6 +137,7 @@ struct ThreadListView: View {
 
     private var emptyDescription: String {
         if mailbox.selectedLabelID == SystemLabel.inbox { return "Your inbox is empty." }
+        if mailbox.showsSnoozed { return "Snoozed conversations wait here until they return to the Inbox." }
         return "Tern keeps your inbox and the last 30 days of mail on this Mac."
     }
 }
@@ -171,6 +202,10 @@ private struct GmailRow: View {
 
 struct ThreadRow: View {
     let thread: ThreadRecord
+    /// Set in Snoozed, where the row shows when the conversation returns.
+    var wakeAt: Date?
+    /// A snooze brought the conversation back to the Inbox.
+    var isWoken = false
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
@@ -196,9 +231,21 @@ struct ThreadRow: View {
                             .imageScale(.small)
                             .foregroundStyle(.yellow)
                     }
-                    Text(ThreadDate.short(thread.lastDate))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if isWoken {
+                        Image(systemName: "clock")
+                            .imageScale(.small)
+                            .foregroundStyle(.tint)
+                    }
+                    if let wakeAt {
+                        Label(ThreadDate.wake(wakeAt), systemImage: "clock")
+                            .labelStyle(.titleAndIcon)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(ThreadDate.short(thread.lastDate))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
                     .fontWeight(thread.isUnread ? .medium : .regular)
@@ -218,9 +265,14 @@ struct ThreadRow: View {
         var parts: [String] = []
         if thread.isUnread { parts.append("Unread") }
         if thread.isStarred { parts.append("Starred") }
+        if isWoken { parts.append("Back from snooze") }
         parts.append(thread.participants)
         parts.append(thread.subject.isEmpty ? "No Subject" : thread.subject)
-        parts.append(ThreadDate.short(thread.lastDate))
+        if let wakeAt {
+            parts.append("Snoozed until \(ThreadDate.wake(wakeAt))")
+        } else {
+            parts.append(ThreadDate.short(thread.lastDate))
+        }
         return parts.joined(separator: ", ")
     }
 }
@@ -236,6 +288,20 @@ struct ThreadMenuItems: View {
         }
         if mailbox.offersTrash {
             Button("Move to Trash") { mailbox.perform(.trash, on: ids) }
+        }
+        if mailbox.snoozeKeeper != nil, mailbox.offersArchive {
+            let schedule = SnoozeSchedule()
+            Menu("Snooze") {
+                SnoozeMenuItems(
+                    options: schedule.options(now: .now),
+                    calendar: schedule.calendar,
+                    onSnooze: { mailbox.snooze(ids, until: $0) },
+                    onChooseDate: { mailbox.showSnoozeDate(for: ids) }
+                )
+            }
+        }
+        if mailbox.showsSnoozed {
+            Button("Unsnooze") { mailbox.unsnooze(ids) }
         }
         Divider()
         Button(mailbox.allRead(ids) ? "Mark as Unread" : "Mark as Read") { mailbox.toggleRead(ids) }
@@ -265,6 +331,26 @@ private struct ThreadToolbar: ToolbarContent {
             }
             .help("Move to Trash")
             .disabled(!mailbox.canTrash)
+
+            // The presets are worked out when the toolbar draws. The model
+            // refuses a time that has passed by the time one is chosen.
+            Menu {
+                let schedule = SnoozeSchedule()
+                SnoozeMenuItems(
+                    options: schedule.options(now: .now),
+                    calendar: schedule.calendar,
+                    onSnooze: { mailbox.snooze(until: $0) },
+                    onChooseDate: { mailbox.showSnoozeDate() }
+                )
+                if mailbox.showsSnoozed {
+                    Divider()
+                    Button("Unsnooze") { mailbox.unsnooze() }
+                }
+            } label: {
+                Label("Snooze", systemImage: "clock")
+            }
+            .help("Snooze")
+            .disabled(!mailbox.canSnooze)
 
             Button { mailbox.toggleRead() } label: {
                 Label(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open")
@@ -326,5 +412,10 @@ enum ThreadDate {
             return date.formatted(.dateTime.month(.abbreviated).day())
         }
         return date.formatted(date: .numeric, time: .omitted)
+    }
+
+    /// When a snooze ends: "Oct 30, 8:00 AM".
+    static func wake(_ date: Date) -> String {
+        date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 }

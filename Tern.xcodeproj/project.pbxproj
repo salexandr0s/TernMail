@@ -22,6 +22,7 @@
 		4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */; };
 		4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2664304C0271DB6260097A /* MessageWebViewTests.swift */; };
 		58CECF42FB80ADDFC0A9E044 /* OutboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5A712DF8EDEF3D7C840B901 /* OutboxView.swift */; };
+		5A30B69D6B09422F1A934BD3 /* MailboxModel+Snooze.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */; };
 		60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F78C5270B0AE64BD13220AD /* MainView.swift */; };
 		6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4463F25A316147E854AB475E /* Tokens.swift */; };
 		6B84492B9FCDB6CD6DF22F91 /* MailStore in Frameworks */ = {isa = PBXBuildFile; productRef = D81AAEFC210B6543F89E42B7 /* MailStore */; };
@@ -66,6 +67,7 @@
 /* Begin PBXFileReference section */
 		028FE485D145D5610D43A3DB /* ComposeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModel.swift; sourceTree = "<group>"; };
 		07898683B01BE7A2DBB2E477 /* LabelSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelSelectionTests.swift; sourceTree = "<group>"; };
+		1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Snooze.swift"; sourceTree = "<group>"; };
 		1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedAttachmentsView.swift; sourceTree = "<group>"; };
 		24BB9B46E342248DBF893DA9 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
 		298461CDC5883F34E395CE4F /* AuditGmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditGmail.swift; sourceTree = "<group>"; };
@@ -214,6 +216,7 @@
 			children = (
 				5E9ECAA922136B06A807EEDB /* MailboxModel.swift */,
 				F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */,
+				1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */,
 				A78ABDE8A5BDCD507FBDFB14 /* SearchModel.swift */,
 				8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */,
 			);
@@ -403,6 +406,7 @@
 				6EE44A599A7948CB78C1D9C6 /* LabelPickerView.swift in Sources */,
 				7687C3F0FC62813AF8BCE982 /* MailCommands.swift in Sources */,
 				F123A5712471A945F7C3B5D5 /* MailboxModel+Labels.swift in Sources */,
+				5A30B69D6B09422F1A934BD3 /* MailboxModel+Snooze.swift in Sources */,
 				F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */,
 				60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */,
 				22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */,
