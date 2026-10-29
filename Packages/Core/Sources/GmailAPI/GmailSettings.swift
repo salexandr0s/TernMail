@@ -40,7 +40,7 @@ public struct GmailFilter: Codable, Sendable, Equatable {
     public struct Action: Codable, Sendable, Equatable {
         public var addLabelIds: [String]?
         public var removeLabelIds: [String]?
-        /// A verified forwarding address. Tern shows it but never sets it.
+        /// A forwarding address, which Gmail accepts only once it is verified.
         public var forward: String?
 
         public init(addLabelIds: [String]? = nil, removeLabelIds: [String]? = nil, forward: String? = nil) {
