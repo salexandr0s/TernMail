@@ -16,6 +16,26 @@ import Testing
         #expect(app.phase == .signedOut)
     }
 
+    @Test func signingOutOfOneAccountKeepsTheOtherAndDeletesOnlyItsMail() async throws {
+        // Audit mode opens two accounts with the same fake mail.
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        try await waitUntil { mailbox.hasSeveralAccounts && mailbox.hasSyncedOnce }
+        let cache = try #require(app.cache)
+        #expect(try await cache.read { tx in try tx.cachedAccountIDs() } == ["ui-audit", "ui-audit-2"])
+
+        await app.signOut(of: "ui-audit")
+        #expect(app.mailbox === mailbox)
+        #expect(app.phase == .signedIn(mailbox.account))
+        #expect(mailbox.account.id == "ui-audit-2")
+        #expect(mailbox.selectedMailbox == .account("ui-audit-2", SystemLabel.inbox))
+        #expect(try await cache.read { tx in try tx.cachedAccountIDs() } == ["ui-audit-2"])
+        try await waitUntil { mailbox.threads.count == 2 }
+        #expect(mailbox.threads.allSatisfy { $0.accountID == "ui-audit-2" })
+        await app.signOut()
+    }
+
     @Test func archiveKeepsSelectionOutsideInboxAndObservationsRemoveStaleSelection() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
