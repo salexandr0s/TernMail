@@ -11,7 +11,7 @@ public enum SyncEvent: Sendable, Equatable {
     case actionFailed(String)
 }
 
-enum SyncError: Error {
+enum SyncError: Error, Equatable {
     case invalidHistoryID
 }
 
@@ -158,7 +158,7 @@ public actor SyncEngine {
         let accountID = accountID
         let deleted = deletedMessageIDs
         let profile = try await gmail.profile()
-        guard let historyID = Int64(profile.historyId) else { throw SyncError.invalidHistoryID }
+        guard let historyID = Int64(profile.historyId), historyID > 0 else { throw SyncError.invalidHistoryID }
         try await refreshLabels()
 
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false)
@@ -216,13 +216,16 @@ public actor SyncEngine {
                 return nil
             }
             records += page.history ?? []
-            latest = Int64(page.historyId) ?? latest
+            guard let pageHistoryID = Int64(page.historyId), pageHistoryID > 0, pageHistoryID >= cursor else {
+                throw SyncError.invalidHistoryID
+            }
+            latest = max(latest, pageHistoryID)
             pageToken = page.nextPageToken
         } while pageToken != nil
 
         let accountID = accountID
         let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
-        let changes = HistoryChanges(records: records, cachedMessageIDs: cached)
+        let changes = try HistoryChanges(records: records, cachedMessageIDs: cached)
         let (fetched, missing) = try await fetchMetadata(changes.messagesToFetch)
         let gone = changes.deletedIDs.union(missing)
         let deleted = deletedMessageIDs
@@ -290,9 +293,12 @@ public actor SyncEngine {
         for id in ids {
             switch results[id] {
             case .success(let message)?:
-                if let update = Mapping.message(message, accountID: accountID) { updates.append(update) }
-            case .failure(.notFound)?, nil:
+                guard message.id == id else { throw GmailError.decoding("Message identity") }
+                updates.append(try Mapping.message(message, accountID: accountID))
+            case .failure(.notFound)?:
                 missing.insert(id)
+            case nil:
+                throw GmailError.missingBatchPart
             case .failure(let error)?:
                 throw error
             }
@@ -332,8 +338,9 @@ public actor SyncEngine {
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
-        for message in thread.messages ?? [] {
-            guard let update = Mapping.message(message, accountID: accountID) else { continue }
+        guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
+        for message in messages {
+            let update = try Mapping.message(message, accountID: accountID)
             updates.append(update)
             bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt))
         }
@@ -384,7 +391,7 @@ struct HistoryChanges {
     /// are left out, since their fresh metadata already has the final labels.
     let labelChanges: [LabelChange]
 
-    init(records: [HistoryRecord], cachedMessageIDs: Set<String>) {
+    init(records: [HistoryRecord], cachedMessageIDs: Set<String>) throws {
         let deleted = Set(records.flatMap { $0.messagesDeleted ?? [] }.map(\.message.id))
         var fetch: [String] = []
         for record in records {
@@ -397,7 +404,7 @@ struct HistoryChanges {
 
         var changes: [LabelChange] = []
         for record in records {
-            let historyID = Int64(record.id) ?? 0
+            guard let historyID = Int64(record.id), historyID > 0 else { throw SyncError.invalidHistoryID }
             for change in record.labelsAdded ?? [] {
                 changes.append(LabelChange(
                     messageID: change.message.id, added: change.labelIds, removed: [], historyID: historyID

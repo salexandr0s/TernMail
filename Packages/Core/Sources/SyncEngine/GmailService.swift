@@ -46,9 +46,9 @@ enum Mapping {
         )
     }
 
-    /// Nil when Gmail sent no history ID, which the cache needs to order updates.
-    static func message(_ message: GmailMessage, accountID: String) -> CacheTransaction.MessageUpdate? {
-        guard let historyID = message.historyId.flatMap(Int64.init) else { return nil }
+    /// Reject incomplete metadata rather than confirming a cursor past lost mail.
+    static func message(_ message: GmailMessage, accountID: String) throws -> CacheTransaction.MessageUpdate {
+        guard let historyID = message.historyId.flatMap(Int64.init), historyID > 0 else { throw SyncError.invalidHistoryID }
         let record = MessageRecord(
             accountID: accountID,
             id: message.id,

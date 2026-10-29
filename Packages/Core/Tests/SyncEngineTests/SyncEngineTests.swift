@@ -144,6 +144,33 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test(arguments: [
+        #"{"historyId":"bad"}"#,
+        #"{"historyId":"120","history":[{"id":"bad","labelsRemoved":[{"message":{"id":"m1","threadId":"t1"},"labelIds":["INBOX"]}]}]}"#,
+    ])
+    func malformedHistoryDoesNotAdvanceTheCursor(_ json: String) async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.queueHistory(try decode(HistoryPage.self, json))
+        await #expect(throws: SyncError.invalidHistoryID) { try await engine.sync() }
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+    }
+
+    @Test func invalidMetadataAndAbsentBatchPartsFailThePass() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        let page = try decode(HistoryPage.self, #"{"historyId":"120","history":[{"id":"110","messagesAdded":[{"message":{"id":"m2","threadId":"t2"}}]}]}"#)
+        await gmail.add(try decode(GmailMessage.self, #"{"id":"m2","threadId":"t2","historyId":"bad"}"#))
+        await gmail.queueHistory(page)
+        await #expect(throws: SyncError.invalidHistoryID) { try await engine.sync() }
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+        await gmail.omitMetadata(["m2"])
+        await gmail.queueHistory(page)
+        await #expect(throws: GmailError.missingBatchPart) { try await engine.sync() }
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+    }
+
     @Test func resyncRefreshesTargetsQueuedWhileMetadataIsInFlight() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox, SystemLabel.unread])], cursor: 100)
@@ -303,6 +330,7 @@ actor FakeGmail: GmailService {
     private var holdsMetadata = false
     private var heldMetadata: CheckedContinuation<Void, Never>?
     private var metadataErrors: [String: GmailError] = [:]
+    private var omittedMetadataIDs = Set<String>()
     private(set) var metadataRequests: [[String]] = []
 
     func add(_ message: GmailMessage, inInbox: Bool = false) {
@@ -321,6 +349,7 @@ actor FakeGmail: GmailService {
     var isHoldingMetadata: Bool { heldMetadata != nil }
     func releaseMetadata() { heldMetadata?.resume(); heldMetadata = nil }
     func setMetadataErrors(_ errors: [String: GmailError]) { metadataErrors = errors }
+    func omitMetadata(_ ids: Set<String>) { omittedMetadataIDs = ids }
 
     /// The next change waits until `release()`.
     func holdNextChange() { holdsNextChange = true }
@@ -359,7 +388,7 @@ actor FakeGmail: GmailService {
 
     func messages(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailMessage, GmailError>] {
         metadataRequests.append(ids)
-        let results = Dictionary(uniqueKeysWithValues: ids.map { id in
+        let results = Dictionary(uniqueKeysWithValues: ids.filter { !omittedMetadataIDs.contains($0) }.map { id in
             (id, metadataErrors[id].map { .failure($0) } ?? messagesByID[id].map { .success($0) } ?? Result<GmailMessage, GmailError>.failure(.notFound))
         })
         if holdsMetadata {
