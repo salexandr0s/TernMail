@@ -40,7 +40,7 @@ Every feature visible in the screenshots or named in the research notes was chec
 
 ### C. Sidebar and mailboxes
 
-1. Editable Favorites: add, remove and reorder mailboxes, labels and saved searches. A favorite that spans accounts expands into one row per account. Reset Favorites. This extends milestone 3's fixed combined section.
+1. Editable Favorites: add, remove and reorder mailboxes, labels and saved searches. A favorite that spans accounts expands into one row per account. Reset Favorites. This builds on milestone 3's mailbox list (its phase 10d): each mailbox appears once, in Tern's order (Inbox, Starred, Snoozed, Sent, Drafts, All Mail, Spam, Trash), and expands to one row per account.
 2. Badge options: total count for Starred and Drafts, unread count for Spam.
 3. A collapsible More group per account for system labels the main list doesn't show (Important, Chats, inbox categories), with a setting to hide it.
 4. Label visibility: honor Gmail's `labelListVisibility` (show, hide, show if unread) and change it from the label menu with `labels.patch`.
@@ -80,7 +80,7 @@ Every feature visible in the screenshots or named in the research notes was chec
 
 ### F. Accounts, profiles and notifications
 
-1. Account details: nickname used as the sidebar section title, account color, sync on or off without signing out, account order.
+1. Account details: a nickname, used for the account's sidebar section title and for its rows under each mailbox in place of the address's local part; a color picker over the colors milestone 3 assigns (its phase 10d keeps them in `UserDefaults` by account ID); sync on or off without signing out; account order.
 2. Notifications: alerts for mail that arrives after each account's last alerted history point, with Off, Inbox, Inbox without categories, or All Mail per account. Alerts group by conversation, show sender, subject and snippet, open the conversation on click and offer one action chosen in Settings (Archive, Trash, Mark as Read, Star). Alerts arrive within seconds for accounts with milestone 4's Inbox Updates on, and at the next 60-second poll otherwise. Dock badge with the unread Inbox count, an optional unread count in the menu bar, and a Send Test Notification button. The first sync, a cache rebuild and re-enabling an account never alert.
 3. Background running: closing the last window keeps Tern syncing, watching for new mail, alerting and waking snoozes. Quit stops it (owner's choice).
 4. Profiles: named groups of accounts with a color and a symbol, each account in one profile, plus an All profile. The window shows the active profile's accounts.
@@ -157,7 +157,7 @@ Still open:
 
 Migrations are named in the phase plan.
 
-- `config.sqlite`: `account` gains nickname, color, a sync switch, order, profile, alert rule and category switches. New tables: `profile`, `profileSchedule`, `favorite`, `savedSearch`, `template`, `signature`, `signatureUse`, `suggestionBlock`, `imageSenderAllow`, `alertMark`.
+- `config.sqlite`: `account` gains nickname, a sync switch, order, profile, alert rule and category switches. Account colors stay in `UserDefaults`, where milestone 3 keeps them. New tables: `profile`, `profileSchedule`, `favorite`, `savedSearch`, `template`, `signature`, `signatureUse`, `suggestionBlock`, `imageSenderAllow`, `alertMark`.
 - `cache.sqlite`: `message` gains `contentType` and `hasAttachments`. `attachment` rows also come from the part tree. New `mimeResource` (account, message, content ID, type, data). `pendingAction` gains message-scoped targets, the new kinds and the `failed` state. Each conversation gets a last-opened time for the cache budget. Milestone 4's contact rows gain a photo.
 
 ## Order
