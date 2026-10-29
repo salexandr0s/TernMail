@@ -29,6 +29,13 @@ public struct MailCache: Sendable {
 public struct CacheTransaction {
     let db: Database
 
+    /// Removes everything cached for an account, including unsent actions.
+    public func deleteAccountData(accountID: String) throws {
+        for table in ["threadLabel", "thread", "messageBody", "messageLabel", "message", "label", "pendingAction", "syncState"] {
+            try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
+        }
+    }
+
     // MARK: Labels
 
     /// Replaces the account's labels with `labels`.

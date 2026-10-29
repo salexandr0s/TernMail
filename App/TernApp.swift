@@ -2,10 +2,37 @@ import SwiftUI
 
 @main
 struct TernApp: App {
+    @State private var model = AppModel()
+
     var body: some Scene {
         WindowGroup {
-            MainView()
+            RootView()
+                .environment(model)
+                .task { await model.start() }
         }
         .defaultSize(width: 1200, height: 760)
+    }
+}
+
+/// Picks the screen for the current sign-in phase.
+struct RootView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        switch model.phase {
+        case .loading:
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .signedOut, .signInRequired:
+            SignInView()
+        case .signedIn:
+            MainView()
+        case .failed(let message):
+            ContentUnavailableView(
+                "Tern Couldn't Open Its Data",
+                systemImage: "exclamationmark.triangle",
+                description: Text(message)
+            )
+        }
     }
 }

@@ -13,6 +13,12 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     DEAD_CODE_STRIPPING: YES
+packages:
+  Core:
+    path: Packages/Core
+  AppAuth:
+    url: https://github.com/openid/AppAuth-iOS
+    exactVersion: 3.0.0
 targets:
   Tern:
     type: application
@@ -28,10 +34,6 @@ targets:
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSHumanReadableCopyright: ""
-        CFBundleURLTypes:
-          - CFBundleURLName: Google sign-in redirect
-            CFBundleURLSchemes:
-              - $(GOOGLE_REDIRECT_SCHEME)
         TernGoogleClientID: $(GOOGLE_CLIENT_ID)
         TernGoogleClientIDPrefix: $(GOOGLE_CLIENT_ID_PREFIX)
         TernGoogleRedirectScheme: $(GOOGLE_REDIRECT_SCHEME)
@@ -47,3 +49,10 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         COMBINE_HIDPI_IMAGES: YES
+    dependencies:
+      - package: Core
+        product: GmailAPI
+      - package: Core
+        product: MailStore
+      - package: AppAuth
+        product: AppAuth
