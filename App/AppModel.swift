@@ -66,6 +66,9 @@ final class AppModel {
                 )
                 self.mailbox = mailbox
                 phase = .signedIn(account)
+                if ProcessInfo.processInfo.arguments.contains("--ui-audit-reauth") {
+                    accountsNeedingSignIn.insert(second.id)
+                }
                 Task {
                     await mailbox.addAccount(second, gmail: AuditGmail(.second))
                     mailbox.selectedMailbox = .combined(SystemLabel.inbox)
@@ -154,7 +157,7 @@ final class AppModel {
                 // Replacing the account would delete its drafts and unsent
                 // messages, so that takes Sign Out, which asks. The new
                 // session is dropped unsaved, so nothing gets its tokens.
-                reportSignInError("You signed in as \(account.email). Sign in as \(returning.email) to keep its drafts and unsent messages, or sign out of it first.")
+                reportSignInError("Signed in as \(account.email). Use \(returning.email) to keep its drafts and unsent mail, or sign out of that account first.")
                 return
             }
             if let returning, try await !accounts.accounts().contains(where: { $0.id == returning.id }) {
@@ -207,12 +210,11 @@ final class AppModel {
         await task.value
     }
 
-    /// The sign-in screen shows the error, or the window when it's open.
+    /// Settings and sign-in show the error; an open mailbox also gets a notice.
     private func reportSignInError(_ message: String) {
+        signInError = message
         if case .signedIn = phase, let mailbox {
             mailbox.notice = MailboxModel.Notice(message: message, isError: true)
-        } else {
-            signInError = message
         }
     }
 
@@ -223,6 +225,7 @@ final class AppModel {
 
     private func signOutOfEveryAccount() async {
         guard let accounts else { return }
+        signInError = nil
         await closeMailbox()
         let signedOut = sessions
         sessions = [:]
@@ -255,6 +258,7 @@ final class AppModel {
             return
         }
         let account = owner.account
+        signInError = nil
         await mailbox.removeAccount(id: accountID)
         let session = sessions.removeValue(forKey: accountID)
         accountsNeedingSignIn.remove(accountID)
@@ -267,7 +271,7 @@ final class AppModel {
             try await removeAccountData(account, session: session, from: accounts)
         } catch {
             // Once its record is gone, the next launch deletes what's left.
-            mailbox.notice = MailboxModel.Notice(message: "Tern couldn't delete everything it kept for \(account.email).", isError: true)
+            mailbox.notice = MailboxModel.Notice(message: "Couldn't remove all local data for \(account.email).", isError: true)
         }
     }
 
@@ -289,7 +293,7 @@ final class AppModel {
     }
 
     private static func signOutMessage(outbox: Int, snoozed: Int) -> String {
-        let deletes = "Tern deletes the mail it downloaded and any changes it hasn't sent to Gmail yet"
+        let deletes = "Downloaded mail and pending changes will be deleted from this Mac"
         let message = switch outbox {
         case 0: deletes + "."
         case 1: deletes + ", including 1 message in the Outbox."

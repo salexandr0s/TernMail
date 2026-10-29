@@ -68,6 +68,8 @@ enum Tokens {
         static let attachmentWidth: CGFloat = 240
         static let shortcutsWidth: CGFloat = 480
         static let shortcutsHeight: CGFloat = 600
+        static let settingsWidth: CGFloat = 520
+        static let settingsHeight: CGFloat = 280
     }
 
     /// `shadow.md`: 0 8px 20px rgba(0,0,0,0.10). SwiftUI's radius is about half the CSS blur.
