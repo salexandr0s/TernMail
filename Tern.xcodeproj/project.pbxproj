@@ -51,6 +51,7 @@
 		CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298461CDC5883F34E395CE4F /* AuditGmail.swift */; };
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
 		D5939A9A28A12206E59092AD /* KeyboardShortcutsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F303E86307AC14A9B36655CA /* KeyboardShortcutsView.swift */; };
+		DED9A870584DC9B63B5634B4 /* AccountAppearanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F26AC6637A997765EF353150 /* AccountAppearanceTests.swift */; };
 		E389A8AE70C8A33491A7BE56 /* ReceivedAttachmentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */; };
 		F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9ECAA922136B06A807EEDB /* MailboxModel.swift */; };
 		F123A5712471A945F7C3B5D5 /* MailboxModel+Labels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */; };
@@ -114,6 +115,7 @@
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
 		F07C7F388D831253FD5749C5 /* NoticeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeView.swift; sourceTree = "<group>"; };
 		F0EB3C8158C8A6AFF45439BC /* TernApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TernApp.swift; sourceTree = "<group>"; };
+		F26AC6637A997765EF353150 /* AccountAppearanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAppearanceTests.swift; sourceTree = "<group>"; };
 		F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Labels.swift"; sourceTree = "<group>"; };
 		F303E86307AC14A9B36655CA /* KeyboardShortcutsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutsView.swift; sourceTree = "<group>"; };
 		F5A712DF8EDEF3D7C840B901 /* OutboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxView.swift; sourceTree = "<group>"; };
@@ -201,6 +203,7 @@
 		2FB765E6928018CC4A2B1B02 /* AppTests */ = {
 			isa = PBXGroup;
 			children = (
+				F26AC6637A997765EF353150 /* AccountAppearanceTests.swift */,
 				75208BBDBE50C9B3B595EAB3 /* AttributedDocumentTests.swift */,
 				C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */,
 				4CBCB6C2893A66D630A93636 /* LabelNodeTests.swift */,
@@ -395,6 +398,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DED9A870584DC9B63B5634B4 /* AccountAppearanceTests.swift in Sources */,
 				8255B9F75B67AADEF7854A07 /* AttributedDocumentTests.swift in Sources */,
 				38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */,
 				AB23A5C1FBDAB6AA9E34EBB0 /* LabelNodeTests.swift in Sources */,

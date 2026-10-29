@@ -189,14 +189,14 @@ import Testing
         try await waitUntil { mailbox.threads.count == 4 }
         #expect(Set(mailbox.threads.map(\.key)) == keys("t1", "t2").union([otherT1, otherT2]))
 
-        // The Go menu stays across accounts, except for All Mail.
+        // The Go menu lists every account, even from one account's mailbox,
+        // and All Mail combines them like the Inbox.
         mailbox.go(to: SystemLabel.starred)
         #expect(mailbox.selectedMailbox == .combined(SystemLabel.starred))
-        mailbox.go(to: SystemLabel.allMail)
-        #expect(mailbox.selectedMailbox == .account("audit", SystemLabel.allMail))
         mailbox.selectedMailbox = .account("second", SystemLabel.trash)
         mailbox.go(to: SystemLabel.allMail)
-        #expect(mailbox.selectedMailbox == .account("second", SystemLabel.allMail))
+        #expect(mailbox.selectedMailbox == .combined(SystemLabel.allMail))
+        try await waitUntil { Set(mailbox.threads.map(\.accountID)) == ["audit", "second"] }
         await mailbox.stop()
     }
 
