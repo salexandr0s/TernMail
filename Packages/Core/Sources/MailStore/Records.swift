@@ -214,6 +214,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         public var parentLabelID: String?
         /// The label as Gmail last listed it, for a delete.
         public var deletedLabel: LabelRecord?
+        /// For a create Gmail refused because the label was there already:
+        /// Tern took that label, so undo must leave it in Gmail.
+        public var adoptedExisting: Bool?
 
         public init(
             newName: String? = nil,
@@ -221,7 +224,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
             newColor: ColorChange? = nil,
             oldColor: Color? = nil,
             parentLabelID: String? = nil,
-            deletedLabel: LabelRecord? = nil
+            deletedLabel: LabelRecord? = nil,
+            adoptedExisting: Bool? = nil
         ) {
             self.newName = newName
             self.oldName = oldName
@@ -229,6 +233,7 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
             self.oldColor = oldColor
             self.parentLabelID = parentLabelID
             self.deletedLabel = deletedLabel
+            self.adoptedExisting = adoptedExisting
         }
     }
 

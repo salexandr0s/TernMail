@@ -76,6 +76,9 @@ extension SyncEngine {
             throw error
         }
         scheduleSending()
+        if let adopted = actions.first(where: { $0.kind == .createLabel && $0.labelChange?.adoptedExisting == true }) {
+            continuation.yield(.actionFailed(Self.adoptedLabelNotice(named: adopted.labelChange?.newName)))
+        }
     }
 
     /// Returns the IDs of other rows the undo took out of the queue.
