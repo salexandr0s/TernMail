@@ -53,9 +53,10 @@ final class MailboxModel {
     /// While the search field has text, the list shows its results.
     let search: SearchModel
 
-    var selectedLabelID: String? = SystemLabel.inbox {
+    /// The mailbox the sidebar has selected.
+    var selectedMailbox: MailboxID? {
         didSet {
-            guard selectedLabelID != oldValue else { return }
+            guard selectedMailbox != oldValue else { return }
             // Choosing another mailbox leaves search.
             search.clear()
             selectedThreadIDs = []
@@ -66,11 +67,14 @@ final class MailboxModel {
             observeThreads()
             if selectedLabelID == SystemLabel.draft {
                 // Drafts made in other apps since the last sync.
-                let engine = engine
-                Task { try? await engine.refreshDrafts() }
+                for engine in selectedAccounts.map(\.engine) {
+                    Task { try? await engine.refreshDrafts() }
+                }
             }
         }
     }
+    /// The selected mailbox's label or virtual mailbox ID, whichever account it's in.
+    var selectedLabelID: String? { selectedMailbox?.id }
     var selectedThreadIDs: Set<ThreadKey> = []
     var notice: Notice?
     /// The newest send's notice, above `notice` so other actions don't replace it.
@@ -132,6 +136,7 @@ final class MailboxModel {
     ) {
         self.cache = cache
         self.downloadsDirectory = downloadsDirectory
+        selectedMailbox = .account(account.id, SystemLabel.inbox)
         primary = AccountMailbox(
             account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore
         )
@@ -242,7 +247,9 @@ final class MailboxModel {
     /// nothing more for this mailbox, and Gmail may. The cache holds all of
     /// the Inbox and Drafts.
     var offersOlderConversations: Bool {
-        guard let id = selectedLabelID, ![SystemLabel.inbox, SystemLabel.draft, Self.outboxID, Self.snoozedID].contains(id),
+        // Gmail pages one account at a time.
+        guard case .account(_, let id)? = selectedMailbox,
+              ![SystemLabel.inbox, SystemLabel.draft, Self.outboxID, Self.snoozedID].contains(id),
               threads.count < threadLimit
         else { return false }
         return older?.state != .finished
@@ -251,14 +258,16 @@ final class MailboxModel {
     /// Asks Gmail for the mailbox's next page older than the list, stores it
     /// and shows it at the end of the list.
     func loadOlderConversations() {
-        guard let labelID = selectedLabelID, offersOlderConversations else { return }
+        guard case .account(let accountID, let labelID)? = selectedMailbox, offersOlderConversations,
+              let engine = self.account(id: accountID)?.engine
+        else { return }
+        let mailbox = selectedMailbox
         if older == nil {
-            let engine = engine
             let cutoff = threads.map(\.lastDate).min()
             older = GmailPager { token in try await engine.loadOlder(labelID: labelID, before: cutoff, pageToken: token) }
         }
         older?.next { [weak self] page in
-            guard let self, selectedLabelID == labelID else { return }
+            guard let self, selectedMailbox == mailbox else { return }
             threadLimit = max(threadLimit, threads.count + page.count)
             observeThreads()
         }
@@ -520,21 +529,21 @@ final class MailboxModel {
 
     private func observeThreads() {
         threadsTask?.cancel()
-        guard let labelID = selectedLabelID, labelID != Self.outboxID else {
+        guard let mailbox = selectedMailbox, mailbox.id != Self.outboxID, let source = selectedAccounts.first else {
             threads = []
             return
         }
-        if labelID == Self.snoozedID {
+        if mailbox.id == Self.snoozedID {
             // The snoozed stream fills it.
             threads = snoozed.map(\.thread)
             listChanged()
             return
         }
-        let stream = cache.threads(accountID: account.id, labelID: labelID, limit: threadLimit)
+        let stream = cache.threads(accountID: source.account.id, labelID: mailbox.id, limit: threadLimit)
         threadsTask = Task { [weak self] in
             do {
                 for try await threads in stream {
-                    guard let self, !Task.isCancelled, !isStopped, selectedLabelID == labelID else { return }
+                    guard let self, !Task.isCancelled, !isStopped, selectedMailbox == mailbox else { return }
                     self.threads = threads
                     listChanged()
                 }
@@ -545,13 +554,26 @@ final class MailboxModel {
         }
     }
 
-    /// Leaves a label that's gone for the Inbox.
+    /// Leaves a label that's gone for its account's Inbox.
     private func labelsChanged() {
-        guard !isStopped, let id = selectedLabelID, id != Self.outboxID,
+        guard !isStopped, case .account(let accountID, let id)? = selectedMailbox, id != Self.outboxID,
               !SystemMailbox.all.contains(where: { $0.id == id }),
-              !labels.contains(where: { $0.id == id })
+              let owner = account(id: accountID), !owner.labels.contains(where: { $0.id == id })
         else { return }
-        selectedLabelID = SystemLabel.inbox
+        selectedMailbox = .account(accountID, SystemLabel.inbox)
+    }
+
+    /// The accounts whose mail the selected mailbox shows.
+    var selectedAccounts: [AccountMailbox] {
+        switch selectedMailbox {
+        case .account(let accountID, _)?: account(id: accountID).map { [$0] } ?? []
+        case .combined?: [primary]
+        case nil: []
+        }
+    }
+
+    func account(id: String) -> AccountMailbox? {
+        primary.account.id == id ? primary : nil
     }
 
     private func snoozedChanged() {
@@ -692,6 +714,19 @@ struct ThreadKey: Hashable, Comparable, Sendable {
 
 extension ThreadRecord {
     var key: ThreadKey { ThreadKey(accountID: accountID, threadID: id) }
+}
+
+/// A mailbox the sidebar lists: one account's, or the same mailbox across
+/// every account. `id` is a Gmail label ID or one of Tern's own mailboxes.
+enum MailboxID: Hashable, Sendable {
+    case combined(String)
+    case account(String, String)
+
+    var id: String {
+        switch self {
+        case .combined(let id), .account(_, let id): id
+        }
+    }
 }
 
 /// The sidebar's mailboxes in order: Gmail's system labels and Tern's Snoozed.

@@ -5,16 +5,17 @@ struct SidebarView: View {
     @Bindable var mailbox: MailboxModel
 
     var body: some View {
-        List(selection: $mailbox.selectedLabelID) {
+        let accountID = mailbox.account.id
+        List(selection: $mailbox.selectedMailbox) {
             Section("Mailboxes") {
                 ForEach(SystemMailbox.all) { box in
                     Label(box.title, systemImage: box.systemImage)
                         .badge(mailbox.label(id: box.id)?.threadsUnread ?? 0)
-                        .tag(box.id as String?)
+                        .tag(MailboxID.account(accountID, box.id) as MailboxID?)
                     if box.id == SystemLabel.draft, mailbox.showsOutbox {
                         Label("Outbox", systemImage: "tray.and.arrow.up")
                             .badge(mailbox.outbox.count)
-                            .tag(MailboxModel.outboxID as String?)
+                            .tag(MailboxID.account(accountID, MailboxModel.outboxID) as MailboxID?)
                     }
                 }
             }
@@ -97,7 +98,7 @@ private struct LabelRow: View {
         .badge(label.threadsUnread ?? 0)
         .opacity(isPending ? 0.5 : 1)
         .selectionDisabled(isPending)
-        .tag(label.id as String?)
+        .tag(MailboxID.account(label.accountID, label.id) as MailboxID?)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {
             Button("Edit Label…") { mailbox.showEditLabel(label) }
