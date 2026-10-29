@@ -31,8 +31,9 @@ public struct PeopleClient: Sendable {
     /// `pageToken` for later pages; every other parameter stays the same, as
     /// the API requires.
     ///
-    /// - Throws: `PeopleError.syncTokenRejected` when a request with a sync
-    ///   token fails with 400 or 410.
+    /// - Throws: For a request with a sync token, `PeopleError.syncTokenExpired`
+    ///   when Google says the token has expired, and otherwise
+    ///   `PeopleError.syncTokenRejected` for a 400 or 410.
     public func page(_ source: Source, syncToken: String? = nil, pageToken: String? = nil) async throws -> ContactPage {
         var query = [
             URLQueryItem(name: source == .connections ? "personFields" : "readMask", value: Self.fields),
@@ -46,6 +47,9 @@ public struct PeopleClient: Sendable {
         let data: Data
         do {
             data = try await session.send(request(path: path, query: query)).data
+        } catch GmailError.http(_, let reason) where syncToken != nil && reason == "EXPIRED_SYNC_TOKEN" {
+            // The People API names the reason but not the status.
+            throw PeopleError.syncTokenExpired
         } catch GmailError.http(let status, _) where syncToken != nil && (status == 400 || status == 410) {
             throw PeopleError.syncTokenRejected(status: status)
         }
@@ -83,8 +87,7 @@ public struct PeopleClient: Sendable {
     /// required. `pageSize` is kept within the API's 1 to 500.
     ///
     /// - Throws: `PeopleError.directoryUnavailable` for a 403 that isn't a
-    ///   missing scope or a rate limit. Until errors keep `details[].reason`,
-    ///   a missing scope reported only there also reads as unavailable.
+    ///   missing scope or a rate limit.
     public func searchDirectory(_ text: String, pageSize: Int = 10, pageToken: String? = nil) async throws -> DirectoryPage {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return DirectoryPage(people: [], nextPageToken: nil) }

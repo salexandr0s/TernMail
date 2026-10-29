@@ -83,9 +83,12 @@ public struct DirectoryPage: Sendable, Equatable {
 }
 
 public enum PeopleError: Error, Sendable, Equatable {
-    /// A request that carried a sync token failed with 400 or 410. The token
-    /// has probably expired, and the caller should decide whether to run a
-    /// full sync.
+    /// Google says the sync token has expired (`EXPIRED_SYNC_TOKEN`). Only a
+    /// full sync, without the token, can continue.
+    case syncTokenExpired
+    /// A request that carried a sync token failed with 400 or 410 without
+    /// saying the token expired. It may still have, so the caller decides
+    /// whether to run a full sync.
     case syncTokenRejected(status: Int)
     /// The account can't search a directory, which personal accounts lack.
     case directoryUnavailable

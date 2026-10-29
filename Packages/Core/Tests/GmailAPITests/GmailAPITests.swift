@@ -100,6 +100,19 @@ import Testing
         #expect(!GmailError(status: 403, body: forbidden).isRetryable)
     }
 
+    @Test func theErrorInfoReasonWinsButUsageLimitsStillRetry() {
+        let help = #"{"@type": "type.googleapis.com/google.rpc.Help", "links": [{"url": "https://example.com/help"}]}"#
+        let info = #"{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}"#
+        let scope = Data(#"{"error": {"code": 403, "errors": [{"reason": "insufficientPermissions"}], "details": [\#(help), \#(info)]}}"#.utf8)
+        let limited = Data(#"{"error": {"code": 403, "errors": [{"reason": "rateLimitExceeded"}], "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}]}}"#.utf8)
+        // A detail whose fields aren't strings doesn't lose the errors[] reason.
+        let odd = Data(#"{"error": {"code": 400, "errors": [{"reason": "badRequest"}], "details": [{"@type": 7, "reason": ["x"]}]}}"#.utf8)
+
+        #expect(GmailError(status: 403, body: scope) == .http(status: 403, reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+        #expect(GmailError(status: 403, body: limited) == .rateLimited)
+        #expect(GmailError(status: 400, body: odd) == .http(status: 400, reason: "badRequest"))
+    }
+
     @Test func queryEscapesPlusSigns() async throws {
         let transport = RecordingTransport([.init(status: 200, body: "{}")])
         let client = GmailClient(tokens: CountingTokens(), transport: transport)
