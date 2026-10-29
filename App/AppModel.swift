@@ -83,6 +83,7 @@ final class AppModel {
                 addedAt: .now
             )
             // One account for now: a different Google account replaces the old one.
+            await closeMailbox()
             for old in try await accounts.accounts() where old.id != account.id {
                 try await removeAccountData(old, from: accounts)
             }
