@@ -80,7 +80,7 @@ struct ComposeView: View {
         .task { model.start() }
         .task(id: model.phase) {
             switch model.phase {
-            case .loading: break
+            case .loading, .moving: break
             case .open: await placeFocus()
             case .closed: dismiss()
             case .moved(let localDraftID): onMove(localDraftID)

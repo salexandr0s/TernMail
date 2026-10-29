@@ -37,6 +37,9 @@ final class ComposeModel {
     enum Phase: Equatable {
         case loading
         case open
+        /// Moving to another account. Nothing can change until the copy
+        /// opens, so the copy misses no typing or file.
+        case moving
         /// Sent, discarded or deleted. The window closes.
         case closed
         /// Moved to another account as the draft `localDraftID`, which the window shows instead.
@@ -236,9 +239,12 @@ final class ComposeModel {
               let engine = owner?.engine, let destination = mailbox.account(id: accountID)
         else { return }
         let id = localDraftID
+        phase = .moving
         serially { [self] in
+            // A move that fails or doesn't happen opens the window again.
+            defer { if phase == .moving { phase = .open } }
             do {
-                guard phase == .open, let moved = try await engine.moveDraft(id, content: content, to: destination.engine) else { return }
+                guard phase == .moving, let moved = try await engine.moveDraft(id, content: content, to: destination.engine) else { return }
                 cancelTimers()
                 observation?.cancel()
                 phase = .moved(to: moved.id)
