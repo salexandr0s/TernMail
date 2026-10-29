@@ -35,11 +35,20 @@ public struct GmailClient: Sendable {
     private let transport: any HTTPTransport
     private let retryDelays: [Duration]
 
+    /// Ephemeral and without a URL cache. Search terms travel in GET URLs and
+    /// responses carry message content, so neither may reach a cache on disk.
+    public static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     /// - Parameter retryDelays: Waits before resending `/batch` parts that failed
     ///   with a retryable status. One retry round per delay.
     public init(
         tokens: any AccessTokenProvider,
-        transport: any HTTPTransport = URLSession.shared,
+        transport: any HTTPTransport = GmailClient.defaultSession,
         retryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)]
     ) {
         self.tokens = tokens
@@ -70,11 +79,13 @@ public struct GmailClient: Sendable {
         pageToken: String? = nil,
         maxResults: Int = 500
     ) async throws -> MessageListPage {
-        var items = [URLQueryItem(name: "maxResults", value: String(maxResults))]
-        if let query { items.append(URLQueryItem(name: "q", value: query)) }
-        items += labelIDs.map { URLQueryItem(name: "labelIds", value: $0) }
-        if includeSpamTrash { items.append(URLQueryItem(name: "includeSpamTrash", value: "true")) }
-        if let pageToken { items.append(URLQueryItem(name: "pageToken", value: pageToken)) }
+        let items = Self.listQuery(
+            query: query,
+            labelIDs: labelIDs,
+            includeSpamTrash: includeSpamTrash,
+            pageToken: pageToken,
+            maxResults: maxResults
+        )
         return try decode(await send(.get("messages", items)))
     }
 
@@ -83,11 +94,33 @@ public struct GmailClient: Sendable {
         format: MessageFormat,
         metadataHeaders: [String] = []
     ) async throws -> [String: Result<GmailMessage, GmailError>] {
+        let items = Self.formatQuery(format, metadataHeaders: metadataHeaders)
+        return try await batchDecode(ids) { .get("messages/\($0)", items) }
+    }
+
+    /// Parameters shared by `messages.list` and `threads.list`.
+    static func listQuery(
+        query: String?,
+        labelIDs: [String],
+        includeSpamTrash: Bool,
+        pageToken: String?,
+        maxResults: Int
+    ) -> [URLQueryItem] {
+        var items = [URLQueryItem(name: "maxResults", value: String(maxResults))]
+        if let query { items.append(URLQueryItem(name: "q", value: query)) }
+        items += labelIDs.map { URLQueryItem(name: "labelIds", value: $0) }
+        if includeSpamTrash { items.append(URLQueryItem(name: "includeSpamTrash", value: "true")) }
+        if let pageToken { items.append(URLQueryItem(name: "pageToken", value: pageToken)) }
+        return items
+    }
+
+    /// Parameters shared by `messages.get` and `threads.get`.
+    static func formatQuery(_ format: MessageFormat, metadataHeaders: [String]) -> [URLQueryItem] {
         var items = [URLQueryItem(name: "format", value: format.rawValue)]
         if format == .metadata {
             items += metadataHeaders.map { URLQueryItem(name: "metadataHeaders", value: $0) }
         }
-        return try await batchDecode(ids) { .get("messages/\($0)", items) }
+        return items
     }
 
     public func thread(id: String, format: MessageFormat = .full) async throws -> GmailThread {
@@ -243,7 +276,7 @@ public struct GmailClient: Sendable {
         return results
     }
 
-    private func batchDecode<T: Decodable & Sendable>(
+    func batchDecode<T: Decodable & Sendable>(
         _ ids: [String],
         endpoint: (String) -> Endpoint
     ) async throws -> [String: Result<T, GmailError>] {
@@ -323,6 +356,10 @@ struct Endpoint: Sendable {
 
     static func post(_ path: String, body: Data? = nil) -> Endpoint {
         Endpoint(method: "POST", path: path, query: [], body: body)
+    }
+
+    static func patch(_ path: String, body: Data) -> Endpoint {
+        Endpoint(method: "PATCH", path: path, query: [], body: body)
     }
 
     static func delete(_ path: String) -> Endpoint {

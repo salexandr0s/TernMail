@@ -237,6 +237,85 @@ import Testing
     }
 }
 
+@Suite struct LabelAndSearchTests {
+    private let labelJSON = #"{"id":"Label_1","name":"Trips","type":"user"}"#
+
+    @Test func labelPatchSendsOnlyTheGivenFieldsAndNullToRemoveAColor() async throws {
+        let transport = StubTransport(Array(repeating: .init(status: 200, body: labelJSON), count: 3))
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let blue = try #require(LabelColor(backgroundColor: "#1C4587"))
+
+        _ = try await client.patchLabel(id: "Label_1", name: "Trips")
+        _ = try await client.patchLabel(id: "Label_1", color: .remove)
+        _ = try await client.patchLabel(id: "Label_1", color: .set(blue))
+        await #expect(throws: GmailError.invalidRequest("Empty label patch")) {
+            try await client.patchLabel(id: "Label_1")
+        }
+
+        let requests = await transport.requests
+        #expect(requests.map(\.httpMethod) == ["PATCH", "PATCH", "PATCH"])
+        #expect(requests.first?.url?.path == "/gmail/v1/users/me/labels/Label_1")
+        let bodies = try requests.map { try JSONSerialization.jsonObject(with: $0.httpBody ?? Data()) as? NSDictionary }
+        #expect(bodies[0] == ["name": "Trips"])
+        #expect(bodies[1] == ["color": NSNull()])
+        #expect(bodies[2] == ["color": ["backgroundColor": "#1c4587", "textColor": "#ffffff"]])
+    }
+
+    @Test func createLabelIsVisibleAndDeleteTreatsMissingAsDone() async throws {
+        let transport = StubTransport([
+            .init(status: 200, body: labelJSON),
+            .init(status: 404, body: #"{"error":{"code":404}}"#),
+            .init(status: 400, body: #"{"error":{"code":400}}"#),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+
+        #expect(try await client.createLabel(name: "Trips", color: nil).id == "Label_1")
+        try await client.deleteLabel(id: "Label_1")
+        await #expect(throws: GmailError.http(status: 400, reason: nil)) { try await client.deleteLabel(id: "Label_2") }
+
+        let requests = await transport.requests
+        let created = try JSONSerialization.jsonObject(with: requests[0].httpBody ?? Data()) as? NSDictionary
+        #expect(created == ["name": "Trips", "labelListVisibility": "labelShow", "messageListVisibility": "show"])
+        #expect(requests[1].httpMethod == "DELETE")
+    }
+
+    @Test func colorsOutsideGmailsListAreRejected() throws {
+        #expect(LabelColor.allowed.count == 102)
+        #expect(Set(LabelColor.allowed).count == 102)
+        #expect(LabelColor.grid.count == 64)
+        #expect(LabelColor(backgroundColor: "#123456") == nil)
+        #expect(LabelColor(backgroundColor: "#000000", textColor: "#fb4c2e") == nil)
+        #expect(LabelColor(backgroundColor: "#000000")?.textColor == "#ffffff")
+        #expect(LabelColor(backgroundColor: "#ffffff")?.textColor == "#000000")
+        let stored = Data(##"{"backgroundColor":"#123456","textColor":"#000000"}"##.utf8)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(LabelColor.self, from: stored) }
+    }
+
+    @Test func threadSearchListsThenFetchesMetadataInOneBatch() async throws {
+        let transport = StubTransport([
+            .init(status: 200, body: #"{"threads":[{"id":"t1","snippet":"hi"}],"nextPageToken":"p2"}"#),
+            batchResponse([(0, 200, #"{"id":"t1","messages":[{"id":"m1","threadId":"t1"}]}"#)]),
+        ])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+
+        let page = try await client.listThreads(query: "trail", pageToken: "p1")
+        let threads = try await client.threads(ids: ["t1", "t1"], format: .metadata, metadataHeaders: ["Subject"])
+
+        #expect(page.threads?.map(\.id) == ["t1"])
+        #expect(page.nextPageToken == "p2")
+        #expect(try threads["t1"]?.get().messages?.first?.id == "m1")
+        let requests = await transport.requests
+        #expect(requests[0].url?.path == "/gmail/v1/users/me/threads")
+        #expect(requests[0].url?.query == "maxResults=25&q=trail&pageToken=p1")
+        let batch = String(decoding: requests[1].httpBody ?? Data(), as: UTF8.self)
+        #expect(batch.contains("GET /gmail/v1/users/me/threads/t1?format=metadata&metadataHeaders=Subject HTTP/1.1\r\n"))
+    }
+
+    @Test func defaultTransportHasNoURLCache() {
+        #expect(GmailClient.defaultSession.configuration.urlCache == nil)
+    }
+}
+
 // MARK: Helpers
 
 private func failure<T>(_ result: Result<T, GmailError>) -> GmailError? {
