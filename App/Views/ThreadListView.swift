@@ -48,7 +48,7 @@ struct ThreadListView: View {
                     GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
                 }
             }
-        } else if mailbox.hasSyncedOnce {
+        } else if mailbox.selectedHaveSyncedOnce {
             ContentUnavailableView {
                 Label("No Conversations", systemImage: "tray")
             } description: {
@@ -58,7 +58,7 @@ struct ThreadListView: View {
                     GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
                 }
             }
-        } else if case .failed(let message) = mailbox.syncStatus {
+        } else if case .failed(let message) = mailbox.selectedSyncStatus {
             ContentUnavailableView {
                 Label("Can't Download Your Mail", systemImage: "wifi.exclamationmark")
             } description: {

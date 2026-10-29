@@ -260,17 +260,22 @@ final class MailboxModel {
     var snoozed: [SnoozedThread] { accounts.flatMap(\.snoozed).sorted { $0.wakeAt < $1.wakeAt } }
     var snoozeKeeper: SnoozeKeeper? { currentAccount.snoozeKeeper }
     /// A failure in any account first, then syncing if any account is.
-    var syncStatus: AccountMailbox.SyncStatus {
-        let statuses = accounts.map(\.syncStatus)
-        if let failed = statuses.first(where: { if case .failed = $0 { true } else { false } }) { return failed }
-        return statuses.contains(.syncing) ? .syncing : .idle
-    }
+    var syncStatus: AccountMailbox.SyncStatus { Self.syncStatus(of: accounts) }
+    /// The same for the accounts the selected mailbox lists, for its empty state.
+    var selectedSyncStatus: AccountMailbox.SyncStatus { Self.syncStatus(of: selectedAccounts) }
     /// The oldest of the accounts' last syncs.
     var lastSyncedAt: Date? {
         let dates = accounts.map(\.lastSyncedAt)
         return dates.contains(nil) ? nil : dates.compactMap { $0 }.min()
     }
     var hasSyncedOnce: Bool { accounts.allSatisfy(\.hasSyncedOnce) }
+    var selectedHaveSyncedOnce: Bool { selectedAccounts.allSatisfy(\.hasSyncedOnce) }
+
+    private static func syncStatus(of accounts: [AccountMailbox]) -> AccountMailbox.SyncStatus {
+        let statuses = accounts.map(\.syncStatus)
+        if let failed = statuses.first(where: { if case .failed = $0 { true } else { false } }) { return failed }
+        return statuses.contains(.syncing) ? .syncing : .idle
+    }
 
     var userLabels: [LabelRecord] {
         labels.filter { !$0.isSystem }
