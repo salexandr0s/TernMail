@@ -46,13 +46,11 @@ public struct DraftActivity: Sendable, Equatable, Identifiable {
 }
 
 extension MailCache {
+    /// Labels as the sidebar and pickers show them: Gmail's last list with
+    /// queued label changes applied. A label Gmail hasn't created yet has a
+    /// temporary ID (`LabelRules.isTemporary`).
     public func labels(accountID: String) -> AsyncThrowingStream<[LabelRecord], any Error> {
-        observe { db in
-            try LabelRecord
-                .filter(Column("accountID") == accountID)
-                .order(Column("name").collating(.localizedCaseInsensitiveCompare))
-                .fetchAll(db)
-        }
+        observe { db in try CacheTransaction(db: db).displayedLabels(accountID: accountID) }
     }
 
     /// Threads listed under `labelID`, newest first.
