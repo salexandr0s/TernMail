@@ -388,6 +388,8 @@ public struct CacheTransaction {
 
     /// Drops sent actions whose send finished before `date`, the start of a
     /// history pass that has since brought their effect into server state.
+    /// A deleted label also comes off its messages again, since a pass that
+    /// fetched before the delete reached Gmail may have stored it back.
     public func dropSentActions(sentBefore date: Date, accountID: String) throws {
         let sent = try PendingAction
             .filter(Column("accountID") == accountID && Column("state") == PendingAction.State.sent.rawValue)
@@ -397,6 +399,10 @@ public struct CacheTransaction {
         for action in sent {
             threads.formUnion(try threadIDs(of: action))
             try action.delete(db)
+            if action.kind == .deleteLabel, let labelID = action.labelID {
+                threads.formUnion(try threadIDsCarrying(labelID, accountID: accountID))
+                try db.execute(sql: "DELETE FROM messageLabel WHERE accountID = ? AND labelID = ?", arguments: [accountID, labelID])
+            }
         }
         try rebuildThreads(threads, accountID: accountID)
     }

@@ -225,7 +225,7 @@ extension CacheTransaction {
     }
 
     /// Conversations with a message that has the label on Gmail.
-    private func threadIDsCarrying(_ labelID: String, accountID: String) throws -> Set<String> {
+    func threadIDsCarrying(_ labelID: String, accountID: String) throws -> Set<String> {
         try String.fetchSet(db, sql: """
             SELECT message.threadID FROM messageLabel
             JOIN message ON message.accountID = messageLabel.accountID AND message.id = messageLabel.messageID
