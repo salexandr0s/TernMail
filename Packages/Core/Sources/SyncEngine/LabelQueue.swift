@@ -419,18 +419,46 @@ extension SyncEngine {
     }
 
     /// Gmail refused the row for good. A create leaves with the changes that
-    /// use the label, a delete puts the label back, and an update just goes.
+    /// use the label, a delete puts the label back, a rename leaves with the
+    /// renames of the labels under it, and any other update just goes.
     private func refuseLabelChange(_ row: PendingAction) async {
         guard let id = row.id else { return }
         let accountID = accountID
         let dropped = try? await write { tx -> [Int64] in
             try tx.deleteLabelChange(id: id, accountID: accountID)
-            guard row.kind == .createLabel, let labelID = row.labelID else { return [id] }
-            return try [id] + tx.dropLabel(labelID, accountID: accountID)
+            switch row.kind {
+            case .createLabel:
+                guard let labelID = row.labelID else { return [id] }
+                return try [id] + tx.dropLabel(labelID, accountID: accountID)
+            case .updateLabel where row.labelChange?.newName != nil:
+                return try [id] + Self.dropChildRenames(of: row, accountID: accountID, in: tx)
+            default:
+                return [id]
+            }
         }
         guard let dropped else { return }
         unavailableUndoIDs.formUnion(dropped)
         continuation.yield(.actionFailed(Self.refusalMessage(for: row)))
+    }
+
+    /// Takes the queued renames of labels nested under a refused rename out
+    /// of the queue, so they keep their names under the parent's old one.
+    /// One rename's rows share its creation time, and come parents first.
+    /// Returns their IDs.
+    private static func dropChildRenames(of parent: PendingAction, accountID: String, in tx: CacheTransaction) throws -> [Int64] {
+        guard let parentID = parent.labelID else { return [] }
+        var renamed: Set<String> = [parentID]
+        var dropped: [Int64] = []
+        for child in try tx.pendingActions(accountID: accountID)
+        where child.kind == .updateLabel && child.state == .queued && child.createdAt == parent.createdAt {
+            guard let id = child.id, let labelID = child.labelID,
+                  let parentLabelID = child.labelChange?.parentLabelID, renamed.contains(parentLabelID)
+            else { continue }
+            try tx.deleteLabelChange(id: id, accountID: accountID)
+            renamed.insert(labelID)
+            dropped.append(id)
+        }
+        return dropped
     }
 
     private static func refusalMessage(for row: PendingAction) -> String {
