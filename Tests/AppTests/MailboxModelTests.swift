@@ -66,6 +66,34 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func editLabelsStartsFromTheConversationsLabelsAndMoveLeavesTheMailbox() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 && !mailbox.labelChoices.isEmpty }
+
+        mailbox.showEditLabels(for: ["t2"])
+        try await waitUntil { mailbox.labelEdit != nil }
+        #expect(mailbox.labelEdit?.applied.first?.contains("Label_1") == false)
+        await mailbox.applyLabels(LabelSelection.Change(add: ["Label_1"]))?.value
+        #expect(mailbox.labelEdit == nil)
+        mailbox.showEditLabels(for: ["t2"])
+        try await waitUntil { mailbox.labelEdit?.applied.first?.contains("Label_1") == true }
+        mailbox.labelEdit = nil
+
+        // Moving out of the Inbox selects the next conversation.
+        mailbox.selectedThreadIDs = ["t1"]
+        mailbox.showMoveTo()
+        #expect(!mailbox.moveChoices.contains { $0.id == SystemLabel.inbox })
+        let move = mailbox.move(to: "Label_1")
+        #expect(mailbox.selectedThreadIDs == ["t2"])
+        await move?.value
+        try await waitUntil { mailbox.threads.map(\.id) == ["t2"] }
+        #expect(mailbox.notice?.message == "Conversation moved to “Hiking”")
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
