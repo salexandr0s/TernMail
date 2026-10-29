@@ -54,9 +54,20 @@ actor AuditGmail: GmailService {
     }
 
     init(_ account: Account = .first) {
-        guard account == .second else { return }
-        mail = Self.secondMail
-        userLabels = [UserLabel(id: "Label_1", name: "Projects")]
+        if account == .second {
+            mail = Self.secondMail
+            userLabels = [UserLabel(id: "Label_1", name: "Projects")]
+        }
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit-list") {
+            mail += [
+                Message(id: "list1", thread: "list1", subject: "Planning the next field visit and reviewing the equipment checklist", text: "Please review the route and let us know which equipment you can bring.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], from: "Alexandra Morgan and the field research team <team@example.invalid>"),
+                Message(id: "list2", thread: "list1", subject: "Planning the next field visit and reviewing the equipment checklist", text: "The revised checklist is ready for review.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], from: "Alexandra Morgan and the field research team <team@example.invalid>"),
+                Message(id: "list3", thread: "list2", subject: "", text: "", html: false, labels: ["INBOX"], from: "Sam <sam@example.invalid>"),
+                Message(id: "list4", thread: "list3", subject: "Workshop registration", text: "Your place is confirmed. The workshop starts at nine.", html: false, labels: ["INBOX", "UNREAD"], from: "Community workshop <workshop@example.invalid>"),
+                Message(id: "list5", thread: "list4", subject: "Notes from Monday", text: "Here are the notes and next steps from our conversation.", html: false, labels: ["INBOX"], from: "Rowan <rowan@example.invalid>"),
+                Message(id: "list6", thread: "list5", subject: "A quick update", text: "Everything is ready for tomorrow.", html: false, labels: ["INBOX"], from: "Casey <casey@example.invalid>"),
+            ]
+        }
     }
 
     private static let secondMail: [Message] = [
@@ -263,7 +274,7 @@ actor AuditGmail: GmailService {
         let ageHours = message.id == "m2" ? 3 : Double(index)
         return ["id": message.id, "threadId": message.thread, "labelIds": Array(message.labels),
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
-                "snippet": "Synthetic mail for the UI audit", "payload": payload(message)]
+                "snippet": message.id.hasPrefix("list") ? message.text : "Synthetic mail for the UI audit", "payload": payload(message)]
     }
 
     private func payload(_ message: Message) -> [String: Any] {

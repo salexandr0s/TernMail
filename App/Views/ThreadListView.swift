@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ThreadListView: View {
     @Bindable var mailbox: MailboxModel
+    @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @FocusState private var listFocused: Bool
 
     var body: some View {
@@ -117,6 +118,10 @@ struct ThreadListView: View {
     ) -> some View {
         let wakeTimes = mailbox.showsSnoozed ? mailbox.wakeTimes : [:]
         let namesAccounts = mailbox.listMixesAccounts
+        let accountMarks = namesAccounts ? compactAccountMarks : [:]
+        let accountColors = AccountAppearance.colorIndexes(
+            for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
+        )
         return List(selection: $mailbox.selectedThreadIDs) {
             // Keyed by account too, since thread IDs repeat across accounts.
             ForEach(threads, id: \.key) { thread in
@@ -124,8 +129,12 @@ struct ThreadListView: View {
                     thread: thread,
                     wakeAt: wakeTimes[thread.key],
                     isWoken: mailbox.isWoken(thread),
-                    accountName: namesAccounts ? mailbox.account(id: thread.accountID)?.account.email : nil
+                    isSelected: mailbox.selectedThreadIDs.contains(thread.key),
+                    accountName: namesAccounts ? mailbox.account(id: thread.accountID)?.account.email : nil,
+                    accountMark: accountMarks[thread.accountID],
+                    accountColor: AccountAppearance.color(at: accountColors[thread.accountID])
                 )
+                    .listRowInsets(EdgeInsets(top: 0, leading: Tokens.Space.s1_5, bottom: 0, trailing: Tokens.Space.s1_5))
                     .onAppear {
                         if thread.key == threads.last?.key { onEnd() }
                     }
@@ -137,6 +146,21 @@ struct ThreadListView: View {
             ThreadMenuItems(mailbox: mailbox, ids: ids)
         }
         .focused($listFocused)
+    }
+
+    /// Use all accounts so a badge keeps its meaning when the list is filtered.
+    private var compactAccountMarks: [String: String] {
+        let groups = Dictionary(grouping: mailbox.accounts.map(\.account)) { account in
+            let localPart = account.email.prefix { $0 != "@" }
+            return localPart.isEmpty ? "?" : String(localPart.prefix(2)).uppercased()
+        }
+        var marks: [String: String] = [:]
+        for (initials, accounts) in groups {
+            for (index, account) in accounts.enumerated() {
+                marks[account.id] = accounts.count > 1 ? "\(initials)·\(index + 1)" : initials
+            }
+        }
+        return marks
     }
 
     private var emptyDescription: String {
@@ -212,22 +236,22 @@ struct ThreadRow: View {
     var wakeAt: Date?
     /// A snooze brought the conversation back to the Inbox.
     var isWoken = false
+    var isSelected = false
     /// Set where the list mixes accounts.
     var accountName: String?
+    var accountMark: String?
+    var accountColor: Color = .secondary
 
     var body: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            TernAvatar(name: thread.participants.isEmpty ? "?" : thread.participants)
-                .overlay(alignment: .bottomTrailing) {
-                    if thread.isUnread {
-                        Circle()
-                            .fill(.tint)
-                            .frame(width: Tokens.Space.s2, height: Tokens.Space.s2)
-                            .overlay(Circle().strokeBorder(Tokens.Surface.primary, lineWidth: Tokens.Border.hairline))
-                    }
-                }
+        HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+            Circle()
+                .fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+                .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
+                .frame(width: Tokens.Space.s2)
+                .padding(.top, Tokens.Space.s1)
+                .opacity(thread.isUnread ? 1 : 0)
 
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                     Text(thread.participants.isEmpty ? "No Sender" : thread.participants)
                         .font(.body)
@@ -238,10 +262,9 @@ struct ThreadRow: View {
                         Text("\(thread.messageCount)")
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, Tokens.Space.s1)
-                            .background(.quaternary, in: Capsule())
+                            .fixedSize()
                     }
-                    Spacer(minLength: Tokens.Space.s2)
+                    Spacer(minLength: Tokens.Space.s1)
                     if thread.isStarred {
                         Image(systemName: "star.fill")
                             .imageScale(.small)
@@ -257,34 +280,42 @@ struct ThreadRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .fixedSize()
+                    if let accountName, let accountMark {
+                        Text(accountMark)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Color(nsColor: .labelColor))
+                            .padding(.horizontal, Tokens.Space.s1)
+                            .frame(minWidth: Tokens.Space.s5, minHeight: Tokens.Space.s4)
+                            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                                    .strokeBorder(accountColor, lineWidth: Tokens.Border.hairline)
+                            }
+                            .fixedSize()
+                            .help(accountName)
+                    }
                 }
                 Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
                     .font(.callout)
                     .fontWeight(thread.isUnread ? .medium : .regular)
                     .lineLimit(1)
                     .help(thread.subject)
-                Text(thread.snippet)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
                 if let wakeAt {
                     Label("Returns \(ThreadDate.wake(wakeAt))", systemImage: "clock")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .help("Snoozed until \(ThreadDate.wake(wakeAt))")
-                }
-                if let accountName {
-                    Label(accountName, systemImage: "person.crop.circle")
-                        .font(.caption2)
+                } else if !thread.snippet.isEmpty {
+                    Text(thread.snippet)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(accountName)
                 }
             }
         }
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1_5)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in Tokens.Space.s2 + Tokens.Space.s1_5 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
