@@ -209,9 +209,12 @@ import Testing
             Change("modifyThreads", ["t2"], add: ["Label_1"]),
             Change("modifyThreads", ["t4"], remove: [SystemLabel.inbox]),
         ])
+        // A pass that fetched before the delete reached Gmail stores the label again.
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, "Label_1"])])
         try await cache.write { tx in try tx.dropSentActions(sentBefore: .distantFuture, accountID: account) }
         #expect(try await rows(cache).isEmpty)
         #expect(try await labels(cache, "t1") == [SystemLabel.inbox])
+        #expect(try await listed(cache, "Label_1").isEmpty)
     }
 
     @Test func aDeleteGmailRefusesPutsTheLabelBack() async throws {
