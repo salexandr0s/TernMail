@@ -40,6 +40,10 @@ final class AppModel {
     private var outgoingDirectory: URL?
     /// Mailboxes still stopping, so data is deleted only after they finish.
     private var closing: Task<Void, Never>?
+    /// The latest sign-out or end of a sign-in. They run one at a time, so a
+    /// sign-in that finishes while its account signs out can't save it back
+    /// half deleted.
+    private var accountChange: Task<Void, Never>?
 
     func start() async {
         guard phase == .loading else { return }
@@ -120,12 +124,25 @@ final class AppModel {
     }
 
     private func signIn(as returning: AccountRecord?) async {
-        guard !isSigningIn, let accounts else { return }
+        guard !isSigningIn, accounts != nil else { return }
         isSigningIn = true
         signInError = nil
         defer { isSigningIn = false }
+        let user: GoogleAuth.SignedInUser
         do {
-            let user = try await auth.signIn(loginHint: returning?.email)
+            user = try await auth.signIn(loginHint: returning?.email)
+        } catch is CancellationError {
+            return
+        } catch {
+            reportSignInError(error.localizedDescription)
+            return
+        }
+        await changeAccounts { [self] in await finishSignIn(as: user, returning: returning) }
+    }
+
+    private func finishSignIn(as user: GoogleAuth.SignedInUser, returning: AccountRecord?) async {
+        guard let accounts else { return }
+        do {
             let account = AccountRecord(
                 id: user.id,
                 email: user.email,
@@ -138,6 +155,11 @@ final class AppModel {
                 // messages, so that takes Sign Out, which asks. The new
                 // session is dropped unsaved, so nothing gets its tokens.
                 reportSignInError("You signed in as \(account.email). Sign in as \(returning.email) to keep its drafts and unsent messages, or sign out of it first.")
+                return
+            }
+            if let returning, try await !accounts.accounts().contains(where: { $0.id == returning.id }) {
+                // Signed out while Google's page was open. The new session
+                // is dropped unsaved.
                 return
             }
             let session: AccountSession
@@ -163,11 +185,20 @@ final class AppModel {
             } else {
                 await mailbox.addAccount(account, gmail: GmailClient(tokens: session))
             }
-        } catch is CancellationError {
-            return
         } catch {
             reportSignInError(error.localizedDescription)
         }
+    }
+
+    /// Runs `change` after the account changes already started.
+    private func changeAccounts(_ change: @escaping @MainActor () async -> Void) async {
+        let previous = accountChange
+        let task = Task {
+            await previous?.value
+            await change()
+        }
+        accountChange = task
+        await task.value
     }
 
     /// The sign-in screen shows the error, or the window when it's open.
@@ -181,14 +212,18 @@ final class AppModel {
 
     /// Signs out of every account.
     func signOut() async {
+        await changeAccounts { [self] in await signOutOfEveryAccount() }
+    }
+
+    private func signOutOfEveryAccount() async {
         guard let accounts else { return }
         await closeMailbox()
-        sessions.values.forEach { $0.signOut() }
+        let signedOut = sessions
         sessions = [:]
         accountsNeedingSignIn = []
         do {
             for account in try await accounts.accounts() {
-                try await removeAccountData(account, from: accounts)
+                try await removeAccountData(account, session: signedOut[account.id], from: accounts)
             }
             // Only signed-in accounts keep downloaded attachments and the
             // files attached to their drafts.
@@ -203,13 +238,19 @@ final class AppModel {
     /// Signs out of one account while the others stay. The last account
     /// signs out of Tern.
     func signOut(of accountID: String) async {
+        await changeAccounts { [self] in await signOutOfOne(accountID) }
+    }
+
+    private func signOutOfOne(_ accountID: String) async {
         guard let mailbox, mailbox.hasSeveralAccounts, let accounts, let owner = mailbox.account(id: accountID) else {
-            await signOut()
+            // The last account signs out of Tern. One that an earlier change
+            // already signed out needs nothing more.
+            if mailbox == nil || mailbox?.account(id: accountID) != nil { await signOutOfEveryAccount() }
             return
         }
         let account = owner.account
         await mailbox.removeAccount(id: accountID)
-        sessions.removeValue(forKey: accountID)?.signOut()
+        let session = sessions.removeValue(forKey: accountID)
         accountsNeedingSignIn.remove(accountID)
         phase = .signedIn(mailbox.account)
         if !mailbox.hasSeveralAccounts, accountsNeedingSignIn.remove(mailbox.account.id) != nil {
@@ -217,7 +258,7 @@ final class AppModel {
             phase = .signInRequired(mailbox.account)
         }
         do {
-            try await removeAccountData(account, from: accounts)
+            try await removeAccountData(account, session: session, from: accounts)
         } catch {
             // Once its record is gone, the next launch deletes what's left.
             mailbox.notice = MailboxModel.Notice(message: "Tern couldn't delete everything it kept for \(account.email).", isError: true)
@@ -359,9 +400,12 @@ final class AppModel {
 
     /// Deletes an account's record, snoozes, Keychain item, cache rows and
     /// files. The record goes first, so if this stops partway the next
-    /// launch deletes the rest.
-    private func removeAccountData(_ account: AccountRecord, from accounts: AccountStore) async throws {
+    /// launch deletes the rest instead of asking to sign in again.
+    private func removeAccountData(
+        _ account: AccountRecord, session: AccountSession?, from accounts: AccountStore
+    ) async throws {
         try await accounts.deleteAccount(id: account.id)
+        session?.signOut()
         // A session that failed to restore at launch can leave its item behind.
         try? KeychainStore.delete(account: account.id)
         try await removeCachedData(accountIDs: [account.id])
