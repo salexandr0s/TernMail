@@ -720,6 +720,38 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try Data(contentsOf: folder.appending(path: try #require(files.first).path)) == Data("items".utf8))
     }
 
+    @Test func receivedAttachmentsDownloadOnceThroughTheirPartID() async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        await gmail.add(try decode(GmailMessage.self, #"""
+            {"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
+            "payload":{"mimeType":"multipart/mixed","headers":[{"name":"Subject","value":"Files"}],
+            "parts":[
+              {"partId":"0","mimeType":"text/plain","body":{"data":"SGk="}},
+              {"partId":"1","mimeType":"text/plain","filename":"../notes.txt","body":{"attachmentId":"a1","size":5}},
+              {"partId":"2","mimeType":"text/plain","filename":"small.txt","body":{"data":"c21hbGw=","size":5}}
+            ]}}
+            """#))
+        await gmail.setAttachment("a1", data: Data("notes".utf8))
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TernReceived-\(UUID().uuidString)")
+        func record(_ partID: String, _ filename: String, attachmentID: String?) -> AttachmentRecord {
+            AttachmentRecord(accountID: account, messageID: "m1", partID: partID, attachmentID: attachmentID,
+                             filename: filename, mimeType: "text/plain", size: 5, isInline: false)
+        }
+
+        // The stored ID went stale, so the message is fetched again for the current one.
+        let notes = try await engine.downloadAttachment(record("1", "../notes.txt", attachmentID: "expired"), into: directory)
+        #expect(notes.lastPathComponent == "-notes.txt")
+        #expect(notes.deletingLastPathComponent().path.hasPrefix(directory.path))
+        #expect(try Data(contentsOf: notes) == Data("notes".utf8))
+        // Bytes Gmail put in the payload come from the message itself.
+        let small = try await engine.downloadAttachment(record("2", "small.txt", attachmentID: nil), into: directory)
+        #expect(try Data(contentsOf: small) == Data("small".utf8))
+        // A second open reuses the file.
+        await gmail.setAttachment("a1", data: Data("changed".utf8))
+        #expect(try await engine.downloadAttachment(record("1", "../notes.txt", attachmentID: "a1"), into: directory) == notes)
+        #expect(try Data(contentsOf: notes) == Data("notes".utf8))
+    }
+
     @Test func openingADraftFromAnotherAppImportsItAsSaved() async throws {
         let (engine, _, gmail, _) = try await makeEngine()
         await gmail.addDraft("D7", messageID: "m7", threadID: "t7")

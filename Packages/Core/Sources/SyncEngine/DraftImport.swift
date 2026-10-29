@@ -245,7 +245,8 @@ extension SyncEngine {
         return copies
     }
 
-    private static func part(_ id: String, in part: MessagePart) -> MessagePart? {
+    /// The part with `id` in a `full`-format payload.
+    static func part(_ id: String, in part: MessagePart) -> MessagePart? {
         if part.partId == id { return part }
         for child in part.parts ?? [] {
             if let found = Self.part(id, in: child) { return found }
