@@ -90,14 +90,8 @@ struct MessageWebView: NSViewRepresentable {
                         range.getBoundingClientRect().bottom - body.getBoundingClientRect().top)
                         + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
                     };
-                    let scheduled = false;
                     const report = () => {
-                      if (scheduled) return;
-                      scheduled = true;
-                      requestAnimationFrame(() => {
-                        scheduled = false;
-                        webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
-                      });
+                      webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
                     };
                     const observer = new ResizeObserver(report);
                     observer.observe(document.body);
