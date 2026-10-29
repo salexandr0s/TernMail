@@ -14,7 +14,7 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } content: {
             Group {
-                if mailbox.selectedLabelID == MailboxModel.outboxID {
+                if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
                     OutboxView(mailbox: mailbox)
                 } else {
                     ThreadListView(mailbox: mailbox)
@@ -31,6 +31,16 @@ struct MainView: View {
             }
         } detail: {
             DetailView(mailbox: mailbox)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        SearchField(
+                            search: mailbox.search,
+                            text: mailbox.search.text,
+                            focusRequest: mailbox.search.fieldFocusRequest
+                        )
+                        .frame(minWidth: 160, idealWidth: 220, maxWidth: 280)
+                    }
+                }
         }
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
@@ -100,7 +110,7 @@ private struct DetailView: View {
 
     var body: some View {
         let ids = mailbox.selectedThreadIDs
-        if mailbox.selectedLabelID == MailboxModel.outboxID {
+        if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
             ContentUnavailableView(
                 "Outbox",
                 systemImage: "tray.and.arrow.up",
@@ -113,6 +123,67 @@ private struct DetailView: View {
             ContentUnavailableView("\(ids.count) Conversations Selected", systemImage: "square.stack")
         } else {
             ContentUnavailableView("No Conversation Selected", systemImage: "envelope")
+        }
+    }
+}
+
+/// The toolbar's search field. An AppKit field, so ⌥⌘F can focus it on
+/// macOS 14. Return asks Gmail and Escape clears the search.
+private struct SearchField: NSViewRepresentable {
+    let search: SearchModel
+    /// Passed in so a change to either updates the field.
+    let text: String
+    let focusRequest: Int
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = "Search"
+        field.sendsSearchStringImmediately = true
+        field.sendsWholeSearchString = false
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.textChanged(_:))
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.search = search
+        if field.stringValue != text { field.stringValue = text }
+        if context.coordinator.focusRequest != focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            field.window?.makeFirstResponder(field)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(search: search, focusRequest: focusRequest)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var search: SearchModel
+        var focusRequest: Int
+
+        init(search: SearchModel, focusRequest: Int) {
+            self.search = search
+            self.focusRequest = focusRequest
+        }
+
+        @objc func textChanged(_ sender: NSSearchField) {
+            search.update(sender.stringValue)
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                search.submit()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                search.cancel()
+                return true
+            default:
+                return false
+            }
         }
     }
 }

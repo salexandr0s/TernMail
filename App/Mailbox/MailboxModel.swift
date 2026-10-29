@@ -52,13 +52,19 @@ final class MailboxModel {
     let cache: MailCache
     let engine: SyncEngine
     let downloadsDirectory: URL
+    /// While the search field has text, the list shows its results.
+    let search: SearchModel
 
     var selectedLabelID: String? = SystemLabel.inbox {
         didSet {
             guard selectedLabelID != oldValue else { return }
+            // Choosing another mailbox leaves search.
+            search.clear()
             selectedThreadIDs = []
             threads = []
             threadLimit = Self.pageSize
+            older?.cancel()
+            older = nil
             observeThreads()
             if selectedLabelID == SystemLabel.draft {
                 // Drafts made in other apps since the last sync.
@@ -81,6 +87,8 @@ final class MailboxModel {
     private(set) var syncStatus: SyncStatus = .idle
     private(set) var lastSyncedAt: Date?
     private(set) var hasSyncedOnce = false
+    /// Gmail's older pages of the selected mailbox, after Load Older Conversations.
+    private(set) var older: GmailPager?
 
     /// The window's undo manager, so Edit > Undo reverts mail actions.
     @ObservationIgnored weak var undoManager: UndoManager? {
@@ -121,13 +129,16 @@ final class MailboxModel {
         self.account = account
         self.cache = cache
         self.downloadsDirectory = downloadsDirectory
-        self.engine = SyncEngine(
+        let engine = SyncEngine(
             accountID: account.id,
             sender: EmailAddress(name: account.displayName, address: account.email),
             outgoingDirectory: outgoingDirectory,
             gmail: gmail,
             cache: cache
         )
+        self.engine = engine
+        search = SearchModel(accountID: account.id, cache: cache, engine: engine)
+        search.onResultsChange = { [weak self] in self?.listChanged() }
     }
 
     func start() async {
@@ -174,6 +185,8 @@ final class MailboxModel {
         tasks.forEach { $0.cancel() }
         tasks = []
         threadsTask?.cancel()
+        search.stop()
+        older?.cancel()
         actionTask?.cancel()
         undoSendTimer?.cancel()
         for entry in undoEntries.values {
@@ -204,7 +217,14 @@ final class MailboxModel {
         labels.first { $0.id == id }
     }
 
+    /// The conversations the list shows: search results while searching,
+    /// otherwise the selected mailbox.
+    var listedThreads: [ThreadRecord] {
+        search.isActive ? search.results : threads
+    }
+
     var selectedLabelTitle: String {
+        if search.isActive { return "Search Results" }
         guard let id = selectedLabelID else { return "Tern" }
         if id == Self.outboxID { return "Outbox" }
         return SystemMailbox.all.first { $0.id == id }?.title ?? label(id: id)?.name ?? "Tern"
@@ -241,6 +261,32 @@ final class MailboxModel {
         guard threads.count >= threadLimit else { return }
         threadLimit += Self.pageSize
         observeThreads()
+    }
+
+    /// Whether the list ends with Load Older Conversations: the cache has
+    /// nothing more for this mailbox, and Gmail may. The cache holds all of
+    /// the Inbox and Drafts.
+    var offersOlderConversations: Bool {
+        guard let id = selectedLabelID, ![SystemLabel.inbox, SystemLabel.draft, Self.outboxID].contains(id),
+              threads.count < threadLimit
+        else { return false }
+        return older?.state != .finished
+    }
+
+    /// Asks Gmail for the mailbox's next page older than the list, stores it
+    /// and shows it at the end of the list.
+    func loadOlderConversations() {
+        guard let labelID = selectedLabelID, offersOlderConversations else { return }
+        if older == nil {
+            let engine = engine
+            let cutoff = threads.map(\.lastDate).min()
+            older = GmailPager { token in try await engine.loadOlder(labelID: labelID, before: cutoff, pageToken: token) }
+        }
+        older?.next { [weak self] page in
+            guard let self, selectedLabelID == labelID else { return }
+            threadLimit = max(threadLimit, threads.count + page.count)
+            observeThreads()
+        }
     }
 
     // MARK: Compose
@@ -369,7 +415,9 @@ final class MailboxModel {
     func perform(_ action: MailAction, on threadIDs: Set<String>? = nil) -> Task<Void, Never>? {
         let ids = Array(threadIDs ?? selectedThreadIDs)
         guard !ids.isEmpty, !isStopped else { return nil }
-        if (action == .archive && selectedLabelID == SystemLabel.inbox)
+        // Search results follow Gmail's labels, so they change after the next sync pass.
+        if !search.isActive,
+           (action == .archive && selectedLabelID == SystemLabel.inbox)
             || (action == .trash && selectedLabelID != SystemLabel.trash) {
             selectThread(after: Set(ids))
         }
@@ -430,11 +478,11 @@ final class MailboxModel {
 
     /// True when every thread in `ids` is read, so commands offer Mark as Unread.
     func allRead(_ ids: Set<String>) -> Bool {
-        !threads.contains { ids.contains($0.id) && $0.isUnread }
+        !listedThreads.contains { ids.contains($0.id) && $0.isUnread }
     }
 
     func allStarred(_ ids: Set<String>) -> Bool {
-        let matching = threads.filter { ids.contains($0.id) }
+        let matching = listedThreads.filter { ids.contains($0.id) }
         return !matching.isEmpty && matching.allSatisfy(\.isStarred)
     }
 
@@ -448,13 +496,22 @@ final class MailboxModel {
         perform(allStarred(ids) ? .unstar : .star, on: ids)
     }
 
-    /// Archiving from Trash or Spam would leave the thread there, so it is offered elsewhere only.
+    /// Archiving from Trash or Spam would leave the thread there, so it is
+    /// offered elsewhere only. Search results come from any mailbox.
+    var offersArchive: Bool {
+        search.isActive || (selectedLabelID != SystemLabel.trash && selectedLabelID != SystemLabel.spam)
+    }
+
+    var offersTrash: Bool {
+        search.isActive || selectedLabelID != SystemLabel.trash
+    }
+
     var canArchive: Bool {
-        !selectedThreadIDs.isEmpty && selectedLabelID != SystemLabel.trash && selectedLabelID != SystemLabel.spam
+        !selectedThreadIDs.isEmpty && offersArchive
     }
 
     var canTrash: Bool {
-        !selectedThreadIDs.isEmpty && selectedLabelID != SystemLabel.trash
+        !selectedThreadIDs.isEmpty && offersTrash
     }
 
     // MARK: Private
@@ -471,13 +528,21 @@ final class MailboxModel {
                 for try await threads in stream {
                     guard let self, !Task.isCancelled, !isStopped, selectedLabelID == labelID else { return }
                     self.threads = threads
-                    selectedThreadIDs.formIntersection(threads.map(\.id))
+                    listChanged()
                 }
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.syncStatus = .failed("Tern couldn't read its mail cache.")
             }
         }
+    }
+
+    /// Keeps the selection inside the list, and tells the engine what the
+    /// list shows so expired search holds don't drop it.
+    private func listChanged() {
+        let ids = listedThreads.map(\.id)
+        selectedThreadIDs.formIntersection(ids)
+        engine.setVisibleThreads(Set(ids))
     }
 
     private func handle(_ event: SyncEvent) {
@@ -515,6 +580,7 @@ final class MailboxModel {
 
     /// Moves the selection to the thread below the ones leaving the list, or above if none is below.
     private func selectThread(after leaving: Set<String>) {
+        let threads = listedThreads
         guard leaving == selectedThreadIDs,
               let lastIndex = threads.lastIndex(where: { leaving.contains($0.id) })
         else { return }

@@ -29,6 +29,11 @@ struct MailCommands: Commands {
             Button("Undo Send") { undoSend() }
                 .disabled(app.mailbox?.undoableSendID == nil)
         }
+        CommandGroup(after: .textEditing) {
+            Button("Search Mail") { mailbox?.search.focusField() }
+                .keyboardShortcut("f", modifiers: [.option, .command])
+                .disabled(mailbox == nil || compose != nil)
+        }
         CommandMenu("Message") {
             Button("Send") { Task { await compose?.send() } }
                 .keyboardShortcut("d", modifiers: [.shift, .command])

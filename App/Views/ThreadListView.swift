@@ -3,33 +3,35 @@ import SwiftUI
 
 struct ThreadListView: View {
     @Bindable var mailbox: MailboxModel
+    @FocusState private var listFocused: Bool
 
     var body: some View {
         content
             .navigationTitle(mailbox.selectedLabelTitle)
             .toolbar { ThreadToolbar(mailbox: mailbox) }
+            .onChange(of: mailbox.search.listFocusRequest) { listFocused = true }
     }
 
     @ViewBuilder
     private var content: some View {
-        if !mailbox.threads.isEmpty {
-            List(selection: $mailbox.selectedThreadIDs) {
-                ForEach(mailbox.threads) { thread in
-                    ThreadRow(thread: thread)
-                        .onAppear {
-                            if thread.id == mailbox.threads.last?.id { mailbox.loadMoreThreads() }
-                        }
+        if mailbox.search.isActive {
+            searchResults
+        } else if !mailbox.threads.isEmpty {
+            list(mailbox.threads, onEnd: mailbox.loadMoreThreads) {
+                if mailbox.offersOlderConversations {
+                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
                 }
             }
-            .contextMenu(forSelectionType: String.self) { ids in
-                ThreadMenuItems(mailbox: mailbox, ids: ids)
-            }
         } else if mailbox.hasSyncedOnce {
-            ContentUnavailableView(
-                "No Conversations",
-                systemImage: "tray",
-                description: Text(emptyDescription)
-            )
+            ContentUnavailableView {
+                Label("No Conversations", systemImage: "tray")
+            } description: {
+                Text(emptyDescription)
+            } actions: {
+                if mailbox.offersOlderConversations {
+                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
+                }
+            }
         } else if case .failed(let message) = mailbox.syncStatus {
             ContentUnavailableView {
                 Label("Can't Download Your Mail", systemImage: "wifi.exclamationmark")
@@ -46,9 +48,124 @@ struct ThreadListView: View {
         }
     }
 
+    /// Local matches as the user types, then Gmail's, with Gmail's state last.
+    @ViewBuilder
+    private var searchResults: some View {
+        let search = mailbox.search
+        let gmail = search.gmail?.state ?? .ready
+        if search.readFailed {
+            ContentUnavailableView(
+                "Can't Search",
+                systemImage: "exclamationmark.magnifyingglass",
+                description: Text("Tern couldn't read its mail cache.")
+            )
+        } else if !search.results.isEmpty {
+            list(search.results, onEnd: search.loadMoreResults) {
+                if gmail != .finished {
+                    GmailRow(kind: .search, state: gmail, action: search.askGmail)
+                }
+            }
+        } else if gmail == .loading {
+            ProgressView {
+                Text("Searching Gmail…")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView {
+                Label("No Results", systemImage: "magnifyingglass")
+            } description: {
+                if gmail == .finished {
+                    Text("Nothing on this Mac or in Gmail matches your search.")
+                } else {
+                    Text("Nothing on this Mac matches your search.")
+                }
+            } actions: {
+                if gmail != .finished {
+                    GmailRow(kind: .search, state: gmail, action: search.askGmail)
+                }
+            }
+        }
+    }
+
+    private func list(
+        _ threads: [ThreadRecord], onEnd: @escaping () -> Void, @ViewBuilder footer: () -> some View
+    ) -> some View {
+        List(selection: $mailbox.selectedThreadIDs) {
+            ForEach(threads) { thread in
+                ThreadRow(thread: thread)
+                    .onAppear {
+                        if thread.id == threads.last?.id { onEnd() }
+                    }
+            }
+            footer()
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            ThreadMenuItems(mailbox: mailbox, ids: ids)
+        }
+        .focused($listFocused)
+    }
+
     private var emptyDescription: String {
         if mailbox.selectedLabelID == SystemLabel.inbox { return "Your inbox is empty." }
         return "Tern keeps your inbox and the last 30 days of mail on this Mac."
+    }
+}
+
+/// The end of a list that Gmail can add to: a button, progress, or why
+/// Gmail didn't answer.
+private struct GmailRow: View {
+    enum Kind {
+        case search
+        case older
+    }
+
+    let kind: Kind
+    let state: GmailPager.State
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: Tokens.Space.s1) {
+            switch state {
+            case .ready, .more:
+                Button(buttonTitle, action: action)
+                    .buttonStyle(.link)
+            case .loading:
+                HStack(spacing: Tokens.Space.s2) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(kind == .search ? "Searching Gmail…" : "Loading older conversations…")
+                        .foregroundStyle(.secondary)
+                }
+            case .busy, .failed:
+                Text(failure)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Try Again", action: action)
+                    .buttonStyle(.link)
+            case .finished:
+                EmptyView()
+            }
+        }
+        .font(.callout)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Tokens.Space.s2)
+    }
+
+    private var buttonTitle: String {
+        switch (kind, state) {
+        case (.search, .ready): "Search Gmail"
+        case (.search, _): "Load More from Gmail"
+        case (.older, _): "Load Older Conversations"
+        }
+    }
+
+    private var failure: String {
+        switch (kind, state) {
+        case (.search, .busy): "Gmail is busy, so these results come from this Mac only."
+        case (.search, _): "Tern couldn't reach Gmail, so these results come from this Mac only."
+        case (.older, .busy): "Gmail is busy. Try again in a moment."
+        case (.older, _): "Tern couldn't reach Gmail. Check your connection."
+        }
     }
 }
 
@@ -114,10 +231,10 @@ struct ThreadMenuItems: View {
     let ids: Set<String>
 
     var body: some View {
-        if mailbox.selectedLabelID != SystemLabel.trash, mailbox.selectedLabelID != SystemLabel.spam {
+        if mailbox.offersArchive {
             Button("Archive") { mailbox.perform(.archive, on: ids) }
         }
-        if mailbox.selectedLabelID != SystemLabel.trash {
+        if mailbox.offersTrash {
             Button("Move to Trash") { mailbox.perform(.trash, on: ids) }
         }
         Divider()
