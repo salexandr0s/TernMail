@@ -8,7 +8,9 @@ public enum SyncEvent: Sendable, Equatable {
     case syncStarted
     case syncFinished(Date)
     case syncFailed(String)
-    /// Gmail refused a change for good, so the cache put the thread back.
+    /// Gmail refused a change for good. A conversation or label goes back
+    /// to how it was; for a settings change, the message names what Gmail
+    /// didn't save.
     case actionFailed(String)
     /// A draft was sent.
     case draftSent(localDraftID: String)
@@ -46,6 +48,11 @@ public actor SyncEngine {
     /// Where compose windows copy attached files. `OutgoingAttachment.path` is relative to it.
     let outgoingDirectory: URL
     let gmail: any GmailService
+    /// Filter, vacation and signature calls. Without them, settings rows wait.
+    let settings: (any SettingsService)?
+    /// Where a signature Gmail accepted is recorded for compose. Without it,
+    /// the next identity refresh picks the signature up.
+    let accounts: AccountStore?
     let cache: MailCache
     let now: @Sendable () -> Date
     let undoHold: TimeInterval
@@ -84,6 +91,7 @@ public actor SyncEngine {
     let visibleThreadIDs = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// - Parameters:
+    ///   - settings: Defaults to `gmail` when it makes the settings calls.
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
     ///   - sendsAutomatically: Tests turn this off and call `sendDueActions()` themselves.
     public init(
@@ -91,6 +99,8 @@ public actor SyncEngine {
         sender: EmailAddress,
         outgoingDirectory: URL,
         gmail: any GmailService,
+        settings: (any SettingsService)? = nil,
+        accounts: AccountStore? = nil,
         cache: MailCache,
         undoHold: TimeInterval = 2,
         sendsAutomatically: Bool = true,
@@ -100,6 +110,8 @@ public actor SyncEngine {
         self.sender = sender
         self.outgoingDirectory = outgoingDirectory
         self.gmail = gmail
+        self.settings = settings ?? gmail as? any SettingsService
+        self.accounts = accounts
         self.cache = cache
         self.undoHold = undoHold
         self.sendsAutomatically = sendsAutomatically

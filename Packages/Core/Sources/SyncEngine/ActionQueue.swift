@@ -186,8 +186,7 @@ extension SyncEngine {
         case .createLabel, .updateLabel, .deleteLabel:
             try enqueueLabelInverse(of: action, accountID: accountID, now: now, in: tx)
         case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
-            // Nothing queues settings rows until their sender and its undo exist.
-            return
+            try enqueueSettingsInverse(of: action, accountID: accountID, now: now, in: tx)
         case .modifyThreads, .modifyMessages:
             // Restore each message exactly: archiving a thread removed INBOX only
             // from the messages that had it, so only those get it back. A label
@@ -212,7 +211,8 @@ extension SyncEngine {
     /// Starts a send loop for each lane that isn't running.
     func scheduleSending() {
         guard sendsAutomatically, !isStopped else { return }
-        for lane in [PendingAction.Lane.labels, .compose] {
+        let lanes: [PendingAction.Lane] = settings == nil ? [.labels, .compose] : [.labels, .compose, .settings]
+        for lane in lanes {
             wakeRequests.insert(lane)
             if drainTasks[lane] == nil {
                 drainTasks[lane] = Task { await drainQueue(lane) }
@@ -251,8 +251,7 @@ extension SyncEngine {
         switch lane {
         case .labels: await sendDueActions()
         case .compose: await sendDueDrafts()
-        // `scheduleSending()` doesn't start this lane until settings rows have a sender.
-        case .settings: 0
+        case .settings: await sendDueSettings()
         }
     }
 
