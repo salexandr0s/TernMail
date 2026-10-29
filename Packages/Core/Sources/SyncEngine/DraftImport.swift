@@ -69,6 +69,58 @@ extension SyncEngine {
         return try await cache.read { tx in try tx.localDraft(id: draft.id) } ?? draft
     }
 
+    /// Moves a new message to `destination`'s account, as the From menu does.
+    /// The copy gets its own ID, Message-ID and files, and holds `content`,
+    /// the window's text. The original's discard is queued in the same
+    /// transaction, so the message is never in both accounts. Returns nil
+    /// when the draft isn't a new message or no longer takes edits.
+    public func moveDraft(_ localDraftID: String, content: DraftContent, to destination: SyncEngine) async throws -> LocalDraft? {
+        guard destination !== self else { return nil }
+        let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: localDraftID) }
+        let moved = LocalDraft(
+            accountID: destination.accountID, kind: .new, content: content,
+            rfcMessageID: MIMEMessage.newMessageID(for: destination.sender), now: now()
+        )
+        // The copy's files are all in its own new folder, removed if the move fails.
+        let folder = destination.outgoingDirectory.appending(path: moved.id, directoryHint: .isDirectory)
+        let copies: [OutgoingAttachment]
+        do {
+            copies = try copyFiles(files, for: moved.id, into: destination.outgoingDirectory)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+        let now = now()
+        let result: (draft: LocalDraft, saves: Bool)?
+        do {
+            result = try await write { tx -> (LocalDraft, Bool)? in
+                // Read here, since a send or discard may have taken the draft during the copy.
+                guard let original = try tx.localDraft(id: localDraftID), original.kind == .new, original.state == .editing
+                else { return nil }
+                _ = try tx.enqueueDiscard(localDraftID: localDraftID, now: now, notBefore: now)
+                var draft = moved
+                // Edits carry over, so closing the window keeps the copy as it would the original.
+                draft.revision = original.revision + (content == original.content ? 0 : 1)
+                try tx.insertLocalDraft(draft)
+                for copy in copies { _ = try tx.addOutgoingAttachment(copy, now: now) }
+                // Gmail held the original, so the copy goes there at once.
+                let saves = original.gmailDraftID != nil
+                if saves { _ = try tx.enqueueSave(localDraftID: draft.id, now: now, notBefore: now) }
+                return (try tx.localDraft(id: draft.id) ?? draft, saves)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+        guard let result else {
+            try? FileManager.default.removeItem(at: folder)
+            return nil
+        }
+        scheduleSending()
+        if result.saves { await destination.scheduleSending() }
+        return result.draft
+    }
+
     /// A message in `full` format, with any text Gmail stores as an attachment.
     private func fullMessage(_ messageID: String) async throws -> (message: GmailMessage, original: OriginalMessage) {
         let results = try await gmail.messages(ids: [messageID], format: .full, metadataHeaders: [])
@@ -258,6 +310,22 @@ extension SyncEngine {
             throw error
         }
         return copies
+    }
+
+    /// Copies another draft's files under `directory` for `localDraftID`.
+    /// The caller removes the copies if one fails.
+    private func copyFiles(_ files: [OutgoingAttachment], for localDraftID: String, into directory: URL) throws -> [OutgoingAttachment] {
+        try files.map { file in
+            let path = Self.outgoingPath(for: localDraftID, filename: file.filename)
+            let url = directory.appending(path: path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            do {
+                try FileManager.default.copyItem(at: outgoingDirectory.appending(path: file.path), to: url)
+            } catch CocoaError.fileReadNoSuchFile {
+                throw ComposeError.missingAttachment(file.filename)
+            }
+            return OutgoingAttachment(localDraftID: localDraftID, filename: file.filename, mimeType: file.mimeType, size: file.size, path: path)
+        }
     }
 
     /// The part with `id` in a `full`-format payload.
