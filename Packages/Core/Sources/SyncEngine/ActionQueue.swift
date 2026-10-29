@@ -312,7 +312,7 @@ extension SyncEngine {
                 let errors = failures.filter { ids.contains($0.key) }.map(\.value).filter { $0 != .notFound }
                 let outcome: Outcome
                 if errors.isEmpty { outcome = .sent }
-                else if errors.allSatisfy({ $0.isRetryable || $0 == .unauthorized }) { outcome = .retry(String(describing: errors[0])) }
+                else if errors.allSatisfy(Self.shouldRetry) { outcome = .retry(String(describing: errors[0])) }
                 else { outcome = .failed }
                 await finish(action, outcome: outcome)
             }
@@ -323,10 +323,18 @@ extension SyncEngine {
 
     private static func outcome(for error: any Error) -> Outcome {
         if let error = error as? GmailError {
-            // Reauthentication can make a rejected request valid again.
-            return error.isRetryable || error == .unauthorized ? .retry(String(describing: error)) : .failed
+            return shouldRetry(error) ? .retry(String(describing: error)) : .failed
         }
         return .retry(String(describing: type(of: error)))
+    }
+
+    private static func shouldRetry(_ error: GmailError) -> Bool {
+        // An unreadable response does not establish that Gmail rejected the
+        // mutation. Keep intent and undo just as for a lost network response.
+        switch error {
+        case .decoding, .unauthorized: true
+        default: error.isRetryable
+        }
     }
 
     private func finish(_ current: PendingAction, outcome: Outcome) async {
