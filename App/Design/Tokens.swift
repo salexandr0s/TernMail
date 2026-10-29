@@ -29,6 +29,17 @@ enum Tokens {
         static let mdY: CGFloat = 8
     }
 
+    /// `components/dropdown.yaml`: width and list height cap for pickers.
+    enum Popover {
+        static let width: CGFloat = 320
+        static let maxListHeight: CGFloat = 320
+    }
+
+    /// `components/modal.yaml`, small size.
+    enum Sheet {
+        static let smallWidth: CGFloat = 420
+    }
+
     /// `components/toast.yaml`.
     enum Toast {
         static let width: CGFloat = 360
