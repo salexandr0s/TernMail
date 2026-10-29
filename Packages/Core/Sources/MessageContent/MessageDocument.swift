@@ -53,7 +53,7 @@ public enum MessageDocument {
 
     private static let plainTextStyle = """
         :root{color-scheme:light dark}\
-        html{background:transparent}\
+        html{background:Canvas;color:CanvasText}\
         body{margin:0;padding:16px;font:13px -apple-system,system-ui,sans-serif}\
         .tern-plain{white-space:pre-wrap;overflow-wrap:anywhere}
         """

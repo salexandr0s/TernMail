@@ -50,10 +50,9 @@ private struct DetailView: View {
 
     var body: some View {
         let ids = mailbox.selectedThreadIDs
-        if ids.count == 1, let thread = mailbox.selectedThreads.first {
-            Text(thread.subject)
-                .font(.title2.weight(.semibold))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        if ids.count == 1, let id = ids.first {
+            ThreadView(threadID: id, mailbox: mailbox)
+                .id(id)
         } else if ids.count > 1 {
             ContentUnavailableView("\(ids.count) Conversations Selected", systemImage: "square.stack")
         } else {
