@@ -67,6 +67,24 @@ import Testing
         #expect(try await gmail.labels().map(\.name).sorted() == ["Bills", "Work", "Work/Trips", "Work/Trips/2026"])
     }
 
+    @Test func aRenameGmailRefusesKeepsTheLabelsUnderIt() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await setLabels([("Label_1", "Work"), ("Label_2", "Work/Trips"), ("Label_3", "Work/Trips/2026")], cache, gmail)
+        let rename = try #require(try await engine.renameLabel("Label_1", to: "Job"))
+        await gmail.failNextLabelCall("patch", with: .http(status: 400, reason: "invalidArgument"))
+        clock.advance(3)
+
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["patch Label_1"])
+        #expect(try await rows(cache).isEmpty)
+        #expect(try await shownNames(cache) == ["Work", "Work/Trips", "Work/Trips/2026"])
+        // Nothing is left to undo.
+        try await engine.undo(rename)
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["patch Label_1"])
+        #expect(await events(engine) == [.actionFailed("Gmail didn't accept a label change, so Tern put the label back.")])
+    }
+
     @Test func namesAreCheckedBeforeAnythingIsQueued() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await setLabels([("Label_1", "Work"), ("Label_2", "Work/Trips"), ("Label_3", "Job/Trips")], cache, gmail)
