@@ -212,7 +212,7 @@ public actor SyncEngine {
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
                 var threads = try tx.upsertMessages(live)
                 threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
-                threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID))
+                threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID, through: historyID))
                 try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
                 try tx.rebuildThreads(threads, accountID: accountID)
                 try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)

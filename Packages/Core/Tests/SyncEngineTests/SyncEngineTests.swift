@@ -220,6 +220,24 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func resyncDoesNotPruneNewerMessagesLoadedAfterItsListings() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.expireHistory()
+        await gmail.add(try gmailMessage("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        await gmail.setThread(try decode(GmailThread.self, """
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1", historyID: 150)),\(try encodedMessage("m2", thread: "t1", historyID: 250))]}
+            """))
+        await gmail.holdNextMetadata()
+        let syncing = Task { try await engine.sync() }
+        while await !gmail.isHoldingMetadata { await Task.yield() }
+        try await engine.openThread("t1")
+        await gmail.releaseMetadata()
+        try await syncing.value
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1", "m2"])
+        #expect(try await cache.syncState(accountID: account)?.historyID == 200)
+    }
+
     @Test func staleThreadNotFoundDoesNotDeleteMessagesIngestedDuringTheRequest() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
