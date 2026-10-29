@@ -20,7 +20,6 @@ struct ThreadListView: View {
             }
             .navigationTitle(mailbox.selectedLabelTitle)
             .navigationSubtitle(mailbox.selectedMailboxSubtitle)
-            .toolbar { ThreadToolbar(mailbox: mailbox) }
             .onChange(of: mailbox.search.listFocusRequest) { listFocused = true }
             .sheet(isPresented: isChoosingSnoozeDate) {
                 if let ids = mailbox.snoozeDateTargets {
@@ -324,92 +323,6 @@ struct ThreadMenuItems: View {
         Divider()
         Button("Edit Labels…") { mailbox.showEditLabels(for: ids) }
         Button("Move to…") { mailbox.showMoveTo(for: ids) }
-    }
-}
-
-private struct ThreadToolbar: ToolbarContent {
-    @Bindable var mailbox: MailboxModel
-
-    var body: some ToolbarContent {
-        let ids = mailbox.selectedThreadIDs
-        let isRead = mailbox.allRead(ids)
-        let isStarred = mailbox.allStarred(ids)
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { mailbox.perform(.archive) } label: {
-                Label("Archive", systemImage: "archivebox")
-            }
-            .help("Archive")
-            .disabled(!mailbox.canArchive)
-
-            Button { mailbox.perform(.trash) } label: {
-                Label("Move to Trash", systemImage: "trash")
-            }
-            .help("Move to Trash")
-            .disabled(!mailbox.canTrash)
-
-            Menu {
-                SnoozeMenuItems(
-                    onSnooze: { mailbox.snooze(until: $0) },
-                    onChooseDate: { mailbox.showSnoozeDate() }
-                )
-                if mailbox.showsSnoozed {
-                    Divider()
-                    Button("Unsnooze") { mailbox.unsnooze() }
-                }
-            } label: {
-                Label("Snooze", systemImage: "clock")
-            }
-            // Without it, VoiceOver names the menu after its arrow image.
-            .accessibilityLabel("Snooze")
-            .help("Snooze")
-            .disabled(!mailbox.canSnooze)
-
-            Button { mailbox.toggleRead() } label: {
-                Label(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open")
-            }
-            .help(isRead ? "Mark as Unread" : "Mark as Read")
-            .disabled(ids.isEmpty)
-
-            Button { mailbox.toggleStar() } label: {
-                Label(isStarred ? "Remove Star" : "Star", systemImage: isStarred ? "star.slash" : "star")
-            }
-            .help(isStarred ? "Remove Star" : "Star")
-            .disabled(ids.isEmpty)
-
-            // The menu commands and the context menu open these popovers too.
-            Button { mailbox.showEditLabels() } label: {
-                Label("Edit Labels", systemImage: "tag")
-            }
-            .help("Edit Labels")
-            .disabled(ids.isEmpty)
-            .popover(isPresented: isEditingLabels, arrowEdge: .bottom) {
-                if let edit = mailbox.labelEdit {
-                    EditLabelsView(
-                        labels: mailbox.labelChoices,
-                        applied: edit.applied,
-                        onApply: { mailbox.applyLabels($0) },
-                        onCreateLabel: { mailbox.createLabel(named: $0, after: $1) }
-                    )
-                }
-            }
-
-            Button { mailbox.showMoveTo() } label: {
-                Label("Move to", systemImage: "folder")
-            }
-            .help("Move to")
-            .disabled(ids.isEmpty)
-            .popover(isPresented: isMoving, arrowEdge: .bottom) {
-                MoveToView(targets: mailbox.moveChoices, onMove: { mailbox.move(to: $0) })
-            }
-        }
-    }
-
-    private var isEditingLabels: Binding<Bool> {
-        Binding(get: { mailbox.labelEdit != nil }, set: { if !$0 { mailbox.labelEdit = nil } })
-    }
-
-    private var isMoving: Binding<Bool> {
-        Binding(get: { mailbox.moveTargets != nil }, set: { if !$0 { mailbox.moveTargets = nil } })
     }
 }
 
