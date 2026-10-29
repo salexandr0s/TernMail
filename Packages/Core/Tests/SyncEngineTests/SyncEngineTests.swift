@@ -735,8 +735,9 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         let draft = makeDraft()
         try await engine.createDraft(draft)
         await gmail.failNextDraftCall("create", with: .http(status: 400, reason: "invalidArgument"))
-        try await engine.sendDraft(draft.id, delay: 0)
-        await engine.sendDueDrafts()
+        try await engine.sendDraft(draft.id, delay: 10)
+        // Quitting sends it at once, and doesn't take the refusal for sent.
+        #expect(await engine.sendWaitingDraftsNow() == false)
 
         let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
         #expect(stored?.state == .editing)

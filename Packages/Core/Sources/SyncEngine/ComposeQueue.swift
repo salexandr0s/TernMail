@@ -123,12 +123,17 @@ extension SyncEngine {
     public func sendWaitingDraftsNow() async -> Bool {
         let accountID = accountID
         let now = now()
+        let waiting: Set<String>
         do {
-            try await write { tx in
-                for var row in try tx.pendingActions(accountID: accountID) where row.kind == .sendDraft && row.state == .queued {
+            waiting = try await write { tx in
+                var drafts = Set<String>()
+                for var row in try tx.pendingActions(accountID: accountID) where row.kind == .sendDraft {
+                    if let id = row.localDraftID { drafts.insert(id) }
+                    guard row.state == .queued else { continue }
                     row.notBefore = min(row.notBefore, now)
                     try tx.updateAction(row)
                 }
+                return drafts
             }
         } catch {
             return false
@@ -139,7 +144,12 @@ extension SyncEngine {
                 try tx.pendingActions(accountID: accountID).filter { $0.kind == .sendDraft }
             }
             guard let rows else { return false }
-            if rows.isEmpty { return true }
+            if rows.isEmpty {
+                // A sent draft is deleted. A refused one leaves no row either,
+                // but goes back to editing.
+                let refused = try? await cache.read { tx in try waiting.contains { try tx.localDraft(id: $0) != nil } }
+                return refused == false
+            }
             if rows.contains(where: { $0.state == .queued && $0.lastError != nil }) { return false }
             // Another sender has the row; wait for it.
             try? await Task.sleep(for: .milliseconds(100))
