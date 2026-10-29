@@ -41,7 +41,7 @@ struct ComposeView: View {
     static let minHeight = Tokens.Layout.composeMinHeight
 
     private enum Field: Hashable {
-        case to, cc, bcc, subject
+        case to, cc, bcc, subject, from
     }
 
     @State private var model: ComposeModel
@@ -52,6 +52,8 @@ struct ComposeView: View {
     /// The recipient field to move the cursor to. Token fields are AppKit
     /// views, which `focus` can't reach.
     @State private var recipientFocus: Field?
+    @State private var focusedRecipient: Field?
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.dismiss) private var dismiss
     /// Shows the copy the window's message became in another account.
     private let onMove: (String) -> Void
@@ -143,9 +145,8 @@ struct ComposeView: View {
     // MARK: Header
 
     private var header: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s2, verticalSpacing: 0) {
-            GridRow {
-                fieldLabel("To:")
+        VStack(spacing: Tokens.Space.s1) {
+            fieldRow("To:", field: .to) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                     recipientField("To", addresses: $model.content.to, field: .to)
                     if !model.showsCc {
@@ -162,88 +163,146 @@ struct ComposeView: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .padding(.vertical, Tokens.Space.s1)
             }
-            Divider()
             if model.showsCc {
-                GridRow {
-                    fieldLabel("Cc:")
+                fieldRow("Cc:", field: .cc) {
                     recipientField("Cc", addresses: $model.content.cc, field: .cc)
-                        .padding(.vertical, Tokens.Space.s1_5)
                 }
-                Divider()
             }
             if model.showsBcc {
-                GridRow {
-                    fieldLabel("Bcc:")
+                fieldRow("Bcc:", field: .bcc) {
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
-                        .padding(.vertical, Tokens.Space.s1_5)
                 }
-                Divider()
             }
-            GridRow {
-                fieldLabel("Subject:")
+            fieldRow("Subject:", field: .subject) {
                 TextField("", text: $model.content.subject)
                     .textFieldStyle(.plain)
-                    .font(.body.weight(.medium))
+                    .font(.body)
                     .labelsHidden()
                     .accessibilityLabel("Subject")
                     .focused($focus, equals: .subject)
-                    .padding(.vertical, Tokens.Space.s1_5)
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(focus == .subject ? Color.accentColor : .clear)
-                            .frame(height: Tokens.Border.focus)
-                            .allowsHitTesting(false)
-                    }
             }
             if model.showsFrom {
-                Divider()
-                GridRow {
-                    fieldLabel("From:")
-                    fromField
-                        .padding(.vertical, Tokens.Space.s1_5)
-                }
+                fromField
             }
         }
         .disabled(!model.isEditable)
         .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s1)
+        .padding(.vertical, Tokens.Space.s2)
         .background(Tokens.Surface.primary)
         .ternAnimation(value: focus)
+        .ternAnimation(value: focusedRecipient)
     }
 
     /// A new message can move to another account. A reply or a Gmail draft
     /// stays in the account of its thread.
     @ViewBuilder private var fromField: some View {
         if model.canChangeAccount {
-            Picker("From", selection: Binding(get: { model.draft?.accountID ?? "" }, set: { model.move(to: $0) })) {
-                ForEach(model.accountChoices, id: \.id) { account in
-                    Text(account.email).tag(account.id)
+            Menu {
+                Picker("From", selection: Binding(get: { model.draft?.accountID ?? "" }, set: { model.move(to: $0) })) {
+                    ForEach(model.accountChoices, id: \.id) { account in
+                        Text(account.email).tag(account.id)
+                    }
                 }
+                .pickerStyle(.inline)
+            } label: {
+                fromLabel
+                    .padding(.horizontal, Tokens.Space.s2)
+                    .padding(.vertical, Tokens.Space.s1_5)
+                    .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton)
+                    .contentShape(Rectangle())
             }
-            .pickerStyle(.menu)
-            .controlSize(.small)
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .lineLimit(1)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .controlSize(.regular)
+            .focused($focus, equals: .from)
+            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .overlay { fieldOutline(isFocused: focus == .from) }
             .help(model.fromEmail)
             .accessibilityLabel("From")
+            .accessibilityValue(model.fromEmail)
         } else {
-            Text(model.fromEmail)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            fromLabel
+                .padding(.horizontal, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s1_5)
+                .frame(minHeight: Tokens.Control.iconButton)
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .overlay { fieldOutline(isFocused: false) }
                 .help("Replies and Gmail drafts stay with their original account.")
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("From \(model.fromEmail)")
         }
+    }
+
+    private var fromLabel: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+            fieldLabel("From:")
+            Text(model.fromEmail)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            Image(systemName: model.canChangeAccount ? "chevron.up.chevron.down" : "lock")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func fieldRow<Content: View>(
+        _ label: String, field: Field, @ViewBuilder content: () -> Content
+    ) -> some View {
+        let isFocused = field == .subject ? focus == field : focusedRecipient == field
+        return HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+            fieldLabel(label)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1_5)
+        .frame(minHeight: Tokens.Control.iconButton)
+        .background {
+            // Only the background handles blank space. Native editors keep their
+            // own mouse events for cursor placement, token selection and dragging.
+            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                .fill(Tokens.Surface.primary)
+                .contentShape(Rectangle())
+                .onTapGesture { focusField(field) }
+                .accessibilityHidden(true)
+        }
+        .overlay { fieldOutline(isFocused: isFocused) }
+    }
+
+    private func fieldOutline(isFocused: Bool) -> some View {
+        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+            .strokeBorder(
+                isFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
+                lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline
+            )
+            .allowsHitTesting(false)
     }
 
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
             .font(.callout.weight(.medium))
             .foregroundStyle(.secondary)
-            .gridColumnAlignment(.leading)
+            .frame(width: Tokens.Space.s16, alignment: .leading)
+            .allowsHitTesting(false)
             .accessibilityHidden(true)
+    }
+
+    private func focusField(_ field: Field) {
+        guard model.isEditable else { return }
+        switch field {
+        case .subject, .from:
+            recipientFocus = nil
+            focus = field
+        case .to, .cc, .bcc:
+            focus = nil
+            recipientFocus = field
+        }
     }
 
     private func recipientField(_ label: String, addresses: Binding<[EmailAddress]>, field: Field) -> some View {
@@ -256,7 +315,14 @@ struct ComposeView: View {
                 get: { recipientFocus == field },
                 set: { if !$0, recipientFocus == field { recipientFocus = nil } }
             ),
-            isEditable: model.isEditable
+            isEditable: model.isEditable,
+            onFocusChange: { isFocused in
+                if isFocused {
+                    focusedRecipient = field
+                } else if focusedRecipient == field {
+                    focusedRecipient = nil
+                }
+            }
         ) { [model] text in
             await model.suggestions(for: text)
         }
@@ -267,9 +333,9 @@ struct ComposeView: View {
         switch field {
         case .cc: model.showsCc = true
         case .bcc: model.showsBcc = true
-        case .to, .subject: break
+        case .to, .subject, .from: break
         }
-        recipientFocus = field
+        focusField(field)
     }
 
     // MARK: Quoted text
