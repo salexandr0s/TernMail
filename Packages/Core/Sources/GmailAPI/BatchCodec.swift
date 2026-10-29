@@ -23,7 +23,7 @@ enum BatchCodec {
             var head = "--\(boundary)\r\n"
             head += "Content-Type: application/http\r\n"
             head += "Content-ID: <item-\(index)>\r\n\r\n"
-            head += "\(endpoint.method) \(try endpoint.requestTarget())\r\n"
+            head += "\(endpoint.method) \(try endpoint.requestTarget()) HTTP/1.1\r\n"
             if let body = endpoint.body {
                 head += "Content-Type: application/json\r\n"
                 head += "Content-Length: \(body.count)\r\n\r\n"
@@ -60,7 +60,9 @@ enum BatchCodec {
         // between tokens and normalizing them cannot change a body's meaning.
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
         var parts: [Part] = []
-        for chunk in normalized.components(separatedBy: "--" + boundary).dropFirst() {
+        // A delimiter starts a MIME line. Boundary text inside a JSON string
+        // is ordinary content, not the start of another part.
+        for chunk in ("\n" + normalized).components(separatedBy: "\n--" + boundary).dropFirst() {
             if chunk.hasPrefix("--") { break }
             parts.append(try decodePart(chunk))
         }

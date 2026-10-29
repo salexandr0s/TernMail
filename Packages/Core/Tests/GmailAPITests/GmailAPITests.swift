@@ -3,6 +3,17 @@ import Testing
 @testable import GmailAPI
 
 @Suite struct GmailClientTests {
+    @Test func batchUsesCompleteRequestLinesAndIgnoresBoundaryTextInJSON() async throws {
+        let transport = StubTransport([batchResponse([
+            (0, 200, #"{"id":"a","threadId":"t1","snippet":"text --resp inside JSON"}"#),
+        ])])
+        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let results = try await client.messages(ids: ["a"], format: .metadata)
+        #expect(try results["a"]?.get().snippet == "text --resp inside JSON")
+        let body = String(decoding: try #require(await transport.requests.first?.httpBody), as: UTF8.self)
+        #expect(body.contains("GET /gmail/v1/users/me/messages/a?format=metadata HTTP/1.1\r\n"))
+    }
+
     @Test func batchMatchesPartsByContentIDAndRetriesOnlyRetryableParts() async throws {
         // First batch: parts out of order, "c" is gone, "b" is rate limited, "d" has no part.
         let first = batchResponse([
