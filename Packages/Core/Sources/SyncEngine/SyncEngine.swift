@@ -26,7 +26,8 @@ enum SyncError: Error, Equatable {
     case invalidHistoryID
 }
 
-/// Keeps one account's cache in step with Gmail and sends queued changes.
+/// Keeps one account's cache in step with Gmail, sends queued changes and
+/// refreshes the account's identities and contacts.
 ///
 /// Passes run one at a time. A pass fetches first and then writes its changes
 /// with the new history cursor in one transaction, so a failed pass leaves the
@@ -39,6 +40,10 @@ public actor SyncEngine {
     static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
     /// Metadata fetched per request group during a full sync.
     static let fullSyncChunk = 100
+    /// How long a requested pass that found no history waits to run again.
+    static let emptyPassRetryDelay: Duration = .seconds(5)
+    /// How often identities and contacts refresh while the engine runs.
+    static let peopleRefreshInterval: Duration = .seconds(6 * 60 * 60)
 
     public nonisolated let events: AsyncStream<SyncEvent>
     let continuation: AsyncStream<SyncEvent>.Continuation
@@ -50,16 +55,35 @@ public actor SyncEngine {
     let gmail: any GmailService
     /// Filter, vacation and signature calls. Without them, settings rows wait.
     let settings: (any SettingsService)?
-    /// Where a signature Gmail accepted is recorded for compose. Without it,
-    /// the next identity refresh picks the signature up.
+    /// The send-as list. Without it, identities aren't refreshed.
+    let identities: (any IdentityService)?
+    /// Contact lists. Without them, contacts aren't synced.
+    let people: (any PeopleService)?
+    /// The config store, which keeps identities and signatures for compose
+    /// and says whether Contacts is on. Without it, identities aren't
+    /// refreshed, contacts aren't synced, and a signature Gmail accepted
+    /// isn't recorded.
     let accounts: AccountStore?
     let cache: MailCache
     let now: @Sendable () -> Date
+    let sleep: @Sendable (Duration) async throws -> Void
     let undoHold: TimeInterval
     let sendsAutomatically: Bool
 
-    private var pass: Task<Void, any Error>?
+    /// The running pass. It clears itself, so a caller that resumes after it
+    /// ends never joins a finished pass.
+    private var pass: Task<Bool, any Error>?
     private var pollTask: Task<Void, Never>?
+    private var peopleTask: Task<Void, Never>?
+    /// Runs the passes `requestSync()` asks for, then clears itself.
+    private(set) var requestedPasses: Task<Void, Never>?
+    /// Set by `requestSync()`, cleared as a requested pass starts.
+    private var passRequested = false
+    var contactSyncTask: Task<Void, any Error>?
+    var lastContactSyncAt: Date?
+    /// When each source's last full contact sync began, failed ones included.
+    /// Kept for the engine's lifetime only.
+    var fullContactSyncStarts: [ContactSource: Date] = [:]
     private var hasStarted = false
     private var writesInFlight = 0
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -92,18 +116,23 @@ public actor SyncEngine {
 
     /// - Parameters:
     ///   - settings: Defaults to `gmail` when it makes the settings calls.
+    ///   - identities: Defaults to `gmail` when it lists send-as addresses.
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
     ///   - sendsAutomatically: Tests turn this off and call `sendDueActions()` themselves.
+    ///   - sleep: Waits between retries. Tests replace it to skip the wait.
     public init(
         accountID: String,
         sender: EmailAddress,
         outgoingDirectory: URL,
         gmail: any GmailService,
         settings: (any SettingsService)? = nil,
+        identities: (any IdentityService)? = nil,
+        people: (any PeopleService)? = nil,
         accounts: AccountStore? = nil,
         cache: MailCache,
         undoHold: TimeInterval = 2,
         sendsAutomatically: Bool = true,
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.accountID = accountID
@@ -111,17 +140,21 @@ public actor SyncEngine {
         self.outgoingDirectory = outgoingDirectory
         self.gmail = gmail
         self.settings = settings ?? gmail as? any SettingsService
+        self.identities = identities ?? gmail as? any IdentityService
+        self.people = people
         self.accounts = accounts
         self.cache = cache
         self.undoHold = undoHold
         self.sendsAutomatically = sendsAutomatically
+        self.sleep = sleep
         self.now = now
         (events, continuation) = AsyncStream.makeStream(of: SyncEvent.self, bufferingPolicy: .bufferingNewest(16))
     }
 
     // MARK: Scheduling
 
-    /// Resumes interrupted sends and syncs now and every `pollInterval`.
+    /// Resumes interrupted sends, syncs now and every `pollInterval`, and
+    /// refreshes identities and contacts now and every 6 hours.
     public func start(pollInterval: Duration = .seconds(60)) async {
         guard !hasStarted, !isStopped else { return }
         hasStarted = true
@@ -145,11 +178,26 @@ public actor SyncEngine {
                 if self == nil { return }
             }
         }
+        peopleTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshPeople()
+                try? await Task.sleep(for: Self.peopleRefreshInterval)
+                if self == nil { return }
+            }
+        }
     }
 
-    /// Cancels polling, sending and any running pass, and returns once they
-    /// have finished, so the caller can delete the account's data safely. A
-    /// send that is already uploading finishes first, so its outcome is known.
+    /// Errors wait for the next run, since the window has no status for
+    /// identities or contacts.
+    private func refreshPeople() async {
+        try? await refreshIdentities()
+        try? await syncContacts()
+    }
+
+    /// Cancels polling, sending, refreshing and any running pass, and returns
+    /// once they have finished, so the caller can delete the account's data
+    /// safely. A send that is already uploading finishes first, so its
+    /// outcome is known.
     public func stop() async {
         stopRequested.withLock { $0 = true }
         isStoppingDrafts = true
@@ -159,12 +207,19 @@ public actor SyncEngine {
         isStopped = true
         pollTask?.cancel()
         pollTask = nil
+        let background = [peopleTask, requestedPasses].compactMap { $0 }
+        peopleTask = nil
+        background.forEach { $0.cancel() }
+        let contacts = contactSyncTask
+        contacts?.cancel()
         let drains = Array(drainTasks.values)
         drainTasks = [:]
         drains.forEach { $0.cancel() }
         let running = pass
         running?.cancel()
         for drain in drains { await drain.value }
+        for task in background { await task.value }
+        _ = try? await contacts?.value
         _ = try? await running?.value
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
@@ -174,6 +229,12 @@ public actor SyncEngine {
 
     /// Every engine write goes through here, so nothing lands after `stop()`.
     func write<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async throws -> T {
+        try await gated { try await cache.write(updates) }
+    }
+
+    /// Runs a write to the cache or the config store unless the engine has
+    /// stopped. `stop()` waits for it to finish.
+    func gated<T: Sendable>(_ write: () async throws -> T) async throws -> T {
         if isStopped || Task.isCancelled { throw CancellationError() }
         writesInFlight += 1
         defer {
@@ -184,46 +245,101 @@ public actor SyncEngine {
                 for waiter in waiters { waiter.resume() }
             }
         }
-        return try await cache.write(updates)
+        return try await write()
     }
 
     /// Runs a pass and reports the outcome on `events` instead of throwing.
     public func syncReportingErrors() async {
-        continuation.yield(.syncStarted)
-        do {
-            try await sync()
-            continuation.yield(.syncFinished(now()))
-        } catch is CancellationError {
-            return
-        } catch {
-            continuation.yield(.syncFailed(Self.message(for: error)))
-        }
+        _ = await reportingErrors { try await joinOrStartPass() }
     }
 
     /// Runs one pass, or waits for the pass already running.
     public func sync() async throws {
+        _ = try await joinOrStartPass()
+    }
+
+    /// Asks for a pass because something reported a change, such as an IMAP
+    /// signal. A pass already running may have started too early to see it,
+    /// so one more runs afterward, however many requests arrive meanwhile. A
+    /// requested pass that finds no history runs once more 5 seconds later,
+    /// since the signal can come before `history.list` shows the change.
+    public func requestSync() {
+        guard !isStopped else { return }
+        passRequested = true
+        guard requestedPasses == nil else { return }
+        requestedPasses = Task { await runRequestedPasses() }
+    }
+
+    private func runRequestedPasses() async {
+        defer { requestedPasses = nil }
+        var mayRetry = true
+        while passRequested, !isStopped {
+            let changed = await reportingErrors { try await freshPass() }
+            if passRequested {
+                mayRetry = true
+                continue
+            }
+            guard changed == false, mayRetry else { return }
+            mayRetry = false
+            do { try await sleep(Self.emptyPassRetryDelay) } catch { return }
+            // A request during the wait is served by the next pass, which may retry for it.
+            if passRequested { mayRetry = true }
+            passRequested = true
+        }
+    }
+
+    /// Runs a pass that starts after every request so far, waiting out any
+    /// pass already running. Requests that arrive meanwhile are served by it.
+    private func freshPass() async throws -> Bool {
+        while let running = pass { _ = try? await running.value }
+        passRequested = false
+        return try await joinOrStartPass()
+    }
+
+    /// Returns whether the pass found changes.
+    private func joinOrStartPass() async throws -> Bool {
         if isStopped { throw CancellationError() }
         if let pass { return try await pass.value }
-        let task = Task { try await runPass() }
+        let task = Task {
+            defer { pass = nil }
+            return try await runPass()
+        }
         pass = task
-        defer { pass = nil }
-        try await task.value
+        return try await task.value
+    }
+
+    /// Reports `pass` on `events`. Returns whether it found changes, or nil
+    /// when it failed or was cancelled.
+    private func reportingErrors(_ pass: () async throws -> Bool) async -> Bool? {
+        continuation.yield(.syncStarted)
+        do {
+            let changed = try await pass()
+            continuation.yield(.syncFinished(now()))
+            return changed
+        } catch is CancellationError {
+            return nil
+        } catch {
+            continuation.yield(.syncFailed(Self.message(for: error)))
+            return nil
+        }
     }
 
     // MARK: Passes
 
-    private func runPass() async throws {
+    /// Returns whether the pass found changes: history records, or a full sync.
+    private func runPass() async throws -> Bool {
         let passStart = now()
         let accountID = accountID
         let state = try await cache.read { tx in try tx.syncState(accountID: accountID) }
-        if let state {
-            if try await incrementalSync(from: state.historyID, passStart: passStart) == nil {
-                try await fullSync(reset: true)
-            }
+        let changed: Bool
+        if let state, let found = try await incrementalSync(from: state.historyID, passStart: passStart) {
+            changed = found
         } else {
-            try await fullSync(reset: false)
+            try await fullSync(reset: state != nil)
+            changed = true
         }
         try await releaseExpiredHolds()
+        return changed
     }
 
     /// Lists INBOX, the last 30 days and every draft and stores their metadata,
