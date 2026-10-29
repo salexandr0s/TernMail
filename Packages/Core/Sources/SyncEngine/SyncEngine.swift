@@ -22,7 +22,8 @@ enum SyncError: Error, Equatable {
 /// with the new history cursor in one transaction, so a failed pass leaves the
 /// cursor where it was.
 public actor SyncEngine {
-    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date"]
+    /// The threading headers let a reply answer a message without fetching it.
+    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"]
     static let inboxCap = 5000
     static let recentQuery = "newer_than:30d"
     /// Metadata fetched per request group during a full sync.

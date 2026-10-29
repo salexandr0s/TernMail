@@ -28,6 +28,12 @@ public protocol GmailService: Sendable {
     func trashThreads(ids: [String]) async throws -> [String: GmailError]
     func untrashThreads(ids: [String]) async throws -> [String: GmailError]
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws
+    func drafts(query: String?, pageToken: String?, maxResults: Int) async throws -> DraftListPage
+    func draft(id: String, format: MessageFormat) async throws -> GmailDraft
+    func createDraft(_ message: OutgoingMessage) async throws -> GmailDraft
+    func updateDraft(id: String, with message: OutgoingMessage) async throws -> GmailDraft
+    func sendDraft(id: String, with message: OutgoingMessage) async throws -> GmailMessage
+    func deleteDraft(id: String) async throws
 }
 
 extension GmailClient: GmailService {}
@@ -61,7 +67,11 @@ enum Mapping {
             recipients: message.header("To") ?? "",
             cc: message.header("Cc"),
             subject: message.header("Subject") ?? "",
-            sizeEstimate: message.sizeEstimate ?? 0
+            sizeEstimate: message.sizeEstimate ?? 0,
+            rfcMessageID: message.header("Message-ID").flatMap { OriginalMessage.messageIDs(in: $0).first },
+            inReplyTo: message.header("In-Reply-To").flatMap { OriginalMessage.messageIDs(in: $0).first },
+            referencesHeader: message.header("References"),
+            replyTo: message.header("Reply-To")
         )
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }

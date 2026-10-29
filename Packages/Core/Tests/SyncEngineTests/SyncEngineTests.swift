@@ -223,7 +223,7 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         // The inverse can't overtake the request in flight.
         #expect(await engine.sendDueActions() == 0)
         await gmail.release()
-        await sending.value
+        _ = await sending.value
 
         #expect(try await pendingActions(cache).map(\.kind) == [.modifyMessages])
         await engine.sendDueActions()
@@ -669,6 +669,108 @@ actor FakeGmail: GmailService {
 
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws {
         try await record(Change("batchModify", ids, add: addLabelIDs, remove: removeLabelIDs))
+    }
+
+    // MARK: Drafts
+
+    /// Draft calls in order, such as "create", "update D1", "send D1" and "delete D1".
+    private(set) var draftCalls: [String] = []
+    private(set) var uploads: [OutgoingMessage] = []
+    /// Gmail's drafts, by ID, with the message each holds.
+    private(set) var draftsByID: [String: (messageID: String, threadID: String)] = [:]
+    private var nextID = 1
+    private var draftErrors: [String: GmailError] = [:]
+    private var draftListings: [String: [String]] = [:]
+
+    /// The next call of `kind` ("create", "update", "send", "delete") fails
+    /// with `error`. With `afterApplying`, Gmail applies it first, as when a
+    /// response is lost.
+    func failNextDraftCall(_ kind: String, with error: GmailError, afterApplying: Bool = false) {
+        draftErrors[kind] = error
+        draftErrorsAfterApplying = afterApplying
+    }
+    private var draftErrorsAfterApplying = false
+
+    func deleteDraftElsewhere(_ id: String) { draftsByID[id] = nil }
+    func setDraftSearch(_ query: String, ids: [String]) { draftListings[query] = ids }
+
+    private func draftCall(_ kind: String, _ call: String, apply: () -> Void) async throws {
+        if holdsNextChange {
+            holdsNextChange = false
+            await withCheckedContinuation { held = $0 }
+        }
+        draftCalls.append(call)
+        if let error = draftErrors.removeValue(forKey: kind) {
+            if draftErrorsAfterApplying { apply() }
+            throw error
+        }
+        apply()
+    }
+
+    private func storeDraftMessage(_ upload: OutgoingMessage, labels: [String]) -> GmailMessage? {
+        let id = "msg\(nextID)"
+        let thread = upload.threadID ?? "thread\(nextID)"
+        nextID += 1
+        let message = try? gmailMessage(id, thread: thread, labels: labels, historyID: 300 + nextID, minutes: 10)
+        messagesByID[id] = message
+        return message
+    }
+
+    func drafts(query: String?, pageToken: String?, maxResults: Int) throws -> DraftListPage {
+        let ids = query.flatMap { draftListings[$0] } ?? draftsByID.keys.sorted()
+        let entries = ids.compactMap { id in draftsByID[id].map { #"{"id":"\#(id)","message":{"id":"\#($0.messageID)","threadId":"\#($0.threadID)"}}"# } }
+        return try decode(DraftListPage.self, #"{"drafts":[\#(entries.joined(separator: ","))]}"#)
+    }
+
+    func draft(id: String, format: MessageFormat) throws -> GmailDraft {
+        guard let stored = draftsByID[id], let message = messagesByID[stored.messageID] else { throw GmailError.notFound }
+        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":\#(try encodedMessage(message.id, thread: message.threadId, labels: message.labelIds ?? []))}"#)
+    }
+
+    func createDraft(_ message: OutgoingMessage) async throws -> GmailDraft {
+        let id = "D\(nextID)"
+        var stored: GmailMessage?
+        try await draftCall("create", "create") {
+            uploads.append(message)
+            stored = storeDraftMessage(message, labels: [SystemLabel.draft])
+            if let stored { draftsByID[id] = (stored.id, stored.threadId) }
+        }
+        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":{"id":"\#(stored?.id ?? "")","threadId":"\#(stored?.threadId ?? "")"}}"#)
+    }
+
+    func updateDraft(id: String, with message: OutgoingMessage) async throws -> GmailDraft {
+        var stored: GmailMessage?
+        try await draftCall("update", "update \(id)") {
+            guard let old = draftsByID[id] else { return }
+            uploads.append(message)
+            messagesByID[old.messageID] = nil
+            stored = storeDraftMessage(OutgoingMessage(raw: message.raw, threadID: old.threadID), labels: [SystemLabel.draft])
+            if let stored { draftsByID[id] = (stored.id, stored.threadId) }
+        }
+        guard let stored else { throw GmailError.notFound }
+        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":{"id":"\#(stored.id)","threadId":"\#(stored.threadId)"}}"#)
+    }
+
+    func sendDraft(id: String, with message: OutgoingMessage) async throws -> GmailMessage {
+        var sent: GmailMessage?
+        try await draftCall("send", "send \(id)") {
+            guard let old = draftsByID.removeValue(forKey: id) else { return }
+            uploads.append(message)
+            messagesByID[old.messageID] = nil
+            sent = storeDraftMessage(OutgoingMessage(raw: message.raw, threadID: old.threadID), labels: [SystemLabel.sent])
+        }
+        guard let sent else { throw GmailError.notFound }
+        return sent
+    }
+
+    func deleteDraft(id: String) async throws {
+        var found = false
+        try await draftCall("delete", "delete \(id)") {
+            guard let old = draftsByID.removeValue(forKey: id) else { return }
+            messagesByID[old.messageID] = nil
+            found = true
+        }
+        if !found { throw GmailError.notFound }
     }
 }
 
