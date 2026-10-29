@@ -5,7 +5,8 @@ struct TernApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        // One window: selection and undo live in the shared mailbox model.
+        Window("Tern", id: "main") {
             RootView()
                 .environment(model)
                 .task { await model.start() }
@@ -29,6 +30,9 @@ struct RootView: View {
         case .signedIn:
             if let mailbox = model.mailbox {
                 MainView(mailbox: mailbox)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         case .failed(let message):
             ContentUnavailableView(

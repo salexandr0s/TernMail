@@ -90,13 +90,23 @@ struct MessageWebView: NSViewRepresentable {
     }
 }
 
-/// Passes scroll events to the enclosing scroll view and reports width
-/// changes, which reflow the message and change its height.
+/// Passes vertical scrolling to the enclosing scroll view, keeps horizontal
+/// scrolling for mail wider than the pane, and reports width changes, which
+/// reflow the message and change its height.
 final class ContentSizedWebView: WKWebView {
     var onWidthChange: (() -> Void)?
+    private var scrollsHorizontally = false
 
     override func scrollWheel(with event: NSEvent) {
-        nextResponder?.scrollWheel(with: event)
+        // A trackpad gesture keeps the direction it started with; a mouse wheel decides per event.
+        if event.phase == .began || (event.phase.isEmpty && event.momentumPhase.isEmpty) {
+            scrollsHorizontally = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        }
+        if scrollsHorizontally {
+            super.scrollWheel(with: event)
+        } else {
+            nextResponder?.scrollWheel(with: event)
+        }
     }
 
     override func setFrameSize(_ newSize: NSSize) {

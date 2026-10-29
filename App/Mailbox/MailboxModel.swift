@@ -50,6 +50,9 @@ final class MailboxModel {
     @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var threadLimit = pageSize
     @ObservationIgnored private var undoneActionIDs = Set<Int64>()
+    /// Edit > Undo entries by action ID, so undoing from the notice can remove one.
+    @ObservationIgnored private var undoEntries: [Int64: UndoEntry] = [:]
+    @ObservationIgnored private var isStopped = false
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
 
@@ -61,6 +64,7 @@ final class MailboxModel {
 
     func start() async {
         hasSyncedOnce = (try? await cache.syncState(accountID: account.id)) != nil
+        guard !isStopped else { return }
         let labelStream = cache.labels(accountID: account.id)
         let events = engine.events
         tasks.append(Task { [weak self] in
@@ -77,12 +81,17 @@ final class MailboxModel {
         await engine.start()
     }
 
-    func stop() {
+    /// Returns once the engine has stopped writing to the cache.
+    func stop() async {
+        isStopped = true
         tasks.forEach { $0.cancel() }
         tasks = []
         threadsTask?.cancel()
-        let engine = engine
-        Task { await engine.stop() }
+        for entry in undoEntries.values {
+            undoManager?.removeAllActions(withTarget: entry)
+        }
+        undoEntries = [:]
+        await engine.stop()
     }
 
     func syncNow() {
@@ -139,20 +148,26 @@ final class MailboxModel {
         let engine = engine
         Task {
             do {
-                guard let row = try await engine.perform(action, threadIDs: ids) else { return }
+                guard let row = try await engine.perform(action, threadIDs: ids), !isStopped else { return }
                 registerUndo(row, name: Self.undoName(action))
                 if let message = Self.confirmation(action, count: ids.count) {
                     notice = Notice(message: message, undo: row)
                 }
             } catch {
+                guard !isStopped else { return }
                 notice = Notice(message: "Tern couldn't save that change.", undo: nil, isError: true)
             }
         }
     }
 
+    /// Reverts an action, from the notice, a menu or Edit > Undo.
     func undo(_ row: PendingAction) {
         if let id = row.id {
             guard undoneActionIDs.insert(id).inserted else { return }
+            // Undone from somewhere else: drop its Edit > Undo entry so the menu stays in step.
+            if let entry = undoEntries.removeValue(forKey: id), let undoManager, !undoManager.isUndoing {
+                undoManager.removeAllActions(withTarget: entry)
+            }
         }
         if notice?.undo == row { notice = nil }
         let engine = engine
@@ -238,9 +253,12 @@ final class MailboxModel {
     }
 
     private func registerUndo(_ row: PendingAction, name: String) {
-        guard let undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { model in
-            MainActor.assumeIsolated { model.undo(row) }
+        guard let undoManager, let id = row.id else { return }
+        let entry = UndoEntry()
+        undoEntries[id] = entry
+        undoManager.registerUndo(withTarget: entry) { [weak self] _ in
+            // The window's undo manager only runs its handlers on the main thread.
+            MainActor.assumeIsolated { self?.undo(row) }
         }
         undoManager.setActionName(name)
     }
@@ -266,6 +284,10 @@ final class MailboxModel {
         }
     }
 }
+
+/// The target of one Edit > Undo entry. The model keeps it alive until the
+/// entry is used or removed.
+private final class UndoEntry {}
 
 /// Gmail's system labels in sidebar order.
 struct SystemMailbox: Identifiable {

@@ -165,11 +165,13 @@ private struct MessageView: View {
     }
 
     /// Sanitizing can take a moment on large mail, so it runs off the main actor.
+    /// Without the rule list that blocks remote loads, only text is shown.
     private func render() async {
         guard let body = message.body else { return }
         let extracted = ExtractedBody(html: body.html, plainText: body.plainText)
+        let textOnly = blocker == nil
         let result = await Task.detached(priority: .userInitiated) {
-            MessageDocument.render(extracted)
+            textOnly ? MessageDocument.renderText(extracted) : MessageDocument.render(extracted)
         }.value
         rendered = result
         hasNoText = result == nil
