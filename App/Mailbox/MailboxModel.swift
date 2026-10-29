@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import MessageContent
 import Observation
 import SyncEngine
 
@@ -68,10 +69,17 @@ final class MailboxModel {
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
 
-    init(account: AccountRecord, cache: MailCache, gmail: any GmailService) {
+    /// `outgoingDirectory` holds copies of the files attached to drafts.
+    init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL) {
         self.account = account
         self.cache = cache
-        self.engine = SyncEngine(accountID: account.id, gmail: gmail, cache: cache)
+        self.engine = SyncEngine(
+            accountID: account.id,
+            sender: EmailAddress(name: account.displayName, address: account.email),
+            outgoingDirectory: outgoingDirectory,
+            gmail: gmail,
+            cache: cache
+        )
     }
 
     func start() async {
@@ -284,8 +292,10 @@ final class MailboxModel {
             hasSyncedOnce = true
         case .syncFailed(let message):
             syncStatus = .failed(message)
-        case .actionFailed(let message):
+        case .actionFailed(let message), .draftFailed(_, let message):
             notice = Notice(message: message, undo: nil, isError: true)
+        case .draftSent:
+            break
         }
     }
 

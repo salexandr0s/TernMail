@@ -19,7 +19,7 @@ import Testing
     @Test func archiveKeepsSelectionOutsideInboxAndObservationsRemoveStaleSelection() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
-        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
         await mailbox.start()
         try await waitUntil { mailbox.hasSyncedOnce && !mailbox.threads.isEmpty }
         mailbox.selectedLabelID = SystemLabel.allMail
@@ -43,7 +43,7 @@ import Testing
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
-        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
         let manager = UndoManager()
         manager.groupsByEvent = false
         mailbox.undoManager = manager
@@ -67,7 +67,7 @@ import Testing
     @Test func undoTargetsAreBoundedAndReleasedWhenTheMailboxStops() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
-        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
         let manager = UndoManager()
         manager.groupsByEvent = false
         mailbox.undoManager = manager

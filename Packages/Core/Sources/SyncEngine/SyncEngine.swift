@@ -10,6 +10,11 @@ public enum SyncEvent: Sendable, Equatable {
     case syncFailed(String)
     /// Gmail refused a change for good, so the cache put the thread back.
     case actionFailed(String)
+    /// A draft was sent.
+    case draftSent(localDraftID: String)
+    /// Gmail refused a draft, or it was sent or deleted in another app. The
+    /// draft is back to editing, and its window shows `message`.
+    case draftFailed(localDraftID: String, message: String)
 }
 
 enum SyncError: Error, Equatable {
@@ -32,6 +37,10 @@ public actor SyncEngine {
     public nonisolated let events: AsyncStream<SyncEvent>
     let continuation: AsyncStream<SyncEvent>.Continuation
     let accountID: String
+    /// The From address of every draft.
+    let sender: EmailAddress
+    /// Where compose windows copy attached files. `OutgoingAttachment.path` is relative to it.
+    let outgoingDirectory: URL
     let gmail: any GmailService
     let cache: MailCache
     let now: @Sendable () -> Date
@@ -43,8 +52,15 @@ public actor SyncEngine {
     private var hasStarted = false
     private var writesInFlight = 0
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
-    var drainTask: Task<Void, Never>?
-    var wakeRequested = false
+    var drainTasks: [PendingAction.Lane: Task<Void, Never>] = [:]
+    var wakeRequests = Set<PendingAction.Lane>()
+    /// The draft row being uploaded, so `stop()` can let a send finish.
+    var draftRowInFlight: PendingAction.Kind?
+    /// Set by `stop()`: the compose lane starts no further rows.
+    var isStoppingDrafts = false
+    /// Earliest next save per local draft. Large messages save at most every
+    /// `largeSaveInterval`, since each save uploads the attachments again.
+    var nextLargeSave: [String: Date] = [:]
     /// Undo receipts exist only for this engine's lifetime. Remember rejected
     /// and consumed row IDs even after history has removed the queue rows.
     var unavailableUndoIDs = Set<Int64>()
@@ -53,13 +69,15 @@ public actor SyncEngine {
     /// Accessed only inside the cache's serialized writes. The lock safely
     /// carries deletion knowledge into their Sendable closures. Gmail message
     /// IDs are never reused; forgetting one could resurrect deleted mail.
-    private let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
+    let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// - Parameters:
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
     ///   - sendsAutomatically: Tests turn this off and call `sendDueActions()` themselves.
     public init(
         accountID: String,
+        sender: EmailAddress,
+        outgoingDirectory: URL,
         gmail: any GmailService,
         cache: MailCache,
         undoHold: TimeInterval = 2,
@@ -67,6 +85,8 @@ public actor SyncEngine {
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.accountID = accountID
+        self.sender = sender
+        self.outgoingDirectory = outgoingDirectory
         self.gmail = gmail
         self.cache = cache
         self.undoHold = undoHold
@@ -101,17 +121,22 @@ public actor SyncEngine {
     }
 
     /// Cancels polling, sending and any running pass, and returns once they
-    /// have finished, so the caller can delete the account's data safely.
+    /// have finished, so the caller can delete the account's data safely. A
+    /// send that is already uploading finishes first, so its outcome is known.
     public func stop() async {
+        isStoppingDrafts = true
+        if draftRowInFlight == .sendDraft, let compose = drainTasks[.compose] {
+            await compose.value
+        }
         isStopped = true
         pollTask?.cancel()
         pollTask = nil
-        let drain = drainTask
-        drainTask = nil
-        drain?.cancel()
+        let drains = Array(drainTasks.values)
+        drainTasks = [:]
+        drains.forEach { $0.cancel() }
         let running = pass
         running?.cancel()
-        await drain?.value
+        for drain in drains { await drain.value }
         _ = try? await running?.value
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
@@ -316,7 +341,7 @@ public actor SyncEngine {
 
     /// Metadata for `ids`, plus the IDs Gmail no longer has. Any other failed
     /// part fails the pass.
-    private func fetchMetadata(
+    func fetchMetadata(
         _ ids: [String]
     ) async throws -> (updates: [CacheTransaction.MessageUpdate], missing: Set<String>) {
         guard !ids.isEmpty else { return ([], []) }

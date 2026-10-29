@@ -187,40 +187,49 @@ extension SyncEngine {
 
     // MARK: Sending
 
-    /// Starts the send loop if it isn't running.
+    /// Starts a send loop for each lane that isn't running.
     func scheduleSending() {
         guard sendsAutomatically, !isStopped else { return }
-        wakeRequested = true
-        if drainTask == nil {
-            drainTask = Task { await drainQueue() }
+        for lane in [PendingAction.Lane.labels, .compose] {
+            wakeRequests.insert(lane)
+            if drainTasks[lane] == nil {
+                drainTasks[lane] = Task { await drainQueue(lane) }
+            }
         }
     }
 
-    /// Sends due rows until the queue is empty, checking each second for new
-    /// rows, undos and the end of a backoff.
-    private func drainQueue() async {
+    /// Sends a lane's due rows until it is empty, checking each second for
+    /// new rows, undos and the end of a backoff.
+    private func drainQueue(_ lane: PendingAction.Lane) async {
         let accountID = accountID
-        while !Task.isCancelled {
-            wakeRequested = false
+        while !Task.isCancelled, !(lane == .compose && isStoppingDrafts) {
+            wakeRequests.remove(lane)
             let next = try? await cache.read { tx in
                 try tx.pendingActions(accountID: accountID)
-                    .filter { $0.state == .queued && $0.kind.lane == .labels }
+                    .filter { $0.state == .queued && $0.kind.lane == lane }
                     .map(\.notBefore).min()
             }
             guard let next = next ?? nil else {
                 // A row queued while the read was in flight sets the flag again.
-                if wakeRequested { continue }
+                if wakeRequests.contains(lane) { continue }
                 break
             }
             let wait = next.timeIntervalSince(now())
             if wait > 0 {
                 try? await Task.sleep(for: .seconds(min(wait, 1)))
-            } else if await sendDueActions() == 0 {
-                // Every due row waits behind an older change to its thread.
+            } else if await sendDue(lane) == 0 {
+                // Every due row waits behind an older change to its thread or draft.
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-        drainTask = nil
+        drainTasks[lane] = nil
+    }
+
+    private func sendDue(_ lane: PendingAction.Lane) async -> Int {
+        switch lane {
+        case .labels: await sendDueActions()
+        case .compose: await sendDueDrafts()
+        }
     }
 
     /// Sends every queued row whose hold or backoff has passed and returns how
@@ -333,7 +342,7 @@ extension SyncEngine {
         return .retry(String(describing: type(of: error)))
     }
 
-    private static func shouldRetry(_ error: GmailError) -> Bool {
+    static func shouldRetry(_ error: GmailError) -> Bool {
         // An unreadable response does not establish that Gmail rejected the
         // mutation. Keep intent and undo just as for a lost network response.
         switch error {

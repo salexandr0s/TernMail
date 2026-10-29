@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MessageContent
 import os
 import Testing
 @testable import SyncEngine
@@ -511,6 +512,155 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 // MARK: Fixtures
 
+@Suite struct ComposeQueueTests {
+    @Test func savesCreateOneDraftThenUpdateIt() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        #expect(await engine.sendDueDrafts() == 1)
+        var content = draft.content
+        content.subject = "Re: Lunch on Friday"
+        try await engine.saveDraft(draft.id, content: content)
+        #expect(await engine.sendDueDrafts() == 1)
+
+        #expect(await gmail.draftCalls == ["create", "update D1"])
+        let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
+        #expect(stored.gmailDraftID == "D1")
+        #expect(stored.savedRevision == stored.revision)
+        // The update replaced the first message, so the thread holds one.
+        let messages = try await cache.read { tx in try tx.messages(threadID: "thread1", accountID: account) }
+        #expect(messages.map(\.id) == ["msg2"])
+        let raw = String(decoding: try #require(await gmail.uploads.last).raw, as: UTF8.self)
+        #expect(raw.contains("Subject: Re: Lunch on Friday"))
+        #expect(raw.contains("In-Reply-To: <original@example.com>"))
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func undoSendCancelsBeforeTheDelayEnds() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        #expect(try await engine.sendDraft(draft.id, delay: 10))
+        #expect(await engine.sendDueDrafts() == 0)
+        #expect(try await engine.undoSend(draft.id))
+        clock.advance(11)
+        #expect(await engine.sendDueDrafts() == 0)
+
+        #expect(await gmail.draftCalls.isEmpty)
+        let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(stored?.state == .editing)
+    }
+
+    @Test func sendUploadsAttachmentsAndRemovesTheDraft() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        let folder = await engine.outgoingDirectory.appending(path: draft.id, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("agenda".utf8).write(to: folder.appending(path: "notes.txt"))
+        let attachment = OutgoingAttachment(localDraftID: draft.id, filename: "notes.txt", mimeType: "text/plain", size: 6, path: "\(draft.id)/notes.txt")
+        #expect(try await engine.addAttachment(attachment) != nil)
+        try await engine.sendDraft(draft.id, delay: 10)
+        clock.advance(10)
+        #expect(await engine.sendDueDrafts() == 1)
+
+        // A draft that never reached Gmail is saved before it's sent.
+        #expect(await gmail.draftCalls == ["create", "send D1"])
+        let raw = String(decoding: try #require(await gmail.uploads.last).raw, as: UTF8.self)
+        #expect(raw.contains("notes.txt"))
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+        #expect(try await threadIDs(cache, SystemLabel.sent) == ["thread1"])
+        await engine.stop()
+        var events: [SyncEvent] = []
+        for await event in engine.events { events.append(event) }
+        #expect(events == [.draftSent(localDraftID: draft.id)])
+    }
+
+    @Test func aRepeatedSendThatFindsTheDraftGoneCountsAsSent() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        // Gmail sends it, but the response is lost.
+        await gmail.failNextDraftCall("send", with: .transport(.networkConnectionLost), afterApplying: true)
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+        #expect(try await pendingActions(cache).first?.lastError != nil)
+        clock.advance(10)
+        await engine.sendDueDrafts()
+
+        #expect(await gmail.draftCalls == ["create", "send D1", "send D1"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func aFirstSendThatFindsTheDraftGoneReturnsItToEditing() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        await gmail.deleteDraftElsewhere("D1")
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+
+        let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
+        #expect(stored.state == .editing)
+        #expect(stored.gmailDraftID == nil)
+        #expect(stored.sendError == "This draft was sent or deleted in another app.")
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func aLostCreateResponseAdoptsTheDraftGmailMade() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        await gmail.failNextDraftCall("create", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        await gmail.setDraftSearch("rfc822msgid:draft1@example.com", ids: ["D1"])
+        clock.advance(10)
+        await engine.sendDueDrafts()
+
+        #expect(await gmail.draftCalls == ["create", "update D1"])
+        let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(stored?.gmailDraftID == "D1")
+    }
+
+    @Test func aRefusedSendReturnsTheDraftToEditingWithAMessage() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        await gmail.failNextDraftCall("create", with: .http(status: 400, reason: "invalidArgument"))
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+
+        let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(stored?.state == .editing)
+        #expect(stored?.sendError == "Gmail didn't send this message. Check the recipients and try again.")
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+}
+
+private func makeDraft() -> LocalDraft {
+    LocalDraft(
+        accountID: account,
+        kind: .reply,
+        content: DraftContent(
+            to: [EmailAddress(name: "Ana", address: "ana@example.com")],
+            subject: "Re: Lunch",
+            body: ComposeDocument(plainText: "Sounds good.")
+        ),
+        rfcMessageID: "<draft1@example.com>",
+        inReplyTo: "<original@example.com>",
+        references: ["<original@example.com>"],
+        now: baseDate
+    )
+}
+
 struct Change: Equatable, CustomStringConvertible {
     let kind: String
     let ids: [String]
@@ -788,7 +938,15 @@ private func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, Tes
     let cache = try MailCache.inMemory()
     let gmail = FakeGmail()
     let clock = TestClock()
-    let engine = SyncEngine(accountID: account, gmail: gmail, cache: cache, sendsAutomatically: false, now: clock.now)
+    let engine = SyncEngine(
+        accountID: account,
+        sender: EmailAddress(name: "Me", address: "me@example.com"),
+        outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: "TernTests-\(UUID().uuidString)", directoryHint: .isDirectory),
+        gmail: gmail,
+        cache: cache,
+        sendsAutomatically: false,
+        now: clock.now
+    )
     return (engine, cache, gmail, clock)
 }
 

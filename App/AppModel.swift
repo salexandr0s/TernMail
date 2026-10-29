@@ -27,6 +27,8 @@ final class AppModel {
     let auth = GoogleAuth(configuration: .fromBundle())
     private(set) var cache: MailCache?
     private var accounts: AccountStore?
+    /// Copies of the files attached to drafts, kept until the draft is sent or discarded.
+    private var outgoingDirectory: URL?
     /// Mailboxes still stopping, so data is deleted only after they finish.
     private var closing: Task<Void, Never>?
 
@@ -41,7 +43,8 @@ final class AppModel {
                 try await accounts.save(account)
                 self.cache = cache
                 self.accounts = accounts
-                let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+                let outgoing = FileManager.default.temporaryDirectory.appending(path: "Tern-UIAudit-Outgoing", directoryHint: .isDirectory)
+                let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)
                 self.mailbox = mailbox
                 phase = .signedIn(account)
                 Task { await mailbox.start() }
@@ -51,6 +54,7 @@ final class AppModel {
             let directory = try Self.dataDirectory()
             let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
             cache = try MailCache.open(at: directory.appending(path: "cache.sqlite"))
+            outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
             auth.onSignInRequired = { [weak self] in self?.sessionExpired() }
 
@@ -115,9 +119,9 @@ final class AppModel {
     }
 
     private func openMailbox(for account: AccountRecord) async {
-        guard let cache else { return }
+        guard let cache, let outgoingDirectory else { return }
         await closeMailbox()
-        let mailbox = MailboxModel(account: account, cache: cache, gmail: GmailClient(tokens: auth))
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: GmailClient(tokens: auth), outgoingDirectory: outgoingDirectory)
         self.mailbox = mailbox
         phase = .signedIn(account)
         Task { await mailbox.start() }
