@@ -56,9 +56,41 @@ import Testing
         model.start()
         try await waitUntil { model.phase == .open }
 
+        // Closed while the file is still being copied in.
         model.attach([.data(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain")])
-        try await waitUntil { model.attachments.map(\.filename) == ["agenda.txt"] }
         model.windowClosed()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while try await cache.read({ try $0.localDraft(id: id) })?.gmailDraftID == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.gmailDraftID != nil)
+        await mailbox.stop()
+    }
+
+    @Test func undoingADiscardBringsBackTheLastEdits() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+
+        model.content.subject = "Plan"
+        #expect(await model.discard())
+        #expect(await mailbox.undoDiscard(id))
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
+        await mailbox.stop()
+    }
+
+    @Test func quittingStoresAnOpenDraftAndSavesItToGmail() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+
+        model.content.subject = "Plan"
+        await mailbox.prepareToQuit()
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while try await cache.read({ try $0.localDraft(id: id) })?.gmailDraftID == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))

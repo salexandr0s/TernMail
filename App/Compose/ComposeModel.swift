@@ -76,6 +76,13 @@ final class ComposeModel {
     var isEditingLink = false
     private(set) var storeError: String?
     private(set) var hasPendingEdits = false
+    /// Changed in this window, so closing it keeps the draft. The stored
+    /// revision can trail a store that just finished, so it can't tell.
+    @ObservationIgnored private var isTouched = false
+    /// Changed since the last save to Gmail was asked for.
+    @ObservationIgnored private var changedSinceSave = false
+    /// Files still being copied into the draft, which `attachments` doesn't list yet.
+    @ObservationIgnored private var attachmentsInProgress = 0
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
     @ObservationIgnored private var isApplyingStoredContent = false
@@ -122,6 +129,7 @@ final class ComposeModel {
 
     func start() {
         guard observation == nil, phase == .loading else { return }
+        mailbox.composeOpened(self)
         droppedFormatting = mailbox.takeDroppedFormatting(localDraftID)
         let stream = mailbox.cache.draftActivity(localDraftID: localDraftID)
         observation = Task { [weak self] in
@@ -188,8 +196,9 @@ final class ComposeModel {
         cancelTimers()
         let engine = mailbox.engine
         let id = localDraftID
-        let queued = await serially {
-            (try? await engine.discardDraft(id, hold: Self.discardHold)) ?? false
+        // Stores the last edits too, so Undo brings them back.
+        let queued = await serially { [self] in
+            (try? await engine.discardDraft(id, content: content, hold: Self.discardHold)) ?? false
         }.value
         if queued {
             mailbox.didQueueDiscard(id, hold: Self.discardHold)
@@ -201,10 +210,13 @@ final class ComposeModel {
     /// Copies the files into the draft, one at a time, in order.
     func attach(_ items: [Attachable]) {
         guard isEditable, !items.isEmpty else { return }
+        markChanged()
         let engine = mailbox.engine
         let id = localDraftID
         for item in items {
+            attachmentsInProgress += 1
             serially { [self] in
+                defer { attachmentsInProgress -= 1 }
                 do {
                     switch item {
                     case .file(let url):
@@ -224,6 +236,7 @@ final class ComposeModel {
 
     func removeAttachment(_ attachment: OutgoingAttachment) {
         guard isEditable, let rowID = attachment.id else { return }
+        markChanged()
         let engine = mailbox.engine
         serially { [self] in
             do {
@@ -245,18 +258,31 @@ final class ComposeModel {
     /// away; anything else stays in Drafts.
     func windowClosed() {
         observation?.cancel()
-        guard isEditable, let draft else { return }
+        guard isEditable else { return }
         phase = .closed
+        keepOrDiscard()
+    }
+
+    /// Before quitting: keeps or discards the draft as closing the window
+    /// would, then waits until that is stored. A kept draft goes to Gmail,
+    /// so it shows in Drafts even when its window isn't restored.
+    func prepareToQuit() async {
+        if isEditable { keepOrDiscard() }
+        await lastWrite?.value
+    }
+
+    private func keepOrDiscard() {
+        guard let draft else { return }
         let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
             && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
-            && attachments.isEmpty
-        let untouched = draft.revision == 0 && !hasPendingEdits
+            && attachments.isEmpty && attachmentsInProgress == 0
+        let untouched = draft.revision == 0 && !isTouched
         if draft.gmailDraftID == nil, untouched || isBlank {
             cancelTimers()
             let engine = mailbox.engine
             let id = localDraftID
             serially { _ = try? await engine.discardDraft(id, hold: 0) }
-        } else if hasPendingEdits || draft.hasUnsavedChanges {
+        } else if changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges {
             saveNow()
         }
     }
@@ -264,6 +290,7 @@ final class ComposeModel {
     private func saveNow() {
         cancelTimers()
         unsavedSince = nil
+        changedSinceSave = false
         let engine = mailbox.engine
         let id = localDraftID
         serially { [self] in
@@ -321,8 +348,14 @@ final class ComposeModel {
         isApplyingStoredContent = false
     }
 
+    private func markChanged() {
+        isTouched = true
+        changedSinceSave = true
+    }
+
     private func contentChanged() {
         guard isEditable else { return }
+        markChanged()
         hasPendingEdits = true
         if storeTask == nil {
             storeTask = Task { [weak self] in
@@ -353,7 +386,7 @@ final class ComposeModel {
     /// A new message that is still blank stays on this Mac.
     private var shouldSaveToGmail: Bool {
         draft?.gmailDraftID != nil || !content.to.isEmpty || !content.cc.isEmpty || !content.bcc.isEmpty
-            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty
+            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty || attachmentsInProgress > 0
     }
 
     private func store() {

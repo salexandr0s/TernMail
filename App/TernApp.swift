@@ -31,15 +31,20 @@ struct TernApp: App {
     }
 }
 
-/// Owns the app model, so quitting can send messages still waiting to go.
+/// Owns the app model, so quitting can store open drafts and send messages
+/// still waiting to go.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let waiting = model.waitingSendCount
-        guard waiting > 0 else { return .terminateNow }
         Task {
+            await model.prepareToQuit()
+            let waiting = model.waitingSendCount
+            guard waiting > 0 else {
+                sender.reply(toApplicationShouldTerminate: true)
+                return
+            }
             let sent = await model.sendWaitingMessages()
             let unsent = model.waitingSendCount
             sender.reply(toApplicationShouldTerminate: sent || Self.confirmQuit(unsent: unsent > 0 ? unsent : waiting))
