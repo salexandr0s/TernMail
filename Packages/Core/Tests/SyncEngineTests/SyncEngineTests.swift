@@ -171,6 +171,24 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func threadLoadPreservesLaterUnreadIntentAndConcurrentDeletions() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread]), ("m2", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.setThread(try decode(GmailThread.self, """
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1", labels: [SystemLabel.inbox, SystemLabel.unread])),\(try encodedMessage("m2", thread: "t1"))]}
+            """))
+        await gmail.holdNextThread()
+        let loading = Task { try await engine.openThread("t1") }
+        while await !gmail.isHoldingThread { await Task.yield() }
+        try await engine.perform(.markUnread, threadIDs: ["t1"])
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"120","history":[{"id":"110","messagesDeleted":[{"message":{"id":"m2","threadId":"t1"}}]}]}"#))
+        try await engine.sync()
+        await gmail.releaseThread()
+        try await loading.value
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1"])
+        #expect(try await cache.read { tx in try tx.thread(id: "t1", accountID: account)?.isUnread } == true)
+    }
+
     @Test func textStoredAsAnAttachmentLoadsWithoutDownloadingAttachedFiles() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
@@ -433,6 +451,8 @@ actor FakeGmail: GmailService {
     private var held: CheckedContinuation<Void, Never>?
     private var holdsMetadata = false
     private var heldMetadata: CheckedContinuation<Void, Never>?
+    private var holdsThread = false
+    private var heldThread: CheckedContinuation<Void, Never>?
     private var metadataErrors: [String: GmailError] = [:]
     private var omittedMetadataIDs = Set<String>()
     private(set) var metadataRequests: [[String]] = []
@@ -459,6 +479,9 @@ actor FakeGmail: GmailService {
     func failNextChange(with error: GmailError) { nextChangeError = error }
     func setChangeErrors(_ errors: [String: GmailError]) { changeErrors = errors }
     func holdNextMetadata() { holdsMetadata = true }
+    func holdNextThread() { holdsThread = true }
+    var isHoldingThread: Bool { heldThread != nil }
+    func releaseThread() { heldThread?.resume(); heldThread = nil }
     var isHoldingMetadata: Bool { heldMetadata != nil }
     func releaseMetadata() { heldMetadata?.resume(); heldMetadata = nil }
     func setMetadataErrors(_ errors: [String: GmailError]) { metadataErrors = errors }
@@ -518,6 +541,10 @@ actor FakeGmail: GmailService {
 
     func thread(id: String, format: MessageFormat) async throws -> GmailThread {
         guard let thread = threadsByID[id] else { throw GmailError.notFound }
+        if holdsThread {
+            holdsThread = false
+            await withCheckedContinuation { heldThread = $0 }
+        }
         return thread
     }
 

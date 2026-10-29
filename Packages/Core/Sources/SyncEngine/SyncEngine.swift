@@ -345,15 +345,20 @@ public actor SyncEngine {
         if isStopped || Task.isCancelled { throw CancellationError() }
         let accountID = accountID
         let deleted = deletedMessageIDs
-        let (missing, isUnread) = try await cache.read { tx in
-            (
-                try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID),
-                try tx.thread(id: threadID, accountID: accountID)?.isUnread ?? false
-            )
+        let openedAt = now()
+        let missing = try await write { tx in
+            let missing = try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)
+            if try tx.thread(id: threadID, accountID: accountID)?.isUnread == true {
+                // Reading state and recording mark-read are one transaction, so
+                // a user command cannot land between them and be overwritten.
+                _ = try tx.enqueue(
+                    .modifyThreads, accountID: accountID, threadIDs: [threadID],
+                    remove: [SystemLabel.unread], now: openedAt, notBefore: openedAt
+                )
+            }
+            return missing
         }
-        if isUnread {
-            try await enqueue(.markRead, threadIDs: [threadID], hold: 0)
-        }
+        scheduleSending()
         guard !missing.isEmpty else { return }
         if isStopped || Task.isCancelled { throw CancellationError() }
 
