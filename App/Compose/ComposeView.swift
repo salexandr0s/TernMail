@@ -103,7 +103,7 @@ struct ComposeView: View {
                 document: $model.content.body,
                 format: $model.format,
                 isEditable: model.isEditable
-            ) { model.editor = $0 } onAttach: { model.attach($0) }
+            ) { model.editor = $0 } onAttach: { model.attach($0) } onFocusChange: { model.isEditingMessage = $0 }
             if !model.attachments.isEmpty {
                 AttachmentStrip(attachments: model.attachments, isEditable: model.isEditable) {
                     model.removeAttachment($0)
@@ -269,7 +269,7 @@ struct ComposeView: View {
                 Label(model.format.link ? "Edit Link" : "Add Link", systemImage: "link")
             }
             .help(model.format.link ? "Edit Link" : "Add Link")
-            .disabled(!model.isEditable)
+            .disabled(!model.canFormat)
             .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
                 LinkEditor(hasLink: model.format.link, width: Self.linkFieldWidth) { url in
                     model.editor?.setLink(url)
@@ -303,7 +303,7 @@ struct ComposeView: View {
             Label(title, systemImage: systemImage)
         }
         .help(title)
-        .disabled(!model.isEditable)
+        .disabled(!model.canFormat)
     }
 
     // MARK: Private

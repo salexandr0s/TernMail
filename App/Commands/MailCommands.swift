@@ -82,7 +82,7 @@ struct MailCommands: Commands {
                 Button(compose?.format.link == true ? "Edit Link…" : "Add Link…") { compose?.isEditingLink = true }
                     .keyboardShortcut("k")
             }
-            .disabled(!canEdit)
+            .disabled(!(compose?.canFormat ?? false))
         }
     }
 

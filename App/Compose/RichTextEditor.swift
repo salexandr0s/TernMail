@@ -40,6 +40,8 @@ struct RichTextEditor: NSViewRepresentable {
     var onReady: (any RichTextEditing) -> Void
     /// Files, or an image without text, dropped or pasted into the message.
     var onAttach: ([Attachable]) -> Void
+    /// Whether the cursor is in the message, which formatting applies to.
+    var onFocusChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -66,6 +68,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.typingAttributes = AttributedDocument.baseAttributes
         textView.setAccessibilityLabel("Message")
         textView.onAttach = onAttach
+        textView.onFocusChange = onFocusChange
         textView.delegate = context.coordinator
         textView.textStorage?.delegate = context.coordinator
 
@@ -83,7 +86,10 @@ struct RichTextEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.textView?.isEditable = isEditable
-        (context.coordinator.textView as? ComposeTextView)?.onAttach = onAttach
+        if let textView = context.coordinator.textView as? ComposeTextView {
+            textView.onAttach = onAttach
+            textView.onFocusChange = onFocusChange
+        }
         if document != context.coordinator.lastDocument {
             context.coordinator.load(document)
         }
@@ -96,6 +102,9 @@ struct RichTextEditor: NSViewRepresentable {
         /// The document the text view shows, so updates that come back from
         /// the binding don't reset the text and selection.
         private(set) var lastDocument = ComposeDocument()
+        /// Replacing the text moves the selection, which mustn't update the
+        /// format during the view update that loads it.
+        private var isLoading = false
 
         init(_ parent: RichTextEditor) {
             self.parent = parent
@@ -104,8 +113,10 @@ struct RichTextEditor: NSViewRepresentable {
         func load(_ document: ComposeDocument) {
             guard let textView, let storage = textView.textStorage else { return }
             lastDocument = document
+            isLoading = true
             storage.setAttributedString(AttributedDocument.string(from: document))
             textView.typingAttributes = AttributedDocument.baseAttributes
+            isLoading = false
             textView.undoManager?.removeAllActions(withTarget: storage)
             // Loading happens while SwiftUI updates views, which mustn't change state.
             Task { @MainActor [weak self] in self?.updateFormat() }
@@ -118,6 +129,7 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isLoading else { return }
             updateFormat()
         }
 
@@ -298,6 +310,24 @@ struct RichTextEditor: NSViewRepresentable {
 /// attachments instead of inserting them.
 private final class ComposeTextView: NSTextView {
     var onAttach: (([Attachable]) -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { reportFocus(true) }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { reportFocus(false) }
+        return resigned
+    }
+
+    /// Focus can move while SwiftUI updates views, which mustn't change state.
+    private func reportFocus(_ isFocused: Bool) {
+        Task { @MainActor [weak self] in self?.onFocusChange?(isFocused) }
+    }
 
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
         [.rtf, .string, .URL]
@@ -466,8 +496,11 @@ enum AttributedDocument {
         var start = 0
         while start < string.length {
             let range = string.paragraphRange(for: NSRange(location: start, length: 0))
-            if location < NSMaxRange(range) || NSMaxRange(range) >= string.length {
-                let content = contentRange(of: range, in: string)
+            let content = contentRange(of: range, in: string)
+            // The end of the text is in the last paragraph, unless that ends
+            // with a line break and so has an empty paragraph after it.
+            let holdsEnd = NSMaxRange(range) >= string.length && NSMaxRange(content) == NSMaxRange(range)
+            if location < NSMaxRange(range) || holdsEnd {
                 let textStart = content.location + markerLength(text, content: content)
                 return Position(block: block, offset: max(0, min(location, NSMaxRange(content)) - textStart))
             }
@@ -481,16 +514,17 @@ enum AttributedDocument {
         let string = text.string as NSString
         var block = 0
         var start = 0
-        while start <= string.length {
+        while start < string.length {
             let range = string.paragraphRange(for: NSRange(location: start, length: 0))
             let content = contentRange(of: range, in: string)
-            if block == position.block || NSMaxRange(range) >= string.length {
+            if block == position.block {
                 let textStart = content.location + markerLength(text, content: content)
                 return min(textStart + position.offset, NSMaxRange(content))
             }
             start = NSMaxRange(range)
             block += 1
         }
+        // The empty paragraph after a final line break, or past the end.
         return string.length
     }
 
