@@ -4,6 +4,30 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct MailboxModelTests {
+    @Test func archiveKeepsSelectionOutsideInboxAndObservationsRemoveStaleSelection() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && !mailbox.threads.isEmpty }
+        mailbox.selectedLabelID = SystemLabel.allMail
+        try await waitUntil { mailbox.threads.count == 4 }
+        mailbox.selectedThreadIDs = ["t1"]
+        await mailbox.perform(.archive)?.value
+        #expect(mailbox.selectedThreadIDs == ["t1"])
+        mailbox.selectedLabelID = SystemLabel.trash
+        #expect(mailbox.threads.isEmpty)
+        #expect(mailbox.selectedThreadIDs.isEmpty)
+        try await waitUntil { mailbox.threads.map(\.id) == ["t4"] }
+        mailbox.selectedThreadIDs = ["t4"]
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.deleteMessages(ids: ["m5"], accountID: account.id), accountID: account.id)
+        }
+        try await waitUntil { mailbox.threads.isEmpty }
+        #expect(mailbox.selectedThreadIDs.isEmpty)
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
@@ -42,4 +66,11 @@ import Testing
         #expect(mailbox.retainedUndoCount == 0)
         #expect(!manager.canUndo)
     }
+}
+
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(condition(), "Mailbox observation did not reach the expected state")
 }

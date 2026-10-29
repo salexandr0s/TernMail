@@ -33,6 +33,7 @@ final class MailboxModel {
         didSet {
             guard selectedLabelID != oldValue else { return }
             selectedThreadIDs = []
+            threads = []
             threadLimit = Self.pageSize
             observeThreads()
         }
@@ -80,7 +81,15 @@ final class MailboxModel {
         let events = engine.events
         tasks.append(Task { [weak self] in
             do {
-                for try await labels in labelStream { self?.labels = labels }
+                for try await labels in labelStream {
+                    guard let self, !Task.isCancelled, !isStopped else { return }
+                    self.labels = labels
+                    if let id = selectedLabelID,
+                       !SystemMailbox.all.contains(where: { $0.id == id }),
+                       !labels.contains(where: { $0.id == id }) {
+                        selectedLabelID = SystemLabel.inbox
+                    }
+                }
             } catch {
                 self?.syncStatus = .failed("Tern couldn't read its mail cache.")
             }
@@ -154,7 +163,8 @@ final class MailboxModel {
     func perform(_ action: MailAction, on threadIDs: Set<String>? = nil) -> Task<Void, Never>? {
         let ids = Array(threadIDs ?? selectedThreadIDs)
         guard !ids.isEmpty, !isStopped else { return nil }
-        if action == .archive || action == .trash {
+        if (action == .archive && selectedLabelID == SystemLabel.inbox)
+            || (action == .trash && selectedLabelID != SystemLabel.trash) {
             selectThread(after: Set(ids))
         }
         // Register inside the initiating event. The target can remember an undo
@@ -252,8 +262,13 @@ final class MailboxModel {
         let stream = cache.threads(accountID: account.id, labelID: labelID, limit: threadLimit)
         threadsTask = Task { [weak self] in
             do {
-                for try await threads in stream { self?.threads = threads }
+                for try await threads in stream {
+                    guard let self, !Task.isCancelled, !isStopped, selectedLabelID == labelID else { return }
+                    self.threads = threads
+                    selectedThreadIDs.formIntersection(threads.map(\.id))
+                }
             } catch {
+                guard !Task.isCancelled else { return }
                 self?.syncStatus = .failed("Tern couldn't read its mail cache.")
             }
         }
