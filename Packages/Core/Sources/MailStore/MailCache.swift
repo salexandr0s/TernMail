@@ -142,10 +142,12 @@ public struct CacheTransaction {
     }
 
     /// Deletes every message not in `kept`, except messages a pending action
-    /// still targets. Used after a full resync. Returns the affected thread IDs.
+    /// still targets and messages in held conversations. Used after a full
+    /// resync. Returns the affected thread IDs.
     @discardableResult
     public func deleteMessages(notIn kept: Set<String>, accountID: String, through historyID: Int64? = nil) throws -> Set<String> {
         let protected = try messageIDsTargetedByPendingActions(accountID: accountID)
+            .union(messageIDsInHeldThreads(accountID: accountID))
         var stale = try cachedMessageIDs(accountID: accountID).subtracting(kept).subtracting(protected)
         if let historyID {
             // A thread load can ingest new mail while the resync awaits its
