@@ -179,6 +179,15 @@ import Testing
         mailbox.undo(receipt)
         try await waitUntil { mailbox.threads.count == 4 }
         #expect(Set(mailbox.threads.map(\.key)) == keys("t1", "t2").union([otherT1, otherT2]))
+
+        // The Go menu stays across accounts, except for All Mail.
+        mailbox.go(to: SystemLabel.starred)
+        #expect(mailbox.selectedMailbox == .combined(SystemLabel.starred))
+        mailbox.go(to: SystemLabel.allMail)
+        #expect(mailbox.selectedMailbox == .account("audit", SystemLabel.allMail))
+        mailbox.selectedMailbox = .account("second", SystemLabel.trash)
+        mailbox.go(to: SystemLabel.allMail)
+        #expect(mailbox.selectedMailbox == .account("second", SystemLabel.allMail))
         await mailbox.stop()
     }
 
