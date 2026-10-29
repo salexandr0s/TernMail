@@ -162,6 +162,7 @@ struct SidebarView: View {
 
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let box: SystemMailbox
     let title: String
     let color: Color
@@ -177,6 +178,7 @@ private struct MailboxRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
                     .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
                     .accessibilityHidden(true)
             }
@@ -201,7 +203,6 @@ private struct MailboxRow: View {
 /// it's expanded. The total moves to the account rows then. These are plain
 /// rows because a disclosure group's own row can't be selected on macOS.
 private struct CombinedMailboxRows: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let mailbox: MailboxModel
     let box: SystemMailbox
     let colors: [String: Color]
@@ -239,9 +240,8 @@ private struct CombinedMailboxRows: View {
 
     private func selectAndToggle() {
         mailbox.selectedMailbox = .combined(box.id)
-        withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast)) {
-            isExpanded.toggle()
-        }
+        // Keep the disclosure animation local to the chevron, outside List layout.
+        isExpanded.toggle()
     }
 }
 

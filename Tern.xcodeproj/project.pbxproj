@@ -22,6 +22,7 @@
 		38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */; };
 		3C4C4E7AE93BF4735A855D07 /* SingleKeyShortcutsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */; };
 		3F1EA6952687324D1314CDEF /* SingleKeyShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */; };
+		41BF834483C5F430BB978DD6 /* SidebarLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C3CD5D6DA0EF678721D5E20 /* SidebarLayoutTests.swift */; };
 		44C15A8C7042454C99FD8246 /* MessageContent in Frameworks */ = {isa = PBXBuildFile; productRef = 1D2F537B3CC39297117479CF /* MessageContent */; };
 		4B20118A95316BC74E36653B /* RecipientField.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */; };
 		4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */; };
@@ -103,6 +104,7 @@
 		76B124379B5808528D2CE7BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleKeyShortcuts.swift; sourceTree = "<group>"; };
 		8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozeSchedule.swift; sourceTree = "<group>"; };
+		8C3CD5D6DA0EF678721D5E20 /* SidebarLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLayoutTests.swift; sourceTree = "<group>"; };
 		8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleKeyShortcutsTests.swift; sourceTree = "<group>"; };
 		8F5652A353C2254FCFC5021C /* LabelEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelEditorSheet.swift; sourceTree = "<group>"; };
 		96214EE63FDC52A0940F4105 /* MessageWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageWebView.swift; sourceTree = "<group>"; };
@@ -222,6 +224,7 @@
 				07898683B01BE7A2DBB2E477 /* LabelSelectionTests.swift */,
 				C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */,
 				AE2664304C0271DB6260097A /* MessageWebViewTests.swift */,
+				8C3CD5D6DA0EF678721D5E20 /* SidebarLayoutTests.swift */,
 				8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */,
 				B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */,
 				4E6D21BDB509E55DA8AAE960 /* SplitDividerHandleTests.swift */,
@@ -432,6 +435,7 @@
 				C0D7959AB5FBA76225CF3B65 /* LabelSelectionTests.swift in Sources */,
 				C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */,
 				4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */,
+				41BF834483C5F430BB978DD6 /* SidebarLayoutTests.swift in Sources */,
 				3C4C4E7AE93BF4735A855D07 /* SingleKeyShortcutsTests.swift in Sources */,
 				4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */,
 				A8AFB9E113C6221DE2AD9B5A /* SplitDividerHandleTests.swift in Sources */,

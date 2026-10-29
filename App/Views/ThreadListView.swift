@@ -7,7 +7,16 @@ struct ThreadListView: View {
     @FocusState private var listFocused: Bool
 
     var body: some View {
-        content
+        list
+            .overlay {
+                if displayedThreads.isEmpty {
+                    if mailbox.search.isActive {
+                        emptySearch
+                    } else {
+                        emptyMailbox
+                    }
+                }
+            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if mailbox.showsSnoozed {
                     Label("Snoozed on this Mac", systemImage: "desktopcomputer")
@@ -39,17 +48,13 @@ struct ThreadListView: View {
         Binding(get: { mailbox.snoozeDateTargets != nil }, set: { if !$0 { mailbox.snoozeDateTargets = nil } })
     }
 
+    private var displayedThreads: [ThreadRecord] {
+        mailbox.search.isActive ? mailbox.search.results : mailbox.threads
+    }
+
     @ViewBuilder
-    private var content: some View {
-        if mailbox.search.isActive {
-            searchResults
-        } else if !mailbox.threads.isEmpty {
-            list(mailbox.threads, onEnd: mailbox.loadMoreThreads) {
-                if mailbox.offersOlderConversations {
-                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
-                }
-            }
-        } else if mailbox.selectedHaveSyncedOnce {
+    private var emptyMailbox: some View {
+        if mailbox.selectedHaveSyncedOnce {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No conversations", systemImage: "tray", message: emptyDescription, fillsSpace: false)
                 if mailbox.offersOlderConversations {
@@ -72,18 +77,11 @@ struct ThreadListView: View {
         }
     }
 
-    /// Local matches as the user types, then Gmail's, with Gmail's state last.
     @ViewBuilder
-    private var searchResults: some View {
+    private var emptySearch: some View {
         let search = mailbox.search
         let gmail = search.gmail?.state ?? .ready
-        if !search.results.isEmpty {
-            list(search.results, onEnd: search.loadMoreResults) {
-                if gmail != .finished {
-                    GmailRow(kind: .search, state: gmail, action: search.askGmail)
-                }
-            }
-        } else if search.readFailed {
+        if search.readFailed {
             TernEmptyState(
                 title: "Can't search",
                 systemImage: "exclamationmark.magnifyingglass",
@@ -113,9 +111,10 @@ struct ThreadListView: View {
         }
     }
 
-    private func list(
-        _ threads: [ThreadRecord], onEnd: @escaping () -> Void, @ViewBuilder footer: () -> some View
-    ) -> some View {
+    /// Keep the native scroll view mounted while mailbox and search states change.
+    private var list: some View {
+        let threads = displayedThreads
+        let isSearching = mailbox.search.isActive
         let wakeTimes = mailbox.showsSnoozed ? mailbox.wakeTimes : [:]
         let namesAccounts = mailbox.listMixesAccounts
         let accountMarks = namesAccounts ? compactAccountMarks : [:]
@@ -134,12 +133,30 @@ struct ThreadListView: View {
                     accountMark: accountMarks[thread.accountID],
                     accountColor: AccountAppearance.color(at: accountColors[thread.accountID])
                 )
+                    .tag(thread.key)
                     .listRowInsets(EdgeInsets(top: 0, leading: Tokens.Space.s1_5, bottom: 0, trailing: Tokens.Space.s1_5))
                     .onAppear {
-                        if thread.key == threads.last?.key { onEnd() }
+                        if thread.key == threads.last?.key {
+                            if isSearching {
+                                mailbox.search.loadMoreResults()
+                            } else {
+                                mailbox.loadMoreThreads()
+                            }
+                        }
                     }
             }
-            footer()
+            // Restart row appearance and pagination when entering or leaving search.
+            .id(isSearching)
+            if !threads.isEmpty {
+                if isSearching {
+                    let gmail = mailbox.search.gmail?.state ?? .ready
+                    if gmail != .finished {
+                        GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
+                    }
+                } else if mailbox.offersOlderConversations {
+                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
+                }
+            }
         }
         .listStyle(.inset)
         .contextMenu(forSelectionType: ThreadKey.self) { ids in
