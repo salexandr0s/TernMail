@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import MessageContent
 
 /// One message in the thread view.
 public struct MessageDetail: Sendable, Equatable, Identifiable {
@@ -26,6 +27,7 @@ public struct DraftActivity: Sendable, Equatable, Identifiable {
     public var draft: LocalDraft
     /// Oldest first.
     public var rows: [PendingAction]
+    public var attachments: [OutgoingAttachment]
 
     public var id: String { draft.id }
 
@@ -104,7 +106,7 @@ extension MailCache {
         observe { db in
             let transaction = CacheTransaction(db: db)
             return try transaction.localDrafts(accountID: accountID)
-                .map { DraftActivity(draft: $0, rows: try transaction.composeRows(localDraftID: $0.id)) }
+                .map { try transaction.draftActivity($0) }
                 .filter(\.isOutgoing)
         }
     }
@@ -113,9 +115,64 @@ extension MailCache {
     public func draftActivity(localDraftID: String) -> AsyncThrowingStream<DraftActivity?, any Error> {
         observe { db in
             let transaction = CacheTransaction(db: db)
-            guard let draft = try transaction.localDraft(id: localDraftID) else { return nil }
-            return DraftActivity(draft: draft, rows: try transaction.composeRows(localDraftID: localDraftID))
+            return try transaction.localDraft(id: localDraftID).map(transaction.draftActivity)
         }
+    }
+
+    /// Addresses in cached mail whose name or address contains `text`, for
+    /// completing a recipient. Prefix matches come first, then the addresses
+    /// seen most often, then the most recent.
+    public func addressSuggestions(
+        accountID: String, matching text: String, excluding excluded: Set<String> = [], limit: Int = 8
+    ) async throws -> [EmailAddress] {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return [] }
+        let escaped = query
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        let headerRows = try await writer.read { db -> [[String?]] in
+            try Row.fetchAll(db, sql: """
+                SELECT sender, recipients, cc FROM message
+                WHERE accountID = :account
+                  AND (sender LIKE :pattern ESCAPE '\\' OR recipients LIKE :pattern ESCAPE '\\' OR cc LIKE :pattern ESCAPE '\\')
+                ORDER BY date DESC
+                LIMIT 500
+                """, arguments: ["account": accountID, "pattern": "%\(escaped)%"])
+            .map { [$0["sender"], $0["recipients"], $0["cc"]] }
+        }
+        struct Candidate {
+            var address: EmailAddress
+            var isPrefix: Bool
+            var count: Int
+            var firstSeen: Int
+        }
+        var candidates: [String: Candidate] = [:]
+        for (index, headers) in headerRows.enumerated() {
+            for address in headers.compactMap({ $0 }).flatMap(EmailAddress.parseList) {
+                let key = address.normalized
+                guard address.isValid, !excluded.contains(key) else { continue }
+                let name = address.name?.lowercased() ?? ""
+                guard key.contains(query) || name.contains(query) else { continue }
+                if var candidate = candidates[key] {
+                    candidate.count += 1
+                    if candidate.address.name == nil { candidate.address.name = address.name }
+                    candidates[key] = candidate
+                } else {
+                    let words = name.split(whereSeparator: { $0 == " " || $0 == "," || $0 == "." })
+                    let isPrefix = key.hasPrefix(query) || words.contains { $0.hasPrefix(query) }
+                    candidates[key] = Candidate(address: address, isPrefix: isPrefix, count: 1, firstSeen: index)
+                }
+            }
+        }
+        return candidates.values
+            .sorted { a, b in
+                if a.isPrefix != b.isPrefix { return a.isPrefix }
+                if a.count != b.count { return a.count > b.count }
+                return a.firstSeen < b.firstSeen
+            }
+            .prefix(limit)
+            .map(\.address)
     }
 
     public func syncState(accountID: String) async throws -> SyncStateRecord? {
@@ -176,5 +233,15 @@ public struct AccountStore: Sendable {
 
     public func deleteAccount(id: String) async throws {
         try await writer.write { db in _ = try AccountRecord.deleteOne(db, key: id) }
+    }
+}
+
+extension CacheTransaction {
+    func draftActivity(_ draft: LocalDraft) throws -> DraftActivity {
+        DraftActivity(
+            draft: draft,
+            rows: try composeRows(localDraftID: draft.id),
+            attachments: try outgoingAttachments(localDraftID: draft.id)
+        )
     }
 }

@@ -2,12 +2,15 @@ import Foundation
 import GmailAPI
 import MailStore
 import MessageContent
+import UniformTypeIdentifiers
 
 /// Why a draft can't be uploaded at all. Shown to the user as is.
 public enum ComposeError: Error, Equatable, LocalizedError {
     case missingAttachment(String)
     case tooLarge
     case draftGone
+    case folder(String)
+    case fileTooLarge(String)
 
     public var errorDescription: String? {
         switch self {
@@ -17,6 +20,10 @@ public enum ComposeError: Error, Equatable, LocalizedError {
             "This message is larger than Gmail accepts. Remove some attachments and try again."
         case .draftGone:
             "This draft was sent or deleted in another app."
+        case .folder(let name):
+            "“\(name)” is a folder. Compress it in Finder, then attach the compressed file."
+        case .fileTooLarge(let name):
+            "“\(name)” doesn't fit in this message. Gmail accepts about 25 MB of attachments per message."
         }
     }
 }
@@ -83,11 +90,25 @@ extension SyncEngine {
         try await write { tx in try tx.cancelExit(localDraftID: localDraftID) }
     }
 
-    /// Adds a file already copied under `outgoingDirectory`. Returns nil when
-    /// the draft no longer takes edits.
-    public func addAttachment(_ attachment: OutgoingAttachment) async throws -> OutgoingAttachment? {
-        let now = now()
-        return try await write { tx in try tx.addOutgoingAttachment(attachment, now: now) }
+    /// Copies a file under `outgoingDirectory` and attaches it, so the draft
+    /// keeps it if the original moves. Returns nil when the draft no longer takes edits.
+    public func attachFile(at url: URL, to localDraftID: String) async throws -> OutgoingAttachment? {
+        let name = url.lastPathComponent
+        // Files chosen in an open panel or dropped on a window are readable only inside this scope.
+        let isScoped = url.startAccessingSecurityScopedResource()
+        defer { if isScoped { url.stopAccessingSecurityScopedResource() } }
+        if try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true { throw ComposeError.folder(name) }
+        let mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        return try await attach(name: name, mimeType: mimeType, to: localDraftID) { destination in
+            try FileManager.default.copyItem(at: url, to: destination)
+        }
+    }
+
+    /// Attaches pasted data, such as an image, under `filename`.
+    public func attachData(_ data: Data, filename: String, mimeType: String, to localDraftID: String) async throws -> OutgoingAttachment? {
+        try await attach(name: filename, mimeType: mimeType, to: localDraftID) { destination in
+            try data.write(to: destination)
+        }
     }
 
     /// Removes an attachment and its file.
@@ -124,6 +145,38 @@ extension SyncEngine {
             try? await Task.sleep(for: .milliseconds(100))
         }
         return false
+    }
+
+    private func attach(
+        name: String, mimeType: String, to localDraftID: String, copy: (URL) throws -> Void
+    ) async throws -> OutgoingAttachment? {
+        let ext = (name as NSString).pathExtension
+        let path = "\(localDraftID)/\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
+        let url = outgoingDirectory.appending(path: path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try copy(url)
+        do {
+            let size = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.size] as? Int ?? 0
+            let attachment = OutgoingAttachment(localDraftID: localDraftID, filename: name, mimeType: mimeType, size: size, path: path)
+            let now = now()
+            let added = try await write { tx -> OutgoingAttachment? in
+                let total = try tx.outgoingAttachments(localDraftID: localDraftID).reduce(size) { $0 + $1.size }
+                // A draft that can't be uploaded would fail every save, so refuse the file now.
+                guard Self.encodedSize(total) <= Self.maxMessageSize else { throw ComposeError.fileTooLarge(name) }
+                return try tx.addOutgoingAttachment(attachment, now: now)
+            }
+            if added == nil { try? FileManager.default.removeItem(at: url) }
+            return added
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+    }
+
+    /// The size of `bytes` once base64 encoded in lines of 76 characters.
+    static func encodedSize(_ bytes: Int) -> Int {
+        let encoded = (bytes + 2) / 3 * 4
+        return encoded + encoded / 76 * 2
     }
 
     // MARK: Sending

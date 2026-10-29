@@ -238,6 +238,35 @@ private let account = "acct"
     }
 }
 
+@Suite struct AddressSuggestionTests {
+    @Test func prefixMatchesComeFirstThenTheMostFrequent() async throws {
+        let cache = try MailCache.inMemory()
+        let messages = [
+            ("Pat Lee <pat@example.com>", "me@example.com", nil),
+            ("me@example.com", "pat@example.com, Paula Diaz <paula@example.com>", nil),
+            ("Sam <sam@example.com>", "me@example.com", "Rupa <rupa@example.com>"),
+            ("Pat Lee <pat@example.com>", "Me <me@example.com>", nil),
+        ]
+        try await cache.write { tx in
+            _ = try tx.upsertMessages(messages.enumerated().map { index, headers in
+                var change = update("m\(index)", thread: "t\(index)", labels: [SystemLabel.inbox], minutes: Double(index))
+                change.record.sender = headers.0
+                change.record.recipients = headers.1
+                change.record.cc = headers.2
+                return change
+            })
+        }
+        let suggestions = try await cache.addressSuggestions(accountID: account, matching: "pa", excluding: ["me@example.com"])
+        #expect(suggestions == [
+            EmailAddress(name: "Pat Lee", address: "pat@example.com"),
+            EmailAddress(name: "Paula Diaz", address: "paula@example.com"),
+            // "pa" is inside the name, not at the start of a word.
+            EmailAddress(name: "Rupa", address: "rupa@example.com"),
+        ])
+        #expect(try await cache.addressSuggestions(accountID: account, matching: "me", excluding: ["me@example.com"]).isEmpty)
+    }
+}
+
 // MARK: Helpers
 
 private func update(

@@ -567,11 +567,13 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         let (engine, cache, gmail, clock) = try await makeEngine()
         let draft = makeDraft()
         try await engine.createDraft(draft)
+        let source = FileManager.default.temporaryDirectory.appending(path: "notes-\(UUID().uuidString).txt")
+        try Data("agenda".utf8).write(to: source)
+        let attachment = try #require(try await engine.attachFile(at: source, to: draft.id))
+        #expect(attachment.mimeType == "text/plain" && attachment.size == 6)
+        // The draft keeps its own copy.
+        try FileManager.default.removeItem(at: source)
         let folder = await engine.outgoingDirectory.appending(path: draft.id, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try Data("agenda".utf8).write(to: folder.appending(path: "notes.txt"))
-        let attachment = OutgoingAttachment(localDraftID: draft.id, filename: "notes.txt", mimeType: "text/plain", size: 6, path: "\(draft.id)/notes.txt")
-        #expect(try await engine.addAttachment(attachment) != nil)
         try await engine.sendDraft(draft.id, delay: 10)
         clock.advance(10)
         #expect(await engine.sendDueDrafts() == 1)
@@ -579,7 +581,7 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         // A draft that never reached Gmail is saved before it's sent.
         #expect(await gmail.draftCalls == ["create", "send D1"])
         let raw = String(decoding: try #require(await gmail.uploads.last).raw, as: UTF8.self)
-        #expect(raw.contains("notes.txt"))
+        #expect(raw.contains("notes-"))
         #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
         #expect(!FileManager.default.fileExists(atPath: folder.path))
         #expect(try await threadIDs(cache, SystemLabel.sent) == ["thread1"])
@@ -587,6 +589,18 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         var events: [SyncEvent] = []
         for await event in engine.events { events.append(event) }
         #expect(events == [.draftSent(localDraftID: draft.id)])
+    }
+
+    @Test func attachingMoreThanGmailAcceptsIsRefused() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        await #expect(throws: ComposeError.fileTooLarge("large.bin")) {
+            try await engine.attachData(Data(count: 26_000_000), filename: "large.bin", mimeType: "application/octet-stream", to: draft.id)
+        }
+        #expect(try await cache.read { tx in try tx.outgoingAttachments(localDraftID: draft.id) }.isEmpty)
+        let folder = await engine.outgoingDirectory.appending(path: draft.id)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).isEmpty)
     }
 
     @Test func aRepeatedSendThatFindsTheDraftGoneCountsAsSent() async throws {
