@@ -159,6 +159,10 @@ final class MailboxModel {
     /// Every signed-in account, the default one first.
     var accounts: [AccountMailbox] { [defaultAccount] + otherAccounts }
 
+    private func isSignedIn(_ owner: AccountMailbox) -> Bool {
+        accounts.contains { $0 === owner }
+    }
+
     func account(id: String) -> AccountMailbox? {
         accounts.first { $0.account.id == id }
     }
@@ -185,9 +189,16 @@ final class MailboxModel {
         } else {
             otherAccounts.removeAll { $0 === removed }
         }
-        // Undo, pickers and sheets can't reach a signed-out account.
-        for entry in undoEntries.values where entry.applied.contains(where: { $0.account === removed }) {
+        removed.onLabelsChange = nil
+        removed.onSnoozedChange = nil
+        removed.onEvent = nil
+        // Undo, pickers and sheets can't reach a signed-out account. Undo
+        // keeps the other accounts' part of a command.
+        for entry in undoEntries.values {
+            entry.applied.removeAll { $0.account === removed }
+            guard entry.applied.isEmpty, !entry.isQueued else { continue }
             removeUndo(entry)
+            if let handle = entry.handle, notice?.undo == .action(handle) { notice = nil }
         }
         if labelEdit?.accountID == id { labelEdit = nil }
         if labelEditor?.accountID == id { labelEditor = nil }
@@ -205,6 +216,30 @@ final class MailboxModel {
         // Search and combined lists drop it before it stops.
         accountsChanged()
         await removed.stop()
+        // Its drafts' notices and Undo Send. Their rows stay until the
+        // account's data is deleted, after this returns.
+        let draftIDs = [undoableSendID, draftToReopen, Self.draftID(in: notice), Self.draftID(in: sendNotice)]
+        for draftID in await drafts(draftIDs.compactMap { $0 }, in: id) {
+            finishSend(draftID)
+            if Self.draftID(in: notice) == draftID { notice = nil }
+            if draftToReopen == draftID { draftToReopen = nil }
+        }
+    }
+
+    private static func draftID(in notice: Notice?) -> String? {
+        switch notice?.undo {
+        case .send(let id)?, .discard(let id)?: id
+        case .action?, nil: nil
+        }
+    }
+
+    /// Which of `ids` are local drafts of `accountID`.
+    private func drafts(_ ids: [String], in accountID: String) async -> Set<String> {
+        guard !ids.isEmpty else { return [] }
+        let found = try? await cache.read { tx in
+            try ids.filter { try tx.localDraft(id: $0)?.accountID == accountID }
+        }
+        return Set(found ?? [])
     }
 
     func start() async {
@@ -624,12 +659,14 @@ final class MailboxModel {
         registerUndo(entry)
         let previous = actionTask
         let task = Task {
+            defer { entry.isQueued = false }
             await previous?.value
             guard !isStopped, !Task.isCancelled else { return }
             var failure: (any Error)?
-            for step in steps {
+            // An account signed out meanwhile is skipped, and so is its change.
+            for step in steps where isSignedIn(step.account) {
                 do {
-                    if let row = try await step.run() {
+                    if let row = try await step.run(), isSignedIn(step.account) {
                         entry.applied.append(.init(account: step.account, receipt: row))
                         if entry.handle == nil { entry.handle = row }
                     }
@@ -680,14 +717,15 @@ final class MailboxModel {
         let revert = entry.revert
         return Task {
             do {
-                // Newest first. A change undone drops out, so a retry skips it.
+                // Newest first. A change undone drops out, so a retry skips
+                // it. Signing out of an account drops its changes meanwhile.
                 while let last = entry.applied.last {
                     if let revert {
                         try await revert(last.account, last.receipt)
                     } else {
                         try await last.account.engine.undo(last.receipt)
                     }
-                    entry.applied.removeLast()
+                    entry.applied.removeAll { $0.receipt === last.receipt }
                 }
                 removeUndo(entry)
                 if notice?.undo == .action(handle) { notice = nil }
@@ -962,6 +1000,8 @@ private final class UndoEntry {
     var applied: [Applied] = []
     /// The first change's receipt, which the notice's Undo carries.
     var handle: ActionReceipt?
+    /// Until the queued steps have all run.
+    var isQueued = true
     var undoRequested = false
     var isApplying = false
 
