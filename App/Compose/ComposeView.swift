@@ -42,6 +42,7 @@ struct ComposeView: View {
     @State private var model: ComposeModel
     @State private var showsQuote = false
     @State private var isEditingLink = false
+    @State private var isChoosingFiles = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
     /// The recipient field to move the cursor to. Token fields are AppKit
@@ -98,10 +99,25 @@ struct ComposeView: View {
                 document: $model.content.body,
                 format: $model.format,
                 isEditable: model.isEditable
-            ) { model.editor = $0 }
+            ) { model.editor = $0 } onAttach: { model.attach($0) }
+            if !model.attachments.isEmpty {
+                AttachmentStrip(attachments: model.attachments, isEditable: model.isEditable) {
+                    model.removeAttachment($0)
+                }
+            }
             if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
                 quotedText(quote)
             }
+        }
+        // Files dropped outside the message, which handles its own drops.
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard model.isEditable, !files.isEmpty else { return false }
+            model.attach(files.map(Attachable.file))
+            return true
+        }
+        .fileImporter(isPresented: $isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
         }
     }
 
@@ -251,6 +267,15 @@ struct ComposeView: View {
                     model.editor?.setLink(url)
                 }
             }
+        }
+        ToolbarItem {
+            Button {
+                isChoosingFiles = true
+            } label: {
+                Label("Attach Files", systemImage: "paperclip")
+            }
+            .help("Attach Files")
+            .disabled(!model.isEditable)
         }
         ToolbarItem {
             Button {

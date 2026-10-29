@@ -38,6 +38,8 @@ struct RichTextEditor: NSViewRepresentable {
     var isEditable: Bool
     /// Hands over the editor once it exists, so menus can send it commands.
     var onReady: (any RichTextEditing) -> Void
+    /// Files, or an image without text, dropped or pasted into the message.
+    var onAttach: ([Attachable]) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -63,6 +65,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.typingAttributes = AttributedDocument.baseAttributes
         textView.setAccessibilityLabel("Message")
+        textView.onAttach = onAttach
         textView.delegate = context.coordinator
         textView.textStorage?.delegate = context.coordinator
 
@@ -80,6 +83,7 @@ struct RichTextEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.textView?.isEditable = isEditable
+        (context.coordinator.textView as? ComposeTextView)?.onAttach = onAttach
         if document != context.coordinator.lastDocument {
             context.coordinator.load(document)
         }
@@ -290,10 +294,55 @@ struct RichTextEditor: NSViewRepresentable {
     }
 }
 
-/// Strips rich paste down to plain text runs the document can hold.
+/// Reads only text from the pasteboard, and turns files and images into
+/// attachments instead of inserting them.
 private final class ComposeTextView: NSTextView {
+    var onAttach: (([Attachable]) -> Void)?
+
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
         [.rtf, .string, .URL]
+    }
+
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        super.acceptableDragTypes + [.fileURL, .png, .tiff]
+    }
+
+    override func paste(_ sender: Any?) {
+        guard let items = Self.attachables(on: .general) else { return super.paste(sender) }
+        onAttach?(items)
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        Self.attachables(on: sender.draggingPasteboard) == nil ? super.draggingEntered(sender) : .copy
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        Self.attachables(on: sender.draggingPasteboard) == nil ? super.draggingUpdated(sender) : .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard isEditable, let items = Self.attachables(on: sender.draggingPasteboard) else {
+            return super.performDragOperation(sender)
+        }
+        onAttach?(items)
+        return true
+    }
+
+    /// Files on the pasteboard, or an image with no text beside it, as from a screenshot.
+    private static func attachables(on pasteboard: NSPasteboard) -> [Attachable]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty {
+            return urls.map(Attachable.file)
+        }
+        guard pasteboard.string(forType: .string) == nil, pasteboard.data(forType: .rtf) == nil else { return nil }
+        if let png = pasteboard.data(forType: .png) {
+            return [.data(png, filename: "Pasted Image.png", mimeType: "image/png")]
+        }
+        if let tiff = pasteboard.data(forType: .tiff),
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            return [.data(png, filename: "Pasted Image.png", mimeType: "image/png")]
+        }
+        return nil
     }
 }
 

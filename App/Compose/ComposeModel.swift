@@ -16,6 +16,19 @@ enum UndoSendDelay {
     }
 }
 
+/// Something to attach: a file, or data pasted or dropped without one.
+enum Attachable: Sendable {
+    case file(URL)
+    case data(Data, filename: String, mimeType: String)
+
+    var name: String {
+        switch self {
+        case .file(let url): url.lastPathComponent
+        case .data(_, let filename, _): filename
+        }
+    }
+}
+
 /// One compose window. Edits are stored on this Mac within half a second, so
 /// a crash or quit keeps them, and saved to Gmail once typing pauses.
 @MainActor
@@ -78,6 +91,8 @@ final class ComposeModel {
     }
 
     var draft: LocalDraft? { activity?.draft }
+
+    var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
 
     var isEditable: Bool { phase == .open && draft?.state == .editing }
 
@@ -173,6 +188,43 @@ final class ComposeModel {
         return queued
     }
 
+    /// Copies the files into the draft, one at a time, in order.
+    func attach(_ items: [Attachable]) {
+        guard isEditable, !items.isEmpty else { return }
+        let engine = mailbox.engine
+        let id = localDraftID
+        for item in items {
+            serially { [self] in
+                do {
+                    switch item {
+                    case .file(let url):
+                        _ = try await engine.attachFile(at: url, to: id)
+                    case .data(let data, let filename, let mimeType):
+                        _ = try await engine.attachData(data, filename: filename, mimeType: mimeType, to: id)
+                    }
+                } catch let error as ComposeError {
+                    alert = error.errorDescription
+                } catch {
+                    alert = "Tern couldn't attach “\(item.name)”."
+                }
+            }
+        }
+        scheduleAutosave()
+    }
+
+    func removeAttachment(_ attachment: OutgoingAttachment) {
+        guard isEditable, let rowID = attachment.id else { return }
+        let engine = mailbox.engine
+        serially { [self] in
+            do {
+                try await engine.removeAttachment(id: rowID)
+            } catch {
+                alert = "Tern couldn't remove “\(attachment.filename)”."
+            }
+        }
+        scheduleAutosave()
+    }
+
     /// Saves to Gmail now.
     func save() {
         guard isEditable else { return }
@@ -187,6 +239,7 @@ final class ComposeModel {
         phase = .closed
         let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
             && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
+            && attachments.isEmpty
         let untouched = draft.revision == 0 && !hasPendingEdits
         if draft.gmailDraftID == nil, untouched || isBlank {
             cancelTimers()
@@ -261,9 +314,6 @@ final class ComposeModel {
     private func contentChanged() {
         guard isEditable else { return }
         hasPendingEdits = true
-        let now = Date()
-        let since = unsavedSince ?? now
-        unsavedSince = since
         if storeTask == nil {
             storeTask = Task { [weak self] in
                 try? await Task.sleep(for: Self.storeDelay)
@@ -272,6 +322,14 @@ final class ComposeModel {
                 store()
             }
         }
+        scheduleAutosave()
+    }
+
+    /// Saves to Gmail once edits pause, or at once when they haven't paused for a while.
+    private func scheduleAutosave() {
+        let now = Date()
+        let since = unsavedSince ?? now
+        unsavedSince = since
         autosaveTask?.cancel()
         let delay = now.timeIntervalSince(since) >= Self.longestUnsaved ? Duration.zero : Self.autosaveDelay
         autosaveTask = Task { [weak self] in
@@ -285,7 +343,7 @@ final class ComposeModel {
     /// A new message that is still blank stays on this Mac.
     private var shouldSaveToGmail: Bool {
         draft?.gmailDraftID != nil || !content.to.isEmpty || !content.cc.isEmpty || !content.bcc.isEmpty
-            || !content.subject.isEmpty || !content.body.isEmpty
+            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty
     }
 
     private func store() {
