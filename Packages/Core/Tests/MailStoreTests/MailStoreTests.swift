@@ -200,9 +200,11 @@ private let account = "acct"
 
         // Once the send has been claimed, undo is too late.
         let sent = update("s1", thread: "t1", labels: [SystemLabel.sent], minutes: 2)
+        // A whole millisecond, which the store keeps exactly.
+        let due = Date(timeIntervalSinceReferenceDate: 800_000_000)
         let finished = try await cache.write { tx in
-            _ = try tx.enqueueSend(localDraftID: "L1", now: .now, notBefore: .now)
-            #expect(try tx.claimDueActions(accountID: account, now: .now, lane: .compose).map(\.kind) == [.sendDraft])
+            _ = try tx.enqueueSend(localDraftID: "L1", now: due, notBefore: due)
+            #expect(try tx.claimDueActions(accountID: account, now: due, lane: .compose).map(\.kind) == [.sendDraft])
             #expect(try !tx.cancelExit(localDraftID: "L1"))
             return try tx.removeFinishedDraft(localDraftID: "L1", sentMessage: sent)
         }
@@ -217,22 +219,25 @@ private let account = "acct"
 
     @Test func draftRowsClaimInTheirOwnLaneAndInOrderPerDraft() async throws {
         let cache = try MailCache.inMemory()
+        // A whole millisecond, which the store keeps exactly. Separate `.now`
+        // calls can land inside one stored millisecond and compare out of order.
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
         try await cache.write { tx in
             try tx.upsertMessages([update("m1", thread: "t1", labels: [SystemLabel.inbox])])
             try tx.rebuildThreads(["t1"], accountID: account)
             for id in ["L1", "L2"] {
-                try tx.insertLocalDraft(LocalDraft(id: id, accountID: account, kind: .new, rfcMessageID: "<\(id)@example.com>", now: .now))
+                try tx.insertLocalDraft(LocalDraft(id: id, accountID: account, kind: .new, rfcMessageID: "<\(id)@example.com>", now: now))
             }
-            _ = try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now)
-            try tx.enqueueSave(localDraftID: "L1", now: .now, notBefore: .now)
-            #expect(try tx.claimDueActions(accountID: account, now: .now, lane: .compose).map(\.localDraftID) == ["L1"])
+            _ = try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: now, notBefore: now)
+            try tx.enqueueSave(localDraftID: "L1", now: now, notBefore: now)
+            #expect(try tx.claimDueActions(accountID: account, now: now, lane: .compose).map(\.localDraftID) == ["L1"])
             // A send queued while the save uploads waits for it.
-            _ = try tx.enqueueSend(localDraftID: "L1", now: .now, notBefore: .now)
-            try tx.enqueueSave(localDraftID: "L2", now: .now, notBefore: .now)
+            _ = try tx.enqueueSend(localDraftID: "L1", now: now, notBefore: now)
+            try tx.enqueueSave(localDraftID: "L2", now: now, notBefore: now)
         }
 
-        let compose = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: .now, lane: .compose) }
-        let labels = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: .now) }
+        let compose = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: now, lane: .compose) }
+        let labels = try await cache.write { tx in try tx.claimDueActions(accountID: account, now: now) }
         #expect(compose.map(\.localDraftID) == ["L2"])
         #expect(labels.map(\.kind) == [.modifyThreads])
     }
