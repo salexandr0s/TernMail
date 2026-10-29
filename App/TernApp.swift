@@ -22,6 +22,7 @@ struct TernApp: App {
                 .environment(model)
         }
         .defaultSize(width: 720, height: 600)
+        .windowToolbarStyle(.unifiedCompact)
         .windowResizability(.contentMinSize)
         // File > New Message replaces the New Window item this scene would add.
         .commandsRemoved()

@@ -10,16 +10,8 @@ struct AttachmentStrip: View {
     let remove: (OutgoingAttachment) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        VStack(alignment: .leading, spacing: 0) {
             Divider()
-            HStack(spacing: Tokens.Space.s2) {
-                Label("Attachments", systemImage: "paperclip")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                TernBadge(text: "\(attachments.count)")
-            }
-            .padding(.horizontal, Tokens.Space.s4)
-            .padding(.top, Tokens.Space.s2)
             ScrollView(.horizontal) {
                 HStack(spacing: Tokens.Space.s2) {
                     ForEach(attachments) { attachment in

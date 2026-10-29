@@ -63,7 +63,7 @@ enum Tokens {
         static let emptyStateWidth: CGFloat = 320
         static let composeMinWidth: CGFloat = 480
         static let composeMinHeight: CGFloat = 360
-        static let quoteMaxHeight: CGFloat = 180
+        static let quoteMaxHeight: CGFloat = 128
         static let linkEditorWidth: CGFloat = 320
         static let attachmentWidth: CGFloat = 240
         static let shortcutsWidth: CGFloat = 480

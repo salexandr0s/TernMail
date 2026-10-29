@@ -46,6 +46,7 @@ struct ComposeView: View {
 
     @State private var model: ComposeModel
     @State private var showsQuote = false
+    @State private var showsFormatting = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
     /// The recipient field to move the cursor to. Token fields are AppKit
@@ -105,6 +106,10 @@ struct ComposeView: View {
             header
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
+            if showsFormatting {
+                formattingBar
+                    .transition(.opacity)
+            }
             RichTextEditor(
                 document: $model.content.body,
                 format: $model.format,
@@ -122,6 +127,7 @@ struct ComposeView: View {
                 quotedText(quote)
             }
         }
+        .ternAnimation(value: showsFormatting)
         // Files dropped outside the message, which handles its own drops.
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
@@ -137,14 +143,7 @@ struct ComposeView: View {
     // MARK: Header
 
     private var header: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s3, verticalSpacing: 0) {
-            if model.showsFrom {
-                GridRow {
-                    fieldLabel("From:")
-                    fromField
-                        .padding(.vertical, Tokens.Space.s2)
-                }
-            }
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s2, verticalSpacing: 0) {
             GridRow {
                 fieldLabel("To:")
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
@@ -152,47 +151,59 @@ struct ComposeView: View {
                     if !model.showsCc {
                         Button("Cc") { reveal(.cc) }
                             .font(.caption.weight(.medium))
+                            .frame(minHeight: Tokens.Space.s6)
                             .help("Add Cc recipients")
                     }
                     if !model.showsBcc {
                         Button("Bcc") { reveal(.bcc) }
                             .font(.caption.weight(.medium))
+                            .frame(minHeight: Tokens.Space.s6)
                             .help("Add Bcc recipients")
                     }
                 }
                 .buttonStyle(.borderless)
-                .padding(.vertical, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s1)
             }
+            Divider()
             if model.showsCc {
                 GridRow {
                     fieldLabel("Cc:")
                     recipientField("Cc", addresses: $model.content.cc, field: .cc)
-                        .padding(.vertical, Tokens.Space.s2)
+                        .padding(.vertical, Tokens.Space.s1_5)
                 }
+                Divider()
             }
             if model.showsBcc {
                 GridRow {
                     fieldLabel("Bcc:")
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
-                        .padding(.vertical, Tokens.Space.s2)
+                        .padding(.vertical, Tokens.Space.s1_5)
                 }
+                Divider()
             }
-            Divider()
             GridRow {
                 fieldLabel("Subject:")
-                TextField("Subject", text: $model.content.subject)
+                TextField("", text: $model.content.subject)
                     .textFieldStyle(.plain)
                     .font(.body.weight(.medium))
                     .labelsHidden()
                     .accessibilityLabel("Subject")
                     .focused($focus, equals: .subject)
-                    .padding(.vertical, Tokens.Space.s2)
+                    .padding(.vertical, Tokens.Space.s1_5)
                     .overlay(alignment: .bottom) {
                         Rectangle()
                             .fill(focus == .subject ? Color.accentColor : .clear)
                             .frame(height: Tokens.Border.focus)
                             .allowsHitTesting(false)
                     }
+            }
+            if model.showsFrom {
+                Divider()
+                GridRow {
+                    fieldLabel("From:")
+                    fromField
+                        .padding(.vertical, Tokens.Space.s1_5)
+                }
             }
         }
         .disabled(!model.isEditable)
@@ -211,6 +222,8 @@ struct ComposeView: View {
                     Text(account.email).tag(account.id)
                 }
             }
+            .pickerStyle(.menu)
+            .controlSize(.small)
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .leading)
             .lineLimit(1)
@@ -229,7 +242,7 @@ struct ComposeView: View {
         Text(text)
             .font(.callout.weight(.medium))
             .foregroundStyle(.secondary)
-            .gridColumnAlignment(.trailing)
+            .gridColumnAlignment(.leading)
             .accessibilityHidden(true)
     }
 
@@ -263,7 +276,7 @@ struct ComposeView: View {
 
     private func quotedText(_ quote: String) -> some View {
         let noun = model.draft?.kind == .forward ? "Forwarded Message" : "Quoted Text"
-        return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        return VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             Divider()
             Button {
                 showsQuote.toggle()
@@ -289,6 +302,7 @@ struct ComposeView: View {
             if showsQuote {
                 ScrollView {
                     Text(quote)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -298,7 +312,7 @@ struct ComposeView: View {
                 .transition(.opacity)
             }
         }
-        .padding(.bottom, Tokens.Space.s2)
+        .padding(.bottom, Tokens.Space.s1)
         .background(Tokens.Surface.muted)
         .ternAnimation(value: showsQuote)
     }
@@ -307,18 +321,58 @@ struct ComposeView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
+        ToolbarItem(placement: .primaryAction) {
+            Toggle(isOn: $showsFormatting) {
+                Label("Formatting", systemImage: "textformat")
+            }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .help(showsFormatting ? "Hide Formatting" : "Show Formatting")
+            .accessibilityLabel("Formatting")
+            .accessibilityValue(showsFormatting ? "Expanded" : "Collapsed")
+            .disabled(!model.isEditable)
+            // Cmd-K must also work while the formatting bar is hidden.
+            .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
+                LinkEditor(hasLink: model.format.link, width: Tokens.Layout.linkEditorWidth) { url in
+                    model.editor?.setLink(url)
+                }
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.isChoosingFiles = true
+            } label: {
+                Label("Attach Files", systemImage: "paperclip")
+            }
+            .help("Attach Files")
+            .disabled(!model.isEditable)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                Task { await model.discard() }
+            } label: {
+                Label("Discard Draft", systemImage: "trash")
+            }
+            .help("Discard Draft")
+            .disabled(!model.isEditable)
+        }
+        ToolbarItem(placement: .primaryAction) {
             Button {
                 Task { await model.send() }
             } label: {
                 Label("Send", systemImage: "paperplane.fill")
             }
-            .labelStyle(.titleAndIcon)
+            .labelStyle(.iconOnly)
             .buttonStyle(.borderedProminent)
-            .help("Send")
+            .controlSize(.small)
+            .help("Send (⇧⌘D)")
+            .accessibilityLabel("Send")
             .disabled(!model.isEditable)
         }
-        ToolbarItemGroup {
+    }
+
+    private var formattingBar: some View {
+        HStack(spacing: Tokens.Space.s2) {
             ControlGroup {
                 formatToggle("Bold", systemImage: "bold", isOn: model.format.bold) { $0.toggleBold() }
                 formatToggle("Italic", systemImage: "italic", isOn: model.format.italic) { $0.toggleItalic() }
@@ -339,30 +393,16 @@ struct ComposeView: View {
             }
             .help(model.format.link ? "Edit Link" : "Add Link")
             .disabled(!model.canFormat)
-            .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
-                LinkEditor(hasLink: model.format.link, width: Tokens.Layout.linkEditorWidth) { url in
-                    model.editor?.setLink(url)
-                }
-            }
+            Spacer(minLength: 0)
         }
-        ToolbarItem {
-            Button {
-                model.isChoosingFiles = true
-            } label: {
-                Label("Attach Files", systemImage: "paperclip")
-            }
-            .help("Attach Files")
-            .disabled(!model.isEditable)
-        }
-        ToolbarItem {
-            Button {
-                Task { await model.discard() }
-            } label: {
-                Label("Discard Draft", systemImage: "trash")
-            }
-            .help("Discard Draft")
-            .disabled(!model.isEditable)
-        }
+        .labelStyle(.iconOnly)
+        .controlSize(.small)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s1)
+        .background(Tokens.Surface.muted)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Formatting")
     }
 
     private func formatToggle(
@@ -371,6 +411,7 @@ struct ComposeView: View {
         Toggle(isOn: Binding(get: { isOn }, set: { _ in model.editor.map(action) })) {
             Label(title, systemImage: systemImage)
         }
+        .toggleStyle(.button)
         .help(title)
         .disabled(!model.canFormat)
     }
@@ -443,9 +484,6 @@ private struct LinkEditor: View {
                 .frame(width: width)
                 .focused($isFocused)
                 .onSubmit(add)
-            Text("Enter a website or an email address.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             HStack(spacing: Tokens.Space.s2) {
                 if hasLink {
                     Button("Remove Link") {
