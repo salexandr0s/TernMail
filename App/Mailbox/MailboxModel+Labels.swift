@@ -8,7 +8,7 @@ import SyncEngine
 extension MailboxModel {
     /// Edit Labels for some conversations, with each one's labels when it opened.
     struct LabelEdit: Equatable {
-        let threadIDs: Set<String>
+        let threadIDs: Set<ThreadKey>
         let applied: [Set<String>]
     }
 
@@ -16,7 +16,7 @@ extension MailboxModel {
     struct LabelEditorRequest: Identifiable {
         enum Kind {
             /// A new label, added to these conversations once queued.
-            case new(applyingTo: Set<String>)
+            case new(applyingTo: Set<ThreadKey>)
             case edit(LabelRecord)
         }
 
@@ -54,15 +54,15 @@ extension MailboxModel {
 
     // MARK: Opening
 
-    func showEditLabels(for threadIDs: Set<String>? = nil) {
-        let ids = threadIDs ?? selectedThreadIDs
+    func showEditLabels(for keys: Set<ThreadKey>? = nil) {
+        let ids = keys ?? selectedThreadIDs
         guard !ids.isEmpty else { return }
-        let accountID = account.id
         Task {
             do {
                 let applied = try await cache.read { tx in
-                    try ids.sorted().map { id in
-                        try tx.currentLabels(threadID: id, accountID: accountID).values.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    try ids.sorted().map { key in
+                        try tx.currentLabels(threadID: key.threadID, accountID: key.accountID)
+                            .values.reduce(into: Set<String>()) { $0.formUnion($1) }
                     }
                 }
                 labelEdit = LabelEdit(threadIDs: ids, applied: applied)
@@ -72,14 +72,14 @@ extension MailboxModel {
         }
     }
 
-    func showMoveTo(for threadIDs: Set<String>? = nil) {
-        let ids = threadIDs ?? selectedThreadIDs
+    func showMoveTo(for keys: Set<ThreadKey>? = nil) {
+        let ids = keys ?? selectedThreadIDs
         guard !ids.isEmpty else { return }
         moveTargets = ids
     }
 
     /// New Label, from the sidebar, the menu or Edit Labels' Create Label.
-    func showNewLabel(named name: String = "", applyingTo threadIDs: Set<String> = []) {
+    func showNewLabel(named name: String = "", applyingTo threadIDs: Set<ThreadKey> = []) {
         labelEdit = nil
         labelEditor = LabelEditorRequest(
             kind: .new(applyingTo: threadIDs),
@@ -107,7 +107,7 @@ extension MailboxModel {
         let name = draft.fullName
         switch request.kind {
         case .new(let threadIDs):
-            let ids = threadIDs.sorted()
+            let ids = Self.threadIDs(threadIDs)
             queueUndoable("New Label") { engine in
                 let receipt = try await engine.createLabel(named: name, color: draft.color)
                 // These wait for Gmail's ID, and undoing the new label drops them.
@@ -147,7 +147,7 @@ extension MailboxModel {
         guard let edit = labelEdit else { return nil }
         labelEdit = nil
         guard !change.isEmpty else { return nil }
-        let ids = edit.threadIDs.sorted()
+        let ids = Self.threadIDs(edit.threadIDs)
         return queueUndoable("Edit Labels") { engine in
             try await engine.editLabels(threadIDs: ids, add: change.add.sorted(), remove: change.remove.sorted())
         }
@@ -158,7 +158,7 @@ extension MailboxModel {
     func move(to labelID: String) -> Task<Void, Never>? {
         guard let targets = moveTargets else { return nil }
         moveTargets = nil
-        let ids = targets.sorted()
+        let ids = Self.threadIDs(targets)
         let title = labelID == SystemLabel.inbox ? "Inbox" : label(id: labelID)?.name ?? "the label"
         let subject = ids.count == 1 ? "Conversation" : "\(ids.count) conversations"
         // Search results come from any mailbox, so they leave the Inbox.

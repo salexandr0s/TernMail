@@ -71,7 +71,7 @@ final class MailboxModel {
             }
         }
     }
-    var selectedThreadIDs: Set<String> = []
+    var selectedThreadIDs: Set<ThreadKey> = []
     var notice: Notice?
     /// The newest send's notice, above `notice` so other actions don't replace it.
     var sendNotice: Notice?
@@ -109,13 +109,13 @@ final class MailboxModel {
     /// Edit Labels, open from its toolbar button while set.
     var labelEdit: LabelEdit?
     /// Move to, open from its toolbar button for these conversations while set.
-    var moveTargets: Set<String>?
+    var moveTargets: Set<ThreadKey>?
     /// The New Label or Edit Label sheet.
     var labelEditor: LabelEditorRequest?
     /// The label whose deletion waits for confirmation.
     var labelToDelete: LabelRecord?
     /// Choose Date & Time, open for these conversations while set.
-    var snoozeDateTargets: Set<String>?
+    var snoozeDateTargets: Set<ThreadKey>?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
@@ -294,9 +294,9 @@ final class MailboxModel {
 
     /// The newest message in the selected conversation that isn't a draft.
     func replyTargetMessageID() async -> String? {
-        guard canReply, let threadID = selectedThreadIDs.first else { return nil }
+        guard canReply, let key = selectedThreadIDs.first else { return nil }
         do {
-            for try await detail in cache.thread(accountID: account.id, threadID: threadID) {
+            for try await detail in cache.thread(accountID: key.accountID, threadID: key.threadID) {
                 return detail?.messages.last { !$0.labels.contains(SystemLabel.draft) }?.id
             }
         } catch {
@@ -387,16 +387,17 @@ final class MailboxModel {
     // MARK: Actions
 
     @discardableResult
-    func perform(_ action: MailAction, on threadIDs: Set<String>? = nil) -> Task<Void, Never>? {
-        let ids = Array(threadIDs ?? selectedThreadIDs)
-        guard !ids.isEmpty, !isStopped else { return nil }
+    func perform(_ action: MailAction, on keys: Set<ThreadKey>? = nil) -> Task<Void, Never>? {
+        let keys = keys ?? selectedThreadIDs
+        guard !keys.isEmpty, !isStopped else { return nil }
         // Search results follow Gmail's labels, so they change after the next sync pass.
         if !search.isActive,
            (action == .archive && selectedLabelID == SystemLabel.inbox)
             || (action == .trash && selectedLabelID != SystemLabel.trash) {
-            selectThread(after: Set(ids))
+            selectThread(after: keys)
         }
-        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: ids.count)) { engine in
+        let ids = Self.threadIDs(keys)
+        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: keys.count)) { engine in
             try await engine.perform(action, threadIDs: ids)
         }
     }
@@ -478,23 +479,23 @@ final class MailboxModel {
     }
 
     /// True when every thread in `ids` is read, so commands offer Mark as Unread.
-    func allRead(_ ids: Set<String>) -> Bool {
-        !listedThreads.contains { ids.contains($0.id) && $0.isUnread }
+    func allRead(_ keys: Set<ThreadKey>) -> Bool {
+        !listedThreads.contains { keys.contains($0.key) && $0.isUnread }
     }
 
-    func allStarred(_ ids: Set<String>) -> Bool {
-        let matching = listedThreads.filter { ids.contains($0.id) }
+    func allStarred(_ keys: Set<ThreadKey>) -> Bool {
+        let matching = listedThreads.filter { keys.contains($0.key) }
         return !matching.isEmpty && matching.allSatisfy(\.isStarred)
     }
 
-    func toggleRead(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selectedThreadIDs
-        perform(allRead(ids) ? .markUnread : .markRead, on: ids)
+    func toggleRead(_ keys: Set<ThreadKey>? = nil) {
+        let keys = keys ?? selectedThreadIDs
+        perform(allRead(keys) ? .markUnread : .markRead, on: keys)
     }
 
-    func toggleStar(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selectedThreadIDs
-        perform(allStarred(ids) ? .unstar : .star, on: ids)
+    func toggleStar(_ keys: Set<ThreadKey>? = nil) {
+        let keys = keys ?? selectedThreadIDs
+        perform(allStarred(keys) ? .unstar : .star, on: keys)
     }
 
     /// Archiving from Trash or Spam would leave the thread there, so it is
@@ -562,9 +563,9 @@ final class MailboxModel {
     /// Keeps the selection inside the list, and tells the engine what the
     /// list shows so expired search holds don't drop it.
     private func listChanged() {
-        let ids = listedThreads.map(\.id)
-        selectedThreadIDs.formIntersection(ids)
-        engine.setVisibleThreads(Set(ids))
+        let threads = listedThreads
+        selectedThreadIDs.formIntersection(threads.map(\.key))
+        engine.setVisibleThreads(Set(threads.map(\.id)))
     }
 
     /// Shows the engine events the account passes on.
@@ -597,14 +598,19 @@ final class MailboxModel {
     }
 
     /// Moves the selection to the thread below the ones leaving the list, or above if none is below.
-    func selectThread(after leaving: Set<String>) {
+    func selectThread(after leaving: Set<ThreadKey>) {
         let threads = listedThreads
         guard leaving == selectedThreadIDs,
-              let lastIndex = threads.lastIndex(where: { leaving.contains($0.id) })
+              let lastIndex = threads.lastIndex(where: { leaving.contains($0.key) })
         else { return }
-        let below = threads[(lastIndex + 1)...].first { !leaving.contains($0.id) }
-        let above = threads[..<lastIndex].last { !leaving.contains($0.id) }
-        selectedThreadIDs = (below ?? above).map { [$0.id] } ?? []
+        let below = threads[(lastIndex + 1)...].first { !leaving.contains($0.key) }
+        let above = threads[..<lastIndex].last { !leaving.contains($0.key) }
+        selectedThreadIDs = (below ?? above).map { [$0.key] } ?? []
+    }
+
+    /// The Gmail thread IDs the engine takes, in a stable order.
+    static func threadIDs(_ keys: Set<ThreadKey>) -> [String] {
+        keys.sorted().map(\.threadID)
     }
 
     private func registerUndo(_ entry: UndoEntry) {
@@ -671,6 +677,21 @@ private final class UndoEntry {
         self.name = name
         self.revert = revert
     }
+}
+
+/// A conversation in one account. Gmail thread IDs are only unique within
+/// their account, so lists and selections use this.
+struct ThreadKey: Hashable, Comparable, Sendable {
+    let accountID: String
+    let threadID: String
+
+    static func < (lhs: ThreadKey, rhs: ThreadKey) -> Bool {
+        (lhs.accountID, lhs.threadID) < (rhs.accountID, rhs.threadID)
+    }
+}
+
+extension ThreadRecord {
+    var key: ThreadKey { ThreadKey(accountID: accountID, threadID: id) }
 }
 
 /// The sidebar's mailboxes in order: Gmail's system labels and Tern's Snoozed.

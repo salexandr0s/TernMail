@@ -15,29 +15,35 @@ extension MailboxModel {
     }
 
     /// When each snoozed conversation wakes, for the list's rows.
-    var wakeTimes: [String: Date] {
-        Dictionary(snoozed.map { ($0.id, $0.wakeAt) }, uniquingKeysWith: { first, _ in first })
+    var wakeTimes: [ThreadKey: Date] {
+        Dictionary(snoozed.map { ($0.thread.key, $0.wakeAt) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Whether a snooze brought the conversation back to the Inbox.
+    func isWoken(_ thread: ThreadRecord) -> Bool {
+        thread.accountID == account.id && wokenThreadIDs.contains(thread.id)
     }
 
     /// Choose Date & Time, from the menus.
-    func showSnoozeDate(for threadIDs: Set<String>? = nil) {
-        let ids = threadIDs ?? selectedThreadIDs
+    func showSnoozeDate(for keys: Set<ThreadKey>? = nil) {
+        let ids = keys ?? selectedThreadIDs
         guard snoozeKeeper != nil, !ids.isEmpty else { return }
         snoozeDateTargets = ids
     }
 
     /// Archives the conversations until `wakeAt`, with Undo.
     @discardableResult
-    func snooze(_ threadIDs: Set<String>? = nil, until wakeAt: Date) -> Task<Void, Never>? {
+    func snooze(_ keys: Set<ThreadKey>? = nil, until wakeAt: Date) -> Task<Void, Never>? {
         snoozeDateTargets = nil
-        let ids = (threadIDs ?? selectedThreadIDs).sorted()
+        let keys = keys ?? selectedThreadIDs
+        let ids = Self.threadIDs(keys)
         guard let keeper = snoozeKeeper, !ids.isEmpty else { return nil }
         guard wakeAt > .now else {
             notice = Notice(message: "Choose a time later than now.", isError: true)
             return nil
         }
         if !search.isActive, selectedLabelID == SystemLabel.inbox {
-            selectThread(after: Set(ids))
+            selectThread(after: keys)
         }
         let subject = ids.count == 1 ? "Conversation" : "\(ids.count) conversations"
         let time = wakeAt.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
@@ -52,14 +58,15 @@ extension MailboxModel {
 
     /// Brings snoozed conversations back to the Inbox now.
     @discardableResult
-    func unsnooze(_ threadIDs: Set<String>? = nil) -> Task<Void, Never>? {
-        let ids = threadIDs ?? selectedThreadIDs
-        guard let keeper = snoozeKeeper, !ids.isEmpty else { return nil }
-        if showsSnoozed { selectThread(after: ids) }
-        let subject = ids.count == 1 ? "Conversation" : "\(ids.count) conversations"
+    func unsnooze(_ keys: Set<ThreadKey>? = nil) -> Task<Void, Never>? {
+        let keys = keys ?? selectedThreadIDs
+        guard let keeper = snoozeKeeper, !keys.isEmpty else { return nil }
+        if showsSnoozed { selectThread(after: keys) }
+        let subject = keys.count == 1 ? "Conversation" : "\(keys.count) conversations"
+        let ids = Self.threadIDs(keys)
         return Task {
             do {
-                try await keeper.unsnooze(threadIDs: ids.sorted())
+                try await keeper.unsnooze(threadIDs: ids)
                 notice = Notice(message: "\(subject) moved to the Inbox")
             } catch {
                 notice = Notice(message: "Tern couldn't unsnooze that. Try again.", isError: true)

@@ -117,19 +117,16 @@ struct ThreadListView: View {
     ) -> some View {
         let wakeTimes = mailbox.showsSnoozed ? mailbox.wakeTimes : [:]
         return List(selection: $mailbox.selectedThreadIDs) {
-            ForEach(threads) { thread in
-                ThreadRow(
-                    thread: thread,
-                    wakeAt: wakeTimes[thread.id],
-                    isWoken: mailbox.wokenThreadIDs.contains(thread.id)
-                )
+            // Keyed by account too, since thread IDs repeat across accounts.
+            ForEach(threads, id: \.key) { thread in
+                ThreadRow(thread: thread, wakeAt: wakeTimes[thread.key], isWoken: mailbox.isWoken(thread))
                     .onAppear {
-                        if thread.id == threads.last?.id { onEnd() }
+                        if thread.key == threads.last?.key { onEnd() }
                     }
             }
             footer()
         }
-        .contextMenu(forSelectionType: String.self) { ids in
+        .contextMenu(forSelectionType: ThreadKey.self) { ids in
             ThreadMenuItems(mailbox: mailbox, ids: ids)
         }
         .focused($listFocused)
@@ -280,7 +277,7 @@ struct ThreadRow: View {
 /// Shared by the context menu so it acts on the clicked rows, not only the selection.
 struct ThreadMenuItems: View {
     let mailbox: MailboxModel
-    let ids: Set<String>
+    let ids: Set<ThreadKey>
 
     var body: some View {
         if mailbox.offersArchive {
