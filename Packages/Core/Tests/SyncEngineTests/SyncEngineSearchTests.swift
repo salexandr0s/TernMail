@@ -37,6 +37,7 @@ import Testing
         _ = try await engine.searchGmail(SearchQuery("in:trash after:2026/01/15"), timeZone: newYork, pageToken: first.nextPageToken)
         _ = try await engine.loadOlder(labelID: SystemLabel.trash)
         _ = try await engine.loadOlder(labelID: "Label_1", pageToken: "4")
+        _ = try await engine.loadOlder(labelID: SystemLabel.sent, before: Date(timeIntervalSince1970: 1_768_453_200.5))
 
         #expect(first.nextPageToken == "1")
         #expect(await gmail.threadSearches == [
@@ -44,6 +45,7 @@ import Testing
             ThreadSearch(query: "in:trash after:1768453200", labelIDs: [], includeSpamTrash: true, pageToken: "1"),
             ThreadSearch(query: nil, labelIDs: [SystemLabel.trash], includeSpamTrash: true, pageToken: nil),
             ThreadSearch(query: nil, labelIDs: ["Label_1"], includeSpamTrash: false, pageToken: "4"),
+            ThreadSearch(query: "before:1768453201", labelIDs: [SystemLabel.sent], includeSpamTrash: false, pageToken: nil),
         ])
     }
 

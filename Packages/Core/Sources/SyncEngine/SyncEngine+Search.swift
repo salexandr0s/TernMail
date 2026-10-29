@@ -25,10 +25,13 @@ extension SyncEngine {
     }
 
     /// One page of a label's conversations for "Load older conversations",
-    /// stored and held like search results.
-    public func loadOlder(labelID: String, pageToken: String? = nil) async throws -> GmailResultPage {
+    /// stored and held like search results. `before` skips the newer
+    /// conversations the list already shows, which Gmail would otherwise
+    /// return first; keep it the same for every page of one listing.
+    public func loadOlder(labelID: String, before: Date? = nil, pageToken: String? = nil) async throws -> GmailResultPage {
         let spamOrTrash = labelID == SystemLabel.spam || labelID == SystemLabel.trash
-        return try await listAndHold(query: nil, labelIDs: [labelID], includeSpamTrash: spamOrTrash, pageToken: pageToken)
+        let query = before.map { "before:\(Int($0.timeIntervalSince1970.rounded(.up)))" }
+        return try await listAndHold(query: query, labelIDs: [labelID], includeSpamTrash: spamOrTrash, pageToken: pageToken)
     }
 
     /// Conversations an open search or list shows. Releasing expired holds
