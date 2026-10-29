@@ -60,3 +60,25 @@ targets:
         product: SyncEngine
       - package: AppAuth
         product: AppAuth
+  TernTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/AppTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+    dependencies:
+      - target: Tern
+      - package: Core
+        product: MailStore
+schemes:
+  Tern:
+    build:
+      targets:
+        Tern: all
+    test:
+      targets:
+        - TernTests
