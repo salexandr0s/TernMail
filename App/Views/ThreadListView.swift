@@ -344,29 +344,34 @@ struct ThreadMenuItems: View {
     let ids: Set<ThreadKey>
 
     var body: some View {
-        if mailbox.offersArchive {
-            Button("Archive") { mailbox.perform(.archive, on: ids) }
-        }
-        if mailbox.offersTrash {
-            Button("Move to Trash") { mailbox.perform(.trash, on: ids) }
-        }
-        if mailbox.snoozeKeeper != nil, mailbox.offersArchive {
-            Menu("Snooze") {
-                SnoozeMenuItems(
-                    onSnooze: { mailbox.snooze(ids, until: $0) },
-                    onChooseDate: { mailbox.showSnoozeDate(for: ids) }
-                )
+        Group {
+            if mailbox.offersArchive {
+                Button("Archive", systemImage: "archivebox") { mailbox.perform(.archive, on: ids) }
             }
+            if mailbox.offersTrash {
+                Button("Move to Trash", systemImage: "trash") { mailbox.perform(.trash, on: ids) }
+            }
+            if mailbox.snoozeKeeper != nil, mailbox.offersArchive {
+                Menu {
+                    SnoozeMenuItems(
+                        onSnooze: { mailbox.snooze(ids, until: $0) },
+                        onChooseDate: { mailbox.showSnoozeDate(for: ids) }
+                    )
+                } label: {
+                    Label("Snooze", systemImage: "clock")
+                }
+            }
+            if mailbox.showsSnoozed {
+                Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox.unsnooze(ids) }
+            }
+            Divider()
+            Button(mailbox.allRead(ids) ? "Mark as Unread" : "Mark as Read", systemImage: mailbox.allRead(ids) ? "envelope.badge" : "envelope.open") { mailbox.toggleRead(ids) }
+            Button(mailbox.allStarred(ids) ? "Remove Star" : "Star", systemImage: mailbox.allStarred(ids) ? "star.fill" : "star") { mailbox.toggleStar(ids) }
+            Divider()
+            Button("Edit Labels…", systemImage: "tag") { mailbox.showEditLabels(for: ids) }
+            Button("Move to…", systemImage: "folder") { mailbox.showMoveTo(for: ids) }
         }
-        if mailbox.showsSnoozed {
-            Button("Unsnooze") { mailbox.unsnooze(ids) }
-        }
-        Divider()
-        Button(mailbox.allRead(ids) ? "Mark as Unread" : "Mark as Read") { mailbox.toggleRead(ids) }
-        Button(mailbox.allStarred(ids) ? "Remove Star" : "Star") { mailbox.toggleStar(ids) }
-        Divider()
-        Button("Edit Labels…") { mailbox.showEditLabels(for: ids) }
-        Button("Move to…") { mailbox.showMoveTo(for: ids) }
+        .labelStyle(.titleAndIcon)
     }
 }
 

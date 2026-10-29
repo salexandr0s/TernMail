@@ -10,13 +10,27 @@ struct SnoozeMenuItems: View {
 
     var body: some View {
         let options = schedule.options(now: MinuteClock.shared.now)
-        ForEach(options, id: \.preset) { option in
-            Button(Self.title(for: option, calendar: schedule.calendar)) { onSnooze(option.wakeAt) }
+        Group {
+            ForEach(options, id: \.preset) { option in
+                Button(Self.title(for: option, calendar: schedule.calendar), systemImage: Self.symbol(for: option.preset)) {
+                    onSnooze(option.wakeAt)
+                }
+            }
+            if !options.isEmpty {
+                Divider()
+            }
+            Button("Choose Date & Time…", systemImage: "calendar.badge.clock", action: onChooseDate)
         }
-        if !options.isEmpty {
-            Divider()
+        .labelStyle(.titleAndIcon)
+    }
+
+    private static func symbol(for preset: SnoozeSchedule.Preset) -> String {
+        switch preset {
+        case .laterToday: "sun.horizon"
+        case .tomorrow: "sunrise"
+        case .thisWeekend: "calendar"
+        case .nextWeek: "calendar.badge.clock"
         }
-        Button("Choose Date & Time…", action: onChooseDate)
     }
 
     /// "Later Today, 6:00 PM" or "Tomorrow, Thu 8:00 AM".

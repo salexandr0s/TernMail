@@ -64,7 +64,8 @@ struct MailToolbar: ToolbarContent {
                 )
                 if mailbox.showsSnoozed {
                     Divider()
-                    Button("Unsnooze") { mailbox.unsnooze() }
+                    Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox.unsnooze() }
+                        .labelStyle(.titleAndIcon)
                 }
             } label: {
                 Label("Snooze", systemImage: "clock")
@@ -86,6 +87,7 @@ struct MailToolbar: ToolbarContent {
             if isCompact {
                 Menu {
                     replyActions
+                        .labelStyle(.titleAndIcon)
                 } label: {
                     Label("Reply or Forward", systemImage: "arrowshape.turn.up.left")
                 }

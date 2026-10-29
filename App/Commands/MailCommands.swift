@@ -17,125 +17,161 @@ struct MailCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Message") { open(.newMessage) }
+            Button("New Message", systemImage: "square.and.pencil") { open(.newMessage) }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("n")
                 .disabled(mailbox == nil)
-            Button("Attach Files…") { compose?.isChoosingFiles = true }
+            Button("Attach Files…", systemImage: "paperclip") { compose?.isChoosingFiles = true }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("a", modifiers: [.shift, .command])
                 .disabled(!canEdit)
             Divider()
-            Button("Add Account…") { Task { await app.addAccount() } }
+            Button("Add Account…", systemImage: "person.crop.circle.badge.plus") { Task { await app.addAccount() } }
+                .labelStyle(.titleAndIcon)
                 .disabled(mailbox == nil || app.isSigningIn)
         }
         CommandGroup(after: .undoRedo) {
             // Compose windows can still send while the session has expired,
             // and the mailbox window, showing sign-in, has no Undo then.
-            Button("Undo Send") { undoSend() }
+            Button("Undo Send", systemImage: "arrow.uturn.backward") { undoSend() }
+                .labelStyle(.titleAndIcon)
                 .disabled(app.mailbox?.undoableSendID == nil)
         }
         CommandGroup(after: .textEditing) {
-            Button("Search Mail") { mailbox?.search.focusField() }
+            Button("Search Mail", systemImage: "magnifyingglass") { mailbox?.search.focusField() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("f", modifiers: [.option, .command])
                 .disabled(mailbox == nil || compose != nil)
         }
         CommandMenu("Message") {
-            Button("Send") { Task { await compose?.send() } }
+            Button("Send", systemImage: "paperplane") { Task { await compose?.send() } }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("d", modifiers: [.shift, .command])
                 .disabled(!canEdit)
             Divider()
-            Button("Reply") { reply(.reply) }
+            Button("Reply", systemImage: "arrowshape.turn.up.left") { reply(.reply) }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("r")
                 .disabled(!canReply)
-            Button("Reply All") { reply(.replyAll) }
+            Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { reply(.replyAll) }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("r", modifiers: [.shift, .command])
                 .disabled(!canReply)
-            Button("Forward") { reply(.forward) }
+            Button("Forward", systemImage: "arrowshape.turn.up.right") { reply(.forward) }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("f", modifiers: [.shift, .command])
                 .disabled(!canReply)
             Divider()
-            Button("Archive") { mailbox?.perform(.archive) }
+            Button("Archive", systemImage: "archivebox") { mailbox?.perform(.archive) }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("a", modifiers: [.control, .command])
                 .disabled(compose != nil || !(mailbox?.canArchive ?? false))
             // In a compose window ⌘⌫ deletes to the start of the line instead.
-            Button("Move to Trash") { mailbox?.perform(.trash) }
+            Button("Move to Trash", systemImage: "trash") { mailbox?.perform(.trash) }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(compose != nil || !(mailbox?.canTrash ?? false))
             Divider()
-            Button(isRead ? "Mark as Unread" : "Mark as Read") { mailbox?.toggleRead() }
+            Button(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open") { mailbox?.toggleRead() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("u", modifiers: [.shift, .command])
                 .disabled(!hasSelection)
-            Button(isStarred ? "Remove Star" : "Star") { mailbox?.toggleStar() }
+            Button(isStarred ? "Remove Star" : "Star", systemImage: isStarred ? "star.fill" : "star") { mailbox?.toggleStar() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("l", modifiers: [.shift, .command])
                 .disabled(!hasSelection)
             Divider()
-            Button("Edit Labels…") { mailbox?.showEditLabels() }
+            Button("Edit Labels…", systemImage: "tag") { mailbox?.showEditLabels() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("l", modifiers: [.option, .command])
                 .disabled(!hasSelection)
-            Button("Move to…") { mailbox?.showMoveTo() }
+            Button("Move to…", systemImage: "folder") { mailbox?.showMoveTo() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("m", modifiers: [.control, .command])
                 .disabled(!hasSelection)
             Divider()
-            Menu("Snooze") {
+            Menu {
                 SnoozeMenuItems(
                     onSnooze: { mailbox?.snooze(until: $0) },
                     onChooseDate: { mailbox?.showSnoozeDate() }
                 )
+            } label: {
+                Label("Snooze", systemImage: "clock")
+                    .labelStyle(.titleAndIcon)
             }
             .disabled(!canSnooze)
             // A shortcut can't open the submenu, so it opens Choose Date & Time.
-            Button("Snooze…") { mailbox?.showSnoozeDate() }
+            Button("Snooze…", systemImage: "clock") { mailbox?.showSnoozeDate() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("b", modifiers: [.control, .command])
                 .disabled(!canSnooze)
             if mailbox?.showsSnoozed ?? false {
-                Button("Unsnooze") { mailbox?.unsnooze() }
+                Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox?.unsnooze() }
+                    .labelStyle(.titleAndIcon)
                     .disabled(!hasSelection)
             }
         }
         CommandMenu("Mailbox") {
-            Button("Check for New Mail") { mailbox?.syncNow() }
+            Button("Check for New Mail", systemImage: "arrow.clockwise") { mailbox?.syncNow() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("n", modifiers: [.shift, .command])
                 .disabled(mailbox == nil)
-            Button("New Label…") { mailbox?.showNewLabel() }
+            Button("New Label…", systemImage: "tag") { mailbox?.showNewLabel() }
+                .labelStyle(.titleAndIcon)
                 .keyboardShortcut("n", modifiers: [.option, .command])
                 .disabled(mailbox == nil || compose != nil)
             Divider()
             if let mailbox, mailbox.hasSeveralAccounts {
-                Menu("Sign Out") {
+                Menu {
                     ForEach(mailbox.accounts, id: \.account.id) { owner in
-                        Button("\(owner.account.email)…") { app.accountToSignOut = owner.account }
+                        Button("\(owner.account.email)…", systemImage: "person.crop.circle") { app.accountToSignOut = owner.account }
+                            .labelStyle(.titleAndIcon)
                     }
+                } label: {
+                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        .labelStyle(.titleAndIcon)
                 }
             } else {
-                Button("Sign Out…") { app.isConfirmingSignOut = true }
+                Button("Sign Out…", systemImage: "rectangle.portrait.and.arrow.right") { app.isConfirmingSignOut = true }
+                    .labelStyle(.titleAndIcon)
                     .disabled(!app.canSignOut)
             }
         }
         CommandMenu("Go") {
             // In the sidebar's order, so each number matches a row.
             ForEach(Array(SystemMailbox.numbered.enumerated()), id: \.element.id) { index, box in
-                Button(box.title) { mailbox?.go(to: box.id) }
+                Button(box.title, systemImage: box.systemImage) { mailbox?.go(to: box.id) }
+                    .labelStyle(.titleAndIcon)
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
                     .disabled(mailbox == nil || compose != nil)
             }
-            Button("All Mail") { mailbox?.go(to: SystemLabel.allMail) }
+            Button("All Mail", systemImage: "archivebox") { mailbox?.go(to: SystemLabel.allMail) }
+                .labelStyle(.titleAndIcon)
                 .disabled(mailbox == nil || compose != nil)
         }
         CommandGroup(replacing: .help) {
-            Button("Keyboard Shortcuts") { openWindow(id: KeyboardShortcutsView.sceneID) }
+            Button("Keyboard Shortcuts", systemImage: "keyboard") { openWindow(id: KeyboardShortcutsView.sceneID) }
+                .labelStyle(.titleAndIcon)
         }
         CommandMenu("Format") {
             Group {
-                Button("Bold") { compose?.editor?.toggleBold() }
+                Button("Bold", systemImage: "bold") { compose?.editor?.toggleBold() }
+                    .labelStyle(.titleAndIcon)
                     .keyboardShortcut("b")
-                Button("Italic") { compose?.editor?.toggleItalic() }
+                Button("Italic", systemImage: "italic") { compose?.editor?.toggleItalic() }
+                    .labelStyle(.titleAndIcon)
                     .keyboardShortcut("i")
-                Button("Underline") { compose?.editor?.toggleUnderline() }
+                Button("Underline", systemImage: "underline") { compose?.editor?.toggleUnderline() }
+                    .labelStyle(.titleAndIcon)
                     .keyboardShortcut("u")
                 Divider()
-                Button("Bulleted List") { compose?.editor?.toggleList(.bulleted) }
-                Button("Numbered List") { compose?.editor?.toggleList(.numbered) }
+                Button("Bulleted List", systemImage: "list.bullet") { compose?.editor?.toggleList(.bulleted) }
+                    .labelStyle(.titleAndIcon)
+                Button("Numbered List", systemImage: "list.number") { compose?.editor?.toggleList(.numbered) }
+                    .labelStyle(.titleAndIcon)
                 Divider()
-                Button(compose?.format.link == true ? "Edit Link…" : "Add Link…") { compose?.isEditingLink = true }
+                Button(compose?.format.link == true ? "Edit Link…" : "Add Link…", systemImage: "link") { compose?.isEditingLink = true }
+                    .labelStyle(.titleAndIcon)
                     .keyboardShortcut("k")
             }
             .disabled(!(compose?.canFormat ?? false))
