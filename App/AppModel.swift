@@ -184,6 +184,12 @@ final class AppModel {
                 owner.syncNow()
             } else {
                 await mailbox.addAccount(account, gmail: GmailClient(tokens: session))
+                if case .signInRequired(let old) = phase {
+                    // Added from Settings while the only account needed
+                    // sign-in. With several, its section asks instead.
+                    accountsNeedingSignIn.insert(old.id)
+                    phase = .signedIn(mailbox.account)
+                }
             }
         } catch {
             reportSignInError(error.localizedDescription)
