@@ -14,7 +14,20 @@ public struct ExtractedBody: Sendable, Equatable {
     public var isEmpty: Bool { html == nil && plainText == nil }
 }
 
-/// Picks the text parts out of a `full`-format Gmail payload.
+/// One attachment in a `full`-format payload.
+public struct AttachmentPart: Sendable, Equatable {
+    /// Stable across fetches, unlike `attachmentID`.
+    public var partID: String
+    public var filename: String
+    public var mimeType: String
+    public var size: Int
+    /// Nil when Gmail put the bytes in the payload, which it does for small parts.
+    public var attachmentID: String?
+    /// Shown inside the message, such as an image the HTML loads through a `cid:` URL.
+    public var isInline: Bool
+}
+
+/// Picks the text parts and attachments out of a `full`-format Gmail payload.
 ///
 /// Gmail undoes the transfer encoding but leaves the bytes in the part's
 /// declared charset, so each part is decoded here.
@@ -26,6 +39,37 @@ public enum MIMEParts {
             html: found.html.isEmpty ? nil : found.html.joined(separator: "\n"),
             plainText: found.plain.isEmpty ? nil : found.plain.joined(separator: "\n")
         )
+    }
+
+    /// Leaf parts with a file name or an attachment disposition, in payload order.
+    public static func attachments(of message: GmailMessage) -> [AttachmentPart] {
+        guard let payload = message.payload else { return [] }
+        var found: [AttachmentPart] = []
+        collectAttachments(payload, into: &found)
+        return found
+    }
+
+    private static func collectAttachments(_ part: MessagePart, into found: inout [AttachmentPart]) {
+        if let children = part.parts, !children.isEmpty {
+            for child in children { collectAttachments(child, into: &found) }
+            return
+        }
+        guard isAttachment(part), let partID = part.partId else { return }
+        let contentType = part.header("Content-Type")
+        let disposition = part.header("Content-Disposition")?.trimmingCharacters(in: .whitespaces).lowercased()
+        let filename = part.filename.flatMap { $0.isEmpty ? nil : $0 }
+            ?? contentType.flatMap { MIMEReader.parameters(of: $0)["name"] }.map(MIMEReader.decodeEncodedWords)
+            ?? "Attachment"
+        let isInline = disposition.map { $0.hasPrefix("inline") }
+            ?? (part.header("Content-ID") != nil)
+        found.append(AttachmentPart(
+            partID: partID,
+            filename: filename,
+            mimeType: (part.mimeType ?? "application/octet-stream").lowercased(),
+            size: part.body?.size ?? 0,
+            attachmentID: part.body?.attachmentId,
+            isInline: isInline
+        ))
     }
 
     private struct Found {
@@ -52,7 +96,7 @@ public enum MIMEParts {
         }
 
         guard !isAttachment(part), let data = part.body?.decodedData else { return Found() }
-        let charset = part.header("Content-Type").flatMap { parameter("charset", in: $0) }
+        let charset = part.header("Content-Type").flatMap { MIMEReader.parameters(of: $0)["charset"] }
         switch mimeType {
         case "text/html": return Found(html: [decode(data, charset: charset)])
         case "text/plain": return Found(plain: [decode(data, charset: charset)])
@@ -85,21 +129,5 @@ public enum MIMEParts {
         let encoding = CFStringConvertIANACharSetNameToEncoding(name as CFString)
         guard encoding != kCFStringEncodingInvalidId else { return nil }
         return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(encoding))
-    }
-
-    /// Reads a parameter such as `charset` from a header like
-    /// `text/plain; charset="iso-8859-1"`.
-    static func parameter(_ name: String, in headerValue: String) -> String? {
-        for piece in headerValue.split(separator: ";").dropFirst() {
-            let pair = piece.split(separator: "=", maxSplits: 1)
-            guard pair.count == 2,
-                  pair[0].trimmingCharacters(in: .whitespaces).lowercased() == name
-            else { continue }
-            let value = pair[1]
-                .trimmingCharacters(in: .whitespaces)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-            return value.isEmpty ? nil : value
-        }
-        return nil
     }
 }
