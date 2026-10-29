@@ -7,6 +7,7 @@ DerivedData/
 .build/
 .swiftpm/
 build/
+__pycache__/
 
 # Local secrets and research captures
 Config/Secrets.xcconfig
