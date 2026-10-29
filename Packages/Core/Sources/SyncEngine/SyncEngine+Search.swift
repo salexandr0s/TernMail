@@ -66,20 +66,34 @@ extension SyncEngine {
         let uncached = try await cache.read { tx in
             try listed.filter { try tx.messages(threadID: $0, accountID: accountID).isEmpty }
         }
-        if isStopped || Task.isCancelled { throw CancellationError() }
-        let (updates, gone) = try await fetchThreadMetadata(uncached)
-        let found = listed.filter { !gone.contains($0) }
-
         let deleted = deletedMessageIDs
-        let expiresAt = now().addingTimeInterval(CacheHolds.searchLifetime)
-        // Messages and holds land together, so no prune runs between them.
-        try await write { [updates] tx in
-            let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
-            let threads = try tx.upsertMessages(live)
-            try tx.holdSearchResults(found, until: expiresAt, accountID: accountID)
-            try tx.rebuildThreads(threads, accountID: accountID)
+        var wanted = uncached
+        var fetched = Set<String>()
+        var updates: [CacheTransaction.MessageUpdate] = []
+        var gone = Set<String>()
+        while true {
+            if isStopped || Task.isCancelled { throw CancellationError() }
+            let (more, missing) = try await fetchThreadMetadata(wanted)
+            updates += more
+            gone.formUnion(missing)
+            fetched.formUnion(wanted)
+            let found = listed.filter { !gone.contains($0) }
+            let expiresAt = now().addingTimeInterval(CacheHolds.searchLifetime)
+            // Messages and holds land together, so no prune runs between them.
+            // A release during the fetch may have pruned conversations that
+            // were cached when read; those are fetched before anything lands.
+            let pruned = try await write { [updates, fetched] tx -> [String] in
+                let pruned = try found.filter { try !fetched.contains($0) && tx.messages(threadID: $0, accountID: accountID).isEmpty }
+                guard pruned.isEmpty else { return pruned }
+                let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+                let threads = try tx.upsertMessages(live)
+                try tx.holdSearchResults(found, until: expiresAt, accountID: accountID)
+                try tx.rebuildThreads(threads, accountID: accountID)
+                return []
+            }
+            guard !pruned.isEmpty else { return GmailResultPage(threadIDs: found, nextPageToken: page.nextPageToken) }
+            wanted = pruned
         }
-        return GmailResultPage(threadIDs: found, nextPageToken: page.nextPageToken)
     }
 
     /// Metadata for every message in `threadIDs`, plus the conversations Gmail
