@@ -127,6 +127,8 @@ final class MailboxModel {
         do {
             try await engine.openThread(threadID)
         } catch {
+            // Switching conversations cancels the load, which isn't a failure.
+            guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return }
             notice = Notice(message: "Tern couldn't load this conversation. Check your connection.", undo: nil, isError: true)
         }
     }
