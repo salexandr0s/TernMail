@@ -103,6 +103,10 @@ final class GoogleAuth {
             session = OIDAuthState.authState(byPresenting: request, presenting: window) { state, error in
                 if let state {
                     continuation.resume(returning: AuthStateBox(state: state))
+                } else if let error = error as NSError?, error.domain == OIDGeneralErrorDomain,
+                          error.code == OIDErrorCode.userCanceledAuthorizationFlow.rawValue {
+                    // Closing Google's page isn't a failure to report.
+                    continuation.resume(throwing: CancellationError())
                 } else {
                     continuation.resume(throwing: error ?? AuthError.missingIdentity)
                 }

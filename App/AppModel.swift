@@ -162,6 +162,8 @@ final class AppModel {
             } else {
                 await mailbox.addAccount(account, gmail: GmailClient(tokens: session))
             }
+        } catch is CancellationError {
+            return
         } catch {
             reportSignInError(error.localizedDescription)
         }
