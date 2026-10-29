@@ -9,6 +9,22 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func undoTrashKeepsMessagesThatWereAlreadyInTrash() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t1", [SystemLabel.trash])])
+        let action = try #require(try await engine.perform(.trash, threadIDs: ["t1"]))
+        clock.advance(3)
+        await engine.sendDueActions()
+        try await engine.undo(action)
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+        #expect(try await threadIDs(cache, SystemLabel.trash) == ["t1"])
+        await engine.sendDueActions()
+        await engine.sendDueActions()
+        #expect(await gmail.changes == [
+            Change("trash", ["t1"]), Change("untrash", ["t1"]), Change("batchModify", ["m2"], add: [SystemLabel.trash]),
+        ])
+    }
+
     @Test func rejectedCredentialsKeepTheChangeForReauthentication() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])

@@ -127,6 +127,12 @@ extension SyncEngine {
                 .untrashThreads, accountID: accountID, threadIDs: action.threadIDs,
                 remove: [SystemLabel.trash], now: now, notBefore: now
             )
+            if !action.messageIDs.isEmpty {
+                _ = try tx.enqueue(
+                    .modifyMessages, accountID: accountID, messageIDs: action.messageIDs,
+                    add: [SystemLabel.trash], now: now, notBefore: now
+                )
+            }
         case .untrashThreads:
             _ = try tx.enqueue(
                 .trashThreads, accountID: accountID, threadIDs: action.threadIDs,

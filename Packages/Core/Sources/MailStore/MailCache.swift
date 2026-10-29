@@ -242,11 +242,13 @@ public struct CacheTransaction {
         }
 
         var diff: [String: PendingAction.LabelDiff] = [:]
+        var alreadyTrashed: [String] = []
         for threadID in affectedThreads {
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: existing)
             let targets = threadIDs.contains(threadID) ? Array(labels.keys) : messageIDs.filter { labels[$0] != nil }
             for messageID in targets {
                 let current = labels[messageID] ?? []
+                if kind == .trashThreads, current.contains(SystemLabel.trash) { alreadyTrashed.append(messageID) }
                 let change = PendingAction.LabelDiff(
                     added: add.filter { !current.contains($0) }.sorted(),
                     removed: remove.filter { current.contains($0) }.sorted()
@@ -259,7 +261,7 @@ public struct CacheTransaction {
 
         var action = PendingAction(
             id: nil, accountID: accountID, kind: kind,
-            threadIDs: threadIDs, messageIDs: messageIDs,
+            threadIDs: threadIDs, messageIDs: kind == .trashThreads ? alreadyTrashed.sorted() : messageIDs,
             addLabelIDs: add, removeLabelIDs: remove, diff: diff,
             state: .queued, attempts: 0, lastError: nil,
             createdAt: now, notBefore: notBefore, sentAt: nil
