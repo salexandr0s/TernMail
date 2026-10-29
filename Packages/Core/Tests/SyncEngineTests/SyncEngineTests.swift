@@ -748,6 +748,25 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await cache.read { tx in try tx.localDraft(id: moved.id) }?.gmailDraftID == "D1")
     }
 
+    @Test func aMoveToAnAccountBeingRemovedIsRefusedAndLeavesNothing() async throws {
+        let (engine, cache, _, clock) = try await makeEngine()
+        let outgoing = await engine.outgoingDirectory
+        let other = SyncEngine(
+            accountID: "second", sender: EmailAddress(address: "second@example.com"), outgoingDirectory: outgoing,
+            gmail: FakeGmail(), cache: cache, sendsAutomatically: false, now: clock.now
+        )
+        let draft = try await engine.startMessage()
+        _ = try #require(try await engine.attachData(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain", to: draft.id))
+        await other.stop()
+
+        await #expect(throws: CancellationError.self) {
+            try await engine.moveDraft(draft.id, content: DraftContent(subject: "Plan"), to: other)
+        }
+        #expect(try await cache.read { tx in try tx.localDrafts(accountID: "second") }.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) }?.state == .editing)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outgoing.path) == [draft.id])
+    }
+
     @Test func aSaveRefusedWhileASendWaitsLeavesTheSendQueued() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         let draft = makeDraft()
@@ -1199,13 +1218,25 @@ actor FakeGmail: GmailService {
         return try decode(ThreadListPage.self, #"{\#(next)"threads": [\#(threads)]}"#)
     }
 
+    /// The next `threads(ids:)` answers once `releaseThreads()` is called.
+    func holdNextThreads() { holdsThreads = true }
+    var isHoldingThreads: Bool { heldThreads != nil }
+    func releaseThreads() { heldThreads?.resume(); heldThreads = nil }
+    private var holdsThreads = false
+    private var heldThreads: CheckedContinuation<Void, Never>?
+
     /// Answers from `setThread`, like `thread(id:format:)`.
     func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailThread, GmailError>] {
         threadRequests.append(ids)
         threadRequestHeaders = metadataHeaders
-        return Dictionary(uniqueKeysWithValues: ids.map { id in
+        let results = Dictionary(uniqueKeysWithValues: ids.map { id in
             (id, threadsByID[id].map { .success($0) } ?? Result<GmailThread, GmailError>.failure(.notFound))
         })
+        if holdsThreads {
+            holdsThreads = false
+            await withCheckedContinuation { heldThreads = $0 }
+        }
+        return results
     }
 
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage {

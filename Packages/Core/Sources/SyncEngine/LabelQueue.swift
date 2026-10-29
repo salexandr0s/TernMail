@@ -18,7 +18,9 @@ extension ActionReceipt {
 extension SyncEngine {
     // MARK: Queuing
 
-    /// Queues a new label after the undo hold. Undo deletes it.
+    /// Queues a new label after the undo hold. Undo deletes it, unless Gmail
+    /// turns out to have the label already: then Tern uses that label, and
+    /// undo leaves it.
     public func createLabel(named name: String, color: LabelColor?) async throws -> ActionReceipt {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let accountID = accountID
@@ -222,6 +224,8 @@ extension SyncEngine {
         }
         switch action.kind {
         case .createLabel:
+            // Gmail had the label before Tern asked for it, so it isn't Tern's to delete.
+            guard change.adoptedExisting != true else { return }
             let label = try tx.displayedLabels(accountID: accountID).first { $0.id == labelID }
             _ = try tx.enqueueLabelChange(
                 .deleteLabel, labelID: labelID, change: .init(deletedLabel: label),
@@ -328,7 +332,7 @@ extension SyncEngine {
                 } catch {
                     return await finish(row, outcome: .retry(String(describing: error)))
                 }
-                if let existing { return await recordCreated(row, realID: existing) }
+                if let existing { return await recordCreated(row, realID: existing, adopted: true) }
                 return await refuseLabelChange(row)
             }
             if case .retry(let reason) = Self.outcome(for: error) {
@@ -355,25 +359,47 @@ extension SyncEngine {
     }
 
     /// Records Gmail's ID for a created label, swaps it into queued rows and
-    /// live receipts, and marks the create sent, all in one write.
-    private func recordCreated(_ row: PendingAction, realID: String) async {
+    /// live receipts, and marks the create sent, all in one write. `adopted`
+    /// marks a label Gmail had before, which undo leaves in Gmail; a delete
+    /// an undo queued while the request was out goes too.
+    private func recordCreated(_ row: PendingAction, realID: String, adopted: Bool = false) async {
         guard let id = row.id, let temporaryID = row.labelID else { return }
         let accountID = accountID
         let now = now()
-        let changed = try? await write { tx -> [PendingAction] in
+        let result = try? await write { tx -> (changed: [PendingAction], keptDeletes: [Int64]) in
+            var keptDeletes: [Int64] = []
+            if adopted {
+                for delete in try tx.pendingActions(accountID: accountID)
+                where delete.kind == .deleteLabel && delete.labelID == temporaryID && delete.state == .queued {
+                    guard let deleteID = delete.id else { continue }
+                    try tx.deleteLabelChange(id: deleteID, accountID: accountID)
+                    keptDeletes.append(deleteID)
+                }
+            }
             var changed = try tx.recordCreatedLabel(temporaryID: temporaryID, realID: realID, accountID: accountID)
-            guard var created = try tx.action(id: id) else { return changed }
+            guard var created = try tx.action(id: id) else { return (changed, keptDeletes) }
             created.state = .sent
             created.sentAt = now
             created.lastError = nil
+            if adopted { created.labelChange?.adoptedExisting = true }
             try tx.updateAction(created)
             changed.removeAll { $0.id == id }
             changed.append(created)
-            return changed
+            return (changed, keptDeletes)
         }
-        for row in changed ?? [] {
+        guard let result else { return }
+        for row in result.changed {
             if let id = row.id { undoReceipts[id]?.value?.update(row) }
         }
+        if !result.keptDeletes.isEmpty {
+            unavailableUndoIDs.formUnion(result.keptDeletes)
+            continuation.yield(.actionFailed(Self.adoptedLabelNotice(named: row.labelChange?.newName)))
+        }
+    }
+
+    /// For undoing a create that took a label Gmail had already.
+    static func adoptedLabelNotice(named name: String?) -> String {
+        "“\(name ?? "")” was already a label in Gmail, so Tern kept it."
     }
 
     /// Marks a delete sent and takes the label out of the cache.
@@ -393,18 +419,46 @@ extension SyncEngine {
     }
 
     /// Gmail refused the row for good. A create leaves with the changes that
-    /// use the label, a delete puts the label back, and an update just goes.
+    /// use the label, a delete puts the label back, a rename leaves with the
+    /// renames of the labels under it, and any other update just goes.
     private func refuseLabelChange(_ row: PendingAction) async {
         guard let id = row.id else { return }
         let accountID = accountID
         let dropped = try? await write { tx -> [Int64] in
             try tx.deleteLabelChange(id: id, accountID: accountID)
-            guard row.kind == .createLabel, let labelID = row.labelID else { return [id] }
-            return try [id] + tx.dropLabel(labelID, accountID: accountID)
+            switch row.kind {
+            case .createLabel:
+                guard let labelID = row.labelID else { return [id] }
+                return try [id] + tx.dropLabel(labelID, accountID: accountID)
+            case .updateLabel where row.labelChange?.newName != nil:
+                return try [id] + Self.dropChildRenames(of: row, accountID: accountID, in: tx)
+            default:
+                return [id]
+            }
         }
         guard let dropped else { return }
         unavailableUndoIDs.formUnion(dropped)
         continuation.yield(.actionFailed(Self.refusalMessage(for: row)))
+    }
+
+    /// Takes the queued renames of labels nested under a refused rename out
+    /// of the queue, so they keep their names under the parent's old one.
+    /// One rename's rows share its creation time, and come parents first.
+    /// Returns their IDs.
+    private static func dropChildRenames(of parent: PendingAction, accountID: String, in tx: CacheTransaction) throws -> [Int64] {
+        guard let parentID = parent.labelID else { return [] }
+        var renamed: Set<String> = [parentID]
+        var dropped: [Int64] = []
+        for child in try tx.pendingActions(accountID: accountID)
+        where child.kind == .updateLabel && child.state == .queued && child.createdAt == parent.createdAt {
+            guard let id = child.id, let labelID = child.labelID,
+                  let parentLabelID = child.labelChange?.parentLabelID, renamed.contains(parentLabelID)
+            else { continue }
+            try tx.deleteLabelChange(id: id, accountID: accountID)
+            renamed.insert(labelID)
+            dropped.append(id)
+        }
+        return dropped
     }
 
     private static func refusalMessage(for row: PendingAction) -> String {

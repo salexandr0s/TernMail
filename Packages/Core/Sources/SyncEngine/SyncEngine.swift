@@ -72,6 +72,9 @@ public actor SyncEngine {
     var unavailableUndoIDs = Set<Int64>()
     var undoReceipts: [Int64: WeakActionReceipt] = [:]
     private(set) var isStopped = false
+    /// Set as `stop()` begins. A lock, so another engine's write that adds
+    /// rows for this account can check it inside its transaction.
+    let stopRequested = OSAllocatedUnfairLock(initialState: false)
     /// Accessed only inside the cache's serialized writes. The lock safely
     /// carries deletion knowledge into their Sendable closures. Gmail message
     /// IDs are never reused; forgetting one could resurrect deleted mail.
@@ -136,6 +139,7 @@ public actor SyncEngine {
     /// have finished, so the caller can delete the account's data safely. A
     /// send that is already uploading finishes first, so its outcome is known.
     public func stop() async {
+        stopRequested.withLock { $0 = true }
         isStoppingDrafts = true
         if sendsInFlight > 0 {
             await withCheckedContinuation { sendWaiters.append($0) }

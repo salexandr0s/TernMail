@@ -67,6 +67,24 @@ import Testing
         #expect(try await gmail.labels().map(\.name).sorted() == ["Bills", "Work", "Work/Trips", "Work/Trips/2026"])
     }
 
+    @Test func aRenameGmailRefusesKeepsTheLabelsUnderIt() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await setLabels([("Label_1", "Work"), ("Label_2", "Work/Trips"), ("Label_3", "Work/Trips/2026")], cache, gmail)
+        let rename = try #require(try await engine.renameLabel("Label_1", to: "Job"))
+        await gmail.failNextLabelCall("patch", with: .http(status: 400, reason: "invalidArgument"))
+        clock.advance(3)
+
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["patch Label_1"])
+        #expect(try await rows(cache).isEmpty)
+        #expect(try await shownNames(cache) == ["Work", "Work/Trips", "Work/Trips/2026"])
+        // Nothing is left to undo.
+        try await engine.undo(rename)
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["patch Label_1"])
+        #expect(await events(engine) == [.actionFailed("Gmail didn't accept a label change, so Tern put the label back.")])
+    }
+
     @Test func namesAreCheckedBeforeAnythingIsQueued() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await setLabels([("Label_1", "Work"), ("Label_2", "Work/Trips"), ("Label_3", "Job/Trips")], cache, gmail)
@@ -90,6 +108,30 @@ import Testing
         while await engine.sendDueActions() > 0 {}
         #expect(await gmail.labelCalls == ["create trips"])
         #expect(await gmail.changes == [Change("modifyThreads", ["t1"], add: ["Label_7"])])
+    }
+
+    @Test(arguments: [false, true])
+    func undoingACreateThatTookAnExistingLabelLeavesItInGmail(undoingDuringTheRequest: Bool) async throws {
+        let (engine, _, gmail, clock) = try await makeEngine()
+        await gmail.setLabels([try gmailLabel("Label_7", "Trips")])
+        let create = try await engine.createLabel(named: "trips", color: nil)
+        clock.advance(3)
+        if undoingDuringTheRequest {
+            await gmail.holdNextChange()
+            let sending = Task { await engine.sendDueActions() }
+            while await !gmail.isHolding { await Task.yield() }
+            try await engine.undo(create)
+            await gmail.release()
+            await sending.value
+        } else {
+            await engine.sendDueActions()
+            try await engine.undo(create)
+        }
+
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["create trips"])
+        #expect(try await gmail.labels().map(\.id) == ["Label_7"])
+        #expect(await events(engine) == [.actionFailed("“trips” was already a label in Gmail, so Tern kept it.")])
     }
 
     @Test func aRateLimitedCreateRetriesWithItsChangesKept() async throws {
@@ -167,9 +209,12 @@ import Testing
             Change("modifyThreads", ["t2"], add: ["Label_1"]),
             Change("modifyThreads", ["t4"], remove: [SystemLabel.inbox]),
         ])
+        // A pass that fetched before the delete reached Gmail stores the label again.
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, "Label_1"])])
         try await cache.write { tx in try tx.dropSentActions(sentBefore: .distantFuture, accountID: account) }
         #expect(try await rows(cache).isEmpty)
         #expect(try await labels(cache, "t1") == [SystemLabel.inbox])
+        #expect(try await listed(cache, "Label_1").isEmpty)
     }
 
     @Test func aDeleteGmailRefusesPutsTheLabelBack() async throws {

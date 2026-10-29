@@ -73,9 +73,14 @@ extension SyncEngine {
     /// The copy gets its own ID, Message-ID and files, and holds `content`,
     /// the window's text. The original's discard is queued in the same
     /// transaction, so the message is never in both accounts. Returns nil
-    /// when the draft isn't a new message or no longer takes edits.
+    /// when the draft isn't a new message or no longer takes edits, and
+    /// throws `CancellationError` when `destination` is stopping or stopped.
     public func moveDraft(_ localDraftID: String, content: DraftContent, to destination: SyncEngine) async throws -> LocalDraft? {
         guard destination !== self else { return nil }
+        // This engine writes the destination's rows, so its write gate alone
+        // can't keep them out of an account that is being removed.
+        let destinationStopped = destination.stopRequested
+        if destinationStopped.withLock({ $0 }) { throw CancellationError() }
         let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: localDraftID) }
         let moved = LocalDraft(
             accountID: destination.accountID, kind: .new, content: content,
@@ -94,6 +99,8 @@ extension SyncEngine {
         let result: (draft: LocalDraft, saves: Bool)?
         do {
             result = try await write { tx -> (LocalDraft, Bool)? in
+                // Checked again here, so nothing lands after the destination's data is deleted.
+                if destinationStopped.withLock({ $0 }) { throw CancellationError() }
                 // Read here, since a send or discard may have taken the draft during the copy.
                 guard let original = try tx.localDraft(id: localDraftID), original.kind == .new, original.state == .editing
                 else { return nil }

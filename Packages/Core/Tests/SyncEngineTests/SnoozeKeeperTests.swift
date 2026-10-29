@@ -29,6 +29,56 @@ private let hour: TimeInterval = 60 * 60
         #expect(await gmail.changes.isEmpty)
     }
 
+    @Test func undoingASnoozeAgainPutsBackTheEarlierSnooze() async throws {
+        let (engine, cache, _, clock) = try await makeEngine()
+        let (keeper, accounts) = try await makeKeeper(engine)
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])])
+        _ = try await keeper.snooze(threadIDs: ["t1"], until: baseDate + hour)
+        clock.advance(3)
+        await engine.sendDueActions()
+
+        let again = try #require(try await keeper.snooze(threadIDs: ["t1"], until: baseDate + 2 * hour))
+        try await keeper.undoSnooze(again)
+        #expect(try await holds(cache) == ["t1": baseDate + hour])
+        #expect(try await accounts.snoozes(accountID: account).map(\.wakeAt) == [baseDate + hour])
+        #expect(try await listed(cache, SystemLabel.inbox) == ["t2"])
+
+        // Undoing a snooze after a newer one leaves the newer one alone.
+        let first = try #require(try await keeper.snooze(threadIDs: ["t2"], until: baseDate + hour))
+        _ = try await keeper.snooze(threadIDs: ["t2"], until: baseDate + 3 * hour)
+        try await keeper.undoSnooze(first)
+        #expect(try await holds(cache) == ["t1": baseDate + hour, "t2": baseDate + 3 * hour])
+        #expect(try await accounts.snoozes(accountID: account).map(\.threadID) == ["t1", "t2"])
+        #expect(try await listed(cache, SystemLabel.inbox).isEmpty)
+
+        clock.advance(hour)
+        await keeper.check()
+        #expect(try await listed(cache, SystemLabel.inbox) == ["t1"])
+    }
+
+    @Test func aSnoozeMovedDuringACheckIsNeitherWokenNorHeldAtItsOldTime() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let (keeper, accounts) = try await makeKeeper(engine)
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        _ = try await keeper.snooze(threadIDs: ["t1"], until: baseDate + hour)
+        // A cache reset dropped t2's messages, so the check fetches them.
+        try await cache.write { tx in try tx.holdSnooze(threadID: "t2", until: baseDate + 2 * hour, accountID: account) }
+        await gmail.setThread(try thread("t2", [("m2", [])]))
+        clock.advance(hour)
+
+        await gmail.holdNextThreads()
+        let checking = Task { await keeper.check() }
+        while await !gmail.isHoldingThreads { await Task.yield() }
+        // t1 is due as the check read it, and t2's fetch read the old time.
+        _ = try await keeper.snooze(threadIDs: ["t1", "t2"], until: baseDate + 5 * hour)
+        await gmail.releaseThreads()
+        await checking.value
+
+        #expect(try await holds(cache) == ["t1": baseDate + 5 * hour, "t2": baseDate + 5 * hour])
+        #expect(try await accounts.snoozes(accountID: account).map(\.wakeAt) == [baseDate + 5 * hour, baseDate + 5 * hour])
+        #expect(try await listed(cache, SystemLabel.inbox).isEmpty)
+    }
+
     @Test func wakingBringsTheConversationBackSortedByItsWakeTime() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         let (keeper, accounts) = try await makeKeeper(engine)

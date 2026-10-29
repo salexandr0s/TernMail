@@ -45,12 +45,19 @@ extension CacheTransaction {
         return Dictionary(rows.map { ($0["threadID"], $0["wakeAt"]) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// Ends a snooze in the cache. The conversation stays where it is.
-    public func releaseSnooze(threadID: String, accountID: String) throws {
-        try db.execute(
-            sql: "DELETE FROM cacheHold WHERE accountID = ? AND threadID = ? AND reason = ?",
-            arguments: [accountID, threadID, CacheHoldReason.snooze.rawValue]
-        )
+    /// Ends a snooze in the cache. The conversation stays where it is. With
+    /// `wakeAt`, only a hold that still wakes then ends, so a snooze moved
+    /// since stays. Returns whether a hold ended.
+    @discardableResult
+    public func releaseSnooze(threadID: String, wakingAt wakeAt: Date? = nil, accountID: String) throws -> Bool {
+        var sql = "DELETE FROM cacheHold WHERE accountID = ? AND threadID = ? AND reason = ?"
+        var arguments: StatementArguments = [accountID, threadID, CacheHoldReason.snooze.rawValue]
+        if let wakeAt {
+            sql += " AND wakeAt = ?"
+            arguments += [wakeAt]
+        }
+        try db.execute(sql: sql, arguments: arguments)
+        return db.changesCount > 0
     }
 
     /// Each cached message's labels in the conversation, with queued changes
@@ -106,9 +113,13 @@ extension AccountStore {
         try await writer.write { db in try snooze.upsert(db) }
     }
 
-    public func deleteSnooze(accountID: String, threadID: String) async throws {
+    /// Deletes a snooze record. With `wakeAt`, only a record that still
+    /// wakes then, so a snooze saved since stays.
+    public func deleteSnooze(accountID: String, threadID: String, wakingAt wakeAt: Date? = nil) async throws {
         try await writer.write { db in
-            _ = try SnoozeRecord.deleteOne(db, key: ["accountID": accountID, "threadID": threadID])
+            var request = SnoozeRecord.filter(Column("accountID") == accountID && Column("threadID") == threadID)
+            if let wakeAt { request = request.filter(Column("wakeAt") == wakeAt) }
+            _ = try request.deleteAll(db)
         }
     }
 }

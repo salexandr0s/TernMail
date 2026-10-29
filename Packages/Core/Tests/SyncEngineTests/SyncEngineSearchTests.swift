@@ -28,6 +28,29 @@ import Testing
         #expect(held == ["t1", "t2"])
     }
 
+    @Test func aResultPrunedDuringTheFetchIsFetchedAgain() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        // t1 is cached under an expired search hold, past the 30 days full sync keeps.
+        try await seed(cache, [("m1", "t1", [])], cursor: 200)
+        try await cache.write { tx in try tx.holdSearchResults(["t1"], until: baseDate + 60, accountID: account) }
+        clock.advance(31 * 24 * 60 * 60)
+        await gmail.setThreadPages("trail", [["t1", "t2"]])
+        await gmail.setThread(try thread("t1", [("m1", [])]))
+        await gmail.setThread(try thread("t2", [("m2", [])]))
+
+        await gmail.holdNextThreads()
+        let searching = Task { try await engine.searchGmail(SearchQuery("trail"), timeZone: .gmt) }
+        while await !gmail.isHoldingThreads { await Task.yield() }
+        // The pass releases t1's hold and drops its messages while t2 is fetched.
+        try await engine.sync()
+        await gmail.releaseThreads()
+        let page = try await searching.value
+
+        #expect(page.threadIDs == ["t1", "t2"])
+        #expect(await gmail.threadRequests == [["t2"], ["t1"]])
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) } == ["m1", "m2"])
+    }
+
     @Test func requestsFollowTheQueryAndTheLabel() async throws {
         let (engine, _, gmail, _) = try await makeEngine()
         let newYork = try #require(TimeZone(identifier: "America/New_York"))
