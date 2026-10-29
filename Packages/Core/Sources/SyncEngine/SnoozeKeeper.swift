@@ -55,12 +55,21 @@ public actor SnoozeKeeper {
         return receipt
     }
 
-    /// Takes back a snooze: the archive, the hold and the record.
+    /// Takes back a snooze: the archive, the hold and the record. A
+    /// conversation that was snoozed already gets its earlier snooze back,
+    /// and one snoozed again since keeps the newer snooze.
     public func undoSnooze(_ receipt: ActionReceipt) async throws {
-        let threadIDs = Set(receipt.actions.flatMap(\.threadIDs))
         try await engine.undo(receipt)
-        try await engine.releaseSnoozes(threadIDs)
-        try await deleteRecords(threadIDs)
+        guard let snooze = receipt.snooze else { return }
+        let undone = try await engine.undoSnoozeHolds(snooze)
+        let accountID = engine.accountID
+        let now = engine.now()
+        for (threadID, wakeAt) in undone.restored.sorted(by: { $0.key < $1.key }) {
+            try await accounts.saveSnooze(SnoozeRecord(accountID: accountID, threadID: threadID, wakeAt: wakeAt, createdAt: now))
+        }
+        for threadID in undone.released.sorted() {
+            try await accounts.deleteSnooze(accountID: accountID, threadID: threadID, wakingAt: snooze.wakeAt)
+        }
         scheduleNextCheck()
     }
 
@@ -100,26 +109,25 @@ public actor SnoozeKeeper {
         do {
             try await reconcile()
             let now = engine.now()
-            var ended = Set<String>()
+            var ended: [String: Date] = [:]
             var due: [String: Date] = [:]
             for state in try await engine.snoozeStates() {
                 if !state.isCached {
                     // Gone only on Gmail's word, never because the cache lacks it.
-                    if try await !engine.fetchSnoozed(state.threadID, until: state.wakeAt) { ended.insert(state.threadID) }
+                    if try await !engine.fetchSnoozed(state.threadID, until: state.wakeAt, ifHeldUntil: state.wakeAt) {
+                        ended[state.threadID] = state.wakeAt
+                    }
                 } else if state.wakeAt <= now {
                     due[state.threadID] = state.wakeAt
                 } else if state.isInInbox {
                     // New mail, or moved back in Tern or in Gmail.
-                    ended.insert(state.threadID)
+                    ended[state.threadID] = state.wakeAt
                 }
             }
-            if !due.isEmpty {
-                try await engine.wake(due)
-                try await deleteRecords(Set(due.keys))
-            }
-            if !ended.isEmpty {
-                try await engine.releaseSnoozes(ended)
-                try await deleteRecords(ended)
+            // A snooze moved or undone since the read above is left for the next check.
+            let finished = try await engine.endSnoozes(waking: due, releasing: ended)
+            for (threadID, wakeAt) in finished.sorted(by: { $0.key < $1.key }) {
+                try await accounts.deleteSnooze(accountID: engine.accountID, threadID: threadID, wakingAt: wakeAt)
             }
         } catch {
             return
@@ -139,8 +147,8 @@ public actor SnoozeKeeper {
             try await accounts.saveSnooze(SnoozeRecord(accountID: accountID, threadID: threadID, wakeAt: wakeAt, createdAt: now))
         }
         for record in records where holds[record.threadID] == nil {
-            if try await !engine.fetchSnoozed(record.threadID, until: record.wakeAt) {
-                try await accounts.deleteSnooze(accountID: accountID, threadID: record.threadID)
+            if try await !engine.fetchSnoozed(record.threadID, until: record.wakeAt, ifHeldUntil: nil) {
+                try await accounts.deleteSnooze(accountID: accountID, threadID: record.threadID, wakingAt: record.wakeAt)
             }
         }
     }
@@ -177,16 +185,26 @@ struct SnoozeState: Sendable {
     let isInInbox: Bool
 }
 
+/// What a snooze changed, so its undo can put back a snooze it replaced.
+struct SnoozeChange: Sendable {
+    let threadIDs: [String]
+    let wakeAt: Date
+    /// Conversations that were snoozed already, with their earlier wake times.
+    let replaced: [String: Date]
+}
+
 extension SyncEngine {
-    /// Archives conversations and holds them until `wakeAt` in one write.
+    /// Archives conversations and holds them until `wakeAt` in one write. The
+    /// receipt keeps the wake times of the snoozes this one replaces.
     func snooze(threadIDs: [String], until wakeAt: Date) async throws -> ActionReceipt? {
         let threadIDs = threadIDs.removingDuplicates().sorted()
         guard !threadIDs.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
         let notBefore = now.addingTimeInterval(undoHold)
-        let rows = try await write { tx in
-            try threadIDs.map { threadID in
+        let (rows, replaced) = try await write { tx -> ([PendingAction], [String: Date]) in
+            let earlier = try tx.snoozeHolds(accountID: accountID).filter { threadIDs.contains($0.key) }
+            let rows = try threadIDs.map { threadID in
                 let row = try tx.enqueue(
                     .modifyThreads, accountID: accountID, threadIDs: [threadID],
                     remove: [SystemLabel.inbox], now: now, notBefore: notBefore
@@ -194,43 +212,95 @@ extension SyncEngine {
                 try tx.holdSnooze(threadID: threadID, until: wakeAt, accountID: accountID)
                 return row
             }
+            return (rows, earlier)
         }
         scheduleSending()
-        return register(rows)
+        return register(rows, snooze: SnoozeChange(threadIDs: threadIDs, wakeAt: wakeAt, replaced: replaced))
     }
 
-    /// Brings conversations back to the Inbox, each sorted by its wake time,
-    /// and ends their snoozes in one write. Messages in Trash or Spam stay
-    /// there, so a conversation trashed while snoozed stays in Trash.
+    /// Takes back a snooze's holds in one write. A conversation whose hold is
+    /// still this snooze's gets back the snooze it replaced while it stays out
+    /// of the Inbox, or else no hold. Returns the conversations changed: those
+    /// with an earlier snooze back, with its wake time, and those released.
+    func undoSnoozeHolds(_ snooze: SnoozeChange) async throws -> (restored: [String: Date], released: Set<String>) {
+        let accountID = accountID
+        return try await write { tx in
+            var restored: [String: Date] = [:]
+            var released = Set<String>()
+            for threadID in snooze.threadIDs {
+                guard try tx.releaseSnooze(threadID: threadID, wakingAt: snooze.wakeAt, accountID: accountID) else { continue }
+                let inInbox = try tx.currentLabels(threadID: threadID, accountID: accountID)
+                    .values.contains { $0.contains(SystemLabel.inbox) }
+                if let earlier = snooze.replaced[threadID], !inInbox {
+                    try tx.holdSnooze(threadID: threadID, until: earlier, accountID: accountID)
+                    restored[threadID] = earlier
+                } else {
+                    released.insert(threadID)
+                }
+            }
+            return (restored, released)
+        }
+    }
+
+    /// Brings conversations back to the Inbox now, each sorted by its wake
+    /// time, and ends their snoozes in one write.
     func wake(_ wakes: [String: Date]) async throws {
         let accountID = accountID
         let now = now()
         try await write { tx in
             for (threadID, wokeAt) in wakes.sorted(by: { $0.key < $1.key }) {
-                let outside = try tx.currentLabels(threadID: threadID, accountID: accountID)
-                    .filter { !$0.value.contains(SystemLabel.trash) && !$0.value.contains(SystemLabel.spam) }
-                    .keys.sorted()
-                if !outside.isEmpty {
-                    _ = try tx.enqueue(
-                        .modifyMessages, accountID: accountID, threadIDs: [threadID], messageIDs: outside,
-                        add: [SystemLabel.inbox], now: now, notBefore: now
-                    )
-                    try tx.recordWake(threadID: threadID, at: wokeAt, accountID: accountID)
-                }
+                try Self.bringBack(threadID, wokeAt: wokeAt, accountID: accountID, now: now, in: tx)
                 try tx.releaseSnooze(threadID: threadID, accountID: accountID)
             }
         }
         scheduleSending()
     }
 
-    /// Ends snoozes in the cache and leaves the conversations where they are.
-    func releaseSnoozes(_ threadIDs: Set<String>) async throws {
+    /// Ends the snoozes a check found finished, in one write: `due`
+    /// conversations come back to the Inbox, each sorted by its wake time,
+    /// and `ended` ones, back in the Inbox already or gone from Gmail, stay
+    /// where they are. Values are the wake times the check read. A hold that
+    /// changed since was moved or undone, and a conversation that left the
+    /// Inbox since stays snoozed, so both wait for the next check. Returns the
+    /// snoozes that ended, with their wake times.
+    func endSnoozes(waking due: [String: Date], releasing ended: [String: Date]) async throws -> [String: Date] {
+        guard !due.isEmpty || !ended.isEmpty else { return [:] }
         let accountID = accountID
-        try await write { tx in
-            for threadID in threadIDs.sorted() {
-                try tx.releaseSnooze(threadID: threadID, accountID: accountID)
+        let now = now()
+        let finished = try await write { tx -> [String: Date] in
+            var finished: [String: Date] = [:]
+            for (threadID, wakeAt) in due.sorted(by: { $0.key < $1.key }) {
+                guard try tx.releaseSnooze(threadID: threadID, wakingAt: wakeAt, accountID: accountID) else { continue }
+                try Self.bringBack(threadID, wokeAt: wakeAt, accountID: accountID, now: now, in: tx)
+                finished[threadID] = wakeAt
             }
+            for (threadID, wakeAt) in ended.sorted(by: { $0.key < $1.key }) {
+                // A conversation Gmail no longer has has no cached messages.
+                let labels = try tx.currentLabels(threadID: threadID, accountID: accountID)
+                guard labels.isEmpty || labels.values.contains(where: { $0.contains(SystemLabel.inbox) }),
+                      try tx.releaseSnooze(threadID: threadID, wakingAt: wakeAt, accountID: accountID)
+                else { continue }
+                finished[threadID] = wakeAt
+            }
+            return finished
         }
+        scheduleSending()
+        return finished
+    }
+
+    /// Queues a conversation's way back to the Inbox and sorts it by `wokeAt`.
+    /// Messages in Trash or Spam stay there, so a conversation trashed while
+    /// snoozed stays in Trash.
+    private static func bringBack(_ threadID: String, wokeAt: Date, accountID: String, now: Date, in tx: CacheTransaction) throws {
+        let outside = try tx.currentLabels(threadID: threadID, accountID: accountID)
+            .filter { !$0.value.contains(SystemLabel.trash) && !$0.value.contains(SystemLabel.spam) }
+            .keys.sorted()
+        guard !outside.isEmpty else { return }
+        _ = try tx.enqueue(
+            .modifyMessages, accountID: accountID, threadIDs: [threadID], messageIDs: outside,
+            add: [SystemLabel.inbox], now: now, notBefore: now
+        )
+        try tx.recordWake(threadID: threadID, at: wokeAt, accountID: accountID)
     }
 
     func snoozeHolds() async throws -> [String: Date] {
@@ -251,9 +321,10 @@ extension SyncEngine {
         }
     }
 
-    /// Fetches a snoozed conversation and holds it again, in one write. False
-    /// when Gmail no longer has it.
-    func fetchSnoozed(_ threadID: String, until wakeAt: Date) async throws -> Bool {
+    /// Fetches a snoozed conversation and holds it until `wakeAt`, in one
+    /// write, unless its hold changed from `held` (nil for none) while the
+    /// request was out. False when Gmail no longer has it.
+    func fetchSnoozed(_ threadID: String, until wakeAt: Date, ifHeldUntil held: Date?) async throws -> Bool {
         let (updates, missing) = try await fetchThreadMetadata([threadID])
         guard !missing.contains(threadID) else { return false }
         let accountID = accountID
@@ -261,7 +332,10 @@ extension SyncEngine {
         try await write { [updates] tx in
             let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
             try tx.rebuildThreads(try tx.upsertMessages(live), accountID: accountID)
-            try tx.holdSnooze(threadID: threadID, until: wakeAt, accountID: accountID)
+            // `held` was read from the cache, so an unchanged hold compares equal.
+            if try tx.snoozeHolds(accountID: accountID)[threadID] == held {
+                try tx.holdSnooze(threadID: threadID, until: wakeAt, accountID: accountID)
+            }
         }
         return true
     }

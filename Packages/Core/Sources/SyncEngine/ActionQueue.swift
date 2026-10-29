@@ -20,10 +20,13 @@ public final class ActionReceipt: Sendable, Equatable {
     // after history has removed the durable rows. All access holds this lock.
     private let rows: OSAllocatedUnfairLock<[PendingAction]>
     public var actions: [PendingAction] { rows.withLock { $0 } }
+    /// For a snooze, what its undo puts back. Nil for other commands.
+    let snooze: SnoozeChange?
 
-    init(actions: [PendingAction]) {
+    init(actions: [PendingAction], snooze: SnoozeChange? = nil) {
         id = actions.first?.id
         rows = OSAllocatedUnfairLock(initialState: actions)
+        self.snooze = snooze
     }
 
     func update(_ action: PendingAction) {
@@ -148,8 +151,8 @@ extension SyncEngine {
     }
 
     /// One receipt for the rows of one user command, so undo treats them as one.
-    func register(_ rows: [PendingAction]) -> ActionReceipt {
-        let receipt = ActionReceipt(actions: rows)
+    func register(_ rows: [PendingAction], snooze: SnoozeChange? = nil) -> ActionReceipt {
+        let receipt = ActionReceipt(actions: rows, snooze: snooze)
         undoReceipts = undoReceipts.filter { $0.value.value != nil }
         for row in rows {
             if let id = row.id { undoReceipts[id] = WeakActionReceipt(receipt) }
