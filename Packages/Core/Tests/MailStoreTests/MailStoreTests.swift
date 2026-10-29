@@ -50,6 +50,19 @@ private let account = "acct"
         #expect(one.map(\.accountID) == [account])
     }
 
+    @Test func cachedAccountIDsDropAnAccountOnceItsDataIsDeleted() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m1", thread: "t1", labels: [SystemLabel.inbox]),
+                update("m1", thread: "t1", labels: [SystemLabel.inbox], minutes: 5, in: "other"),
+            ])
+        }
+        #expect(try await cache.read { tx in try tx.cachedAccountIDs() } == [account, "other"])
+        try await cache.write { tx in try tx.deleteAccountData(accountID: "other") }
+        #expect(try await cache.read { tx in try tx.cachedAccountIDs() } == [account])
+    }
+
     @Test func trashedMessagesListTheirThreadOnlyUnderTrash() async throws {
         let cache = try MailCache.inMemory()
         try await cache.write { tx in
