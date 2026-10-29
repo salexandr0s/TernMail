@@ -3,10 +3,13 @@ import SwiftSoup
 
 /// Strips active content and remote loads from message HTML.
 ///
-/// This is the first of three layers. The page also carries a strict CSP and
-/// the web view applies a content rule list, so anything this misses (CSS
-/// escapes, for example) still cannot run or load. The returned count drives
-/// the "remote content blocked" notice.
+/// For display this is the first of three layers. The page also carries a
+/// strict CSP and the web view applies a content rule list, so anything this
+/// misses (CSS escapes, for example) still cannot run or load. The returned
+/// count drives the "remote content blocked" notice.
+///
+/// Quoting a message in a reply keeps its remote images, so the recipient
+/// sees the original as it was sent, and removes only active content.
 enum HTMLSanitizer {
     private static let removedElements =
         "script, noscript, iframe, frame, frameset, object, embed, applet, meta, link, base, portal, template"
@@ -17,7 +20,7 @@ enum HTMLSanitizer {
     private static let svgReferenceElements: Set<String> = ["image", "use", "feimage"]
 
     /// Cleans `document` in place and returns how many remote loads it removed.
-    static func clean(_ document: Document) throws -> Int {
+    static func clean(_ document: Document, keepingRemoteLoads: Bool = false) throws -> Int {
         var blocked = 0
         for element in try document.select(removedElements) {
             if element.tagName() == "link", try !element.attr("href").isEmpty { blocked += 1 }
@@ -34,6 +37,7 @@ enum HTMLSanitizer {
                 try style.remove()
                 continue
             }
+            guard !keepingRemoteLoads else { continue }
             for node in style.dataNodes() {
                 let (css, count) = neutralizeCSS(node.getWholeData())
                 if count > 0 { node.setWholeData(css) }
@@ -41,12 +45,12 @@ enum HTMLSanitizer {
             }
         }
         for element in try document.getAllElements() {
-            blocked += try cleanAttributes(of: element)
+            blocked += try cleanAttributes(of: element, keepingRemoteLoads: keepingRemoteLoads)
         }
         return blocked
     }
 
-    private static func cleanAttributes(of element: Element) throws -> Int {
+    private static func cleanAttributes(of element: Element, keepingRemoteLoads: Bool) throws -> Int {
         guard let attributes = element.getAttributes()?.asList(), !attributes.isEmpty else { return 0 }
         let tag = element.tagName().lowercased()
         var loadsRemote = false
@@ -58,6 +62,10 @@ enum HTMLSanitizer {
 
             if name.hasPrefix("on") || name == "ping" {
                 try element.removeAttr(key)
+            } else if linkAttributes.contains(name), isScriptURL(value) {
+                try element.removeAttr(key)
+            } else if keepingRemoteLoads {
+                continue
             } else if name == "style" {
                 let (css, count) = neutralizeCSS(value)
                 if count > 0 {
@@ -72,8 +80,6 @@ enum HTMLSanitizer {
                 }
                 try element.removeAttr(key)
                 if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { loadsRemote = true }
-            } else if linkAttributes.contains(name), isScriptURL(value) {
-                try element.removeAttr(key)
             }
         }
         // One element counts once, however many of its attributes pointed off-device.
