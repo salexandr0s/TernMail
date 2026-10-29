@@ -11,8 +11,12 @@ import SwiftSoup
 /// Quoting a message in a reply keeps its remote images, so the recipient
 /// sees the original as it was sent, and removes only active content.
 enum HTMLSanitizer {
-    private static let removedElements =
-        "script, noscript, iframe, frame, frameset, object, embed, applet, meta, link, base, portal, template"
+    /// Form controls go too: a message is read, not filled in, and a focused
+    /// control would take keystrokes meant for Tern's single-key shortcuts.
+    private static let removedElements = """
+        script, noscript, iframe, frame, frameset, object, embed, applet, meta, link, base, portal, template, \
+        input, select, button
+        """
     /// Attributes that fetch a resource as soon as the page renders.
     private static let loadingAttributes: Set<String> = ["src", "srcset", "poster", "background", "lowsrc", "dynsrc"]
     /// Attributes that navigate when used, checked for script URLs.
@@ -28,6 +32,10 @@ enum HTMLSanitizer {
         }
         for form in try document.select("form") {
             try form.unwrap()
+        }
+        // A text box's text stays as plain text, without the box to type in.
+        for textArea in try document.select("textarea") {
+            try textArea.unwrap()
         }
         for style in try document.select("style") {
             // Inside SVG or MathML a browser parses a style element's text as
@@ -60,7 +68,7 @@ enum HTMLSanitizer {
             let name = key.lowercased()
             let value = attribute.getValue()
 
-            if name.hasPrefix("on") || name == "ping" {
+            if name.hasPrefix("on") || name == "ping" || name == "contenteditable" {
                 try element.removeAttr(key)
             } else if linkAttributes.contains(name), isScriptURL(value) {
                 try element.removeAttr(key)
