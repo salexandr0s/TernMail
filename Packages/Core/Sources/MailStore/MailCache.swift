@@ -35,9 +35,9 @@ public struct MailCache: Sendable {
 public struct CacheTransaction {
     let db: Database
 
-    /// Removes everything cached for an account, including unsent actions and
-    /// drafts. Outgoing attachment rows go with their local drafts, and search
-    /// text with its messages.
+    /// Removes everything cached for an account, including unsent actions,
+    /// drafts, contacts and invitation answers. Outgoing attachment rows go
+    /// with their local drafts, and search text with its messages.
     public func deleteAccountData(accountID: String) throws {
         for table in Self.accountTables {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
@@ -52,8 +52,9 @@ public struct CacheTransaction {
     }
 
     private static let accountTables = [
-        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
+        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
+        "contactEmail", "contact", "contactSync", "invitationReply",
     ]
 
     // MARK: Labels

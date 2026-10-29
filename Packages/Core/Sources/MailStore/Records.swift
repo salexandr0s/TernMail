@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import GRDB
 
 /// Gmail system label IDs, plus the virtual All Mail label this app derives.
@@ -140,8 +141,8 @@ public struct SyncStateRecord: Codable, Sendable, Equatable, FetchableRecord, Pe
     public var lastFullSyncAt: Date
 }
 
-/// A change made locally and not yet confirmed by Gmail: a label change, or a
-/// draft save, send or discard.
+/// A change made locally and not yet confirmed by Gmail: a label change, a
+/// draft save, send or discard, or a settings change.
 public struct PendingAction: Codable, Sendable, Equatable, Identifiable, FetchableRecord, MutablePersistableRecord {
     public static let databaseTableName = "pendingAction"
 
@@ -235,6 +236,32 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         }
     }
 
+    /// What a settings row changes in Gmail, with what its undo restores.
+    public enum SettingsChange: Codable, Sendable, Equatable {
+        /// `filters.create`. `listedIDs` holds the filter IDs Gmail listed
+        /// before the first attempt, so a retry can find the filter an
+        /// unanswered attempt created.
+        case createFilter(filter: GmailFilter, listedIDs: [String]?)
+        /// `filters.delete`, with the filter as listed so undo can create it again.
+        case deleteFilter(id: String, filter: GmailFilter)
+        /// Gmail can't edit a filter, so a replace creates the new one, then
+        /// deletes the old. `newID` is set once the create has answered.
+        case replaceFilter(oldID: String, old: GmailFilter, new: GmailFilter, listedIDs: [String]?, newID: String?)
+        /// `settings.updateVacation`, sending only `fields` from `new` over
+        /// the settings Gmail holds at that moment.
+        case vacation(fields: Set<VacationField>, new: VacationSettings, previous: VacationSettings)
+        /// `sendAs.patch` of one address's signature.
+        case signature(address: String, html: String, previousHTML: String)
+    }
+
+    /// A part of the vacation responder that one edit changes.
+    public enum VacationField: String, Codable, Sendable, CaseIterable {
+        case enableAutoReply, subject
+        /// The plain text and the HTML, which change together.
+        case body
+        case restrictToContacts, restrictToDomain, startTime, endTime
+    }
+
     public enum Lane: Sendable {
         case labels, compose
     }
@@ -280,6 +307,7 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     /// The label a create, update or delete row changes.
     public var labelID: String? = nil
     public var labelChange: LabelChange? = nil
+    public var settingsChange: SettingsChange? = nil
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
@@ -297,12 +325,24 @@ public struct AccountRecord: Codable, Sendable, Equatable, Identifiable, Fetchab
     public var displayName: String?
     public var grantedScopes: [String]
     public var addedAt: Date
+    /// The ID token's `hd` claim. Nil for personal accounts and while unknown.
+    public var hostedDomain: String?
+    /// The optional features the user turned on, by name.
+    public var enabledFeatures: [String]
+    /// Whether replies and forwards get the From address's signature.
+    public var signatureOnReplies: Bool
 
-    public init(id: String, email: String, displayName: String?, grantedScopes: [String], addedAt: Date) {
+    public init(
+        id: String, email: String, displayName: String?, grantedScopes: [String], addedAt: Date,
+        hostedDomain: String? = nil, enabledFeatures: [String] = [], signatureOnReplies: Bool = false
+    ) {
         self.id = id
         self.email = email
         self.displayName = displayName
         self.grantedScopes = grantedScopes
         self.addedAt = addedAt
+        self.hostedDomain = hostedDomain
+        self.enabledFeatures = enabledFeatures
+        self.signatureOnReplies = signatureOnReplies
     }
 }

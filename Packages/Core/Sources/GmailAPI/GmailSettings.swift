@@ -217,7 +217,7 @@ public struct VacationSettings: Codable, Sendable, Equatable {
 
 /// An address the account can send as, with its signature.
 public struct SendAsIdentity: Decodable, Sendable, Equatable {
-    public enum VerificationStatus: String, Decodable, Sendable {
+    public enum VerificationStatus: String, Codable, Sendable {
         case accepted, pending, unspecified = "verificationStatusUnspecified"
 
         public init(from decoder: any Decoder) throws {
