@@ -1,22 +1,15 @@
 import Accessibility
-import AppKit
 import Foundation
 import MailStore
 import MessageContent
 import Observation
 import SyncEngine
 
-/// The signed-in mailbox: what the sidebar, thread list and commands read,
-/// and the actions they send to the sync engine.
+/// The window's mailbox: what the sidebar, thread list and commands read,
+/// and the actions they send to each account's sync engine.
 @MainActor
 @Observable
 final class MailboxModel {
-    enum SyncStatus: Equatable {
-        case idle
-        case syncing
-        case failed(String)
-    }
-
     /// A short message at the bottom of the window, with Undo when it can be reverted.
     struct Notice: Identifiable, Equatable {
         enum Undo: Equatable {
@@ -50,10 +43,12 @@ final class MailboxModel {
         case editDraft(messageID: String)
     }
 
-    let account: AccountRecord
+    /// The signed-in account.
+    let primary: AccountMailbox
     /// Compose windows read and edit their drafts through these directly.
     let cache: MailCache
-    let engine: SyncEngine
+    var engine: SyncEngine { primary.engine }
+    var account: AccountRecord { primary.account }
     let downloadsDirectory: URL
     /// While the search field has text, the list shows its results.
     let search: SearchModel
@@ -83,13 +78,7 @@ final class MailboxModel {
     /// The newest send still inside its undo delay, for Edit > Undo Send.
     private(set) var undoableSendID: String?
 
-    private(set) var labels: [LabelRecord] = []
     private(set) var threads: [ThreadRecord] = []
-    /// Drafts and sends that haven't reached Gmail, or that Gmail refused.
-    private(set) var outbox: [DraftActivity] = []
-    private(set) var syncStatus: SyncStatus = .idle
-    private(set) var lastSyncedAt: Date?
-    private(set) var hasSyncedOnce = false
     /// Gmail's older pages of the selected mailbox, after Load Older Conversations.
     private(set) var older: GmailPager?
 
@@ -112,7 +101,6 @@ final class MailboxModel {
     /// The retained targets are bounded along with UndoManager's history.
     var retainedUndoCount: Int { undoEntries.count }
     @ObservationIgnored private var isStopped = false
-    @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
     /// Drafts opened from another app with formatting the editor drops, until their window warns.
     @ObservationIgnored private var droppedFormatting = Set<String>()
@@ -126,15 +114,8 @@ final class MailboxModel {
     var labelEditor: LabelEditorRequest?
     /// The label whose deletion waits for confirmation.
     var labelToDelete: LabelRecord?
-    /// Wakes this account's snoozes. Nil when the mailbox has no config store.
-    @ObservationIgnored let snoozeKeeper: SnoozeKeeper?
-    /// Snoozed conversations, the soonest to wake first.
-    private(set) var snoozed: [SnoozedThread] = []
-    /// Conversations a snooze brought back that are still in the Inbox.
-    private(set) var wokenThreadIDs: Set<String> = []
     /// Choose Date & Time, open for these conversations while set.
     var snoozeDateTargets: Set<String>?
-    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
@@ -149,111 +130,27 @@ final class MailboxModel {
         downloadsDirectory: URL = MailboxModel.defaultDownloadsDirectory,
         snoozeStore: AccountStore? = nil
     ) {
-        self.account = account
         self.cache = cache
         self.downloadsDirectory = downloadsDirectory
-        let engine = SyncEngine(
-            accountID: account.id,
-            sender: EmailAddress(name: account.displayName, address: account.email),
-            outgoingDirectory: outgoingDirectory,
-            gmail: gmail,
-            cache: cache
+        primary = AccountMailbox(
+            account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore
         )
-        self.engine = engine
-        snoozeKeeper = snoozeStore.map { SnoozeKeeper(engine: engine, accounts: $0) }
-        search = SearchModel(accountID: account.id, cache: cache, engine: engine)
+        search = SearchModel(accountID: account.id, cache: cache, engine: primary.engine)
         search.onResultsChange = { [weak self] in self?.listChanged() }
+        primary.onLabelsChange = { [weak self] in self?.labelsChanged() }
+        primary.onSnoozedChange = { [weak self] in self?.snoozedChanged() }
+        primary.onEvent = { [weak self] in self?.handle($0) }
     }
 
     func start() async {
-        hasSyncedOnce = (try? await cache.syncState(accountID: account.id)) != nil
         guard !isStopped else { return }
-        let labelStream = cache.labels(accountID: account.id)
-        let outboxStream = cache.outbox(accountID: account.id)
-        let snoozedStream = cache.snoozedThreads(accountID: account.id)
-        let wokenStream = cache.wokenThreadIDs(accountID: account.id)
-        let events = engine.events
-        tasks.append(Task { [weak self] in
-            do {
-                for try await labels in labelStream {
-                    guard let self, !Task.isCancelled, !isStopped else { return }
-                    self.labels = labels
-                    if let id = selectedLabelID, id != Self.outboxID,
-                       !SystemMailbox.all.contains(where: { $0.id == id }),
-                       !labels.contains(where: { $0.id == id }) {
-                        selectedLabelID = SystemLabel.inbox
-                    }
-                }
-            } catch {
-                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
-            }
-        })
-        tasks.append(Task { [weak self] in
-            do {
-                for try await outbox in outboxStream {
-                    guard let self, !Task.isCancelled, !isStopped else { return }
-                    self.outbox = outbox
-                }
-            } catch {
-                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
-            }
-        })
-        tasks.append(Task { [weak self] in
-            do {
-                for try await snoozed in snoozedStream {
-                    guard let self, !Task.isCancelled, !isStopped else { return }
-                    self.snoozed = snoozed
-                    if selectedLabelID == Self.snoozedID {
-                        threads = snoozed.map(\.thread)
-                        listChanged()
-                    }
-                }
-            } catch {
-                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
-            }
-        })
-        tasks.append(Task { [weak self] in
-            do {
-                var isFirst = true
-                for try await woken in wokenStream {
-                    guard let self, !Task.isCancelled, !isStopped else { return }
-                    let back = woken.subtracting(wokenThreadIDs).count
-                    wokenThreadIDs = woken
-                    if !isFirst, back > 0 {
-                        let subject = back == 1 ? "A snoozed conversation is" : "\(back) snoozed conversations are"
-                        AccessibilityNotification.Announcement("\(subject) back in the Inbox").post()
-                    }
-                    isFirst = false
-                }
-            } catch {
-                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
-            }
-        })
-        tasks.append(Task { [weak self] in
-            for await event in events { self?.handle(event) }
-        })
-        // Snoozes that came due while the Mac slept wake when it does.
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            // Delivered on the main queue, as requested above.
-            MainActor.assumeIsolated { self?.checkSnoozes() }
-        }
         observeThreads()
-        await engine.start()
-        guard !isStopped else { return }
-        await snoozeKeeper?.start()
+        await primary.start()
     }
 
-    /// Returns once the engine has stopped writing to the cache.
+    /// Returns once the accounts have stopped writing to the cache.
     func stop() async {
         isStopped = true
-        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
-        wakeObserver = nil
-        // The keeper writes through the engine, so it stops first.
-        await snoozeKeeper?.stop()
-        tasks.forEach { $0.cancel() }
-        tasks = []
         threadsTask?.cancel()
         search.stop()
         older?.cancel()
@@ -264,15 +161,23 @@ final class MailboxModel {
         }
         undoEntries = [:]
         undoOrder = []
-        await engine.stop()
+        await primary.stop()
     }
 
     func syncNow() {
-        let engine = engine
-        Task { await engine.syncReportingErrors() }
+        primary.syncNow()
     }
 
     // MARK: Reading
+
+    var labels: [LabelRecord] { primary.labels }
+    var outbox: [DraftActivity] { primary.outbox }
+    var snoozed: [SnoozedThread] { primary.snoozed }
+    var wokenThreadIDs: Set<String> { primary.wokenThreadIDs }
+    var snoozeKeeper: SnoozeKeeper? { primary.snoozeKeeper }
+    var syncStatus: AccountMailbox.SyncStatus { primary.syncStatus }
+    var lastSyncedAt: Date? { primary.lastSyncedAt }
+    var hasSyncedOnce: Bool { primary.hasSyncedOnce }
 
     var userLabels: [LabelRecord] {
         labels.filter { !$0.isSystem }
@@ -634,9 +539,24 @@ final class MailboxModel {
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.syncStatus = .failed("Tern couldn't read its mail cache.")
+                self?.primary.cacheReadFailed()
             }
         }
+    }
+
+    /// Leaves a label that's gone for the Inbox.
+    private func labelsChanged() {
+        guard !isStopped, let id = selectedLabelID, id != Self.outboxID,
+              !SystemMailbox.all.contains(where: { $0.id == id }),
+              !labels.contains(where: { $0.id == id })
+        else { return }
+        selectedLabelID = SystemLabel.inbox
+    }
+
+    private func snoozedChanged() {
+        guard !isStopped, selectedLabelID == Self.snoozedID else { return }
+        threads = snoozed.map(\.thread)
+        listChanged()
     }
 
     /// Keeps the selection inside the list, and tells the engine what the
@@ -647,18 +567,12 @@ final class MailboxModel {
         engine.setVisibleThreads(Set(ids))
     }
 
+    /// Shows the engine events the account passes on.
     private func handle(_ event: SyncEvent) {
+        guard !isStopped else { return }
         switch event {
-        case .syncStarted:
-            syncStatus = .syncing
-        case .syncFinished(let date):
-            syncStatus = .idle
-            lastSyncedAt = date
-            hasSyncedOnce = true
-            // A pass can bring new mail that ends a snooze early.
-            checkSnoozes()
-        case .syncFailed(let message):
-            syncStatus = .failed(message)
+        case .syncStarted, .syncFinished, .syncFailed:
+            break
         case .actionFailed(let message):
             notice = Notice(message: message, isError: true)
         case .draftFailed(let id, let message):

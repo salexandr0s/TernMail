@@ -66,10 +66,4 @@ extension MailboxModel {
             }
         }
     }
-
-    /// Wakes what is due. Runs after each sync pass and when the Mac wakes.
-    func checkSnoozes() {
-        guard let keeper = snoozeKeeper else { return }
-        Task { await keeper.check() }
-    }
 }

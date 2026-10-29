@@ -12,6 +12,7 @@
 		08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */; };
 		0A05B210B67A37E8DD8DC160 /* RichTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0C93981EA52DD5F7C918F3 /* RichTextEditor.swift */; };
 		1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B124379B5808528D2CE7BC /* SettingsView.swift */; };
+		228F4D4E86B06E4BF5122C6C /* AccountMailbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31521AC242C20212C9EB1C94 /* AccountMailbox.swift */; };
 		22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96214EE63FDC52A0940F4105 /* MessageWebView.swift */; };
 		2C5D3D7718C073EF6FC3B4EB /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
 		38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */; };
@@ -73,6 +74,7 @@
 		298461CDC5883F34E395CE4F /* AuditGmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditGmail.swift; sourceTree = "<group>"; };
 		2BAB4E48504F15C1FDFDFE2D /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Packages/Core; sourceTree = SOURCE_ROOT; };
 		313612542F6E2902BDDD3B95 /* ThreadListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadListView.swift; sourceTree = "<group>"; };
+		31521AC242C20212C9EB1C94 /* AccountMailbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMailbox.swift; sourceTree = "<group>"; };
 		34CAD881F5F6678BF14AC6CB /* AttachmentStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStrip.swift; sourceTree = "<group>"; };
 		4154FA36100D7D066F989912 /* TernTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TernTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4463F25A316147E854AB475E /* Tokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tokens.swift; sourceTree = "<group>"; };
@@ -214,6 +216,7 @@
 		79C2C151F2570607C95BBB25 /* Mailbox */ = {
 			isa = PBXGroup;
 			children = (
+				31521AC242C20212C9EB1C94 /* AccountMailbox.swift */,
 				5E9ECAA922136B06A807EEDB /* MailboxModel.swift */,
 				F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */,
 				1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */,
@@ -395,6 +398,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				228F4D4E86B06E4BF5122C6C /* AccountMailbox.swift in Sources */,
 				71B4075ADE8ADA6F30496EC0 /* AppModel.swift in Sources */,
 				9C833D67144E414955B2C340 /* AttachmentStrip.swift in Sources */,
 				CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */,
