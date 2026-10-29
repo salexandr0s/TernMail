@@ -19,17 +19,34 @@ extension SyncEngine {
         try await enqueue(action, threadIDs: threadIDs, hold: undoHold)
     }
 
-    /// Reverts an action. A row still in its hold is deleted. One that may
-    /// have reached Gmail gets an inverse built from its recorded diff.
+    /// Reverts an action. A row Gmail has never seen is deleted. One that may
+    /// have reached Gmail gets an inverse built from its recorded diff, which
+    /// goes out after any request for the row that is still in flight.
     public func undo(_ action: PendingAction) async throws {
         let accountID = accountID
         let now = now()
-        try await cache.write { tx in
-            if let id = action.id, let stored = try tx.action(id: id), stored.state == .queued, stored.attempts == 0 {
-                try tx.deleteAction(id: id)
+        try await write { tx in
+            guard let id = action.id, let stored = try tx.action(id: id) else {
+                try Self.enqueueInverse(of: action, accountID: accountID, now: now, in: tx)
                 return
             }
-            try Self.enqueueInverse(of: action, accountID: accountID, now: now, in: tx)
+            switch stored.state {
+            case .queued:
+                try tx.deleteAction(id: id)
+                // A failed attempt may still have reached Gmail.
+                if stored.attempts > 0 {
+                    try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+                }
+            case .sending:
+                var row = stored
+                row.state = .undone
+                try tx.updateAction(row)
+                try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+            case .sent:
+                try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
+            case .undone:
+                return
+            }
         }
         scheduleSending()
     }
@@ -40,7 +57,7 @@ extension SyncEngine {
         let accountID = accountID
         let now = now()
         let notBefore = now.addingTimeInterval(hold)
-        let row = try await cache.write { tx -> PendingAction in
+        let row = try await write { tx -> PendingAction in
             func modify(add: [String] = [], remove: [String] = []) throws -> PendingAction {
                 try tx.enqueue(
                     .modifyThreads, accountID: accountID, threadIDs: threadIDs,
@@ -106,7 +123,7 @@ extension SyncEngine {
 
     /// Starts the send loop if it isn't running.
     func scheduleSending() {
-        guard sendsAutomatically else { return }
+        guard sendsAutomatically, !isStopped else { return }
         wakeRequested = true
         if drainTask == nil {
             drainTask = Task { await drainQueue() }
@@ -130,23 +147,27 @@ extension SyncEngine {
             let wait = next.timeIntervalSince(now())
             if wait > 0 {
                 try? await Task.sleep(for: .seconds(min(wait, 1)))
-            } else {
-                await sendDueActions()
+            } else if await sendDueActions() == 0 {
+                // Every due row waits behind an older change to its thread.
+                try? await Task.sleep(for: .seconds(1))
             }
         }
         drainTask = nil
     }
 
-    /// Sends every queued row whose hold or backoff has passed.
-    public func sendDueActions() async {
+    /// Sends every queued row whose hold or backoff has passed and returns how
+    /// many it claimed.
+    @discardableResult
+    public func sendDueActions() async -> Int {
         let accountID = accountID
         let now = now()
-        guard let due = try? await cache.write({ tx in try tx.claimDueActions(accountID: accountID, now: now) }) else {
-            return
+        guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now) }) else {
+            return 0
         }
         for action in due {
             await send(action)
         }
+        return due.count
     }
 
     private enum Outcome {
@@ -156,6 +177,14 @@ extension SyncEngine {
     }
 
     private func send(_ action: PendingAction) async {
+        guard let id = action.id else { return }
+        // Undo can reach a claimed row before its turn in this batch.
+        let current = try? await cache.read { tx in try tx.action(id: id) }
+        guard let current = current ?? nil, current.state == .sending else {
+            _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
+            return
+        }
+
         let outcome: Outcome
         do {
             let failures = try await deliver(action).values.filter { $0 != .notFound }
@@ -173,24 +202,34 @@ extension SyncEngine {
             outcome = .retry(String(describing: type(of: error)))
         }
 
-        var row = action
+        var row = current
         let now = now()
         switch outcome {
         case .sent:
             row.state = .sent
             row.sentAt = now
             row.lastError = nil
-            try? await cache.write { [row] tx in try tx.updateAction(row) }
         case .retry(let reason):
             row.state = .queued
             row.attempts += 1
             row.lastError = reason
             row.notBefore = now.addingTimeInterval(min(pow(2, Double(row.attempts)), 300))
-            try? await cache.write { [row] tx in try tx.updateAction(row) }
         case .failed:
-            if let id = row.id {
-                try? await cache.write { tx in try tx.deleteAction(id: id) }
+            break
+        }
+        let failed = if case .failed = outcome { true } else { false }
+        // Undone during the request: its inverse is queued behind it, so the row
+        // just goes, whatever Gmail answered.
+        let reported = try? await write { [row] tx -> Bool in
+            if try tx.deleteActionIfUndone(id: id) { return false }
+            if failed {
+                try tx.deleteAction(id: id)
+            } else {
+                try tx.updateAction(row)
             }
+            return failed
+        }
+        if reported == true {
             continuation.yield(.actionFailed("Gmail didn't accept a change, so Tern put the conversation back."))
         }
     }

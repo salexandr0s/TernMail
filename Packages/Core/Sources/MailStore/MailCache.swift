@@ -100,11 +100,18 @@ public struct CacheTransaction {
         return threads
     }
 
-    /// Applies a history label change to a cached message. Returns its thread ID,
-    /// or nil when the message is not cached.
-    public func applyLabelChange(messageID: String, added: [String], removed: [String], accountID: String) throws -> String? {
-        guard let message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
+    /// Applies a history label change to a cached message and raises its stored
+    /// history ID to the change's, so older metadata fetched later can't undo it.
+    /// Returns the thread ID, or nil when the message is not cached.
+    public func applyLabelChange(
+        messageID: String, added: [String], removed: [String], historyID: Int64, accountID: String
+    ) throws -> String? {
+        guard var message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
             return nil
+        }
+        if historyID > message.historyID {
+            message.historyID = historyID
+            try message.update(db)
         }
         for labelID in added {
             try db.execute(
@@ -138,14 +145,23 @@ public struct CacheTransaction {
     /// still targets. Used after a full resync. Returns the affected thread IDs.
     @discardableResult
     public func deleteMessages(notIn kept: Set<String>, accountID: String) throws -> Set<String> {
+        let protected = try messageIDsTargetedByPendingActions(accountID: accountID)
+        let stale = try cachedMessageIDs(accountID: accountID).subtracting(kept).subtracting(protected)
+        return try deleteMessages(ids: stale, accountID: accountID)
+    }
+
+    /// Cached messages that a pending action names, directly or through its thread.
+    public func messageIDsTargetedByPendingActions(accountID: String) throws -> Set<String> {
         let actions = try pendingActions(accountID: accountID)
-        let pendingThreads = Set(actions.flatMap(\.threadIDs))
-        let pendingMessages = Set(actions.flatMap(\.messageIDs))
-        let stale = try MessageRecord
-            .filter(Column("accountID") == accountID)
-            .fetchAll(db)
-            .filter { !kept.contains($0.id) && !pendingMessages.contains($0.id) && !pendingThreads.contains($0.threadID) }
-        return try deleteMessages(ids: stale.map(\.id), accountID: accountID)
+        let threads = Array(Set(actions.flatMap(\.threadIDs)))
+        let messages = Set(actions.flatMap(\.messageIDs))
+        let inThreads = try String.fetchSet(
+            db,
+            MessageRecord
+                .select(Column("id"))
+                .filter(Column("accountID") == accountID && threads.contains(Column("threadID")))
+        )
+        return inThreads.union(messages.intersection(try cachedMessageIDs(accountID: accountID)))
     }
 
     public func cachedMessageIDs(accountID: String) throws -> Set<String> {
@@ -260,20 +276,33 @@ public struct CacheTransaction {
         try PendingAction.fetchOne(db, key: id)
     }
 
-    /// Marks queued actions that are due as `sending` and returns them, so two
-    /// senders never pick up the same row.
+    /// Marks due actions as `sending` and returns them, so two senders never pick
+    /// up the same row. Changes to one thread reach Gmail in the order they were
+    /// made: a row waits while an older unsent row touches the same thread,
+    /// even one held back by a retry.
     public func claimDueActions(accountID: String, now: Date) throws -> [PendingAction] {
-        var due = try pendingActions(accountID: accountID).filter { $0.state == .queued && $0.notBefore <= now }
-        for index in due.indices {
-            due[index].state = .sending
-            try due[index].update(db)
+        var busyThreads = Set<String>()
+        var claimed: [PendingAction] = []
+        for var action in try pendingActions(accountID: accountID) where action.state != .sent {
+            let threads = try threadIDs(of: action)
+            if action.state == .queued, action.notBefore <= now, busyThreads.isDisjoint(with: threads) {
+                action.state = .sending
+                try action.update(db)
+                claimed.append(action)
+            }
+            busyThreads.formUnion(threads)
         }
-        return due
+        return claimed
     }
 
-    /// Puts rows left in `sending` by a quit or crash back in the queue. Gmail
-    /// may already have applied them; resending a label change is harmless.
+    /// Recovers rows a quit or crash left mid-send. `sending` rows go back in
+    /// the queue (resending a label change is harmless) and `undone` rows are
+    /// dropped, since their inverse is already queued.
     public func requeueInterruptedActions(accountID: String) throws {
+        try db.execute(
+            sql: "DELETE FROM pendingAction WHERE accountID = ? AND state = ?",
+            arguments: [accountID, PendingAction.State.undone.rawValue]
+        )
         try db.execute(
             sql: "UPDATE pendingAction SET state = ? WHERE accountID = ? AND state = ?",
             arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
@@ -282,6 +311,16 @@ public struct CacheTransaction {
 
     public func updateAction(_ action: PendingAction) throws {
         try action.update(db)
+    }
+
+    /// Deletes the action if it is missing or was undone mid-send. Returns
+    /// true when the caller should stop handling it.
+    @discardableResult
+    public func deleteActionIfUndone(id: Int64) throws -> Bool {
+        guard let action = try action(id: id) else { return true }
+        guard action.state == .undone else { return false }
+        try deleteAction(id: id)
+        return true
     }
 
     /// Removes an action and rebuilds its threads, which reverts it locally.

@@ -51,9 +51,15 @@ private let account = "acct"
         try await cache.write { tx in
             try tx.upsertMessages([update("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 200)])
             try tx.upsertMessages([update("m1", thread: "t1", labels: [], historyID: 150)])
+            // A history change raises the message's history ID, so a thread fetch
+            // started before it can't undo it.
+            _ = try tx.applyLabelChange(
+                messageID: "m1", added: [SystemLabel.starred], removed: [], historyID: 220, accountID: account
+            )
+            try tx.upsertMessages([update("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 210)])
         }
 
-        #expect(try await serverLabels(cache, "m1") == [SystemLabel.inbox])
+        #expect(try await serverLabels(cache, "m1") == [SystemLabel.inbox, SystemLabel.starred])
     }
 
     @Test func resyncCleanupKeepsMessagesThatPendingActionsTarget() async throws {

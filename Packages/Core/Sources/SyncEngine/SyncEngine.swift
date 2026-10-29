@@ -39,6 +39,9 @@ public actor SyncEngine {
     private var pollTask: Task<Void, Never>?
     var drainTask: Task<Void, Never>?
     var wakeRequested = false
+    private(set) var isStopped = false
+    /// Messages recent passes deleted, so a slow thread load can't bring them back.
+    private var deletedMessageIDs = Set<String>()
 
     /// - Parameters:
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
@@ -64,9 +67,9 @@ public actor SyncEngine {
 
     /// Resumes interrupted sends and syncs now and every `pollInterval`.
     public func start(pollInterval: Duration = .seconds(60)) async {
-        guard pollTask == nil else { return }
+        guard pollTask == nil, !isStopped else { return }
         let accountID = accountID
-        _ = try? await cache.write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
+        _ = try? await write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
         scheduleSending()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -77,12 +80,26 @@ public actor SyncEngine {
         }
     }
 
-    public func stop() {
+    /// Cancels polling, sending and any running pass, and returns once they
+    /// have finished, so the caller can delete the account's data safely.
+    public func stop() async {
+        isStopped = true
         pollTask?.cancel()
         pollTask = nil
-        drainTask?.cancel()
+        let drain = drainTask
         drainTask = nil
+        drain?.cancel()
+        let running = pass
+        running?.cancel()
+        await drain?.value
+        _ = try? await running?.value
         continuation.finish()
+    }
+
+    /// Every engine write goes through here, so nothing lands after `stop()`.
+    func write<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async throws -> T {
+        if isStopped || Task.isCancelled { throw CancellationError() }
+        return try await cache.write(updates)
     }
 
     /// Runs a pass and reports the outcome on `events` instead of throwing.
@@ -100,6 +117,7 @@ public actor SyncEngine {
 
     /// Runs one pass, or waits for the pass already running.
     public func sync() async throws {
+        if isStopped { throw CancellationError() }
         if let pass { return try await pass.value }
         let task = Task { try await runPass() }
         pass = task
@@ -126,9 +144,9 @@ public actor SyncEngine {
         }
     }
 
-    /// Lists INBOX and the last 30 days, then stores their metadata. With
-    /// `reset`, which follows an expired cursor, messages the listings did not
-    /// return are deleted, except those pending actions still target.
+    /// Lists INBOX and the last 30 days and stores their metadata, then deletes
+    /// cached messages the listings did not return. That covers both an expired
+    /// cursor (`reset`) and a first sync that quit partway through.
     private func fullSync(reset: Bool) async throws {
         let passStart = now()
         let accountID = accountID
@@ -139,21 +157,28 @@ public actor SyncEngine {
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
         let listed = (inbox + recent).removingDuplicates()
+        // Messages pending actions target stay cached even when unlisted. Refetch
+        // them as well: their stored labels may predate changes the lost history held.
+        let targeted = try await cache.read { tx in try tx.messageIDsTargetedByPendingActions(accountID: accountID) }
+        let wanted = listed + targeted.subtracting(listed).sorted()
 
-        for start in stride(from: 0, to: listed.count, by: Self.fullSyncChunk) {
-            let chunk = Array(listed[start..<min(start + Self.fullSyncChunk, listed.count)])
-            let updates = try await fetchMetadata(chunk)
-            try await cache.write { tx in
+        var gone = Set<String>()
+        for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
+            let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
+            let (updates, missing) = try await fetchMetadata(chunk)
+            gone.formUnion(missing)
+            try await write { tx in
                 try tx.rebuildThreads(try tx.upsertMessages(updates), accountID: accountID)
             }
         }
 
+        rememberDeleted(gone)
         let kept = Set(listed)
         let finishedAt = now()
-        try await cache.write { tx in
-            if reset {
-                try tx.rebuildThreads(try tx.deleteMessages(notIn: kept, accountID: accountID), accountID: accountID)
-            }
+        try await write { [gone] tx in
+            var threads = try tx.deleteMessages(ids: gone, accountID: accountID)
+            threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID))
+            try tx.rebuildThreads(threads, accountID: accountID)
             try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
             try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
         }
@@ -180,13 +205,15 @@ public actor SyncEngine {
         let accountID = accountID
         let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
         let changes = HistoryChanges(records: records, cachedMessageIDs: cached)
-        let fetched = try await fetchMetadata(changes.messagesToFetch)
+        let (fetched, _) = try await fetchMetadata(changes.messagesToFetch)
 
-        try await cache.write { [latest] tx in
+        rememberDeleted(changes.deletedIDs)
+        try await write { [latest] tx in
             var threads = Set<String>()
             for change in changes.labelChanges {
                 if let threadID = try tx.applyLabelChange(
-                    messageID: change.messageID, added: change.added, removed: change.removed, accountID: accountID
+                    messageID: change.messageID, added: change.added, removed: change.removed,
+                    historyID: change.historyID, accountID: accountID
                 ) {
                     threads.insert(threadID)
                 }
@@ -210,7 +237,7 @@ public actor SyncEngine {
             let full = (try? detailed[label.id]?.get()) ?? label
             return Mapping.label(full, accountID: accountID)
         }
-        try await cache.write { tx in try tx.replaceLabels(records, accountID: accountID) }
+        try await write { tx in try tx.replaceLabels(records, accountID: accountID) }
     }
 
     private func listMessageIDs(labelIDs: [String], query: String?, includeSpamTrash: Bool) async throws -> [String] {
@@ -230,23 +257,31 @@ public actor SyncEngine {
         return Array(ids.prefix(Self.inboxCap))
     }
 
-    /// Metadata for `ids`. Messages deleted since they were listed are skipped;
-    /// any other failed part fails the pass.
-    private func fetchMetadata(_ ids: [String]) async throws -> [CacheTransaction.MessageUpdate] {
-        guard !ids.isEmpty else { return [] }
+    /// Metadata for `ids`, plus the IDs Gmail no longer has. Any other failed
+    /// part fails the pass.
+    private func fetchMetadata(
+        _ ids: [String]
+    ) async throws -> (updates: [CacheTransaction.MessageUpdate], missing: Set<String>) {
+        guard !ids.isEmpty else { return ([], []) }
         let results = try await gmail.messages(ids: ids, format: .metadata, metadataHeaders: Self.metadataHeaders)
         var updates: [CacheTransaction.MessageUpdate] = []
+        var missing = Set<String>()
         for id in ids {
             switch results[id] {
             case .success(let message)?:
                 if let update = Mapping.message(message, accountID: accountID) { updates.append(update) }
             case .failure(.notFound)?, nil:
-                continue
+                missing.insert(id)
             case .failure(let error)?:
                 throw error
             }
         }
-        return updates
+        return (updates, missing)
+    }
+
+    private func rememberDeleted(_ ids: Set<String>) {
+        if deletedMessageIDs.count > 10_000 { deletedMessageIDs.removeAll() }
+        deletedMessageIDs.formUnion(ids)
     }
 
     // MARK: Opening a thread
@@ -270,12 +305,13 @@ public actor SyncEngine {
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
-        for message in thread.messages ?? [] {
+        // A pass may have deleted messages while the fetch was in flight.
+        for message in thread.messages ?? [] where !deletedMessageIDs.contains(message.id) {
             guard let update = Mapping.message(message, accountID: accountID) else { continue }
             updates.append(update)
             bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt))
         }
-        try await cache.write { [updates, bodies] tx in
+        try await write { [updates, bodies] tx in
             let threads = try tx.upsertMessages(updates)
             try tx.saveBodies(bodies)
             try tx.rebuildThreads(threads, accountID: accountID)
@@ -307,6 +343,8 @@ struct HistoryChanges {
         let messageID: String
         let added: [String]
         let removed: [String]
+        /// The history record's ID, which becomes the message's stored history ID.
+        let historyID: Int64
     }
 
     /// New messages, and messages with label changes that the cache lacks.
@@ -329,11 +367,16 @@ struct HistoryChanges {
 
         var changes: [LabelChange] = []
         for record in records {
+            let historyID = Int64(record.id) ?? 0
             for change in record.labelsAdded ?? [] {
-                changes.append(LabelChange(messageID: change.message.id, added: change.labelIds, removed: []))
+                changes.append(LabelChange(
+                    messageID: change.message.id, added: change.labelIds, removed: [], historyID: historyID
+                ))
             }
             for change in record.labelsRemoved ?? [] {
-                changes.append(LabelChange(messageID: change.message.id, added: [], removed: change.labelIds))
+                changes.append(LabelChange(
+                    messageID: change.message.id, added: [], removed: change.labelIds, historyID: historyID
+                ))
             }
         }
         messagesToFetch = toFetch

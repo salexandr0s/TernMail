@@ -145,6 +145,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
 
     public enum State: String, Codable, Sendable {
         case queued, sending, sent
+        /// Undone while its send was in flight. The sender deletes it once the
+        /// request finishes, and the inverse goes out after it.
+        case undone
     }
 
     /// What the action changed on one message, relative to what the user saw.
