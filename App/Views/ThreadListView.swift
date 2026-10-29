@@ -240,11 +240,14 @@ struct ThreadMenuItems: View {
         Divider()
         Button(mailbox.allRead(ids) ? "Mark as Unread" : "Mark as Read") { mailbox.toggleRead(ids) }
         Button(mailbox.allStarred(ids) ? "Remove Star" : "Star") { mailbox.toggleStar(ids) }
+        Divider()
+        Button("Edit Labels…") { mailbox.showEditLabels(for: ids) }
+        Button("Move to…") { mailbox.showMoveTo(for: ids) }
     }
 }
 
 private struct ThreadToolbar: ToolbarContent {
-    let mailbox: MailboxModel
+    @Bindable var mailbox: MailboxModel
 
     var body: some ToolbarContent {
         let ids = mailbox.selectedThreadIDs
@@ -274,7 +277,41 @@ private struct ThreadToolbar: ToolbarContent {
             }
             .help(isStarred ? "Remove Star" : "Star")
             .disabled(ids.isEmpty)
+
+            // The menu commands and the context menu open these popovers too.
+            Button { mailbox.showEditLabels() } label: {
+                Label("Edit Labels", systemImage: "tag")
+            }
+            .help("Edit Labels")
+            .disabled(ids.isEmpty)
+            .popover(isPresented: isEditingLabels, arrowEdge: .bottom) {
+                if let edit = mailbox.labelEdit {
+                    EditLabelsView(
+                        labels: mailbox.labelChoices,
+                        applied: edit.applied,
+                        onApply: { mailbox.applyLabels($0) },
+                        onCreateLabel: { mailbox.showNewLabel(named: $0, applyingTo: edit.threadIDs) }
+                    )
+                }
+            }
+
+            Button { mailbox.showMoveTo() } label: {
+                Label("Move to", systemImage: "folder")
+            }
+            .help("Move to")
+            .disabled(ids.isEmpty)
+            .popover(isPresented: isMoving, arrowEdge: .bottom) {
+                MoveToView(targets: mailbox.moveChoices, onMove: { mailbox.move(to: $0) })
+            }
         }
+    }
+
+    private var isEditingLabels: Binding<Bool> {
+        Binding(get: { mailbox.labelEdit != nil }, set: { if !$0 { mailbox.labelEdit = nil } })
+    }
+
+    private var isMoving: Binding<Bool> {
+        Binding(get: { mailbox.moveTargets != nil }, set: { if !$0 { mailbox.moveTargets = nil } })
     }
 }
 

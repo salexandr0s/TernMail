@@ -46,6 +46,7 @@
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
 		E389A8AE70C8A33491A7BE56 /* ReceivedAttachmentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */; };
 		F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9ECAA922136B06A807EEDB /* MailboxModel.swift */; };
+		F123A5712471A945F7C3B5D5 /* MailboxModel+Labels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */; };
 		F5D78A8E257DB917FCE51B9E /* SnoozePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91CA7FF62FB26BF0EC5327A /* SnoozePicker.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
 		FEBB2860AF8110BD3AE2079E /* SnoozeSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */; };
@@ -101,6 +102,7 @@
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
 		F07C7F388D831253FD5749C5 /* NoticeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeView.swift; sourceTree = "<group>"; };
 		F0EB3C8158C8A6AFF45439BC /* TernApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TernApp.swift; sourceTree = "<group>"; };
+		F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Labels.swift"; sourceTree = "<group>"; };
 		F5A712DF8EDEF3D7C840B901 /* OutboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxView.swift; sourceTree = "<group>"; };
 		FAA7CC885F3A6C23AE46C631 /* Tern.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tern.entitlements; sourceTree = "<group>"; };
 		FF0C93981EA52DD5F7C918F3 /* RichTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichTextEditor.swift; sourceTree = "<group>"; };
@@ -208,6 +210,7 @@
 			isa = PBXGroup;
 			children = (
 				5E9ECAA922136B06A807EEDB /* MailboxModel.swift */,
+				F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */,
 				A78ABDE8A5BDCD507FBDFB14 /* SearchModel.swift */,
 				8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */,
 			);
@@ -395,6 +398,7 @@
 				AB4FE50C8C5E7CFBCD6070AD /* LabelEditorSheet.swift in Sources */,
 				6EE44A599A7948CB78C1D9C6 /* LabelPickerView.swift in Sources */,
 				7687C3F0FC62813AF8BCE982 /* MailCommands.swift in Sources */,
+				F123A5712471A945F7C3B5D5 /* MailboxModel+Labels.swift in Sources */,
 				F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */,
 				60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */,
 				22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */,

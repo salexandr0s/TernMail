@@ -63,11 +63,21 @@ struct MailCommands: Commands {
             Button(isStarred ? "Remove Star" : "Star") { mailbox?.toggleStar() }
                 .keyboardShortcut("l", modifiers: [.shift, .command])
                 .disabled(!hasSelection)
+            Divider()
+            Button("Edit Labels…") { mailbox?.showEditLabels() }
+                .keyboardShortcut("l", modifiers: [.option, .command])
+                .disabled(!hasSelection)
+            Button("Move to…") { mailbox?.showMoveTo() }
+                .keyboardShortcut("m", modifiers: [.control, .command])
+                .disabled(!hasSelection)
         }
         CommandMenu("Mailbox") {
             Button("Check for New Mail") { mailbox?.syncNow() }
                 .keyboardShortcut("n", modifiers: [.shift, .command])
                 .disabled(mailbox == nil)
+            Button("New Label…") { mailbox?.showNewLabel() }
+                .keyboardShortcut("n", modifiers: [.option, .command])
+                .disabled(mailbox == nil || compose != nil)
             Divider()
             Button("Sign Out…") { app.isConfirmingSignOut = true }
                 .disabled(!app.canSignOut)

@@ -115,6 +115,14 @@ final class MailboxModel {
     @ObservationIgnored private var droppedFormatting = Set<String>()
     /// A draft Gmail refused, whose window the mailbox window reopens.
     var draftToReopen: String?
+    /// Edit Labels, open from its toolbar button while set.
+    var labelEdit: LabelEdit?
+    /// Move to, open from its toolbar button for these conversations while set.
+    var moveTargets: Set<String>?
+    /// The New Label or Edit Label sheet.
+    var labelEditor: LabelEditorRequest?
+    /// The label whose deletion waits for confirmation.
+    var labelToDelete: LabelRecord?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
@@ -421,9 +429,23 @@ final class MailboxModel {
             || (action == .trash && selectedLabelID != SystemLabel.trash) {
             selectThread(after: Set(ids))
         }
-        // Register inside the initiating event. The target can remember an undo
-        // requested before its durable queue rows have been returned.
-        let entry = UndoEntry(name: Self.undoName(action))
+        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: ids.count)) { engine in
+            try await engine.perform(action, threadIDs: ids)
+        }
+    }
+
+    /// Queues a change with Undo, in order after earlier changes. The undo
+    /// entry is registered inside the initiating event, so it can remember
+    /// an undo requested before the engine returns the durable queue rows.
+    /// `confirmation` shows in a notice with Undo.
+    @discardableResult
+    func queueUndoable(
+        _ name: String,
+        confirmation: String? = nil,
+        _ change: @escaping @Sendable (SyncEngine) async throws -> ActionReceipt?
+    ) -> Task<Void, Never>? {
+        guard !isStopped else { return nil }
+        let entry = UndoEntry(name: name)
         registerUndo(entry)
         let previous = actionTask
         let engine = engine
@@ -431,17 +453,21 @@ final class MailboxModel {
             await previous?.value
             guard !isStopped, !Task.isCancelled else { return }
             do {
-                guard let row = try await engine.perform(action, threadIDs: ids), !isStopped else { return }
+                guard let row = try await change(engine) else {
+                    removeUndo(entry)
+                    return
+                }
+                guard !isStopped else { return }
                 entry.receipt = row
                 if entry.undoRequested {
                     await requestUndo(entry)?.value
-                } else if let message = Self.confirmation(action, count: ids.count) {
-                    notice = Notice(message: message, undo: .action(row))
+                } else if let confirmation {
+                    notice = Notice(message: confirmation, undo: .action(row))
                 }
             } catch {
                 removeUndo(entry)
                 guard !isStopped else { return }
-                notice = Notice(message: "Tern couldn't save that change.", isError: true)
+                notice = Notice(message: Self.failureMessage(error), isError: true)
             }
         }
         actionTask = task
@@ -579,7 +605,7 @@ final class MailboxModel {
     }
 
     /// Moves the selection to the thread below the ones leaving the list, or above if none is below.
-    private func selectThread(after leaving: Set<String>) {
+    func selectThread(after leaving: Set<String>) {
         let threads = listedThreads
         guard leaving == selectedThreadIDs,
               let lastIndex = threads.lastIndex(where: { leaving.contains($0.id) })
