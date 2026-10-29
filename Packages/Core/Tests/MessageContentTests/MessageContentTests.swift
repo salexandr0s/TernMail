@@ -15,6 +15,8 @@ import Testing
             <img src="https://t.example/p.gif" srcset="https://t.example/p2.gif 2x" onload="x()">
             <img src="data:image/png;base64,AAAA">
             <div style="background-image: url('https://t.example/bg.png')">Hi</div>
+            <div style="background-image: -webkit-image-set('https://t.example/set.png' 1x)">Set</div>
+            <svg><style><img src="https://t.example/svg.png"></style></svg>
             <a href=" java&#x09;script:alert(1)" onclick="x()">bad</a>
             <a href="https://example.com/ok">ok</a>
             </body></html>
@@ -22,7 +24,7 @@ import Testing
         let rendered = MessageDocument.render(html: html)
         let page = rendered.html.lowercased()
 
-        for forbidden in ["<script", "refresh", "onload", "onclick", "javascript", "<link", "@import", " src=\"https://", "srcset", "t.example/b.png", "t.example/bg.png"] {
+        for forbidden in ["<script", "refresh", "onload", "onclick", "javascript", "<link", "@import", " src=\"https://", "srcset", "t.example/b.png", "t.example/bg.png", "t.example/set.png", "t.example/svg.png"] {
             #expect(!page.contains(forbidden), "page still contains \(forbidden)")
         }
         #expect(page.contains("data-blocked-src=\"https://t.example/p.gif\""))
@@ -30,8 +32,8 @@ import Testing
         #expect(page.contains("url(#g)"))
         #expect(page.contains("href=\"https://example.com/ok\""))
         #expect(rendered.html.contains(MessageDocument.contentSecurityPolicy))
-        // The stylesheet link, @import, style-block url(), the remote img and the inline style.
-        #expect(rendered.blockedRemoteContent == 5)
+        // The stylesheet link, @import, style-block url(), the remote img and the two inline styles.
+        #expect(rendered.blockedRemoteContent == 6)
     }
 
     @Test func extractsTextPartsInTheirDeclaredCharsetAndSkipsAttachments() throws {

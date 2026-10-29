@@ -21,6 +21,15 @@ public enum MessageDocument {
         return nil
     }
 
+    /// Plain text only, for when the web view can't block remote loads itself.
+    /// HTML-only mail loses its formatting.
+    public static func renderText(_ body: ExtractedBody) -> RenderedMessage? {
+        if let plainText = body.plainText { return render(plainText: plainText) }
+        guard let html = body.html else { return nil }
+        let text = (try? SwiftSoup.parse(html).body()?.text()) ?? nil
+        return render(plainText: text ?? html)
+    }
+
     public static func render(html: String) -> RenderedMessage {
         do {
             let document = try SwiftSoup.parse(html)

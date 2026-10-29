@@ -27,6 +27,13 @@ enum HTMLSanitizer {
             try form.unwrap()
         }
         for style in try document.select("style") {
+            // Inside SVG or MathML a browser parses a style element's text as
+            // markup, which this parser doesn't, so neither may survive.
+            let inForeignContent = style.parents().array().contains { ["svg", "math"].contains($0.tagName().lowercased()) }
+            if inForeignContent || style.data().contains("<") {
+                try style.remove()
+                continue
+            }
             for node in style.dataNodes() {
                 let (css, count) = neutralizeCSS(node.getWholeData())
                 if count > 0 { node.setWholeData(css) }
@@ -73,18 +80,27 @@ enum HTMLSanitizer {
         return loadsRemote ? 1 : 0
     }
 
-    /// Replaces remote `url()` values with `none` and drops `@import` rules.
-    /// Data URLs and fragment references such as SVG `url(#gradient)` stay.
+    /// Replaces remote `url()` values and `image-set()` lists with `none` and
+    /// drops `@import` rules. Data URLs and fragment references such as SVG
+    /// `url(#gradient)` stay.
     static func neutralizeCSS(_ css: String) -> (css: String, blocked: Int) {
         let lowered = css.lowercased()
-        guard lowered.contains("url(") || lowered.contains("@import") else { return (css, 0) }
+        guard lowered.contains("url(") || lowered.contains("@import") || lowered.contains("image-set(") else {
+            return (css, 0)
+        }
         // Regex isn't Sendable, so these can't be shared statics.
         let importRule = #/(?i)@import\s+[^;]*;?/#
+        // image-set() takes bare strings as well as url(), so the whole list goes.
+        let imageSet = #/(?i)(?:-webkit-)?image-set\((?:[^()]|\([^()]*\))*\)/#
         let cssURL = #/(?i)url\(\s*(['"]?)(.*?)\1\s*\)/#
         var blocked = 0
         var result = css.replacing(importRule) { _ in
             blocked += 1
             return ""
+        }
+        result = result.replacing(imageSet) { match in
+            if !match.output.lowercased().contains("data:") { blocked += 1 }
+            return "none"
         }
         result = result.replacing(cssURL) { match in
             let target = match.output.2.trimmingCharacters(in: .whitespaces).lowercased()
