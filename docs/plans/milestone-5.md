@@ -108,7 +108,7 @@ Every feature visible in the screenshots or named in the research notes was chec
 
 ### J. Beyond milestone 4
 
-Milestone 4's plan leaves these to milestone 5. This list first also held filters that forward and a vacation message with formatting. The owner moved both into milestone 4 on 2026-10-29 (its answered question 3), and that amendment still waits for the owner's approval.
+Milestone 4's plan leaves these to milestone 5. This list first also held filters that forward and a vacation message with formatting. The owner moved both into milestone 4 on 2026-10-29 (its answered question 3) and approved that amendment the same day.
 
 1. Contact photos: People API photos for saved and other contacts, cached with the contact rows, used by A9.
 2. Contact groups: a group name typed in a recipient field expands to its members' addresses.
@@ -124,7 +124,7 @@ Milestone 4's plan leaves these to milestone 5. This list first also held filter
 
 ## Check against milestone 4
 
-Milestone 4's plan (`docs/plans/milestone-4.md` on `feat/milestone-4`, approved 2026-10-29 and amended at `36c6455`) covers these, so they're left out here:
+Milestone 4's plan (`docs/plans/milestone-4.md` on `feat/milestone-4`, approved 2026-10-29, with an amendment at `36c6455` approved the same day) covers these, so they're left out here:
 
 - Vacation dates, the contacts-only and domain-only options, and a formatted message edited in the compose editor.
 - Gmail signatures per address, and replying from the address a message was sent to.
@@ -137,10 +137,7 @@ What milestone 5 builds on, as the milestone 4 session confirmed on 2026-10-29:
 - Per-feature authorization (its phase B3) keeps a set of features per account, each with its scopes, and counts a broader granted scope. D4 adds a Permanent Deletion feature to it.
 - Block Sender and Filter Messages Like These use its `createFilter(criteria:action:)` call and the filter editor sheet from its phase B10b.
 
-Still open:
-
-- The owner's approval of milestone 4's amendment. Without it, filters that forward and the formatted vacation message return to workstream J.
-- Gmail's web option to also apply a new filter to existing mail has no API equivalent, since filters act only on mail that arrives after they exist. It isn't planned here.
+Not planned in either milestone: Gmail's web option to also apply a new filter to existing mail. The API has no equivalent, since filters act only on mail that arrives after they exist.
 
 ## Decisions
 
@@ -209,7 +206,6 @@ No UI snapshot tests.
 - Message mode changes queue targeting across many actions.
 - Alerts need Tern running.
 - The tracker list's license must allow bundling.
-- If the owner doesn't approve milestone 4's amendment, two items return to workstream J.
 
 ## Answered questions
 
