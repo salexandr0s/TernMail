@@ -388,7 +388,7 @@ private struct ThreadToolbar: ToolbarContent {
                         labels: mailbox.labelChoices,
                         applied: edit.applied,
                         onApply: { mailbox.applyLabels($0) },
-                        onCreateLabel: { mailbox.showNewLabel(named: $0, applyingTo: edit.threadIDs) }
+                        onCreateLabel: { mailbox.createLabel(named: $0, after: $1) }
                     )
                 }
             }

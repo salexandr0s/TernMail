@@ -164,6 +164,16 @@ extension MailboxModel {
         }
     }
 
+    /// Edit Labels' Create Label: applies the boxes already changed, as
+    /// Apply would, then opens New Label for the same conversations.
+    @discardableResult
+    func createLabel(named name: String, after change: LabelSelection.Change) -> Task<Void, Never>? {
+        guard let edit = labelEdit else { return nil }
+        let applying = applyLabels(change)
+        showNewLabel(named: name, applyingTo: edit.threadIDs)
+        return applying
+    }
+
     /// Applies Edit Labels to the conversations it opened for.
     @discardableResult
     func applyLabels(_ change: LabelSelection.Change) -> Task<Void, Never>? {
