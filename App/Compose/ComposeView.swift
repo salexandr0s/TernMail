@@ -475,31 +475,31 @@ private struct LinkEditor: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Label(hasLink ? "Edit Link" : "Add Link", systemImage: "link")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 0) {
+            PopupHeader(title: hasLink ? "Edit Link" : "Add Link", systemImage: "link")
             TextField("Web or email address", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Link address")
-                .frame(width: width)
                 .focused($isFocused)
                 .onSubmit(add)
-            HStack(spacing: Tokens.Space.s2) {
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.bottom, Tokens.Space.s5)
+            PopupFooter {
                 if hasLink {
                     Button("Remove Link") {
                         apply(nil)
                         dismiss()
                     }
                 }
-                Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(hasLink ? "Update Link" : "Add Link", action: add)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(ComposeModel.linkURL(from: text) == nil)
             }
         }
-        .padding(Tokens.Space.s4)
+        .frame(width: width)
         .onAppear { isFocused = true }
     }
 

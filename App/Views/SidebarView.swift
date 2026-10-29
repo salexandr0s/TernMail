@@ -35,7 +35,7 @@ struct SidebarView: View {
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
                         let boxID = MailboxID.account(owner.account.id, box.id)
                         MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarCount(boxID))
-                            .tag(boxID as MailboxID?)
+                            .tag(boxID)
                     }
                 }
                 Section {
@@ -67,6 +67,9 @@ struct SidebarView: View {
             let stored = AccountAppearance.decode(storedColors)
             let indexes = AccountAppearance.colorIndexes(for: ids, stored: stored)
             if indexes != stored { storedColors = AccountAppearance.encode(indexes) }
+        }
+        .task(id: mailbox.accounts.flatMap(\.labels)) {
+            await LabelAppearance.shared.reconcile(using: mailbox.cache)
         }
         .onChange(of: mailbox.selectedMailbox) { _, selected in
             // An account's mailbox chosen elsewhere shows under its expanded row.
@@ -219,7 +222,7 @@ private struct CombinedMailboxRows: View {
             box: box, title: box.title, color: box.color,
             count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: $isExpanded
         )
-        .tag(combinedID as MailboxID?)
+        .tag(combinedID)
         if isExpanded {
             ForEach(mailbox.accounts, id: \.account.id) { owner in
                 let boxID = MailboxID.account(owner.account.id, box.id)
@@ -232,7 +235,7 @@ private struct CombinedMailboxRows: View {
                     .padding(.leading, Tokens.Space.s6)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
-                    .tag(boxID as MailboxID?)
+                    .tag(boxID)
                 }
             }
         }
@@ -319,13 +322,14 @@ private struct LabelRow: View {
             }
         } icon: {
             let color = Color(gmailHex: label.backgroundColor)
-            Image(systemName: color == nil ? "tag" : "tag.fill")
+            let icon = LabelAppearance.shared.icon(for: label)
+            Image(systemName: icon == "tag" && color != nil ? "tag.fill" : icon)
                 .foregroundStyle(color ?? .secondary)
         }
         .padding(.vertical, Tokens.Space.s1)
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
-        .tag(MailboxID.account(label.accountID, label.id) as MailboxID?)
+        .tag(MailboxID.account(label.accountID, label.id))
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {
             Button("Edit Label…") { mailbox.showEditLabel(label) }

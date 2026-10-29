@@ -135,7 +135,11 @@ private struct ThreadHeading: View {
                         mailbox.perform(.archive, on: [key])
                     }
                 } else {
-                    LabelChip(name: label.name, tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label") {
+                    let icon = LabelAppearance.shared.icon(for: label)
+                    LabelChip(
+                        name: label.name, symbol: icon == "tag" ? "tag.fill" : icon,
+                        tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label"
+                    ) {
                         mailbox.removeLabel(label.id, from: key)
                     }
                 }

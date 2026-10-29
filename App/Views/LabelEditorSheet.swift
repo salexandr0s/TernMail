@@ -1,12 +1,13 @@
 import GmailAPI
 import SwiftUI
 
-/// New Label and Edit Label: a name, an optional parent and a color.
+/// Name and color sync with Gmail; the icon is a local preference.
 struct LabelEditorSheet: View {
     struct Draft: Equatable {
         var name: String
         var parent: String?
         var color: LabelColor?
+        var icon = "tag"
 
         /// Gmail stores nesting in the name, as "Parent/Child".
         var fullName: String {
@@ -17,14 +18,13 @@ struct LabelEditorSheet: View {
 
     let title: String
     let saveTitle: String
-    /// Full names of the labels this one may be nested under.
     let parentChoices: [String]
-    /// A message when Gmail would refuse the full name, or nil.
     let validate: (String) -> String?
     let onSave: (Draft) -> Void
     let onCancel: () -> Void
 
     @State private var draft: Draft
+    @State private var isChoosingIcon = false
     @FocusState private var isNameFocused: Bool
 
     init(
@@ -45,153 +45,114 @@ struct LabelEditorSheet: View {
         _draft = State(initialValue: draft)
     }
 
-    private var isNameEmpty: Bool {
-        draft.name.allSatisfy(\.isWhitespace)
+    private var isNameEmpty: Bool { draft.name.allSatisfy(\.isWhitespace) }
+    private var problem: String? { isNameEmpty ? nil : validate(draft.fullName) }
+    private var previewBackground: Color {
+        Color(gmailHex: draft.color?.backgroundColor) ?? Tokens.Surface.muted
     }
-
-    /// Shown once there's a name, so an empty field doesn't open with an error.
-    private var problem: String? {
-        isNameEmpty ? nil : validate(draft.fullName)
+    private var previewForeground: Color {
+        Color(gmailHex: draft.color?.textColor) ?? .primary
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Tokens.Space.s3) {
-                Image(systemName: "tag")
-                    .font(.title2)
-                    .foregroundStyle(.tint)
-                    .frame(width: Tokens.Control.avatarLarge, height: Tokens.Control.avatarLarge)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text(title).font(.title3.weight(.semibold))
-                }
-            }
-            .padding([.horizontal, .top], Tokens.Space.s6)
-
-            Form {
-                Section {
-                    TextField("Name", text: $draft.name)
-                        .focused($isNameFocused)
-                        .accessibilityHint(problem ?? "Label name")
-                    Picker("Nest under", selection: $draft.parent) {
-                        Text("None").tag(String?.none)
-                        ForEach(parentChoices, id: \.self) { name in
-                            Text(name).tag(Optional(name))
-                        }
-                    }
-                    if let problem {
-                        Label(problem, systemImage: "exclamationmark.triangle")
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Section {
-                    LabelColorGrid(selection: $draft.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                } header: {
-                    Text("Color")
-                } footer: {
-                    Text("Name and color sync with Gmail.")
-                }
-            }
-            .formStyle(.grouped)
-            .frame(
-                minHeight: Tokens.Popover.maxListHeight,
-                idealHeight: Tokens.Sheet.smallWidth,
-                maxHeight: Tokens.Sheet.smallWidth
+            PopupHeader(
+                title: title,
+                systemImage: draft.icon,
+                subtitle: "Click the icon to change it.",
+                iconForeground: draft.color == nil ? .accentColor : previewForeground,
+                iconBackground: previewBackground,
+                iconAction: { isChoosingIcon = true }
             )
+            .popover(isPresented: $isChoosingIcon, arrowEdge: .bottom) {
+                LabelIconPicker(selection: $draft.icon) { isChoosingIcon = false }
+            }
 
-            Divider()
-            HStack(spacing: Tokens.Space.s3) {
-                Spacer()
+            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+                fields
+                Divider()
+                LabelColorPicker(selection: $draft.color)
+                preview
+                Text("Name and color sync with Gmail. Icons stay on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.bottom, Tokens.Space.s5)
+
+            PopupFooter {
                 Button("Cancel", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
                 Button(saveTitle) { onSave(draft) }
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isNameEmpty || problem != nil)
             }
-            .padding(Tokens.Space.s5)
-            .background(Tokens.Surface.muted)
         }
         .frame(width: Tokens.Sheet.smallWidth)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { isNameFocused = true }
         .ternAnimation(value: problem)
     }
-}
 
-/// The 8×8 grid of Gmail's label colors and a No Color choice.
-struct LabelColorGrid: View {
-    @Binding var selection: LabelColor?
-
-    private static let rows: [[LabelColor]] = stride(from: 0, to: LabelColor.grid.count, by: 8).map {
-        Array(LabelColor.grid[$0..<min($0 + 8, LabelColor.grid.count)])
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Grid(horizontalSpacing: Tokens.Space.s1, verticalSpacing: Tokens.Space.s1) {
-                ForEach(Self.rows.indices, id: \.self) { row in
-                    GridRow {
-                        ForEach(Self.rows[row].indices, id: \.self) { column in
-                            swatch(Self.rows[row][column], name: Self.name(row: row, column: column))
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Grid(alignment: .leading, horizontalSpacing: Tokens.Space.s3, verticalSpacing: Tokens.Space.s3) {
+                GridRow {
+                    Text("Name")
+                        .foregroundStyle(.secondary)
+                    TextField("Label name", text: $draft.name)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isNameFocused)
+                        .accessibilityLabel("Label name")
+                        .accessibilityHint(problem ?? "")
+                        .overlay {
+                            if problem != nil {
+                                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                                    .strokeBorder(.red, lineWidth: Tokens.Border.hairline)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                }
+                GridRow {
+                    Text("Nest under")
+                        .foregroundStyle(.secondary)
+                    Picker("Nest under", selection: $draft.parent) {
+                        Text("None").tag(String?.none)
+                        ForEach(parentChoices, id: \.self) { name in
+                            Text(name).tag(Optional(name))
                         }
                     }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            Button {
-                selection = nil
-            } label: {
-                Label("No Color", systemImage: selection == nil ? "checkmark.circle" : "circle.slash")
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.link)
-            .accessibilityAddTraits(selection == nil ? .isSelected : [])
         }
     }
 
-    private func swatch(_ color: LabelColor, name: String) -> some View {
-        let isSelected = selection == color
-        return Button {
-            selection = color
-        } label: {
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .fill(Color(gmailHex: color.backgroundColor) ?? .clear)
-                .overlay {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(.separator)
-                }
-                .overlay {
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Color(gmailHex: color.textColor) ?? .primary)
-                    }
-                }
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                .padding(Tokens.Space.s1)
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                            .strokeBorder(.tint, lineWidth: Tokens.Border.focus)
-                    }
-                }
+    private var preview: some View {
+        HStack(spacing: Tokens.Space.s3) {
+            Text("Preview")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Label(isNameEmpty ? "Label name" : draft.fullName, systemImage: draft.icon)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s1_5)
+                .foregroundStyle(previewForeground)
+                .background(previewBackground, in: Capsule())
+                .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+                .help(isNameEmpty ? "Label name" : draft.fullName)
         }
-        .buttonStyle(.borderless)
-        .help(name)
-        .accessibilityLabel(name)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .ternAnimation(value: isSelected)
-    }
-
-    /// The first row is grays. In the other rows each column is a hue and each
-    /// row a shade, as Gmail lays the colors out.
-    static func name(row: Int, column: Int) -> String {
-        let grays = ["Black", "Darkest gray", "Dark gray", "Gray", "Light gray", "Lighter gray", "Lightest gray", "White"]
-        let hues = ["red", "orange", "yellow", "green", "mint", "blue", "purple", "pink"]
-        let shades = ["Bright", "Palest", "Pale", "Medium", "Deep", "Dark", "Darkest"]
-        guard row > 0 else { return grays[column % grays.count] }
-        return "\(shades[(row - 1) % shades.count]) \(hues[column % hues.count])"
     }
 }

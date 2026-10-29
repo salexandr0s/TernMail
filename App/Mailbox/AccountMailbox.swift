@@ -66,6 +66,8 @@ final class AccountMailbox {
     }
 
     func start() async {
+        // The engine clears old aliases on startup. Migrate saved icons first.
+        await LabelAppearance.shared.reconcile(using: cache)
         hasSyncedOnce = (try? await cache.syncState(accountID: account.id)) != nil
         guard !isStopped else { return }
         let labelStream = cache.labels(accountID: account.id)

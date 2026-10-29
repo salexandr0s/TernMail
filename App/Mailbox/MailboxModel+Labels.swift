@@ -43,7 +43,12 @@ extension MailboxModel {
 
     /// User labels as the pickers list them.
     var labelChoices: [LabelChoice] {
-        labelAccountUserLabels.map { LabelChoice(id: $0.id, name: $0.name, backgroundColor: $0.backgroundColor) }
+        labelAccountUserLabels.map {
+            LabelChoice(
+                id: $0.id, name: $0.name, backgroundColor: $0.backgroundColor,
+                systemImage: LabelAppearance.shared.icon(for: $0)
+            )
+        }
     }
 
     /// Move to offers the Inbox and the user labels, less the mailbox shown.
@@ -115,7 +120,10 @@ extension MailboxModel {
         labelEditor = LabelEditorRequest(
             accountID: label.accountID,
             kind: .edit(label),
-            draft: .init(name: name, parent: parent, color: Self.color(of: label))
+            draft: .init(
+                name: name, parent: parent, color: Self.color(of: label),
+                icon: LabelAppearance.shared.icon(for: label)
+            )
         )
     }
 
@@ -126,11 +134,16 @@ extension MailboxModel {
         labelEditor = nil
         guard let owner = account(id: request.accountID) else { return }
         let name = draft.fullName
+        let cache = cache
         switch request.kind {
         case .new(let threadIDs):
             let ids = Self.threadIDs(threadIDs)
             queueUndoable("New Label", in: owner) { engine in
                 let receipt = try await engine.createLabel(named: name, color: draft.color)
+                if let labelID = receipt.labelID {
+                    LabelAppearance.shared.setIcon(draft.icon, labelID: labelID, accountID: request.accountID)
+                    await LabelAppearance.shared.reconcile(using: cache)
+                }
                 // These wait for Gmail's ID, and undoing the new label drops them.
                 if !ids.isEmpty, let labelID = receipt.labelID {
                     _ = try await engine.editLabels(threadIDs: ids, add: [labelID], remove: [])
@@ -138,6 +151,10 @@ extension MailboxModel {
                 return receipt
             }
         case .edit(let label):
+            if draft.icon != LabelAppearance.shared.icon(for: label) {
+                LabelAppearance.shared.setIcon(draft.icon, labelID: label.id, accountID: label.accountID)
+                Task { await LabelAppearance.shared.reconcile(using: cache) }
+            }
             if name != label.name {
                 queueUndoable("Rename Label", in: owner) { engine in try await engine.renameLabel(label.id, to: name) }
             }

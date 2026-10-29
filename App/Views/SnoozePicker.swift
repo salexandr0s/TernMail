@@ -77,19 +77,7 @@ struct SnoozeDateSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Tokens.Space.s3) {
-                Image(systemName: "moon.zzz")
-                    .font(.title2)
-                    .foregroundStyle(.tint)
-                    .frame(width: Tokens.Control.avatarLarge, height: Tokens.Control.avatarLarge)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Snooze Until")
-                        .font(.title3.weight(.semibold))
-                }
-            }
-            .padding(Tokens.Space.s6)
+            PopupHeader(title: "Snooze Until", systemImage: "moon.zzz")
 
             VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                 DatePicker("Date", selection: $wakeAt, in: now..., displayedComponents: .date)
@@ -97,8 +85,14 @@ struct SnoozeDateSheet: View {
                     .labelsHidden()
                     .frame(maxWidth: .infinity)
                 Divider()
-                DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
-                    .accessibilityHint(isInPast ? "Choose a future time." : "Time to return to the Inbox")
+                HStack {
+                    Text("Time")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .accessibilityHint(isInPast ? "Choose a future time." : "Time to return to the Inbox")
+                }
                 if isInPast {
                     Label("Choose a future time.", systemImage: "exclamationmark.triangle")
                         .font(.callout)
@@ -106,14 +100,10 @@ struct SnoozeDateSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(Tokens.Space.s4)
-            .ternSurface()
-            .padding(.horizontal, Tokens.Space.s6)
-            .padding(.bottom, Tokens.Space.s6)
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.bottom, Tokens.Space.s5)
 
-            Divider()
-            HStack(spacing: Tokens.Space.s3) {
-                Spacer()
+            PopupFooter {
                 Button("Cancel", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
                 Button("Snooze") {
@@ -124,10 +114,9 @@ struct SnoozeDateSheet: View {
                         isInPast = true
                     }
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(Tokens.Space.s5)
-            .background(Tokens.Surface.muted)
         }
         .frame(width: Tokens.Sheet.smallWidth)
         .fixedSize(horizontal: false, vertical: true)

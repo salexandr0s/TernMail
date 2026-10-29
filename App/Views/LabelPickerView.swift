@@ -70,6 +70,7 @@ struct EditLabelsView: View {
     let onCreateLabel: (String, LabelSelection.Change) -> Void
 
     @State private var selection: LabelSelection
+    @Environment(\.dismiss) private var dismiss
 
     init(
         labels: [LabelChoice],
@@ -85,28 +86,22 @@ struct EditLabelsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Label("Edit Labels", systemImage: "tag")
-                    .font(.headline)
-                Spacer()
-            }
-            .padding([.horizontal, .top], Tokens.Space.s3)
+            PopupHeader(title: "Edit Labels", systemImage: "tag")
             FilteredLabelList(
                 choices: labels,
                 mark: { .check(selection.state(of: $0.id)) },
                 onPick: { selection.toggle($0.id) },
                 onCreate: { onCreateLabel($0, selection.change) }
             )
-            Divider()
-            HStack {
-                Spacer()
+            PopupFooter {
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Apply") { onApply(selection.change) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(selection.change.isEmpty)
                     .help("Apply (⌘Return)")
             }
-            .padding(Tokens.Space.s3)
         }
         .frame(width: Tokens.Popover.width)
     }
@@ -119,12 +114,7 @@ struct MoveToView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Label("Move to", systemImage: "folder")
-                    .font(.headline)
-                Spacer()
-            }
-            .padding([.horizontal, .top], Tokens.Space.s3)
+            PopupHeader(title: "Move to", systemImage: "folder")
             FilteredLabelList(choices: targets, mark: { _ in .none }, onPick: { onMove($0.id) }, onCreate: nil)
         }
         .frame(width: Tokens.Popover.width)
@@ -191,14 +181,15 @@ private struct FilteredLabelList: View {
                     move(by: -1, count: items.count)
                     return .handled
                 }
-                .padding(Tokens.Space.s3)
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.bottom, Tokens.Space.s3)
             Divider()
             if items.isEmpty {
                 Label("No matching labels", systemImage: "magnifyingglass")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Tokens.Space.s4)
+                    .padding(Tokens.Space.s5)
             } else {
                 list(items)
             }
@@ -225,7 +216,7 @@ private struct FilteredLabelList: View {
                         .id(item.id)
                     }
                 }
-                .padding(Tokens.Space.s1)
+                .padding(Tokens.Space.s2)
             }
             .frame(maxHeight: Tokens.Popover.maxListHeight)
             .fixedSize(horizontal: false, vertical: true)
