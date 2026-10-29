@@ -1,5 +1,4 @@
 import AppKit
-import GmailAPI
 import MailStore
 import Observation
 import SyncEngine
@@ -100,10 +99,6 @@ final class MailboxModel {
     }
 
     // MARK: Reading
-
-    var selectedThreads: [ThreadRecord] {
-        threads.filter { selectedThreadIDs.contains($0.id) }
-    }
 
     var userLabels: [LabelRecord] {
         labels.filter { !$0.isSystem }
