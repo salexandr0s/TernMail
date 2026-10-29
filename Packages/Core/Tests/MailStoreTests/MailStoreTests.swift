@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import Testing
 @testable import MailStore
+import MessageContent
 
 private let account = "acct"
 
@@ -88,6 +89,82 @@ private let account = "acct"
         let remaining = try await cache.write { tx in try tx.cachedMessageIDs(accountID: account) }
         #expect(remaining == ["m1", "m3"])
         #expect(try await threadIDs(cache, SystemLabel.inbox).sorted() == ["t1", "t3"])
+    }
+}
+
+@Suite struct DraftStoreTests {
+    @Test func localDraftsKeepTheirContentAndTakeEditsOnlyWhileEditing() async throws {
+        let cache = try MailCache.inMemory()
+        let link = try #require(URL(string: "https://example.com"))
+        let original = DraftContent(
+            to: [EmailAddress(name: "Zoë", address: "zoe@example.com")],
+            subject: "Plans",
+            body: ComposeDocument(blocks: [.init(runs: [.init("Hi", bold: true), .init(" there", link: link)])])
+        )
+        var content = original
+        content.subject = "Re: Plans"
+        let draft = LocalDraft(id: "L1", accountID: account, kind: .reply, content: original, rfcMessageID: "<a@example.com>", references: ["<r@example.com>"], now: .now)
+
+        let stored = try await cache.write { [content] tx in
+            try tx.insertLocalDraft(draft)
+            let edited = try tx.updateLocalDraft(id: "L1", content: content, now: .now)
+            let file = OutgoingAttachment(localDraftID: "L1", filename: "a.pdf", mimeType: "application/pdf", size: 3, path: "L1/a.pdf")
+            _ = try tx.addOutgoingAttachment(file, now: .now)
+            return edited
+        }
+        #expect(stored?.content == content)
+        #expect(stored?.references == ["<r@example.com>"])
+        let reloaded = try await cache.read { tx in try tx.localDraft(id: "L1") }
+        #expect(reloaded?.revision == 2)
+        #expect(reloaded?.content == content)
+
+        let refused = try await cache.write { tx in
+            var sending = try #require(try tx.localDraft(id: "L1"))
+            sending.state = .sending
+            try sending.update(tx.db)
+            return try tx.updateLocalDraft(id: "L1", content: DraftContent(subject: "Lost"), now: .now)
+        }
+        #expect(refused == nil)
+
+        let removed = try await cache.write { tx in try tx.deleteLocalDraft(id: "L1") }
+        #expect(removed.map(\.filename) == ["a.pdf"])
+        #expect(try await cache.read { tx in try tx.outgoingAttachments(localDraftID: "L1") }.isEmpty)
+    }
+
+    @Test func aSaveReplacesTheDraftsEarlierMessage() async throws {
+        let cache = try MailCache.inMemory()
+        let replaced = try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m1", thread: "t1", labels: [SystemLabel.inbox]),
+                update("d-old", thread: "t1", labels: [SystemLabel.draft], minutes: 1),
+            ])
+            try tx.rebuildThreads(["t1"], accountID: account)
+            try tx.replaceDrafts([DraftRecord(accountID: account, id: "D1", messageID: "d-old", threadID: "t1")], accountID: account)
+            try tx.insertLocalDraft(LocalDraft(id: "L1", accountID: account, kind: .reply, rfcMessageID: "<a@example.com>", gmailDraftID: "D1", savedMessageID: "d-old", threadID: "t1", now: .now))
+
+            return try tx.recordDraftSave(
+                DraftRecord(accountID: account, id: "D1", messageID: "d-new", threadID: "t1"),
+                localDraftID: "L1", revision: 3,
+                message: update("d-new", thread: "t1", labels: [SystemLabel.draft], minutes: 2)
+            )
+        }
+
+        #expect(replaced == ["d-old"])
+        let state = try await cache.read { tx in
+            (try tx.messages(threadID: "t1", accountID: account).map(\.id), try tx.localDraft(id: "L1"), try tx.draft(id: "D1", accountID: account))
+        }
+        #expect(state.0 == ["m1", "d-new"])
+        #expect(state.1?.savedMessageID == "d-new")
+        #expect(state.1?.savedRevision == 3)
+        #expect(state.2?.messageID == "d-new")
+        #expect(try await threadIDs(cache, SystemLabel.draft) == ["t1"])
+
+        // A listing taken before the save finished must not drop its draft.
+        try await cache.write { tx in
+            try tx.replaceDrafts([DraftRecord(accountID: account, id: "D9", messageID: "x", threadID: "t9")], accountID: account)
+        }
+        let drafts = try await cache.read { tx in try DraftRecord.order(Column("id")).fetchAll(tx.db).map(\.id) }
+        #expect(drafts == ["D1", "D9"])
     }
 }
 

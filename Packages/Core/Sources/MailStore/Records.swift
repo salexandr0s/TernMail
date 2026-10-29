@@ -60,10 +60,16 @@ public struct MessageRecord: Codable, Sendable, Equatable, FetchableRecord, Pers
     public var cc: String?
     public var subject: String
     public var sizeEstimate: Int
+    /// The `Message-ID` header. Nil for rows cached before replies needed it.
+    public var rfcMessageID: String?
+    public var inReplyTo: String?
+    public var referencesHeader: String?
+    public var replyTo: String?
 
     public init(
         accountID: String, id: String, threadID: String, historyID: Int64, date: Date,
-        snippet: String, sender: String, recipients: String, cc: String?, subject: String, sizeEstimate: Int
+        snippet: String, sender: String, recipients: String, cc: String?, subject: String, sizeEstimate: Int,
+        rfcMessageID: String? = nil, inReplyTo: String? = nil, referencesHeader: String? = nil, replyTo: String? = nil
     ) {
         self.accountID = accountID
         self.id = id
@@ -76,6 +82,10 @@ public struct MessageRecord: Codable, Sendable, Equatable, FetchableRecord, Pers
         self.cc = cc
         self.subject = subject
         self.sizeEstimate = sizeEstimate
+        self.rfcMessageID = rfcMessageID
+        self.inReplyTo = inReplyTo
+        self.referencesHeader = referencesHeader
+        self.replyTo = replyTo
     }
 }
 
@@ -179,6 +189,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     /// The sender leaves the row alone until this date (undo hold, then backoff).
     public var notBefore: Date
     public var sentAt: Date?
+    /// The compose window's draft, for draft rows. Nil for label changes.
+    public var localDraftID: String? = nil
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID

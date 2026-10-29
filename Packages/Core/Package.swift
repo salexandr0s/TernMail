@@ -16,11 +16,11 @@ let package = Package(
     ],
     targets: [
         .target(name: "GmailAPI"),
-        .target(name: "MailStore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
+        .target(name: "MailStore", dependencies: [.product(name: "GRDB", package: "GRDB.swift"), "MessageContent"]),
         .target(name: "MessageContent", dependencies: ["GmailAPI", "SwiftSoup"]),
         .target(name: "SyncEngine", dependencies: ["GmailAPI", "MailStore", "MessageContent"]),
         .testTarget(name: "GmailAPITests", dependencies: ["GmailAPI"]),
-        .testTarget(name: "MailStoreTests", dependencies: ["MailStore"]),
+        .testTarget(name: "MailStoreTests", dependencies: ["MailStore", "MessageContent"]),
         .testTarget(name: "MessageContentTests", dependencies: ["MessageContent"]),
         .testTarget(name: "SyncEngineTests", dependencies: ["SyncEngine", "GmailAPI", "MailStore"]),
     ]
