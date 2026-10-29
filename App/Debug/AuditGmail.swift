@@ -45,6 +45,28 @@ actor AuditGmail: GmailService {
         Message(id: "m7", thread: "t6", subject: "Unwanted offer", text: "Synthetic spam message.", html: false, labels: ["SPAM", "UNREAD"]),
     ]
 
+    /// Which audit account's mail to serve.
+    enum Account {
+        case first
+        /// Other mail under the first account's message, thread and label
+        /// IDs, as separate Gmail accounts can have.
+        case second
+    }
+
+    init(_ account: Account = .first) {
+        guard account == .second else { return }
+        mail = Self.secondMail
+        userLabels = [UserLabel(id: "Label_1", name: "Projects")]
+    }
+
+    private static let secondMail: [Message] = [
+        Message(id: "m1", thread: "t1", subject: "Book club", text: "The next meeting moves to Thursday.", html: false, labels: ["INBOX", "UNREAD"], from: "Sky <sky@example.invalid>"),
+        Message(id: "m2", thread: "t2", subject: "Garden plans", text: "The first message.", html: false, labels: ["INBOX"], from: "Sky <sky@example.invalid>"),
+        Message(id: "m3", thread: "t2", subject: "Garden plans", text: "The latest reply, with the planting list attached.", html: false, labels: ["INBOX", "STARRED"], from: "Sky <sky@example.invalid>", attachment: "Planting list.txt"),
+        Message(id: "m4", thread: "t3", subject: "Project notes", text: "Archived mail with a custom label.", html: false, labels: ["Label_1"], from: "Sky <sky@example.invalid>"),
+        Message(id: "m5", thread: "t5", subject: "Order confirmation", text: "Synthetic sent message.", html: false, labels: ["SENT"]),
+    ]
+
     func profile() throws -> GmailProfile {
         try decode(["emailAddress": "audit@example.invalid", "historyId": String(version)])
     }

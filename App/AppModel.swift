@@ -49,8 +49,8 @@ final class AppModel {
                 let cache = try MailCache.inMemory()
                 let accounts = try AccountStore.inMemory()
                 let account = AccountRecord(id: "ui-audit", email: "audit@example.invalid", displayName: "UI Audit", grantedScopes: [], addedAt: .now)
-                // A second account with its own copy of the fake mail, so
-                // both accounts hold the same thread and message IDs.
+                // A second account with other mail under the same thread,
+                // message and label IDs.
                 let second = AccountRecord(id: "ui-audit-2", email: "second@example.invalid", displayName: "Second Audit", grantedScopes: [], addedAt: .now)
                 try await accounts.save(account)
                 try await accounts.save(second)
@@ -63,7 +63,8 @@ final class AppModel {
                 self.mailbox = mailbox
                 phase = .signedIn(account)
                 Task {
-                    await mailbox.addAccount(second, gmail: AuditGmail())
+                    await mailbox.addAccount(second, gmail: AuditGmail(.second))
+                    mailbox.selectedMailbox = .combined(SystemLabel.inbox)
                     await mailbox.start()
                 }
                 return

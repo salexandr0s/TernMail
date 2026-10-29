@@ -17,7 +17,7 @@ import Testing
     }
 
     @Test func signingOutOfOneAccountKeepsTheOtherAndDeletesOnlyItsMail() async throws {
-        // Audit mode opens two accounts with the same fake mail.
+        // Audit mode opens two accounts.
         let app = AppModel()
         await app.start()
         let mailbox = try #require(app.mailbox)
