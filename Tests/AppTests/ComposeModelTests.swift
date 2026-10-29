@@ -123,6 +123,31 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func aNewMessageMovesToAnotherAccountWithTheWindowsEdits() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(.second))
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        #expect(model.showsFrom && model.canChangeAccount && model.fromEmail == "audit@example.invalid")
+
+        // Typed, and not yet stored on this Mac.
+        model.content.subject = "Plan"
+        model.move(to: "second")
+        try await waitUntil { model.phase != .open }
+        guard case .moved(let movedID) = model.phase else {
+            Issue.record("The message didn't move")
+            return
+        }
+        let moved = try #require(try await cache.read { try $0.localDraft(id: movedID) })
+        #expect(moved.accountID == "second" && moved.subject == "Plan")
+        let original = try await cache.read { try $0.localDraft(id: id) }
+        #expect(original == nil || original?.state == .discarding)
+        await mailbox.stop()
+    }
+
     private func makeMailbox() async throws -> (MailboxModel, MailCache) {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
