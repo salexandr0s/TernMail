@@ -389,7 +389,7 @@ final class MailboxModel {
         } catch {
             // Switching conversations cancels the load, which isn't a failure.
             guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return }
-            notice = Notice(message: "Tern couldn't load this conversation. Check your connection.", isError: true)
+            notice = Notice(message: "Couldn't load this conversation. Try again.", isError: true)
         }
     }
 
@@ -403,7 +403,7 @@ final class MailboxModel {
             return try await owner.engine.downloadAttachment(attachment, into: folder)
         } catch {
             guard !isStopped, !(error is CancellationError) else { return nil }
-            notice = Notice(message: "Tern couldn't download “\(attachment.filename)”. Check your connection.", isError: true)
+            notice = Notice(message: "Couldn't download “\(attachment.filename)”. Try again.", isError: true)
             return nil
         }
     }
@@ -504,7 +504,7 @@ final class MailboxModel {
                 return target.map { .reply(kind, messageID: $0.id, accountID: key.accountID) }
             }
         } catch {
-            notice = Notice(message: "Tern couldn't read this conversation.", isError: true)
+            notice = Notice(message: "Couldn't read this conversation. Try again.", isError: true)
         }
         return nil
     }
@@ -516,7 +516,7 @@ final class MailboxModel {
 
     /// Shows the send's notice with Undo Send for as long as the send waits.
     func didQueueSend(_ localDraftID: String, delay: TimeInterval) {
-        sendNotice = Notice(message: "Sending message", undo: .send(localDraftID: localDraftID), duration: .seconds(delay))
+        sendNotice = Notice(message: "Message queued", undo: .send(localDraftID: localDraftID), duration: .seconds(delay))
         undoableSendID = localDraftID
         undoSendTimer?.cancel()
         undoSendTimer = Task { [weak self] in
@@ -552,12 +552,12 @@ final class MailboxModel {
                 // The reopened window is the visible sign, which VoiceOver doesn't read out.
                 AccessibilityNotification.Announcement("Send undone").post()
             } else {
-                sendNotice = Notice(message: "Too late to undo. Tern has started sending this message.")
+                sendNotice = Notice(message: "Sending has started. Undo is no longer available.")
             }
             return undone
         } catch {
             guard !isStopped else { return false }
-            sendNotice = Notice(message: "Tern couldn't stop this message.", isError: true)
+            sendNotice = Notice(message: "Couldn't undo sending.", isError: true)
             return false
         }
     }
@@ -569,14 +569,14 @@ final class MailboxModel {
             let undone = try await owner.engine.undoDiscard(localDraftID)
             guard !isStopped else { return false }
             if !undone {
-                notice = Notice(message: "Too late to undo. Tern has already discarded this draft.")
+                notice = Notice(message: "Draft already discarded. Undo is no longer available.")
             } else if notice?.undo == .discard(localDraftID: localDraftID) {
                 notice = nil
             }
             return undone
         } catch {
             guard !isStopped else { return false }
-            notice = Notice(message: "Tern couldn't keep this draft.", isError: true)
+            notice = Notice(message: "Couldn't restore this draft.", isError: true)
             return false
         }
     }
@@ -589,10 +589,10 @@ final class MailboxModel {
 
     private static func composeFailure(_ start: ComposeStart) -> String {
         switch start {
-        case .newMessage: "Tern couldn't start a new message."
-        case .reply(.forward, _, _): "Tern couldn't load the message to forward. Check your connection."
-        case .reply: "Tern couldn't load the message to reply to. Check your connection."
-        case .editDraft: "Tern couldn't open this draft. Check your connection."
+        case .newMessage: "Couldn't start a new message. Try again."
+        case .reply(.forward, _, _): "Couldn't prepare the forwarded message. Try again."
+        case .reply: "Couldn't prepare this reply. Try again."
+        case .editDraft: "Couldn't open this draft. Try again."
         }
     }
 
@@ -734,7 +734,7 @@ final class MailboxModel {
                 entry.isApplying = false
                 entry.undoRequested = false
                 registerUndo(entry)
-                notice = Notice(message: "Tern couldn't undo that change. Try again.", undo: .action(handle), isError: true)
+                notice = Notice(message: "Couldn't undo this change. Try again.", undo: .action(handle), isError: true)
             }
         }
     }
@@ -881,7 +881,7 @@ final class MailboxModel {
             // The window shows Gmail's message and lets the person fix the draft.
             draftToReopen = id
         case .draftCopied:
-            notice = Notice(message: "Another app changed this draft, so Tern kept both versions.")
+            notice = Notice(message: "This draft changed elsewhere. Both versions were kept.")
         case .draftSent(let id):
             finishSend(id)
             // A newer send keeps its notice and its Undo Send.

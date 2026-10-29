@@ -93,8 +93,8 @@ struct SignInView: View {
             return "Google sign-in isn't available in this version of Tern."
         }
         if case .signInRequired(let account) = model.phase {
-            return "Google ended the session for \(account.email). Your cached mail is still here."
+            return "Google ended the session for \(account.email). Your downloaded mail is still here."
         }
-        return "Sign in with your Google account to read and organize your Gmail."
+        return "Sign in to read and organize your Gmail."
     }
 }

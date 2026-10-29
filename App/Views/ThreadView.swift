@@ -55,7 +55,7 @@ struct ThreadView: View {
                     TernEmptyState(
                         title: "Couldn't open this conversation",
                         systemImage: "exclamationmark.bubble",
-                        message: "Tern couldn't read this conversation. Try opening it again.",
+                        message: "Try again, or select another conversation.",
                         fillsSpace: false
                     )
                     Button("Try Again") { loadAttempt += 1 }
@@ -66,7 +66,7 @@ struct ThreadView: View {
                 TernEmptyState(
                     title: "Conversation unavailable",
                     systemImage: "envelope.badge",
-                    message: "This conversation is no longer available in this mailbox. Select another message to continue."
+                    message: "No longer available in this mailbox. Select another conversation."
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -439,7 +439,7 @@ private struct MessageView: View {
     private var content: some View {
         if let rendered {
             if rendered.blockedRemoteContent > 0 {
-                Label("Remote content blocked to protect your privacy", systemImage: "eye.slash")
+                Label("Remote content blocked for privacy", systemImage: "eye.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(Tokens.Space.s2)

@@ -644,7 +644,7 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
         #expect(stored.state == .editing)
         #expect(stored.gmailDraftID == nil)
-        #expect(stored.sendError == "This draft was sent or deleted in another app.")
+        #expect(stored.sendError == "This draft is no longer available in Gmail. It may have been sent or deleted.")
         #expect(try await pendingActions(cache).isEmpty)
     }
 
@@ -798,7 +798,7 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
         let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
         #expect(stored?.state == .editing)
-        #expect(stored?.sendError == "Gmail didn't send this message. Check the recipients and try again.")
+        #expect(stored?.sendError == "Gmail didn't send this message. Try again.")
         #expect(try await pendingActions(cache).isEmpty)
     }
 

@@ -95,7 +95,7 @@ struct SidebarView: View {
         ) {
             Button("Delete Label", role: .destructive) { mailbox.deleteConfirmedLabel() }
         } message: {
-            Text("Conversations keep their other labels. Gmail can't restore a deleted label, so this can't be undone.")
+            Text("Conversations keep their other labels. This can't be undone.")
         }
     }
 
@@ -283,7 +283,7 @@ private struct AccountHeader: View {
                 }
                 .buttonStyle(.link)
                 .disabled(app.isSigningIn)
-                .help("Google ended this account's session. Sign in to keep its mail up to date.")
+                .help("Google ended this session. Sign in again to sync mail.")
                 .accessibilityLabel("Sign in again to \(email)")
             }
         }

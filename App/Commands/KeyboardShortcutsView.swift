@@ -43,11 +43,11 @@ struct KeyboardShortcutsView: View {
                     shortcutRow(key.title, keys: "g then \(key.label)")
                 }
             } header: {
-                Text("Single keys")
+                Text("Single-key shortcuts")
             } footer: {
                 Text(usesSingleKeys
-                    ? "On. They work in the main window while you aren't typing."
-                    : "Off. Turn them on in Settings.")
+                    ? "On in the main window when you aren't typing."
+                    : "Off. Enable in Settings.")
             }
         }
         .formStyle(.grouped)

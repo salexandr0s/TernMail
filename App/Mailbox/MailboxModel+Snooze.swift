@@ -74,7 +74,7 @@ extension MailboxModel {
                 }
                 notice = Notice(message: "\(subject) moved to the Inbox")
             } catch {
-                notice = Notice(message: "Tern couldn't unsnooze that. Try again.", isError: true)
+                notice = Notice(message: "Couldn't return this mail to the Inbox. Try again.", isError: true)
             }
         }
     }

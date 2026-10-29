@@ -82,7 +82,7 @@ extension MailboxModel {
                 }
                 labelEdit = LabelEdit(accountID: accountID, threadIDs: ids, applied: applied)
             } catch {
-                notice = Notice(message: "Tern couldn't read these conversations' labels.", isError: true)
+                notice = Notice(message: "Couldn't load labels for these conversations.", isError: true)
             }
         }
     }
@@ -222,15 +222,15 @@ extension MailboxModel {
     static func failureMessage(_ error: any Error) -> String {
         switch error as? LabelChangeError {
         case .name(let problem)?: message(problem)
-        case .notAUserLabel?: "Tern couldn't find that label."
-        case nil: "Tern couldn't save that change."
+        case .notAUserLabel?: "This label is missing or managed by Gmail."
+        case nil: "Couldn't save this change. Try again."
         }
     }
 
     private static func message(_ problem: LabelRules.NameProblem) -> String {
         switch problem {
         case .empty: "Enter a name for the label."
-        case .reserved: "Gmail keeps this name for its own labels."
+        case .reserved: "Gmail reserves this label name."
         case .taken: "A label with this name already exists."
         }
     }

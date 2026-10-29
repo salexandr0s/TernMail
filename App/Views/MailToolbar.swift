@@ -113,7 +113,7 @@ struct MailToolbar: ToolbarContent {
                 idealWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth,
                 maxWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchMaxWidth
             )
-            .help("Search mail (⌥⌘F). Press Return to search Gmail.")
+            .help("Search mail (⌥⌘F). Return searches Gmail.")
         }
     }
 
@@ -159,7 +159,7 @@ private struct SearchField: NSViewRepresentable {
         let field = NSSearchField()
         field.placeholderString = "Search mail"
         field.setAccessibilityLabel("Search mail")
-        field.setAccessibilityHelp("Search saved mail as you type. Press Return to search Gmail, or Escape to clear.")
+        field.setAccessibilityHelp("Type to search saved mail. Return searches Gmail; Escape clears the search.")
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
         field.delegate = context.coordinator

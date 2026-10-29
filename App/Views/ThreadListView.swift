@@ -58,14 +58,14 @@ struct ThreadListView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if case .failed(let message) = mailbox.selectedSyncStatus {
             VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "Can't download your mail", systemImage: "wifi.exclamationmark", message: message, fillsSpace: false)
+                TernEmptyState(title: "Can't download mail", systemImage: "wifi.exclamationmark", message: message, fillsSpace: false)
                 Button("Try Again") { mailbox.syncNow() }
                     .buttonStyle(.bordered)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ProgressView {
-                Text("Downloading your mail…")
+                Text("Downloading mail…")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -100,8 +100,8 @@ struct ThreadListView: View {
                     title: "No results",
                     systemImage: "magnifyingglass",
                     message: gmail == .finished
-                        ? "Nothing on this Mac or in Gmail matches your search."
-                        : "Nothing on this Mac matches your search.",
+                        ? "No matches on this Mac or in Gmail."
+                        : "No matches on this Mac.",
                     fillsSpace: false
                 )
                 if gmail != .finished {
@@ -198,10 +198,10 @@ private struct GmailRow: View {
 
     private var failure: String {
         switch (kind, state) {
-        case (.search, .busy): "Gmail is busy, so these results come from this Mac only."
-        case (.search, _): "Tern couldn't reach Gmail, so these results come from this Mac only."
+        case (.search, .busy): "Gmail is busy. Showing results from this Mac only."
+        case (.search, _): "Couldn't reach Gmail. Showing results from this Mac only."
         case (.older, .busy): "Gmail is busy. Try again in a moment."
-        case (.older, _): "Tern couldn't reach Gmail. Check your connection."
+        case (.older, _): "Couldn't reach Gmail. Check your connection."
         }
     }
 }

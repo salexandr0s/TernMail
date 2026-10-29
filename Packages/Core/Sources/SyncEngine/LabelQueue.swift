@@ -399,7 +399,7 @@ extension SyncEngine {
 
     /// For undoing a create that took a label Gmail had already.
     static func adoptedLabelNotice(named name: String?) -> String {
-        "“\(name ?? "")” was already a label in Gmail, so Tern kept it."
+        "“\(name ?? "")” already existed in Gmail and wasn't deleted."
     }
 
     /// Marks a delete sent and takes the label out of the cache.
@@ -466,9 +466,9 @@ extension SyncEngine {
         case .createLabel:
             "Gmail didn't create the label “\(row.labelChange?.newName ?? "")”."
         case .deleteLabel:
-            "Gmail didn't delete the label “\(row.labelChange?.deletedLabel?.name ?? "")”, so Tern put it back."
+            "Gmail didn't delete “\(row.labelChange?.deletedLabel?.name ?? "")”. The label was restored."
         default:
-            "Gmail didn't accept a label change, so Tern put the label back."
+            "Gmail didn't accept this change. The label was restored."
         }
     }
 

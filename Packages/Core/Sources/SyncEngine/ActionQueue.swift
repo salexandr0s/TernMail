@@ -407,7 +407,7 @@ extension SyncEngine {
         }
         if reported == true {
             unavailableUndoIDs.insert(id)
-            continuation.yield(.actionFailed("Gmail didn't accept a change, so Tern put the conversation back."))
+            continuation.yield(.actionFailed("Gmail didn't accept this change. The conversation was restored."))
         }
     }
 

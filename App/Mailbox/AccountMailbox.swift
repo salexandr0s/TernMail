@@ -18,7 +18,7 @@ final class AccountMailbox {
         case failed(String)
     }
 
-    static let cacheFailure = "Tern couldn't read its mail cache."
+    static let cacheFailure = "Couldn't load saved mail."
 
     let account: AccountRecord
     let engine: SyncEngine

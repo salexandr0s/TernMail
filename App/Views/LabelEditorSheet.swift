@@ -65,9 +65,6 @@ struct LabelEditorSheet: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(title).font(.title3.weight(.semibold))
-                    Text("Keep related conversations together.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
                 }
             }
             .padding([.horizontal, .top], Tokens.Space.s6)
@@ -96,7 +93,7 @@ struct LabelEditorSheet: View {
                 } header: {
                     Text("Color")
                 } footer: {
-                    Text("The label name and color also appear in Gmail.")
+                    Text("Name and color sync with Gmail.")
                 }
             }
             .formStyle(.grouped)

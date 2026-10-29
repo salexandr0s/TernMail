@@ -82,7 +82,7 @@ import Testing
         try await engine.undo(rename)
         while await engine.sendDueActions() > 0 {}
         #expect(await gmail.labelCalls == ["patch Label_1"])
-        #expect(await events(engine) == [.actionFailed("Gmail didn't accept a label change, so Tern put the label back.")])
+        #expect(await events(engine) == [.actionFailed("Gmail didn't accept this change. The label was restored.")])
     }
 
     @Test func namesAreCheckedBeforeAnythingIsQueued() async throws {
@@ -131,7 +131,7 @@ import Testing
         while await engine.sendDueActions() > 0 {}
         #expect(await gmail.labelCalls == ["create trips"])
         #expect(try await gmail.labels().map(\.id) == ["Label_7"])
-        #expect(await events(engine) == [.actionFailed("“trips” was already a label in Gmail, so Tern kept it.")])
+        #expect(await events(engine) == [.actionFailed("“trips” already existed in Gmail and wasn't deleted.")])
     }
 
     @Test func aRateLimitedCreateRetriesWithItsChangesKept() async throws {
@@ -228,7 +228,7 @@ import Testing
         await engine.sendDueActions()
         #expect(try await shownNames(cache) == ["Trips"])
         #expect(try await listed(cache, "Label_1") == ["t1"])
-        #expect(await events(engine) == [.actionFailed("Gmail didn't delete the label “Trips”, so Tern put it back.")])
+        #expect(await events(engine) == [.actionFailed("Gmail didn't delete “Trips”. The label was restored.")])
     }
 
     @Test func undoingACreateBeforeItIsSentTakesItsChangesAlong() async throws {

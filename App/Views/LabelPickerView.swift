@@ -120,7 +120,7 @@ struct MoveToView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Move To", systemImage: "folder")
+                Label("Move to", systemImage: "folder")
                     .font(.headline)
                 Spacer()
             }

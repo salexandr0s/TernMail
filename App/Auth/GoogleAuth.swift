@@ -40,10 +40,10 @@ final class GoogleAuth {
 
         var errorDescription: String? {
             switch self {
-            case .notConfigured: "No Google OAuth client is set up for this build."
+            case .notConfigured: "Google sign-in is unavailable in this version."
             case .noWindow: "Open a Tern window, then try again."
             case .missingIdentity: "Google did not return your account details."
-            case .gmailAccessNotGranted: "Tern needs permission to read and organize your Gmail. Sign in again and leave that box checked."
+            case .gmailAccessNotGranted: "Sign in again and allow Tern to read and organize your Gmail."
             case .signInRequired: "Your Google session expired. Sign in again."
             }
         }

@@ -87,10 +87,6 @@ struct SnoozeDateSheet: View {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text("Snooze Until")
                         .font(.title3.weight(.semibold))
-                    Text("Return this conversation to your inbox later.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(Tokens.Space.s6)
@@ -102,9 +98,9 @@ struct SnoozeDateSheet: View {
                     .frame(maxWidth: .infinity)
                 Divider()
                 DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
-                    .accessibilityHint(isInPast ? "Choose a time later than now." : "Time to return to the Inbox")
+                    .accessibilityHint(isInPast ? "Choose a future time." : "Time to return to the Inbox")
                 if isInPast {
-                    Label("Choose a time later than now.", systemImage: "exclamationmark.triangle")
+                    Label("Choose a future time.", systemImage: "exclamationmark.triangle")
                         .font(.callout)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)

@@ -87,8 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = count == 1 ? "Gmail didn't send your message" : "Gmail didn't send \(count) messages"
         alert.informativeText = count == 1
-            ? "It's open again and says why. If you quit, it stays in the Outbox and isn't sent."
-            : "They're open again and say why. If you quit, they stay in the Outbox and aren't sent."
+            ? "Review the error in the reopened message. If you quit, it stays unsent in the Outbox."
+            : "Review the errors in the reopened messages. If you quit, they stay unsent in the Outbox."
         alert.addButton(withTitle: "Stay Open")
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn
@@ -97,9 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func confirmQuit(unsent count: Int) -> Bool {
         let alert = NSAlert()
         alert.messageText = count == 1 ? "Quit without sending your message?" : "Quit without sending \(count) messages?"
-        alert.informativeText = "Tern can't reach Gmail right now. If you quit, "
-            + (count == 1 ? "the message goes" : "the messages go")
-            + " out the next time you open Tern."
+        alert.informativeText = "Tern can't reach Gmail. If you quit, "
+            + (count == 1 ? "it will retry this message" : "it will retry these messages")
+            + " the next time you open Tern."
         alert.addButton(withTitle: "Stay Open")
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn

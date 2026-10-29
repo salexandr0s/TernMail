@@ -194,7 +194,7 @@ private struct DetailView: View {
             TernEmptyState(
                 title: "Outgoing messages",
                 systemImage: "tray.and.arrow.up",
-                message: "Messages wait in the Outbox until Gmail receives them. Double-click a message to open it."
+                message: "Messages wait here until Gmail receives them. Double-click to open."
             )
         } else if ids.count == 1, let key = ids.first {
             ThreadView(key: key, mailbox: mailbox)
@@ -203,13 +203,13 @@ private struct DetailView: View {
             TernEmptyState(
                 title: "\(ids.count) conversations selected",
                 systemImage: "square.stack",
-                message: "Use the toolbar to organize these conversations together."
+                message: "Use the toolbar to organize your selection."
             )
         } else {
             TernEmptyState(
                 title: "Select a conversation",
                 systemImage: "envelope.open",
-                message: "Select a conversation to read it, or start a new message with ⌘N."
+                message: "Start a new message with ⌘N."
             )
         }
     }

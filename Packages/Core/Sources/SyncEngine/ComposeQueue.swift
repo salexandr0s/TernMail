@@ -15,11 +15,11 @@ public enum ComposeError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingAttachment(let name):
-            "Tern can't find the attachment “\(name)”. Remove it and attach it again."
+            "Can't find the attachment “\(name)”. Remove it and attach it again."
         case .tooLarge:
-            "This message is larger than Gmail accepts. Remove some attachments and try again."
+            "This message is too large for Gmail. Shorten it or remove attachments, then try again."
         case .draftGone:
-            "This draft was sent or deleted in another app."
+            "This draft is no longer available in Gmail. It may have been sent or deleted."
         case .folder(let name):
             "“\(name)” is a folder. Compress it in Finder, then attach the compressed file."
         case .fileTooLarge(let name):
@@ -469,9 +469,9 @@ extension SyncEngine {
     private static func failureMessage(for error: any Error, kind: PendingAction.Kind) -> String {
         if let error = error as? ComposeError { return error.errorDescription ?? "" }
         switch kind {
-        case .sendDraft: return "Gmail didn't send this message. Check the recipients and try again."
-        case .discardDraft: return "Tern couldn't discard this draft."
-        default: return "Gmail didn't save this draft. Check the recipients and try again."
+        case .sendDraft: return "Gmail didn't send this message. Try again."
+        case .discardDraft: return "Couldn't discard this draft."
+        default: return "Gmail didn't save this draft. Try again."
         }
     }
 

@@ -94,7 +94,7 @@ struct ComposeView: View {
             if model.droppedFormatting {
                 Banner(
                     systemImage: "exclamationmark.triangle",
-                    text: "This draft has formatting Tern can't edit, such as tables or fonts. If you change it, Tern keeps only bold, italic, underline, links and lists."
+                    text: "Editing this draft removes tables, fonts and other formatting. Only bold, italic, underline, links and lists are kept."
                 ) {
                     model.droppedFormatting = false
                 }
@@ -220,7 +220,7 @@ struct ComposeView: View {
             Text(model.fromEmail)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .help("Replies and drafts from Gmail stay in their own account.")
+                .help("Replies and Gmail drafts stay with their original account.")
                 .accessibilityLabel("From \(model.fromEmail)")
         }
     }
@@ -282,7 +282,7 @@ struct ComposeView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .help("It's sent below your message as it is.")
+            .help("Included unchanged below your message, even when hidden.")
             .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
             .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
             .padding(.horizontal, Tokens.Space.s4)
