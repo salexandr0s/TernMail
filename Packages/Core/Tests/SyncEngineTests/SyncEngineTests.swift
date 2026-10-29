@@ -1199,13 +1199,25 @@ actor FakeGmail: GmailService {
         return try decode(ThreadListPage.self, #"{\#(next)"threads": [\#(threads)]}"#)
     }
 
+    /// The next `threads(ids:)` answers once `releaseThreads()` is called.
+    func holdNextThreads() { holdsThreads = true }
+    var isHoldingThreads: Bool { heldThreads != nil }
+    func releaseThreads() { heldThreads?.resume(); heldThreads = nil }
+    private var holdsThreads = false
+    private var heldThreads: CheckedContinuation<Void, Never>?
+
     /// Answers from `setThread`, like `thread(id:format:)`.
     func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailThread, GmailError>] {
         threadRequests.append(ids)
         threadRequestHeaders = metadataHeaders
-        return Dictionary(uniqueKeysWithValues: ids.map { id in
+        let results = Dictionary(uniqueKeysWithValues: ids.map { id in
             (id, threadsByID[id].map { .success($0) } ?? Result<GmailThread, GmailError>.failure(.notFound))
         })
+        if holdsThreads {
+            holdsThreads = false
+            await withCheckedContinuation { heldThreads = $0 }
+        }
+        return results
     }
 
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage {
