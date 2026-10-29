@@ -20,13 +20,16 @@ final class AppModel {
     private(set) var phase: Phase = .loading
     private(set) var isSigningIn = false
     private(set) var signInError: String?
-    /// The open mailbox while signed in.
+    /// The open mailbox. It stays open while the session has expired, so
+    /// compose windows keep working and queued changes wait for sign-in.
     private(set) var mailbox: MailboxModel?
     var isConfirmingSignOut = false
 
     let auth = GoogleAuth(configuration: .fromBundle())
     private(set) var cache: MailCache?
     private var accounts: AccountStore?
+    /// Copies of the files attached to drafts, kept until the draft is sent or discarded.
+    private var outgoingDirectory: URL?
     /// Mailboxes still stopping, so data is deleted only after they finish.
     private var closing: Task<Void, Never>?
 
@@ -41,7 +44,8 @@ final class AppModel {
                 try await accounts.save(account)
                 self.cache = cache
                 self.accounts = accounts
-                let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail())
+                let outgoing = FileManager.default.temporaryDirectory.appending(path: "Tern-UIAudit-Outgoing", directoryHint: .isDirectory)
+                let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)
                 self.mailbox = mailbox
                 phase = .signedIn(account)
                 Task { await mailbox.start() }
@@ -51,6 +55,7 @@ final class AppModel {
             let directory = try Self.dataDirectory()
             let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
             cache = try MailCache.open(at: directory.appending(path: "cache.sqlite"))
+            outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
             auth.onSignInRequired = { [weak self] in self?.sessionExpired() }
 
@@ -82,6 +87,13 @@ final class AppModel {
                 grantedScopes: user.grantedScopes,
                 addedAt: .now
             )
+            if let mailbox, mailbox.account.id == account.id {
+                // Back after the session expired: the open mailbox carries on.
+                try await accounts.save(account)
+                phase = .signedIn(account)
+                mailbox.syncNow()
+                return
+            }
             // One account for now: a different Google account replaces the old one.
             await closeMailbox()
             for old in try await accounts.accounts() where old.id != account.id {
@@ -108,16 +120,42 @@ final class AppModel {
         }
     }
 
+    /// Saves, sends and label changes retry until the user signs in again.
     private func sessionExpired() {
         guard case .signedIn(let account) = phase else { return }
         phase = .signInRequired(account)
-        Task { await closeMailbox() }
+    }
+
+    // MARK: Quitting
+
+    /// Sends waiting out their undo delay or a retry, which quitting sends at once.
+    var waitingSendCount: Int {
+        mailbox?.outbox.filter(\.isSending).count ?? 0
+    }
+
+    /// Sends every waiting message now. False when one of them couldn't
+    /// reach Gmail, or `timeout` passed first. A send still running after the
+    /// timeout keeps going, and the next launch finishes one cut off by quitting.
+    func sendWaitingMessages(timeout: Duration = .seconds(10)) async -> Bool {
+        guard let engine = mailbox?.engine else { return true }
+        let (outcome, continuation) = AsyncStream.makeStream(of: Bool.self)
+        Task {
+            continuation.yield(await engine.sendWaitingDraftsNow())
+            continuation.finish()
+        }
+        Task {
+            try? await Task.sleep(for: timeout)
+            continuation.yield(false)
+            continuation.finish()
+        }
+        for await sent in outcome { return sent }
+        return false
     }
 
     private func openMailbox(for account: AccountRecord) async {
-        guard let cache else { return }
+        guard let cache, let outgoingDirectory else { return }
         await closeMailbox()
-        let mailbox = MailboxModel(account: account, cache: cache, gmail: GmailClient(tokens: auth))
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: GmailClient(tokens: auth), outgoingDirectory: outgoingDirectory)
         self.mailbox = mailbox
         phase = .signedIn(account)
         Task { await mailbox.start() }

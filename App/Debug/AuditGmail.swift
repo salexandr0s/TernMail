@@ -14,7 +14,11 @@ actor AuditGmail: GmailService {
         let html: Bool
         var labels: Set<String>
         var history = 200
+        var from = "River <river@example.invalid>"
     }
+
+    private var drafts: [String: String] = [:]
+    private var nextDraft = 1
 
     private var version = 200
     private let referenceDate = Date.now
@@ -91,6 +95,62 @@ actor AuditGmail: GmailService {
         change(ids: ids, add: addLabelIDs, remove: removeLabelIDs)
     }
 
+    // MARK: Drafts
+
+    func drafts(query: String?, pageToken: String?, maxResults: Int) throws -> DraftListPage {
+        try decode(["drafts": drafts.sorted { $0.key < $1.key }.compactMap { id, messageID in
+            mail.first { $0.id == messageID }.map { ["id": id, "message": ["id": $0.id, "threadId": $0.thread]] }
+        }])
+    }
+
+    func draft(id: String, format: MessageFormat) throws -> GmailDraft {
+        guard let message = drafts[id].flatMap({ messageID in mail.first { $0.id == messageID } }) else { throw GmailError.notFound }
+        return try decode(["id": id, "message": messageJSON(message)])
+    }
+
+    func createDraft(_ message: OutgoingMessage) throws -> GmailDraft {
+        let id = "draft\(nextDraft)"
+        nextDraft += 1
+        let stored = store(message, labels: ["DRAFT"])
+        drafts[id] = stored.id
+        return try decode(["id": id, "message": ["id": stored.id, "threadId": stored.thread]])
+    }
+
+    func updateDraft(id: String, with message: OutgoingMessage) throws -> GmailDraft {
+        guard let old = drafts[id], let thread = mail.first(where: { $0.id == old })?.thread else { throw GmailError.notFound }
+        mail.removeAll { $0.id == old }
+        let stored = store(OutgoingMessage(raw: message.raw, threadID: thread), labels: ["DRAFT"])
+        drafts[id] = stored.id
+        return try decode(["id": id, "message": ["id": stored.id, "threadId": stored.thread]])
+    }
+
+    func sendDraft(id: String, with message: OutgoingMessage) throws -> GmailMessage {
+        guard let old = drafts.removeValue(forKey: id), let thread = mail.first(where: { $0.id == old })?.thread else {
+            throw GmailError.notFound
+        }
+        mail.removeAll { $0.id == old }
+        return try decode(messageJSON(store(OutgoingMessage(raw: message.raw, threadID: thread), labels: ["SENT"])))
+    }
+
+    func deleteDraft(id: String) throws {
+        guard let old = drafts.removeValue(forKey: id) else { throw GmailError.notFound }
+        mail.removeAll { $0.id == old }
+    }
+
+    /// Keeps the subject of an uploaded message. Encoded words stay encoded.
+    private func store(_ message: OutgoingMessage, labels: Set<String>) -> Message {
+        version += 1
+        let headers = String(decoding: message.raw, as: UTF8.self).components(separatedBy: "\r\n\r\n").first ?? ""
+        let subject = headers.components(separatedBy: "\r\n").first { $0.hasPrefix("Subject: ") }.map { String($0.dropFirst(9)) }
+        let stored = Message(
+            id: "m\(version)", thread: message.threadID ?? "t\(version)", subject: subject ?? "",
+            text: "Synthetic message saved from the compose window.", html: false, labels: labels,
+            history: version, from: "Audit <audit@example.invalid>"
+        )
+        mail.append(stored)
+        return stored
+    }
+
     private func change(ids: [String], add: [String], remove: [String]) {
         version += 1
         for index in mail.indices where ids.contains(mail[index].id) {
@@ -107,7 +167,7 @@ actor AuditGmail: GmailService {
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
                 "snippet": "Synthetic mail for the UI audit", "payload": [
                     "mimeType": message.html ? "text/html" : "text/plain",
-                    "headers": [["name": "From", "value": "River <river@example.invalid>"], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]],
+                    "headers": [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]],
                     "body": ["data": Data(message.text.utf8).base64EncodedString()]]]
     }
 

@@ -10,6 +10,14 @@ public enum SyncEvent: Sendable, Equatable {
     case syncFailed(String)
     /// Gmail refused a change for good, so the cache put the thread back.
     case actionFailed(String)
+    /// A draft was sent.
+    case draftSent(localDraftID: String)
+    /// Gmail refused a draft, or it was sent or deleted in another app. The
+    /// draft is back to editing, and its window shows `message`.
+    case draftFailed(localDraftID: String, message: String)
+    /// Another app changed the draft's Gmail copy, so Tern kept that one and
+    /// saves this draft as a new one.
+    case draftCopied(localDraftID: String)
 }
 
 enum SyncError: Error, Equatable {
@@ -22,7 +30,8 @@ enum SyncError: Error, Equatable {
 /// with the new history cursor in one transaction, so a failed pass leaves the
 /// cursor where it was.
 public actor SyncEngine {
-    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date"]
+    /// The threading headers let a reply answer a message without fetching it.
+    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"]
     static let inboxCap = 5000
     static let recentQuery = "newer_than:30d"
     /// Metadata fetched per request group during a full sync.
@@ -31,6 +40,10 @@ public actor SyncEngine {
     public nonisolated let events: AsyncStream<SyncEvent>
     let continuation: AsyncStream<SyncEvent>.Continuation
     let accountID: String
+    /// The From address of every draft.
+    let sender: EmailAddress
+    /// Where compose windows copy attached files. `OutgoingAttachment.path` is relative to it.
+    let outgoingDirectory: URL
     let gmail: any GmailService
     let cache: MailCache
     let now: @Sendable () -> Date
@@ -42,8 +55,15 @@ public actor SyncEngine {
     private var hasStarted = false
     private var writesInFlight = 0
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
-    var drainTask: Task<Void, Never>?
-    var wakeRequested = false
+    var drainTasks: [PendingAction.Lane: Task<Void, Never>] = [:]
+    var wakeRequests = Set<PendingAction.Lane>()
+    /// The draft row being uploaded, so `stop()` can let a send finish.
+    var draftRowInFlight: PendingAction.Kind?
+    /// Set by `stop()`: the compose lane starts no further rows.
+    var isStoppingDrafts = false
+    /// Earliest next save per local draft. Large messages save at most every
+    /// `largeSaveInterval`, since each save uploads the attachments again.
+    var nextLargeSave: [String: Date] = [:]
     /// Undo receipts exist only for this engine's lifetime. Remember rejected
     /// and consumed row IDs even after history has removed the queue rows.
     var unavailableUndoIDs = Set<Int64>()
@@ -52,13 +72,15 @@ public actor SyncEngine {
     /// Accessed only inside the cache's serialized writes. The lock safely
     /// carries deletion knowledge into their Sendable closures. Gmail message
     /// IDs are never reused; forgetting one could resurrect deleted mail.
-    private let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
+    let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// - Parameters:
     ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
     ///   - sendsAutomatically: Tests turn this off and call `sendDueActions()` themselves.
     public init(
         accountID: String,
+        sender: EmailAddress,
+        outgoingDirectory: URL,
         gmail: any GmailService,
         cache: MailCache,
         undoHold: TimeInterval = 2,
@@ -66,6 +88,8 @@ public actor SyncEngine {
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.accountID = accountID
+        self.sender = sender
+        self.outgoingDirectory = outgoingDirectory
         self.gmail = gmail
         self.cache = cache
         self.undoHold = undoHold
@@ -100,17 +124,22 @@ public actor SyncEngine {
     }
 
     /// Cancels polling, sending and any running pass, and returns once they
-    /// have finished, so the caller can delete the account's data safely.
+    /// have finished, so the caller can delete the account's data safely. A
+    /// send that is already uploading finishes first, so its outcome is known.
     public func stop() async {
+        isStoppingDrafts = true
+        if draftRowInFlight == .sendDraft, let compose = drainTasks[.compose] {
+            await compose.value
+        }
         isStopped = true
         pollTask?.cancel()
         pollTask = nil
-        let drain = drainTask
-        drainTask = nil
-        drain?.cancel()
+        let drains = Array(drainTasks.values)
+        drainTasks = [:]
+        drains.forEach { $0.cancel() }
         let running = pass
         running?.cancel()
-        await drain?.value
+        for drain in drains { await drain.value }
         _ = try? await running?.value
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
@@ -170,9 +199,9 @@ public actor SyncEngine {
         }
     }
 
-    /// Lists INBOX and the last 30 days and stores their metadata, then deletes
-    /// cached messages the listings did not return. That covers both an expired
-    /// cursor (`reset`) and a first sync that quit partway through.
+    /// Lists INBOX, the last 30 days and every draft and stores their metadata,
+    /// then deletes cached messages the listings did not return. That covers
+    /// both an expired cursor (`reset`) and a first sync that quit partway through.
     private func fullSync(reset: Bool) async throws {
         let passStart = now()
         let accountID = accountID
@@ -183,7 +212,9 @@ public actor SyncEngine {
 
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
-        let listed = (inbox + recent).removingDuplicates()
+        // Older drafts stay cached, so the Drafts label is complete.
+        let drafts = try await listDrafts()
+        let listed = (inbox + recent + drafts.map(\.messageID)).removingDuplicates()
         // Messages pending actions target stay cached even when unlisted. Refetch
         // them as well: their stored labels may predate changes the lost history held.
         let targeted = try await cache.read { tx in try tx.messageIDsTargetedByPendingActions(accountID: accountID) }
@@ -208,6 +239,7 @@ public actor SyncEngine {
                 let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
                 guard remaining.isEmpty else { return remaining }
                 try tx.replaceLabels(labels, accountID: accountID)
+                try tx.replaceDrafts(drafts, accountID: accountID)
                 deleted.withLock { $0.formUnion(gone) }
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
                 var threads = try tx.upsertMessages(live)
@@ -313,9 +345,32 @@ public actor SyncEngine {
         return limit.map { Array(ids.prefix($0)) } ?? ids
     }
 
+    /// Every Gmail draft, with the message it holds.
+    func listDrafts() async throws -> [DraftRecord] {
+        var drafts: [DraftRecord] = []
+        var pageToken: String?
+        repeat {
+            let page = try await gmail.drafts(query: nil, pageToken: pageToken, maxResults: 500)
+            for draft in page.drafts ?? [] {
+                guard let message = draft.message else { throw GmailError.decoding("Draft message") }
+                drafts.append(DraftRecord(accountID: accountID, id: draft.id, messageID: message.id, threadID: message.threadId))
+            }
+            pageToken = page.nextPageToken
+        } while pageToken != nil
+        return drafts
+    }
+
+    /// Relists Gmail's drafts, so a draft made in another app can be opened.
+    public func refreshDrafts() async throws {
+        if isStopped || Task.isCancelled { throw CancellationError() }
+        let drafts = try await listDrafts()
+        let accountID = accountID
+        try await write { tx in try tx.replaceDrafts(drafts, accountID: accountID) }
+    }
+
     /// Metadata for `ids`, plus the IDs Gmail no longer has. Any other failed
     /// part fails the pass.
-    private func fetchMetadata(
+    func fetchMetadata(
         _ ids: [String]
     ) async throws -> (updates: [CacheTransaction.MessageUpdate], missing: Set<String>) {
         guard !ids.isEmpty else { return ([], []) }
@@ -381,25 +436,30 @@ public actor SyncEngine {
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
+        var attachments: [String: [AttachmentRecord]] = [:]
         guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
         for message in messages {
             guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
             let update = try Mapping.message(message, accountID: accountID)
             updates.append(update)
-            var attachments: [String: Data] = [:]
+            var textParts: [String: Data] = [:]
             for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
                 if isStopped || Task.isCancelled { throw CancellationError() }
-                attachments[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+                textParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: attachments))
+            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: textParts))
+            attachments[message.id] = Mapping.attachments(message, accountID: accountID)
         }
-        try await write { [updates, bodies] tx in
+        try await write { [updates, bodies, attachments] tx in
             // Decide inside the same serialized write as ingestion, so a delete
             // committed while this request was awaiting cannot be overwritten.
             let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
             let liveIDs = Set(live.map(\.record.id))
             let threads = try tx.upsertMessages(live)
             try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) })
+            for (messageID, records) in attachments where liveIDs.contains(messageID) {
+                try tx.replaceAttachments(records, messageID: messageID, accountID: accountID)
+            }
             try tx.rebuildThreads(threads, accountID: accountID)
         }
     }
