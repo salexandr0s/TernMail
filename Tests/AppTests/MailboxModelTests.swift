@@ -44,6 +44,15 @@ import Testing
         try await waitUntil { mailbox.hasSyncedOnce && !mailbox.threads.isEmpty }
         mailbox.selectedMailbox = .account("audit", SystemLabel.allMail)
         try await waitUntil { mailbox.threads.count == 4 }
+        // The j and k keys start at the first conversation and stop at the ends.
+        let listed = mailbox.threads.map(\.key)
+        mailbox.selectAdjacentThread(-1)
+        #expect(mailbox.selectedThreadIDs == [listed[0]])
+        mailbox.selectAdjacentThread(1)
+        #expect(mailbox.selectedThreadIDs == [listed[1]])
+        mailbox.selectedThreadIDs = [listed[3]]
+        mailbox.selectAdjacentThread(1)
+        #expect(mailbox.selectedThreadIDs == [listed[3]])
         mailbox.selectedThreadIDs = keys("t1")
         await mailbox.perform(.archive)?.value
         #expect(mailbox.selectedThreadIDs == keys("t1"))
