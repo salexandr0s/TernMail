@@ -47,6 +47,8 @@ import Testing
                  "body":{"data":"\(base64URL(Data("<p>Café</p>".utf8)))"}}
               ]},
               {"mimeType":"text/plain","filename":"notes.txt","body":{"data":"\(base64URL(Data("attached".utf8)))"}}
+              ,{"mimeType":"multipart/mixed","headers":[{"name":"Content-Disposition","value":"attachment"}],
+                "parts":[{"mimeType":"text/plain","body":{"data":"\(base64URL(Data("attached multipart".utf8)))"}}]}
             ]}}
             """
         let message = try JSONDecoder().decode(GmailMessage.self, from: Data(json.utf8))

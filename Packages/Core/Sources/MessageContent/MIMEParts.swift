@@ -34,6 +34,7 @@ public enum MIMEParts {
     }
 
     private static func collect(_ part: MessagePart) -> Found {
+        guard !isAttachment(part) else { return Found() }
         let mimeType = (part.mimeType ?? "").lowercased()
 
         if mimeType.hasPrefix("multipart/") {
@@ -51,7 +52,7 @@ public enum MIMEParts {
             }
         }
 
-        guard !isAttachment(part), let data = part.body?.decodedData else { return Found() }
+        guard let data = part.body?.decodedData else { return Found() }
         let charset = part.header("Content-Type").flatMap { parameter("charset", in: $0) }
         switch mimeType {
         case "text/html": return Found(html: [decode(data, charset: charset)])
