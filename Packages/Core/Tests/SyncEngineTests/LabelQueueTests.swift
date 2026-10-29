@@ -92,6 +92,30 @@ import Testing
         #expect(await gmail.changes == [Change("modifyThreads", ["t1"], add: ["Label_7"])])
     }
 
+    @Test(arguments: [false, true])
+    func undoingACreateThatTookAnExistingLabelLeavesItInGmail(undoingDuringTheRequest: Bool) async throws {
+        let (engine, _, gmail, clock) = try await makeEngine()
+        await gmail.setLabels([try gmailLabel("Label_7", "Trips")])
+        let create = try await engine.createLabel(named: "trips", color: nil)
+        clock.advance(3)
+        if undoingDuringTheRequest {
+            await gmail.holdNextChange()
+            let sending = Task { await engine.sendDueActions() }
+            while await !gmail.isHolding { await Task.yield() }
+            try await engine.undo(create)
+            await gmail.release()
+            await sending.value
+        } else {
+            await engine.sendDueActions()
+            try await engine.undo(create)
+        }
+
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["create trips"])
+        #expect(try await gmail.labels().map(\.id) == ["Label_7"])
+        #expect(await events(engine) == [.actionFailed("“trips” was already a label in Gmail, so Tern kept it.")])
+    }
+
     @Test func aRateLimitedCreateRetriesWithItsChangesKept() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
