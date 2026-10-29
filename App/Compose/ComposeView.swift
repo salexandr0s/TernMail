@@ -11,15 +11,17 @@ extension FocusedValues {
 struct ComposeWindow: View {
     static let sceneID = "compose"
 
-    let localDraftID: String?
+    /// Changes when the message moves to another account, which makes a copy.
+    @Binding var localDraftID: String?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
-            if let localDraftID, let mailbox = app.mailbox {
-                ComposeView(localDraftID: localDraftID, mailbox: mailbox)
-                    // Another account's mailbox needs its own model.
+            if let id = localDraftID, let mailbox = app.mailbox {
+                ComposeView(localDraftID: id, mailbox: mailbox) { localDraftID = $0 }
+                    // Each draft, and a new sign-in's mailbox, needs its own model.
+                    .id(id)
                     .id(ObjectIdentifier(mailbox))
             } else {
                 ProgressView()
@@ -52,9 +54,12 @@ struct ComposeView: View {
     /// views, which `focus` can't reach.
     @State private var recipientFocus: Field?
     @Environment(\.dismiss) private var dismiss
+    /// Shows the copy the window's message became in another account.
+    private let onMove: (String) -> Void
 
-    init(localDraftID: String, mailbox: MailboxModel) {
+    init(localDraftID: String, mailbox: MailboxModel, onMove: @escaping (String) -> Void) {
         _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox))
+        self.onMove = onMove
     }
 
     var body: some View {
@@ -78,6 +83,7 @@ struct ComposeView: View {
             case .loading: break
             case .open: await placeFocus()
             case .closed: dismiss()
+            case .moved(let localDraftID): onMove(localDraftID)
             }
         }
         .onDisappear { model.windowClosed() }
@@ -129,6 +135,14 @@ struct ComposeView: View {
 
     private var header: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s2, verticalSpacing: 0) {
+            if model.showsFrom {
+                GridRow {
+                    fieldLabel("From:")
+                    fromField
+                        .padding(.vertical, Tokens.Space.s2)
+                }
+                Divider()
+            }
             GridRow {
                 fieldLabel("To:")
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
@@ -174,6 +188,25 @@ struct ComposeView: View {
         }
         .disabled(!model.isEditable)
         .padding(.horizontal, Tokens.Space.s4)
+    }
+
+    /// A new message can move to another account. A reply or a Gmail draft
+    /// stays in the account of its thread.
+    @ViewBuilder private var fromField: some View {
+        if model.canChangeAccount {
+            Picker("From", selection: Binding(get: { model.draft?.accountID ?? "" }, set: { model.move(to: $0) })) {
+                ForEach(model.accountChoices, id: \.id) { account in
+                    Text(account.email).tag(account.id)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityLabel("From")
+        } else {
+            Text(model.fromEmail)
+                .help("Replies and drafts from Gmail stay in their own account.")
+                .accessibilityLabel("From \(model.fromEmail)")
+        }
     }
 
     private func fieldLabel(_ text: String) -> some View {

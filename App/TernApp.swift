@@ -18,7 +18,7 @@ struct TernApp: App {
 
         // One window per local draft. Opening a draft that has a window brings it forward.
         WindowGroup("New Message", id: ComposeWindow.sceneID, for: String.self) { $localDraftID in
-            ComposeWindow(localDraftID: localDraftID)
+            ComposeWindow(localDraftID: $localDraftID)
                 .environment(model)
         }
         .defaultSize(width: 720, height: 600)

@@ -39,6 +39,8 @@ final class ComposeModel {
         case open
         /// Sent, discarded or deleted. The window closes.
         case closed
+        /// Moved to another account as the draft `localDraftID`, which the window shows instead.
+        case moved(to: String)
     }
 
     struct Status: Equatable {
@@ -111,6 +113,16 @@ final class ComposeModel {
     }
 
     var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
+
+    /// With several accounts, the window shows which one the message is from.
+    var showsFrom: Bool { mailbox.hasSeveralAccounts && draft != nil }
+
+    var accountChoices: [AccountRecord] { mailbox.accounts.map(\.account) }
+
+    var fromEmail: String { owner?.account.email ?? "" }
+
+    /// Only a new message can change accounts.
+    var canChangeAccount: Bool { draft?.kind == .new }
 
     var isEditable: Bool { phase == .open && draft?.state == .editing }
 
@@ -215,6 +227,27 @@ final class ComposeModel {
             close()
         }
         return queued
+    }
+
+    /// Moves a new message to another account, after any edits and files
+    /// still on their way. The window then shows the copy.
+    func move(to accountID: String) {
+        guard isEditable, canChangeAccount, accountID != draft?.accountID,
+              let engine = owner?.engine, let destination = mailbox.account(id: accountID)
+        else { return }
+        let id = localDraftID
+        serially { [self] in
+            do {
+                guard phase == .open, let moved = try await engine.moveDraft(id, content: content, to: destination.engine) else { return }
+                cancelTimers()
+                observation?.cancel()
+                phase = .moved(to: moved.id)
+            } catch let error as ComposeError {
+                alert = error.errorDescription
+            } catch {
+                alert = "Tern couldn't move this message to \(destination.account.email)."
+            }
+        }
     }
 
     /// Copies the files into the draft, one at a time, in order.
