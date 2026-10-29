@@ -36,6 +36,8 @@ final class MailboxModel {
     static let undoLimit = 100
     /// The sidebar's Outbox, which isn't a Gmail label.
     static let outboxID = "TERN_OUTBOX"
+    /// Received attachments, downloaded when opened. Signing out deletes them.
+    static let defaultDownloadsDirectory = URL.cachesDirectory.appending(path: "Tern/Attachments", directoryHint: .isDirectory)
 
     /// Where a compose window's draft comes from.
     enum ComposeStart: Equatable {
@@ -49,6 +51,7 @@ final class MailboxModel {
     /// Compose windows read and edit their drafts through these directly.
     let cache: MailCache
     let engine: SyncEngine
+    let downloadsDirectory: URL
 
     var selectedLabelID: String? = SystemLabel.inbox {
         didSet {
@@ -104,9 +107,16 @@ final class MailboxModel {
     @ObservationIgnored private var droppedFormatting = Set<String>()
 
     /// `outgoingDirectory` holds copies of the files attached to drafts.
-    init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL) {
+    init(
+        account: AccountRecord,
+        cache: MailCache,
+        gmail: any GmailService,
+        outgoingDirectory: URL,
+        downloadsDirectory: URL = MailboxModel.defaultDownloadsDirectory
+    ) {
         self.account = account
         self.cache = cache
+        self.downloadsDirectory = downloadsDirectory
         self.engine = SyncEngine(
             accountID: account.id,
             sender: EmailAddress(name: account.displayName, address: account.email),
@@ -208,6 +218,18 @@ final class MailboxModel {
             // Switching conversations cancels the load, which isn't a failure.
             guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return }
             notice = Notice(message: "Tern couldn't load this conversation. Check your connection.", isError: true)
+        }
+    }
+
+    /// The attachment's file, downloaded if this is its first open, or nil
+    /// after showing why it couldn't be.
+    func download(_ attachment: AttachmentRecord) async -> URL? {
+        do {
+            return try await engine.downloadAttachment(attachment, into: downloadsDirectory)
+        } catch {
+            guard !isStopped, !(error is CancellationError) else { return nil }
+            notice = Notice(message: "Tern couldn't download “\(attachment.filename)”. Check your connection.", isError: true)
+            return nil
         }
     }
 

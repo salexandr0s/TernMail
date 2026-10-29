@@ -37,6 +37,7 @@
 		CE5838DB32E85E4BC42F3C83 /* ThreadListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 313612542F6E2902BDDD3B95 /* ThreadListView.swift */; };
 		CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298461CDC5883F34E395CE4F /* AuditGmail.swift */; };
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
+		E389A8AE70C8A33491A7BE56 /* ReceivedAttachmentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */; };
 		F0B754C07BA40B0B560242BE /* MailboxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9ECAA922136B06A807EEDB /* MailboxModel.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
 /* End PBXBuildFile section */
@@ -53,6 +54,7 @@
 
 /* Begin PBXFileReference section */
 		028FE485D145D5610D43A3DB /* ComposeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModel.swift; sourceTree = "<group>"; };
+		1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedAttachmentsView.swift; sourceTree = "<group>"; };
 		24BB9B46E342248DBF893DA9 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
 		298461CDC5883F34E395CE4F /* AuditGmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditGmail.swift; sourceTree = "<group>"; };
 		2BAB4E48504F15C1FDFDFE2D /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Packages/Core; sourceTree = SOURCE_ROOT; };
@@ -137,6 +139,7 @@
 				96214EE63FDC52A0940F4105 /* MessageWebView.swift */,
 				F07C7F388D831253FD5749C5 /* NoticeView.swift */,
 				F5A712DF8EDEF3D7C840B901 /* OutboxView.swift */,
+				1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */,
 				76B124379B5808528D2CE7BC /* SettingsView.swift */,
 				CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */,
 				5497ADD358BEE4C53246A55C /* SignInView.swift */,
@@ -365,6 +368,7 @@
 				22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */,
 				89DA04EFCFC5C677096729A7 /* NoticeView.swift in Sources */,
 				58CECF42FB80ADDFC0A9E044 /* OutboxView.swift in Sources */,
+				E389A8AE70C8A33491A7BE56 /* ReceivedAttachmentsView.swift in Sources */,
 				4B20118A95316BC74E36653B /* RecipientField.swift in Sources */,
 				0A05B210B67A37E8DD8DC160 /* RichTextEditor.swift in Sources */,
 				1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */,

@@ -28,6 +28,7 @@ struct ThreadView: View {
                                 message: message,
                                 blocker: blocker,
                                 isExpanded: expanded.contains(message.id),
+                                mailbox: mailbox,
                                 compose: compose
                             ) {
                                 if expanded.contains(message.id) {
@@ -89,6 +90,7 @@ private struct MessageView: View {
     let message: MessageDetail
     let blocker: WKContentRuleList?
     let isExpanded: Bool
+    let mailbox: MailboxModel
     let compose: (MailboxModel.ComposeStart) -> Void
     let onToggle: () -> Void
 
@@ -107,6 +109,9 @@ private struct MessageView: View {
 
             if isExpanded {
                 content
+                if !message.attachments.isEmpty {
+                    ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox)
+                }
                 actions
             }
         }
