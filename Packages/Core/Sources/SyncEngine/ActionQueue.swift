@@ -220,13 +220,15 @@ extension SyncEngine {
             let failures = try await deliver(action).values.filter { $0 != .notFound }
             if failures.isEmpty {
                 outcome = .sent
-            } else if failures.allSatisfy(\.isRetryable) {
+            } else if failures.allSatisfy({ $0.isRetryable || $0 == .unauthorized }) {
                 outcome = .retry(String(describing: failures[0]))
             } else {
                 outcome = .failed
             }
         } catch let error as GmailError {
-            outcome = error.isRetryable ? .retry(String(describing: error)) : .failed
+            // Reauthentication can make this request valid again. Keep the
+            // user's intent just as we do for an invalid_grant from the provider.
+            outcome = error.isRetryable || error == .unauthorized ? .retry(String(describing: error)) : .failed
         } catch {
             // Offline, signed out or cancelled: keep the row and try later.
             outcome = .retry(String(describing: type(of: error)))

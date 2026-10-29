@@ -9,6 +9,17 @@ private let account = "acct"
 private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
+    @Test func rejectedCredentialsKeepTheChangeForReauthentication() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        await gmail.failNextChange(with: .unauthorized)
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.state) == [.queued])
+        #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
+    }
+
     @Test func partialFailuresKeepIndependentRetriesAndUndoOnlyAcceptedTargets() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [
