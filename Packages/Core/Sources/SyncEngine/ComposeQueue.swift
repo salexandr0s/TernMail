@@ -207,6 +207,7 @@ extension SyncEngine {
             case .sendDraft: try await deliver(row, localDraftID: localDraftID)
             case .discardDraft: try await discard(row, localDraftID: localDraftID)
             case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads: return
+            case .createLabel, .updateLabel, .deleteLabel: return
             }
         } catch {
             await finish(row, localDraftID: localDraftID, after: error)

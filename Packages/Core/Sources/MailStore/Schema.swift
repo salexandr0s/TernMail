@@ -248,6 +248,22 @@ enum Schema {
                 t.primaryKey(["accountID", "threadID", "reason"])
             }
         }
+
+        migrator.registerMigration("labels-v1") { db in
+            // The label a create, update or delete row changes, and the change.
+            try db.alter(table: "pendingAction") { t in
+                t.add(column: "labelID", .text)
+                t.add(column: "labelChange", .jsonText)
+            }
+            // Gmail's ID for a label created under a temporary one, so rows and
+            // undos made with the temporary ID still reach the label.
+            try db.create(table: "labelAlias") { t in
+                t.column("accountID", .text).notNull()
+                t.column("temporaryID", .text).notNull()
+                t.column("realID", .text).notNull()
+                t.primaryKey(["accountID", "temporaryID"])
+            }
+        }
         return migrator
     }
 

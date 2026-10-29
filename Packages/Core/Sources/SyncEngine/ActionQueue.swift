@@ -170,6 +170,9 @@ extension SyncEngine {
         case .saveDraft, .sendDraft, .discardDraft:
             // Draft rows have no inverse. Undo send cancels the row instead.
             return
+        case .createLabel, .updateLabel, .deleteLabel:
+            // Nothing queues label rows yet, so there is nothing to invert.
+            return
         case .modifyThreads, .modifyMessages:
             // Restore each message exactly: archiving a thread removed INBOX only
             // from the messages that had it, so only those get it back.
@@ -403,6 +406,9 @@ extension SyncEngine {
             return [:]
         case .saveDraft, .sendDraft, .discardDraft:
             // Claimed only by the compose lane, never batched with label changes.
+            return [:]
+        case .createLabel, .updateLabel, .deleteLabel:
+            // Nothing queues label rows yet.
             return [:]
         }
     }

@@ -41,7 +41,7 @@ public struct CacheTransaction {
     public func deleteAccountData(accountID: String) throws {
         for table in [
             "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
-            "pendingAction", "syncState", "draft", "localDraft", "cacheHold",
+            "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias",
         ] {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
         }
@@ -299,14 +299,17 @@ public struct CacheTransaction {
 
     /// Marks due actions in `lane` as `sending` and returns them, so two senders
     /// never pick up the same row. Changes reach Gmail in the order they were
-    /// made: a row waits while an older unsent row touches the same thread, or
-    /// the same local draft, even one held back by a retry.
+    /// made: a row waits while an older unsent row holds one of its keys, even
+    /// a row held back by a retry. See `claimKeys(of:)`.
     public func claimDueActions(accountID: String, now: Date, lane: PendingAction.Lane = .labels) throws -> [PendingAction] {
-        var busy = Set<String>()
+        var exclusive = Set<String>()
+        var shared = Set<String>()
         var claimed: [PendingAction] = []
         for var action in try pendingActions(accountID: accountID) where action.state != .sent && action.kind.lane == lane {
-            let keys: Set<String> = try action.localDraftID.map { [$0] } ?? threadIDs(of: action)
-            if action.state == .queued, action.notBefore <= now, busy.isDisjoint(with: keys) {
+            let keys = try claimKeys(of: action)
+            if action.state == .queued, action.notBefore <= now,
+               keys.exclusive.isDisjoint(with: exclusive), keys.exclusive.isDisjoint(with: shared),
+               keys.shared.isDisjoint(with: exclusive) {
                 action.state = .sending
                 // A crash may happen after Gmail applies this attempt but before
                 // its reply is saved. Undo must compensate after recovery.
@@ -314,9 +317,29 @@ public struct CacheTransaction {
                 try action.update(db)
                 claimed.append(action)
             }
-            busy.formUnion(keys)
+            exclusive.formUnion(keys.exclusive)
+            shared.formUnion(keys.shared)
         }
         return claimed
+    }
+
+    /// An exclusive key waits for every older row holding the key; a shared
+    /// key waits only for older exclusive holders. A draft row holds its local
+    /// draft and a label row its label, exclusively; a child's rename holds
+    /// its parent's label too, shared, so it follows the parent's rename. A
+    /// conversation row holds its threads exclusively and the labels it adds
+    /// or removes shared, so one label goes onto many conversations together
+    /// while a rename or delete of that label waits its turn.
+    func claimKeys(of action: PendingAction) throws -> (exclusive: Set<String>, shared: Set<String>) {
+        if let localDraftID = action.localDraftID { return (["draft:" + localDraftID], []) }
+        if action.kind.changesLabel {
+            let own = action.labelID.map { Set(["label:" + $0]) } ?? []
+            let parent = action.labelChange?.parentLabelID.map { Set(["label:" + $0]) } ?? []
+            return (own, parent)
+        }
+        let threads = try threadIDs(of: action).map { "thread:" + $0 }
+        let labels = (action.addLabelIDs + action.removeLabelIDs).map { "label:" + $0 }
+        return (Set(threads), Set(labels))
     }
 
     /// Recovers rows a quit or crash left mid-send. `sending` rows go back in
@@ -438,6 +461,7 @@ public struct CacheTransaction {
 /// Pure rules for deriving thread state, kept apart from SQL so they read plainly.
 enum ThreadRules {
     static func overlay(_ actions: [PendingAction], onto labels: inout [String: Set<String>], threadID: String) {
+        var deleted = Set<String>()
         for action in actions {
             let targets: [String]
             switch action.kind {
@@ -445,13 +469,21 @@ enum ThreadRules {
                 targets = action.threadIDs.contains(threadID) ? Array(labels.keys) : []
             case .modifyMessages:
                 targets = action.messageIDs.filter { labels[$0] != nil }
-            case .saveDraft, .sendDraft, .discardDraft:
+            case .deleteLabel:
+                deleted.formUnion(action.labelID.map { [$0] } ?? [])
+                targets = []
+            case .saveDraft, .sendDraft, .discardDraft, .createLabel, .updateLabel:
                 targets = []
             }
             for messageID in targets {
                 labels[messageID]?.formUnion(action.addLabelIDs)
                 labels[messageID]?.subtract(action.removeLabelIDs)
             }
+        }
+        // A deleted label leaves every conversation at once, whatever a row
+        // queued after the delete would add.
+        for messageID in labels.keys {
+            labels[messageID]?.subtract(deleted)
         }
     }
 
