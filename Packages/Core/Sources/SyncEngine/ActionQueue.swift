@@ -205,6 +205,7 @@ extension SyncEngine {
     }
 
     private func send(_ action: PendingAction) async {
+        guard !isStopped, !Task.isCancelled else { return }
         guard let id = action.id else { return }
         // Undo can reach a claimed row before its turn in this batch.
         let current = try? await cache.read { tx in try tx.action(id: id) }
@@ -212,6 +213,7 @@ extension SyncEngine {
             _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
             return
         }
+        guard !isStopped, !Task.isCancelled else { return }
 
         let outcome: Outcome
         do {

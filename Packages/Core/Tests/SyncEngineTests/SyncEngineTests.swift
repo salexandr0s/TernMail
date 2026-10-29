@@ -144,6 +144,28 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 }
 
 @Suite struct SyncPassTests {
+    @Test func stopWaitsForDatabaseWritesAlreadyInFlight() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        let (entered, signal) = AsyncStream.makeStream(of: Void.self)
+        let release = DispatchSemaphore(value: 0)
+        let didStop = OSAllocatedUnfairLock(initialState: false)
+        let writing = Task {
+            try await engine.write { tx in
+                signal.yield(())
+                release.wait()
+                try tx.saveCursor(historyID: 100, accountID: account)
+            }
+        }
+        for await _ in entered { break }
+        let stopping = Task { await engine.stop(); didStop.withLock { $0 = true } }
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(!didStop.withLock { $0 })
+        release.signal()
+        try await writing.value
+        await stopping.value
+        #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+    }
+
     @Test(arguments: [
         #"{"historyId":"bad"}"#,
         #"{"historyId":"120","history":[{"id":"bad","labelsRemoved":[{"message":{"id":"m1","threadId":"t1"},"labelIds":["INBOX"]}]}]}"#,

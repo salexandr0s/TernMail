@@ -38,6 +38,9 @@ public actor SyncEngine {
 
     private var pass: Task<Void, any Error>?
     private var pollTask: Task<Void, Never>?
+    private var hasStarted = false
+    private var writesInFlight = 0
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     var drainTask: Task<Void, Never>?
     var wakeRequested = false
     /// Undo receipts exist only for this engine's lifetime. Remember rejected
@@ -73,9 +76,17 @@ public actor SyncEngine {
 
     /// Resumes interrupted sends and syncs now and every `pollInterval`.
     public func start(pollInterval: Duration = .seconds(60)) async {
-        guard pollTask == nil, !isStopped else { return }
+        guard !hasStarted, !isStopped else { return }
+        hasStarted = true
         let accountID = accountID
-        _ = try? await write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
+        do {
+            try await write { tx in try tx.requeueInterruptedActions(accountID: accountID) }
+        } catch {
+            hasStarted = false
+            if !isStopped { continuation.yield(.syncFailed(Self.message(for: error))) }
+            return
+        }
+        guard !isStopped else { return }
         scheduleSending()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -99,12 +110,24 @@ public actor SyncEngine {
         running?.cancel()
         await drain?.value
         _ = try? await running?.value
+        if writesInFlight > 0 {
+            await withCheckedContinuation { writeWaiters.append($0) }
+        }
         continuation.finish()
     }
 
     /// Every engine write goes through here, so nothing lands after `stop()`.
     func write<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async throws -> T {
         if isStopped || Task.isCancelled { throw CancellationError() }
+        writesInFlight += 1
+        defer {
+            writesInFlight -= 1
+            if writesInFlight == 0 {
+                let waiters = writeWaiters
+                writeWaiters = []
+                for waiter in waiters { waiter.resume() }
+            }
+        }
         return try await cache.write(updates)
     }
 
@@ -311,6 +334,7 @@ public actor SyncEngine {
     /// Fetches bodies the cache lacks for a thread the user opened, and marks
     /// the thread read.
     public func openThread(_ threadID: String) async throws {
+        if isStopped || Task.isCancelled { throw CancellationError() }
         let accountID = accountID
         let deleted = deletedMessageIDs
         let (missing, isUnread) = try await cache.read { tx in
@@ -323,6 +347,7 @@ public actor SyncEngine {
             try await enqueue(.markRead, threadIDs: [threadID], hold: 0)
         }
         guard !missing.isEmpty else { return }
+        if isStopped || Task.isCancelled { throw CancellationError() }
 
         let thread: GmailThread
         do {
