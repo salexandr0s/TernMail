@@ -1,5 +1,6 @@
 import Foundation
 import GmailAPI
+import JavaScriptCore
 import Testing
 @testable import MessageContent
 
@@ -64,6 +65,31 @@ import Testing
         #expect(page.contains("&lt;b&gt;hi&lt;/b&gt;"))
         #expect(page.contains("<a href=\"https://example.com/a?b=1&amp;c=2\">https://example.com/a?b=1&amp;c=2</a>"))
         #expect(HTMLEntities.decode("Tom&#39;s &amp; Jerry") == "Tom's & Jerry")
+    }
+
+    @Test func darkModeKeepsCommonMailColorsReadable() throws {
+        let context = try #require(JSContext())
+        let palette = try #require(context.evaluateScript(MessageDocument.darkModeScript))
+        let colors = try #require(palette.call(withArguments: [[30, 30, 30], [255, 255, 255]]))
+        func adapt(_ method: String, _ arguments: [Any]) -> [Int] {
+            colors.invokeMethod(method, withArguments: arguments).toArray() as? [Int] ?? []
+        }
+
+        let page = adapt("background", [[255, 255, 255]])
+        #expect(zip(page, [30, 30, 30]).allSatisfy { abs($0 - $1) <= 1 }, "white became \(page)")
+        #expect(adapt("background", [[26, 115, 232]]) == [26, 115, 232], "a saturated button keeps its color")
+
+        // Text over background: body text, muted text, a link, a highlight, a button label.
+        let pairs = [
+            ([0, 0, 0], [255, 255, 255]), ([51, 51, 51], [244, 244, 244]), ([102, 102, 102], [255, 255, 255]),
+            ([17, 85, 204], [255, 255, 255]), ([0, 0, 0], [255, 255, 0]), ([255, 255, 255], [26, 115, 232]),
+        ]
+        for (text, background) in pairs {
+            let darkBackground = adapt("background", [background])
+            let darkText = adapt("text", [text, 1, darkBackground])
+            let ratio = colors.invokeMethod("contrast", withArguments: [darkText, darkBackground]).toDouble()
+            #expect(ratio >= 4.5, "\(text) on \(background) became \(darkText) on \(darkBackground)")
+        }
     }
 }
 

@@ -52,7 +52,8 @@ public enum MessageDocument {
 
     // The values below mirror Tokens.Space.s4 (16) and the macOS body size (13).
 
-    /// HTML mail is designed for a white page, so it keeps one in dark mode.
+    /// HTML mail is designed for a white page, so the page starts white and
+    /// `darkModeScript` adapts its colors in dark mode.
     private static let htmlStyle = """
         :root{color-scheme:light}\
         html{background:#fff;color:#000}\
