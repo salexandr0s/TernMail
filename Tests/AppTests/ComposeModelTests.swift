@@ -99,6 +99,30 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func repliesAndNewMessagesStayInTheirOwnAccount() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(.second))
+        try await waitUntil { mailbox.hasSyncedOnce }
+
+        mailbox.selectedMailbox = .account("second", SystemLabel.inbox)
+        let newID = try #require(await mailbox.startCompose(.newMessage))
+        #expect(try await cache.read { try $0.localDraft(id: newID) }?.accountID == "second")
+
+        // Both accounts hold a message m1. The reply answers the second account's.
+        let replyID = try #require(await mailbox.startCompose(.reply(.reply, messageID: "m1", accountID: "second")))
+        let model = ComposeModel(localDraftID: replyID, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        #expect(model.content.subject == "Re: Book club")
+        #expect(try await cache.read { try $0.localDraft(id: replyID) }?.accountID == "second")
+
+        #expect(await model.send())
+        #expect(await mailbox.undoSend(replyID))
+        #expect(try await cache.read { try $0.localDraft(id: replyID) }?.state == .editing)
+        await mailbox.stop()
+    }
+
     private func makeMailbox() async throws -> (MailboxModel, MailCache) {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
