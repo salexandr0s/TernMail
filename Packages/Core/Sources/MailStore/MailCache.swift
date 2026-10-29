@@ -109,6 +109,7 @@ public struct CacheTransaction {
         guard var message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
             return nil
         }
+        guard historyID >= message.historyID else { return nil }
         if historyID > message.historyID {
             message.historyID = historyID
             try message.update(db)
