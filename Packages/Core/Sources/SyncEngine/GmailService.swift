@@ -22,12 +22,27 @@ public protocol GmailService: Sendable {
         metadataHeaders: [String]
     ) async throws -> [String: Result<GmailMessage, GmailError>]
     func thread(id: String, format: MessageFormat) async throws -> GmailThread
+    func listThreads(
+        query: String?,
+        labelIDs: [String],
+        includeSpamTrash: Bool,
+        pageToken: String?,
+        maxResults: Int
+    ) async throws -> ThreadListPage
+    func threads(
+        ids: [String],
+        format: MessageFormat,
+        metadataHeaders: [String]
+    ) async throws -> [String: Result<GmailThread, GmailError>]
     func attachment(messageID: String, attachmentID: String) async throws -> Data
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
     func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError]
     func trashThreads(ids: [String]) async throws -> [String: GmailError]
     func untrashThreads(ids: [String]) async throws -> [String: GmailError]
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws
+    func createLabel(name: String, color: LabelColor?) async throws -> GmailLabel
+    func patchLabel(id: String, name: String?, color: LabelColorChange?) async throws -> GmailLabel
+    func deleteLabel(id: String) async throws
     func drafts(query: String?, pageToken: String?, maxResults: Int) async throws -> DraftListPage
     func draft(id: String, format: MessageFormat) async throws -> GmailDraft
     func createDraft(_ message: OutgoingMessage) async throws -> GmailDraft

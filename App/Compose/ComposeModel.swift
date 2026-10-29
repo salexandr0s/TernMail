@@ -37,8 +37,13 @@ final class ComposeModel {
     enum Phase: Equatable {
         case loading
         case open
+        /// Moving to another account. Nothing can change until the copy
+        /// opens, so the copy misses no typing or file.
+        case moving
         /// Sent, discarded or deleted. The window closes.
         case closed
+        /// Moved to another account as the draft `localDraftID`, which the window shows instead.
+        case moved(to: String)
     }
 
     struct Status: Equatable {
@@ -65,6 +70,8 @@ final class ComposeModel {
         }
     }
     var format = TextFormat()
+    /// The cursor is in the message, so formatting has something to apply to.
+    var isEditingMessage = false
     var showsCc = false
     var showsBcc = false
     /// The draft came from another app with formatting the editor can't keep.
@@ -76,6 +83,13 @@ final class ComposeModel {
     var isEditingLink = false
     private(set) var storeError: String?
     private(set) var hasPendingEdits = false
+    /// Changed in this window, so closing it keeps the draft. The stored
+    /// revision can trail a store that just finished, so it can't tell.
+    @ObservationIgnored private var isTouched = false
+    /// Changed since the last save to Gmail was asked for.
+    @ObservationIgnored private var changedSinceSave = false
+    /// Files still being copied into the draft, which `attachments` doesn't list yet.
+    @ObservationIgnored private var attachmentsInProgress = 0
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
     @ObservationIgnored private var isApplyingStoredContent = false
@@ -95,9 +109,27 @@ final class ComposeModel {
 
     var draft: LocalDraft? { activity?.draft }
 
+    /// The draft's account, whose engine stores, saves and sends it. Nil
+    /// until the draft loads, or once its account signs out.
+    private var owner: AccountMailbox? {
+        draft.flatMap { mailbox.account(id: $0.accountID) }
+    }
+
     var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
 
+    /// With several accounts, the window shows which one the message is from.
+    var showsFrom: Bool { mailbox.hasSeveralAccounts && draft != nil }
+
+    var accountChoices: [AccountRecord] { mailbox.accounts.map(\.account) }
+
+    var fromEmail: String { owner?.account.email ?? "" }
+
+    /// Only a new message can change accounts.
+    var canChangeAccount: Bool { draft?.kind == .new }
+
     var isEditable: Bool { phase == .open && draft?.state == .editing }
+
+    var canFormat: Bool { isEditable && isEditingMessage }
 
     var title: String {
         let subject = content.subject.trimmingCharacters(in: .whitespaces)
@@ -122,6 +154,7 @@ final class ComposeModel {
 
     func start() {
         guard observation == nil, phase == .loading else { return }
+        mailbox.composeOpened(self)
         droppedFormatting = mailbox.takeDroppedFormatting(localDraftID)
         let stream = mailbox.cache.draftActivity(localDraftID: localDraftID)
         observation = Task { [weak self] in
@@ -140,7 +173,7 @@ final class ComposeModel {
     /// Addresses from stored mail for a recipient being typed, leaving out
     /// this account and the recipients already added.
     func suggestions(for text: String) async -> [EmailAddress] {
-        let account = mailbox.account
+        guard let account = owner?.account else { return [] }
         let excluded = Set((content.to + content.cc + content.bcc).map(\.normalized) + [account.email.lowercased()])
         let found = try? await mailbox.cache.addressSuggestions(accountID: account.id, matching: text, excluding: excluded)
         return found ?? []
@@ -162,8 +195,8 @@ final class ComposeModel {
             alert = "“\(invalid.address)” isn't a valid email address."
             return false
         }
+        guard let engine = owner?.engine else { return false }
         cancelTimers()
-        let engine = mailbox.engine
         let id = localDraftID
         let delay = UndoSendDelay.current
         let queued = await serially { [self] in
@@ -185,11 +218,12 @@ final class ComposeModel {
     @discardableResult
     func discard() async -> Bool {
         guard isEditable else { return false }
+        guard let engine = owner?.engine else { return false }
         cancelTimers()
-        let engine = mailbox.engine
         let id = localDraftID
-        let queued = await serially {
-            (try? await engine.discardDraft(id, hold: Self.discardHold)) ?? false
+        // Stores the last edits too, so Undo brings them back.
+        let queued = await serially { [self] in
+            (try? await engine.discardDraft(id, content: content, hold: Self.discardHold)) ?? false
         }.value
         if queued {
             mailbox.didQueueDiscard(id, hold: Self.discardHold)
@@ -198,13 +232,40 @@ final class ComposeModel {
         return queued
     }
 
+    /// Moves a new message to another account, after any edits and files
+    /// still on their way. The window then shows the copy.
+    func move(to accountID: String) {
+        guard isEditable, canChangeAccount, accountID != draft?.accountID,
+              let engine = owner?.engine, let destination = mailbox.account(id: accountID)
+        else { return }
+        let id = localDraftID
+        phase = .moving
+        serially { [self] in
+            // A move that fails or doesn't happen opens the window again.
+            defer { if phase == .moving { phase = .open } }
+            do {
+                guard phase == .moving, let moved = try await engine.moveDraft(id, content: content, to: destination.engine) else { return }
+                cancelTimers()
+                observation?.cancel()
+                phase = .moved(to: moved.id)
+            } catch let error as ComposeError {
+                alert = error.errorDescription
+            } catch {
+                alert = "Tern couldn't move this message to \(destination.account.email)."
+            }
+        }
+    }
+
     /// Copies the files into the draft, one at a time, in order.
     func attach(_ items: [Attachable]) {
         guard isEditable, !items.isEmpty else { return }
-        let engine = mailbox.engine
+        markChanged()
+        guard let engine = owner?.engine else { return }
         let id = localDraftID
         for item in items {
+            attachmentsInProgress += 1
             serially { [self] in
+                defer { attachmentsInProgress -= 1 }
                 do {
                     switch item {
                     case .file(let url):
@@ -224,7 +285,8 @@ final class ComposeModel {
 
     func removeAttachment(_ attachment: OutgoingAttachment) {
         guard isEditable, let rowID = attachment.id else { return }
-        let engine = mailbox.engine
+        markChanged()
+        guard let engine = owner?.engine else { return }
         serially { [self] in
             do {
                 try await engine.removeAttachment(id: rowID)
@@ -245,18 +307,31 @@ final class ComposeModel {
     /// away; anything else stays in Drafts.
     func windowClosed() {
         observation?.cancel()
-        guard isEditable, let draft else { return }
+        guard isEditable else { return }
         phase = .closed
+        keepOrDiscard()
+    }
+
+    /// Before quitting: keeps or discards the draft as closing the window
+    /// would, then waits until that is stored. A kept draft goes to Gmail,
+    /// so it shows in Drafts even when its window isn't restored.
+    func prepareToQuit() async {
+        if isEditable { keepOrDiscard() }
+        await lastWrite?.value
+    }
+
+    private func keepOrDiscard() {
+        guard let draft else { return }
         let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
             && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
-            && attachments.isEmpty
-        let untouched = draft.revision == 0 && !hasPendingEdits
+            && attachments.isEmpty && attachmentsInProgress == 0
+        let untouched = draft.revision == 0 && !isTouched
         if draft.gmailDraftID == nil, untouched || isBlank {
             cancelTimers()
-            let engine = mailbox.engine
+            guard let engine = owner?.engine else { return }
             let id = localDraftID
             serially { _ = try? await engine.discardDraft(id, hold: 0) }
-        } else if hasPendingEdits || draft.hasUnsavedChanges {
+        } else if changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges {
             saveNow()
         }
     }
@@ -264,7 +339,8 @@ final class ComposeModel {
     private func saveNow() {
         cancelTimers()
         unsavedSince = nil
-        let engine = mailbox.engine
+        changedSinceSave = false
+        guard let engine = owner?.engine else { return }
         let id = localDraftID
         serially { [self] in
             let content = content
@@ -321,8 +397,14 @@ final class ComposeModel {
         isApplyingStoredContent = false
     }
 
+    private func markChanged() {
+        isTouched = true
+        changedSinceSave = true
+    }
+
     private func contentChanged() {
         guard isEditable else { return }
+        markChanged()
         hasPendingEdits = true
         if storeTask == nil {
             storeTask = Task { [weak self] in
@@ -353,11 +435,11 @@ final class ComposeModel {
     /// A new message that is still blank stays on this Mac.
     private var shouldSaveToGmail: Bool {
         draft?.gmailDraftID != nil || !content.to.isEmpty || !content.cc.isEmpty || !content.bcc.isEmpty
-            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty
+            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty || attachmentsInProgress > 0
     }
 
     private func store() {
-        let engine = mailbox.engine
+        guard let engine = owner?.engine else { return }
         let id = localDraftID
         serially { [self] in
             let content = content

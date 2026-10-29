@@ -6,8 +6,8 @@ import os
 import Testing
 @testable import SyncEngine
 
-private let account = "acct"
-private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
+let account = "acct"
+let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
 @Suite struct ActionQueueTests {
     @Test func unreadableMutationResponsesKeepTheActionAndItsUndo() async throws {
@@ -626,15 +626,21 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
     }
 
     @Test func aFirstSendThatFindsTheDraftGoneReturnsItToEditing() async throws {
-        let (engine, cache, gmail, _) = try await makeEngine()
+        let (engine, cache, gmail, clock) = try await makeEngine()
         let draft = makeDraft()
         try await engine.createDraft(draft)
         try await engine.saveDraft(draft.id)
         await engine.sendDueDrafts()
         await gmail.deleteDraftElsewhere("D1")
         try await engine.sendDraft(draft.id, delay: 0)
+        // Claimed alongside another row, then the app quit before this one started.
+        try await cache.write { tx in
+            _ = try tx.claimDueActions(accountID: account, now: clock.now(), lane: .compose)
+            try tx.requeueInterruptedActions(accountID: account)
+        }
         await engine.sendDueDrafts()
 
+        #expect(await gmail.draftCalls == ["create", "send D1"])
         let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
         #expect(stored.state == .editing)
         #expect(stored.gmailDraftID == nil)
@@ -658,18 +664,161 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(stored?.gmailDraftID == "D1")
     }
 
+    @Test func aSendAfterAnUpdateLostItsAnswerSendsTheSameDraft() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        var content = draft.content
+        content.subject = "Re: Lunch on Friday"
+        await gmail.failNextDraftCall("update", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id, content: content)
+        await engine.sendDueDrafts()
+        // The send replaces the save waiting to retry.
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+
+        // The changed Gmail draft is Tern's own upload, not another app's.
+        #expect(await gmail.draftCalls == ["create", "update D1", "send D1"])
+        #expect(await gmail.draftsByID.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+        await engine.stop()
+        var events: [SyncEvent] = []
+        for await event in engine.events { events.append(event) }
+        #expect(events == [.draftSent(localDraftID: draft.id)])
+    }
+
+    @Test(arguments: [true, false])
+    func aSendOrDiscardAfterACreateLostItsAnswerUsesTheDraftGmailMade(sending: Bool) async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        await gmail.failNextDraftCall("create", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        await gmail.setDraftSearch("rfc822msgid:draft1@example.com", ids: ["D1"])
+        if sending {
+            try await engine.sendDraft(draft.id, delay: 0)
+        } else {
+            try await engine.discardDraft(draft.id, hold: 0)
+        }
+        await engine.sendDueDrafts()
+
+        #expect(await gmail.draftCalls == (sending ? ["create", "update D1", "send D1"] : ["create", "delete D1"]))
+        #expect(await gmail.draftsByID.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+    }
+
+    @Test func movingANewMessageCopiesItToTheOtherAccountAndDiscardsTheOriginal() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let outgoing = await engine.outgoingDirectory
+        let otherGmail = FakeGmail()
+        let other = SyncEngine(
+            accountID: "second", sender: EmailAddress(address: "second@example.com"), outgoingDirectory: outgoing,
+            gmail: otherGmail, cache: cache, sendsAutomatically: false, now: clock.now
+        )
+        // A reply stays in its thread's account.
+        let reply = makeDraft()
+        try await engine.createDraft(reply)
+        #expect(try await engine.moveDraft(reply.id, content: reply.content, to: other) == nil)
+
+        let draft = try await engine.startMessage()
+        var content = DraftContent(subject: "Plan")
+        try await engine.saveDraft(draft.id, content: content)
+        #expect(await engine.sendDueDrafts() == 1)
+        _ = try #require(try await engine.attachData(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain", to: draft.id))
+        content.to = [EmailAddress(address: "pat@example.com")]
+
+        let moved = try #require(try await engine.moveDraft(draft.id, content: content, to: other))
+        #expect(moved.accountID == "second" && moved.id != draft.id && moved.rfcMessageID != draft.rfcMessageID)
+        #expect(moved.content == content && moved.hasUnsavedChanges && moved.gmailDraftID == nil)
+        let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: moved.id) }
+        let file = try #require(files.first)
+        #expect(files.count == 1 && file.filename == "agenda.txt" && file.path.hasPrefix("\(moved.id)/"))
+        #expect(try Data(contentsOf: outgoing.appending(path: file.path)) == Data("agenda".utf8))
+
+        // The original leaves Gmail and this Mac. Gmail held it, so the copy saves at once.
+        #expect(await engine.sendDueDrafts() == 1)
+        #expect(await gmail.draftCalls == ["create", "delete D1"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
+        #expect(!FileManager.default.fileExists(atPath: outgoing.appending(path: draft.id).path))
+        #expect(await other.sendDueDrafts() == 1)
+        #expect(await otherGmail.draftCalls == ["create"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: moved.id) }?.gmailDraftID == "D1")
+    }
+
+    @Test func aMoveToAnAccountBeingRemovedIsRefusedAndLeavesNothing() async throws {
+        let (engine, cache, _, clock) = try await makeEngine()
+        let outgoing = await engine.outgoingDirectory
+        let other = SyncEngine(
+            accountID: "second", sender: EmailAddress(address: "second@example.com"), outgoingDirectory: outgoing,
+            gmail: FakeGmail(), cache: cache, sendsAutomatically: false, now: clock.now
+        )
+        let draft = try await engine.startMessage()
+        _ = try #require(try await engine.attachData(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain", to: draft.id))
+        await other.stop()
+
+        await #expect(throws: CancellationError.self) {
+            try await engine.moveDraft(draft.id, content: DraftContent(subject: "Plan"), to: other)
+        }
+        #expect(try await cache.read { tx in try tx.localDrafts(accountID: "second") }.isEmpty)
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) }?.state == .editing)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outgoing.path) == [draft.id])
+    }
+
+    @Test func aSaveRefusedWhileASendWaitsLeavesTheSendQueued() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await gmail.failNextDraftCall("create", with: .http(status: 400, reason: "invalidArgument"))
+        await gmail.holdNextChange()
+        let saving = Task { await engine.sendDueDrafts() }
+        while await !gmail.isHolding { await Task.yield() }
+        #expect(try await engine.sendDraft(draft.id, delay: 10))
+        await gmail.release()
+        _ = await saving.value
+
+        let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
+        #expect(stored?.state == .sending)
+        #expect(try await pendingActions(cache).map(\.kind) == [.sendDraft])
+        // Undo still finds the send to cancel.
+        #expect(try await engine.undoSend(draft.id))
+    }
+
     @Test func aRefusedSendReturnsTheDraftToEditingWithAMessage() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         let draft = makeDraft()
         try await engine.createDraft(draft)
         await gmail.failNextDraftCall("create", with: .http(status: 400, reason: "invalidArgument"))
-        try await engine.sendDraft(draft.id, delay: 0)
-        await engine.sendDueDrafts()
+        try await engine.sendDraft(draft.id, delay: 10)
+        // Quitting sends it at once, and doesn't take the refusal for sent.
+        #expect(await engine.sendWaitingDraftsNow() == false)
 
         let stored = try await cache.read { tx in try tx.localDraft(id: draft.id) }
         #expect(stored?.state == .editing)
         #expect(stored?.sendError == "Gmail didn't send this message. Check the recipients and try again.")
         #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func stopWaitsForASendStartedWhenQuitting() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.sendDraft(draft.id, delay: 10)
+        await gmail.holdNextChange()
+        let quitting = Task { await engine.sendWaitingDraftsNow() }
+        while await !gmail.isHolding { await Task.yield() }
+        let stopping = Task { await engine.stop() }
+        while await !engine.isStoppingDrafts { await Task.yield() }
+        await gmail.release()
+        await stopping.value
+        _ = await quitting.value
+
+        // The send finished and was stored before stop returned.
+        #expect(await gmail.draftCalls == ["create", "send D1"])
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
     }
 }
 
@@ -814,6 +963,55 @@ private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(kept?.subject == "Plans, mine")
         #expect(try await pendingActions(cache).map(\.kind) == [.saveDraft])
     }
+
+    @Test func reopeningADraftWhoseSaveLostItsAnswerKeepsTheOpenCopy() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        var content = draft.content
+        content.subject = "Re: Lunch on Friday"
+        await gmail.failNextDraftCall("update", with: .transport(.timedOut), afterApplying: true)
+        try await engine.saveDraft(draft.id, content: content)
+        await engine.sendDueDrafts()
+        // Edit Draft on the message Gmail made from that save.
+        let opened = try await engine.openDraft(messageID: "msg2")
+        clock.advance(10)
+        await engine.sendDueDrafts()
+
+        #expect(opened.draft.id == draft.id)
+        #expect(try await cache.read { tx in try tx.localDrafts(accountID: account) }.map(\.id) == [draft.id])
+        #expect(await gmail.draftCalls == ["create", "update D1", "update D1"])
+    }
+
+    @Test func reopeningADraftWhileItsSaveUploadsKeepsTheOpenCopy() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.addDraft("D7", messageID: "m7", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m7", subject: "Plans", html: "<p>Hi</p>"))
+        let draft = try await engine.openDraft(messageID: "m7").draft
+        var content = draft.content
+        content.subject = "Plans, mine"
+        try await engine.saveDraft(draft.id, content: content)
+        await gmail.holdNextChange()
+        let saving = Task { await engine.sendDueDrafts() }
+        while await !gmail.isHolding { await Task.yield() }
+        // Another app changes the draft while Tern's update is on its way.
+        await gmail.addDraft("D7", messageID: "m8", threadID: "t7")
+        await gmail.setDraftJSON("D7", draftJSON(messageID: "m8", subject: "Plans for Friday", html: "<p>Hi all</p>"))
+        let reopened = try await engine.openDraft(id: "D7")
+        await gmail.release()
+        _ = await saving.value
+
+        #expect(reopened.draft.id == draft.id)
+        #expect(!reopened.droppedFormatting)
+        let drafts = try await cache.read { tx in try tx.localDrafts(accountID: account) }
+        #expect(drafts.map(\.id) == [draft.id])
+        #expect(drafts.first?.gmailDraftID == "D7")
+        #expect(drafts.first?.hasUnsavedChanges == false)
+        #expect(await gmail.draftCalls == ["update D7"])
+        #expect(try await pendingActions(cache).isEmpty)
+    }
 }
 
 /// A `drafts.get` response in full format with an HTML body.
@@ -859,6 +1057,13 @@ struct Change: Equatable, CustomStringConvertible {
     }
 
     var description: String { "\(kind) \(ids) +\(add) -\(remove)" }
+}
+
+struct ThreadSearch: Equatable, Sendable {
+    let query: String?
+    let labelIDs: [String]
+    let includeSpamTrash: Bool
+    let pageToken: String?
 }
 
 /// A mailbox in memory: serves listings, metadata and history pages, and
@@ -980,6 +1185,60 @@ actor FakeGmail: GmailService {
         return thread
     }
 
+    // MARK: Search
+
+    private(set) var threadSearches: [ThreadSearch] = []
+    /// The thread IDs of each batched `threads.get`, in order.
+    private(set) var threadRequests: [[String]] = []
+    private(set) var threadRequestHeaders: [String] = []
+    private var threadPages: [String: [[String]]] = [:]
+    private var holdsThreadList = false
+    private var heldThreadList: CheckedContinuation<Void, Never>?
+
+    /// `threads.list` pages for a query, or for a label ID when there's no
+    /// query. The page token is the next page's index.
+    func setThreadPages(_ key: String, _ pages: [[String]]) { threadPages[key] = pages }
+    func holdNextThreadList() { holdsThreadList = true }
+    var isHoldingThreadList: Bool { heldThreadList != nil }
+    func releaseThreadList() { heldThreadList?.resume(); heldThreadList = nil }
+
+    func listThreads(
+        query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int
+    ) async throws -> ThreadListPage {
+        threadSearches.append(ThreadSearch(query: query, labelIDs: labelIDs, includeSpamTrash: includeSpamTrash, pageToken: pageToken))
+        if holdsThreadList {
+            holdsThreadList = false
+            await withCheckedContinuation { heldThreadList = $0 }
+        }
+        let pages = threadPages[query ?? labelIDs.joined(separator: ",")] ?? []
+        let index = pageToken.flatMap(Int.init) ?? 0
+        let ids = index < pages.count ? pages[index] : []
+        let next = index + 1 < pages.count ? #""nextPageToken": "\#(index + 1)", "# : ""
+        let threads = ids.map { #"{"id": "\#($0)"}"# }.joined(separator: ",")
+        return try decode(ThreadListPage.self, #"{\#(next)"threads": [\#(threads)]}"#)
+    }
+
+    /// The next `threads(ids:)` answers once `releaseThreads()` is called.
+    func holdNextThreads() { holdsThreads = true }
+    var isHoldingThreads: Bool { heldThreads != nil }
+    func releaseThreads() { heldThreads?.resume(); heldThreads = nil }
+    private var holdsThreads = false
+    private var heldThreads: CheckedContinuation<Void, Never>?
+
+    /// Answers from `setThread`, like `thread(id:format:)`.
+    func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailThread, GmailError>] {
+        threadRequests.append(ids)
+        threadRequestHeaders = metadataHeaders
+        let results = Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, threadsByID[id].map { .success($0) } ?? Result<GmailThread, GmailError>.failure(.notFound))
+        })
+        if holdsThreads {
+            holdsThreads = false
+            await withCheckedContinuation { heldThreads = $0 }
+        }
+        return results
+    }
+
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage {
         if historyExpired { throw GmailError.notFound }
         guard !historyPages.isEmpty else { return try decode(HistoryPage.self, #"{"historyId": "\#(startHistoryID)"}"#) }
@@ -1003,6 +1262,75 @@ actor FakeGmail: GmailService {
 
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws {
         try await record(Change("batchModify", ids, add: addLabelIDs, remove: removeLabelIDs))
+    }
+
+    // MARK: Labels
+
+    /// Label calls in order, such as "create Trips", "patch Label_1" and "delete Label_1".
+    private(set) var labelCalls: [String] = []
+    private var labelCallErrors: [String: (error: GmailError, afterApplying: Bool)] = [:]
+    private var nextLabelID = 1
+
+    /// The next label call of `kind` ("create", "patch", "delete") fails with
+    /// `error`. With `afterApplying`, Gmail applies it first.
+    func failNextLabelCall(_ kind: String, with error: GmailError, afterApplying: Bool = false) {
+        labelCallErrors[kind] = (error, afterApplying)
+    }
+
+    private func labelCall(_ kind: String, _ call: String, apply: () throws -> Void) async throws {
+        if holdsNextChange {
+            holdsNextChange = false
+            await withCheckedContinuation { held = $0 }
+        }
+        labelCalls.append(call)
+        if let failure = labelCallErrors.removeValue(forKey: kind) {
+            if failure.afterApplying { try apply() }
+            throw failure.error
+        }
+        try apply()
+    }
+
+    /// Refuses a name already in use with 409, as Gmail does.
+    func createLabel(name: String, color: LabelColor?) async throws -> GmailLabel {
+        var created: GmailLabel?
+        try await labelCall("create", "create \(name)") {
+            guard !labelValues.contains(where: { $0.name.lowercased() == name.lowercased() }) else {
+                throw GmailError.http(status: 409, reason: nil)
+            }
+            let label = try userLabel(id: "Label_\(nextLabelID)", name: name, color: color)
+            nextLabelID += 1
+            labelValues.append(label)
+            created = label
+        }
+        guard let created else { throw GmailError.notFound }
+        return created
+    }
+
+    func patchLabel(id: String, name: String?, color: LabelColorChange?) async throws -> GmailLabel {
+        var patched: GmailLabel?
+        try await labelCall("patch", "patch \(id)") {
+            guard let index = labelValues.firstIndex(where: { $0.id == id }) else { throw GmailError.notFound }
+            let old = labelValues[index]
+            let oldColor = old.color.flatMap { color in
+                color.backgroundColor.flatMap { background in color.textColor.flatMap { LabelColor(backgroundColor: background, textColor: $0) } }
+            }
+            let newColor: LabelColor? = switch color {
+            case nil: oldColor
+            case .remove?: nil
+            case .set(let value)?: value
+            }
+            labelValues[index] = try userLabel(id: id, name: name ?? old.name, color: newColor)
+            patched = labelValues[index]
+        }
+        guard let patched else { throw GmailError.notFound }
+        return patched
+    }
+
+    /// A label that's already gone counts as deleted, as in `GmailClient`.
+    func deleteLabel(id: String) async throws {
+        try await labelCall("delete", "delete \(id)") {
+            labelValues.removeAll { $0.id == id }
+        }
     }
 
     // MARK: Drafts
@@ -1049,7 +1377,10 @@ actor FakeGmail: GmailService {
         let id = "msg\(nextID)"
         let thread = upload.threadID ?? "thread\(nextID)"
         nextID += 1
-        let message = try? gmailMessage(id, thread: thread, labels: labels, historyID: 300 + nextID, minutes: 10)
+        // Gmail keeps the upload's Message-ID header.
+        let head = String(decoding: upload.raw, as: UTF8.self).components(separatedBy: "\r\n\r\n").first ?? ""
+        let messageID = head.components(separatedBy: "\r\n").first { $0.hasPrefix("Message-ID: ") }?.dropFirst("Message-ID: ".count)
+        let message = try? gmailMessage(id, thread: thread, labels: labels, historyID: 300 + nextID, minutes: 10, messageID: messageID.map(String.init))
         messagesByID[id] = message
         return message
     }
@@ -1063,7 +1394,8 @@ actor FakeGmail: GmailService {
     func draft(id: String, format: MessageFormat) throws -> GmailDraft {
         if let json = draftJSONByID[id] { return try decode(GmailDraft.self, json) }
         guard let stored = draftsByID[id], let message = messagesByID[stored.messageID] else { throw GmailError.notFound }
-        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":\#(try encodedMessage(message.id, thread: message.threadId, labels: message.labelIds ?? []))}"#)
+        let encoded = try encodedMessage(message.id, thread: message.threadId, labels: message.labelIds ?? [], messageID: message.header("Message-ID"))
+        return try decode(GmailDraft.self, #"{"id":"\#(id)","message":\#(encoded)}"#)
     }
 
     func createDraft(_ message: OutgoingMessage) async throws -> GmailDraft {
@@ -1123,7 +1455,7 @@ struct TestClock: Sendable {
     }
 }
 
-private func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
+func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
     let cache = try MailCache.inMemory()
     let gmail = FakeGmail()
     let clock = TestClock()
@@ -1140,7 +1472,7 @@ private func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, Tes
 }
 
 /// Stores messages a minute apart, oldest first.
-private func seed(_ cache: MailCache, _ messages: [(id: String, thread: String, labels: [String])], cursor: Int64? = nil) async throws {
+func seed(_ cache: MailCache, _ messages: [(id: String, thread: String, labels: [String])], cursor: Int64? = nil) async throws {
     let updates = messages.enumerated().map { index, message in
         CacheTransaction.MessageUpdate(
             record: MessageRecord(
@@ -1157,24 +1489,34 @@ private func seed(_ cache: MailCache, _ messages: [(id: String, thread: String, 
     }
 }
 
-private func gmailMessage(_ id: String, thread: String, labels: [String], historyID: Int, minutes: Double = 0) throws -> GmailMessage {
-    try decode(GmailMessage.self, try encodedMessage(id, thread: thread, labels: labels, historyID: historyID, minutes: minutes))
+private func gmailMessage(
+    _ id: String, thread: String, labels: [String], historyID: Int, minutes: Double = 0, messageID: String? = nil
+) throws -> GmailMessage {
+    try decode(GmailMessage.self, try encodedMessage(id, thread: thread, labels: labels, historyID: historyID, minutes: minutes, messageID: messageID))
 }
 
-private func encodedMessage(
-    _ id: String, thread: String, labels: [String] = [SystemLabel.inbox], historyID: Int = 100, minutes: Double = 0
+func encodedMessage(
+    _ id: String, thread: String, labels: [String] = [SystemLabel.inbox], historyID: Int = 100, minutes: Double = 0,
+    messageID: String? = nil
 ) throws -> String {
     let milliseconds = Int(baseDate.addingTimeInterval(minutes * 60).timeIntervalSince1970 * 1000)
     let labelJSON = String(decoding: try JSONEncoder().encode(labels), as: UTF8.self)
+    let messageIDHeader = messageID.map { #", {"name": "Message-ID", "value": "\#($0)"}"# } ?? ""
     return """
         {"id": "\(id)", "threadId": "\(thread)", "labelIds": \(labelJSON), "historyId": "\(historyID)",
          "internalDate": "\(milliseconds)", "snippet": "Hi &amp; bye",
-         "payload": {"headers": [{"name": "From", "value": "B <b@example.com>"}, {"name": "Subject", "value": "New"}]}}
+         "payload": {"headers": [{"name": "From", "value": "B <b@example.com>"}, {"name": "Subject", "value": "New"}\(messageIDHeader)]}}
         """
 }
 
-private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
     try JSONDecoder().decode(type, from: Data(json.utf8))
+}
+
+private func userLabel(id: String, name: String, color: LabelColor?) throws -> GmailLabel {
+    var json: [String: Any] = ["id": id, "name": name, "type": "user"]
+    if let color { json["color"] = ["backgroundColor": color.backgroundColor, "textColor": color.textColor] }
+    return try JSONDecoder().decode(GmailLabel.self, from: JSONSerialization.data(withJSONObject: json))
 }
 
 private func threadIDs(_ cache: MailCache, _ labelID: String) async throws -> [String] {

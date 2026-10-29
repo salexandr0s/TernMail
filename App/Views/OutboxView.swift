@@ -10,7 +10,7 @@ struct OutboxView: View {
 
     var body: some View {
         Group {
-            if mailbox.outbox.isEmpty {
+            if mailbox.selectedOutbox.isEmpty {
                 ContentUnavailableView(
                     "Outbox Is Empty",
                     systemImage: "tray.and.arrow.up",
@@ -18,14 +18,14 @@ struct OutboxView: View {
                 )
             } else {
                 List(selection: $selection) {
-                    ForEach(mailbox.outbox) { activity in
+                    ForEach(mailbox.selectedOutbox) { activity in
                         OutboxRow(activity: activity)
                     }
                 }
                 .contextMenu(forSelectionType: String.self) { ids in
                     if ids.count == 1, let id = ids.first {
                         Button("Open") { open(id) }
-                        if let activity = mailbox.outbox.first(where: { $0.id == id }), Self.canUndoSend(activity) {
+                        if let activity = mailbox.selectedOutbox.first(where: { $0.id == id }), Self.canUndoSend(activity) {
                             Button("Undo Send") { undoSend(id) }
                         }
                     }

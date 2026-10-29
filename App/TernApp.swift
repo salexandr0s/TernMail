@@ -18,7 +18,7 @@ struct TernApp: App {
 
         // One window per local draft. Opening a draft that has a window brings it forward.
         WindowGroup("New Message", id: ComposeWindow.sceneID, for: String.self) { $localDraftID in
-            ComposeWindow(localDraftID: localDraftID)
+            ComposeWindow(localDraftID: $localDraftID)
                 .environment(model)
         }
         .defaultSize(width: 720, height: 600)
@@ -27,24 +27,56 @@ struct TernApp: App {
 
         Settings {
             SettingsView()
+                .environment(model)
         }
+
+        Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
+            KeyboardShortcutsView()
+        }
+        .windowResizability(.contentSize)
+        // Help opens it, so the Window menu doesn't list it too.
+        .commandsRemoved()
     }
 }
 
-/// Owns the app model, so quitting can send messages still waiting to go.
+/// Owns the app model, so quitting can store open drafts and send messages
+/// still waiting to go.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let waiting = model.waitingSendCount
-        guard waiting > 0 else { return .terminateNow }
         Task {
-            let sent = await model.sendWaitingMessages()
-            let unsent = model.waitingSendCount
-            sender.reply(toApplicationShouldTerminate: sent || Self.confirmQuit(unsent: unsent > 0 ? unsent : waiting))
+            await model.prepareToQuit()
+            let waiting = await model.sendingDraftIDs()
+            var sent = true
+            if !waiting.isEmpty { sent = await model.sendWaitingMessages() }
+            guard !sent else {
+                sender.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            let unsent = await model.sendingDraftIDs().count
+            if unsent > 0 {
+                sender.reply(toApplicationShouldTerminate: Self.confirmQuit(unsent: unsent))
+                return
+            }
+            // Nothing waits any more, so Gmail refused what didn't go out.
+            let refused = await model.refusedDraftCount(among: waiting)
+            sender.reply(toApplicationShouldTerminate: refused == 0 || Self.confirmQuit(refused: refused))
         }
         return .terminateLater
+    }
+
+    /// Asks before quitting with a refused message, which is open again and says why.
+    private static func confirmQuit(refused count: Int) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = count == 1 ? "Gmail didn't send your message" : "Gmail didn't send \(count) messages"
+        alert.informativeText = count == 1
+            ? "It's open again and says why. If you quit, it stays in the Outbox and isn't sent."
+            : "They're open again and say why. If you quit, they stay in the Outbox and aren't sent."
+        alert.addButton(withTitle: "Stay Open")
+        alert.addButton(withTitle: "Quit")
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     private static func confirmQuit(unsent count: Int) -> Bool {

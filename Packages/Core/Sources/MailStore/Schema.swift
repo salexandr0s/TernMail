@@ -181,6 +181,24 @@ enum Schema {
             }
         }
 
+        migrator.registerMigration("compose-v2") { db in
+            // What Gmail may have seen of a draft. It lives on the draft, since
+            // a send or discard replaces a save row that is waiting to retry.
+            try db.alter(table: "localDraft") { t in
+                t.add(column: "hasUnrecordedUpload", .boolean).notNull().defaults(to: false)
+                t.add(column: "sendRequested", .boolean).notNull().defaults(to: false)
+            }
+            // Rows that already ran are read as the attempt counts were read before.
+            try db.execute(sql: """
+                UPDATE localDraft SET hasUnrecordedUpload = 1 WHERE id IN (
+                    SELECT localDraftID FROM pendingAction WHERE kind IN ('saveDraft', 'sendDraft') AND attempts > 0)
+                """)
+            try db.execute(sql: """
+                UPDATE localDraft SET sendRequested = 1 WHERE id IN (
+                    SELECT localDraftID FROM pendingAction WHERE kind = 'sendDraft' AND attempts > 0)
+                """)
+        }
+
         migrator.registerMigration("search-v1") { db in
             // The text the search index reads. Metadata arrives through the
             // triggers below; body text is written in Swift by `saveBodies`.
@@ -248,6 +266,33 @@ enum Schema {
                 t.primaryKey(["accountID", "threadID", "reason"])
             }
         }
+
+        migrator.registerMigration("labels-v1") { db in
+            // The label a create, update or delete row changes, and the change.
+            try db.alter(table: "pendingAction") { t in
+                t.add(column: "labelID", .text)
+                t.add(column: "labelChange", .jsonText)
+            }
+            // Gmail's ID for a label created under a temporary one, so rows and
+            // undos made with the temporary ID still reach the label.
+            try db.create(table: "labelAlias") { t in
+                t.column("accountID", .text).notNull()
+                t.column("temporaryID", .text).notNull()
+                t.column("realID", .text).notNull()
+                t.primaryKey(["accountID", "temporaryID"])
+            }
+        }
+
+        migrator.registerMigration("wake-v1") { db in
+            // A conversation a snooze brought back. It sorts by its wake time
+            // until it leaves the Inbox.
+            try db.create(table: "wokenThread") { t in
+                t.column("accountID", .text).notNull()
+                t.column("threadID", .text).notNull()
+                t.column("wokeAt", .datetime).notNull()
+                t.primaryKey(["accountID", "threadID"])
+            }
+        }
         return migrator
     }
 
@@ -260,6 +305,16 @@ enum Schema {
                 t.column("displayName", .text)
                 t.column("grantedScopes", .jsonText).notNull()
                 t.column("addedAt", .datetime).notNull()
+            }
+        }
+        migrator.registerMigration("snooze-v1") { db in
+            // The durable copy of each snooze, which outlives a cache reset.
+            try db.create(table: "snooze") { t in
+                t.column("accountID", .text).notNull().references("account", onDelete: .cascade)
+                t.column("threadID", .text).notNull()
+                t.column("wakeAt", .datetime).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.primaryKey(["accountID", "threadID"])
             }
         }
         return migrator

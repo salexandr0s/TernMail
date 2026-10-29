@@ -15,21 +15,56 @@ actor AuditGmail: GmailService {
         var labels: Set<String>
         var history = 200
         var from = "River <river@example.invalid>"
+        /// The name of a small text file the message carries.
+        var attachment: String?
     }
+
+    private struct UserLabel {
+        let id: String
+        var name: String
+        var color: LabelColor?
+    }
+
+    private static let attachmentData = Data("Synthetic attachment for the UI audit.\n".utf8)
 
     private var drafts: [String: String] = [:]
     private var nextDraft = 1
+    private static let systemLabels = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"]
+    private var userLabels = [UserLabel(id: "Label_1", name: "Hiking")]
+    private var nextLabel = 2
 
     private var version = 200
     private let referenceDate = Date.now
     private var mail: [Message] = [
         Message(id: "m1", thread: "t1", subject: "Field notes", text: "<p>Today’s field notes.</p><img src='https://example.invalid/pixel'><p><a href='https://example.com/'>Example link</a></p><div style='width:900px;background:#eef'>Wide message, right edge →</div>" + String(repeating: "<p>Another paragraph of synthetic mail.</p>", count: 18), html: true, labels: ["INBOX", "UNREAD"]),
         Message(id: "m2", thread: "t2", subject: "Weekend plans", text: "The earlier message.", html: false, labels: ["INBOX"]),
-        Message(id: "m3", thread: "t2", subject: "Weekend plans", text: "The latest reply. See https://example.com/ for details.", html: false, labels: ["INBOX", "UNREAD", "STARRED"]),
+        Message(id: "m3", thread: "t2", subject: "Weekend plans", text: "The latest reply. See https://example.com/ for details.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], attachment: "Trail map.txt"),
         Message(id: "m4", thread: "t3", subject: "Trail plans", text: "Archived mail with a custom label.", html: false, labels: ["Label_1", "UNREAD"]),
         Message(id: "m5", thread: "t4", subject: "Discarded draft notes", text: "Synthetic trash message.", html: false, labels: ["TRASH"]),
         Message(id: "m6", thread: "t5", subject: "Sent confirmation", text: "Synthetic sent message.", html: false, labels: ["SENT"]),
         Message(id: "m7", thread: "t6", subject: "Unwanted offer", text: "Synthetic spam message.", html: false, labels: ["SPAM", "UNREAD"]),
+    ]
+
+    /// Which audit account's mail to serve.
+    enum Account {
+        case first
+        /// Other mail under the first account's message, thread and label
+        /// IDs, as separate Gmail accounts can have.
+        case second
+    }
+
+    init(_ account: Account = .first) {
+        guard account == .second else { return }
+        mail = Self.secondMail
+        userLabels = [UserLabel(id: "Label_1", name: "Projects")]
+    }
+
+    private static let secondMail: [Message] = [
+        Message(id: "m1", thread: "t1", subject: "Book club", text: "The next meeting moves to Thursday.", html: false, labels: ["INBOX", "UNREAD"], from: "Sky <sky@example.invalid>"),
+        Message(id: "m2", thread: "t2", subject: "Garden plans", text: "The first message.", html: false, labels: ["INBOX"], from: "Sky <sky@example.invalid>"),
+        Message(id: "m3", thread: "t2", subject: "Garden plans", text: "The latest reply, with the planting list attached.", html: false, labels: ["INBOX", "STARRED"], from: "Sky <sky@example.invalid>", attachment: "Planting list.txt"),
+        Message(id: "m4", thread: "t3", subject: "Project notes", text: "Archived mail with a custom label.", html: false, labels: ["Label_1"], from: "Sky <sky@example.invalid>"),
+        Message(id: "m5", thread: "t5", subject: "Order confirmation", text: "Synthetic sent message.", html: false, labels: ["SENT"]),
     ]
 
     func profile() throws -> GmailProfile {
@@ -37,10 +72,22 @@ actor AuditGmail: GmailService {
     }
 
     func labels() throws -> [GmailLabel] {
-        try (["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"] + ["Label_1"]).map { id in
-            let unread = Set(mail.filter { $0.labels.contains(id) && $0.labels.contains("UNREAD") }.map(\.thread)).count
-            return try decode(["id": id, "name": id == "Label_1" ? "Hiking" : id, "type": id == "Label_1" ? "user" : "system", "threadsUnread": unread])
+        let system = try Self.systemLabels.map { id in
+            try decode(["id": id, "name": id, "type": "system", "threadsUnread": unreadThreads(id)]) as GmailLabel
         }
+        return try system + userLabels.map(labelValue)
+    }
+
+    private func labelValue(_ label: UserLabel) throws -> GmailLabel {
+        var json: [String: Any] = ["id": label.id, "name": label.name, "type": "user", "threadsUnread": unreadThreads(label.id)]
+        if let color = label.color {
+            json["color"] = ["backgroundColor": color.backgroundColor, "textColor": color.textColor]
+        }
+        return try decode(json)
+    }
+
+    private func unreadThreads(_ labelID: String) -> Int {
+        Set(mail.filter { $0.labels.contains(labelID) && $0.labels.contains("UNREAD") }.map(\.thread)).count
     }
 
     func labels(ids: [String]) throws -> [String: Result<GmailLabel, GmailError>] {
@@ -66,11 +113,34 @@ actor AuditGmail: GmailService {
         return try decode(["id": id, "messages": messages.map(messageJSON)])
     }
 
-    func attachment(messageID: String, attachmentID: String) throws -> Data { throw GmailError.notFound }
+    /// Matches every plain word of `query` against subjects and text, and
+    /// ignores operators.
+    func listThreads(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) throws -> ThreadListPage {
+        let words = (query ?? "").lowercased().split(separator: " ").filter { !$0.contains(":") }
+        let selected = mail.filter { message in
+            let text = (message.subject + " " + message.text).lowercased()
+            return labelIDs.allSatisfy(message.labels.contains)
+                && (includeSpamTrash || message.labels.isDisjoint(with: ["TRASH", "SPAM"]))
+                && words.allSatisfy { text.contains($0) }
+        }
+        var seen = Set<String>()
+        return try decode(["threads": selected.map(\.thread).filter { seen.insert($0).inserted }.map { ["id": $0] }])
+    }
+
+    func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) -> [String: Result<GmailThread, GmailError>] {
+        Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, Result { try thread(id: id, format: format) }.mapError { $0 as? GmailError ?? .notFound })
+        })
+    }
+
+    func attachment(messageID: String, attachmentID: String) throws -> Data {
+        guard mail.contains(where: { $0.id == messageID && $0.attachment != nil }) else { throw GmailError.notFound }
+        return Self.attachmentData
+    }
 
     func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
         let changed = mail.filter { $0.history > (Int(startHistoryID) ?? 0) }
-        let allLabels: Set<String> = ["INBOX", "UNREAD", "STARRED", "SENT", "SPAM", "TRASH", "Label_1"]
+        let allLabels = Set(Self.systemLabels + ["UNREAD"] + userLabels.map(\.id))
         return try decode(["historyId": String(version), "history": changed.map { message in
             ["id": String(message.history),
              "labelsAdded": [["message": ["id": message.id, "threadId": message.thread], "labelIds": Array(message.labels)]],
@@ -93,6 +163,34 @@ actor AuditGmail: GmailService {
 
     func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) {
         change(ids: ids, add: addLabelIDs, remove: removeLabelIDs)
+    }
+
+    // MARK: Labels
+
+    func createLabel(name: String, color: LabelColor?) throws -> GmailLabel {
+        guard !userLabels.contains(where: { $0.name.lowercased() == name.lowercased() }) else {
+            throw GmailError.http(status: 409, reason: nil)
+        }
+        let label = UserLabel(id: "Label_\(nextLabel)", name: name, color: color)
+        nextLabel += 1
+        userLabels.append(label)
+        return try labelValue(label)
+    }
+
+    func patchLabel(id: String, name: String?, color: LabelColorChange?) throws -> GmailLabel {
+        guard let index = userLabels.firstIndex(where: { $0.id == id }) else { throw GmailError.notFound }
+        if let name { userLabels[index].name = name }
+        switch color {
+        case .set(let value)?: userLabels[index].color = value
+        case .remove?: userLabels[index].color = nil
+        case nil: break
+        }
+        return try labelValue(userLabels[index])
+    }
+
+    func deleteLabel(id: String) {
+        userLabels.removeAll { $0.id == id }
+        change(ids: mail.filter { $0.labels.contains(id) }.map(\.id), add: [], remove: [id])
     }
 
     // MARK: Drafts
@@ -165,10 +263,19 @@ actor AuditGmail: GmailService {
         let ageHours = message.id == "m2" ? 3 : Double(index)
         return ["id": message.id, "threadId": message.thread, "labelIds": Array(message.labels),
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
-                "snippet": "Synthetic mail for the UI audit", "payload": [
-                    "mimeType": message.html ? "text/html" : "text/plain",
-                    "headers": [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]],
-                    "body": ["data": Data(message.text.utf8).base64EncodedString()]]]
+                "snippet": "Synthetic mail for the UI audit", "payload": payload(message)]
+    }
+
+    private func payload(_ message: Message) -> [String: Any] {
+        let headers = [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]]
+        let text: [String: Any] = ["mimeType": message.html ? "text/html" : "text/plain", "body": ["data": Data(message.text.utf8).base64EncodedString()]]
+        guard let name = message.attachment else { return text.merging(["headers": headers]) { $1 } }
+        let file: [String: Any] = [
+            "partId": "1", "mimeType": "text/plain", "filename": name,
+            "headers": [["name": "Content-Disposition", "value": "attachment; filename=\"\(name)\""]],
+            "body": ["attachmentId": "a-\(message.id)", "size": Self.attachmentData.count],
+        ]
+        return ["mimeType": "multipart/mixed", "headers": headers, "parts": [text.merging(["partId": "0"]) { $1 }, file]]
     }
 
     private func decode<T: Decodable>(_ json: [String: Any]) throws -> T {

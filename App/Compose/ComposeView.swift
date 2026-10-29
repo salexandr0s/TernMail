@@ -11,15 +11,17 @@ extension FocusedValues {
 struct ComposeWindow: View {
     static let sceneID = "compose"
 
-    let localDraftID: String?
+    /// Changes when the message moves to another account, which makes a copy.
+    @Binding var localDraftID: String?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
-            if let localDraftID, let mailbox = app.mailbox {
-                ComposeView(localDraftID: localDraftID, mailbox: mailbox)
-                    // Another account's mailbox needs its own model.
+            if let id = localDraftID, let mailbox = app.mailbox {
+                ComposeView(localDraftID: id, mailbox: mailbox) { localDraftID = $0 }
+                    // Each draft, and a new sign-in's mailbox, needs its own model.
+                    .id(id)
                     .id(ObjectIdentifier(mailbox))
             } else {
                 ProgressView()
@@ -52,9 +54,12 @@ struct ComposeView: View {
     /// views, which `focus` can't reach.
     @State private var recipientFocus: Field?
     @Environment(\.dismiss) private var dismiss
+    /// Shows the copy the window's message became in another account.
+    private let onMove: (String) -> Void
 
-    init(localDraftID: String, mailbox: MailboxModel) {
+    init(localDraftID: String, mailbox: MailboxModel, onMove: @escaping (String) -> Void) {
         _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox))
+        self.onMove = onMove
     }
 
     var body: some View {
@@ -75,9 +80,10 @@ struct ComposeView: View {
         .task { model.start() }
         .task(id: model.phase) {
             switch model.phase {
-            case .loading: break
+            case .loading, .moving: break
             case .open: await placeFocus()
             case .closed: dismiss()
+            case .moved(let localDraftID): onMove(localDraftID)
             }
         }
         .onDisappear { model.windowClosed() }
@@ -103,7 +109,7 @@ struct ComposeView: View {
                 document: $model.content.body,
                 format: $model.format,
                 isEditable: model.isEditable
-            ) { model.editor = $0 } onAttach: { model.attach($0) }
+            ) { model.editor = $0 } onAttach: { model.attach($0) } onFocusChange: { model.isEditingMessage = $0 }
             if !model.attachments.isEmpty {
                 AttachmentStrip(attachments: model.attachments, isEditable: model.isEditable) {
                     model.removeAttachment($0)
@@ -129,6 +135,14 @@ struct ComposeView: View {
 
     private var header: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Tokens.Space.s2, verticalSpacing: 0) {
+            if model.showsFrom {
+                GridRow {
+                    fieldLabel("From:")
+                    fromField
+                        .padding(.vertical, Tokens.Space.s2)
+                }
+                Divider()
+            }
             GridRow {
                 fieldLabel("To:")
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
@@ -167,12 +181,32 @@ struct ComposeView: View {
                 TextField("Subject", text: $model.content.subject)
                     .textFieldStyle(.plain)
                     .labelsHidden()
+                    .accessibilityLabel("Subject")
                     .focused($focus, equals: .subject)
                     .padding(.vertical, Tokens.Space.s2)
             }
         }
         .disabled(!model.isEditable)
         .padding(.horizontal, Tokens.Space.s4)
+    }
+
+    /// A new message can move to another account. A reply or a Gmail draft
+    /// stays in the account of its thread.
+    @ViewBuilder private var fromField: some View {
+        if model.canChangeAccount {
+            Picker("From", selection: Binding(get: { model.draft?.accountID ?? "" }, set: { model.move(to: $0) })) {
+                ForEach(model.accountChoices, id: \.id) { account in
+                    Text(account.email).tag(account.id)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityLabel("From")
+        } else {
+            Text(model.fromEmail)
+                .help("Replies and drafts from Gmail stay in their own account.")
+                .accessibilityLabel("From \(model.fromEmail)")
+        }
     }
 
     private func fieldLabel(_ text: String) -> some View {
@@ -183,7 +217,9 @@ struct ComposeView: View {
     }
 
     private func recipientField(_ label: String, addresses: Binding<[EmailAddress]>, field: Field) -> some View {
-        RecipientField(
+        // Never ask the token field itself; see `RecipientField.firstBaseline`.
+        let baseline = RecipientField.firstBaseline
+        return RecipientField(
             label: label,
             addresses: addresses,
             requestsFocus: Binding(
@@ -194,6 +230,7 @@ struct ComposeView: View {
         ) { [model] text in
             await model.suggestions(for: text)
         }
+        .alignmentGuide(.firstTextBaseline) { _ in baseline }
     }
 
     private func reveal(_ field: Field) {
@@ -265,7 +302,7 @@ struct ComposeView: View {
                 Label(model.format.link ? "Edit Link" : "Add Link", systemImage: "link")
             }
             .help(model.format.link ? "Edit Link" : "Add Link")
-            .disabled(!model.isEditable)
+            .disabled(!model.canFormat)
             .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
                 LinkEditor(hasLink: model.format.link, width: Self.linkFieldWidth) { url in
                     model.editor?.setLink(url)
@@ -299,7 +336,7 @@ struct ComposeView: View {
             Label(title, systemImage: systemImage)
         }
         .help(title)
-        .disabled(!model.isEditable)
+        .disabled(!model.canFormat)
     }
 
     // MARK: Private

@@ -160,14 +160,80 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         case sendDraft
         /// Deletes a local draft, and its Gmail draft when one was saved.
         case discardDraft
+        /// `labels.create` for `labelID`, a temporary ID until Gmail answers.
+        case createLabel
+        /// `labels.patch` with the new name, color or both.
+        case updateLabel
+        /// `labels.delete`, which Gmail can't undo.
+        case deleteLabel
 
         /// Draft rows drain apart from label changes, so a large upload
         /// doesn't hold up archive or star.
         public var lane: Lane {
             switch self {
             case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads: .labels
+            case .createLabel, .updateLabel, .deleteLabel: .labels
             case .saveDraft, .sendDraft, .discardDraft: .compose
             }
+        }
+
+        public var changesLabel: Bool {
+            switch self {
+            case .createLabel, .updateLabel, .deleteLabel: true
+            default: false
+            }
+        }
+    }
+
+    /// What a create, update or delete row does to its label.
+    public struct LabelChange: Codable, Sendable, Equatable {
+        public struct Color: Codable, Sendable, Hashable {
+            public var textColor: String
+            public var backgroundColor: String
+
+            public init(textColor: String, backgroundColor: String) {
+                self.textColor = textColor
+                self.backgroundColor = backgroundColor
+            }
+        }
+
+        public enum ColorChange: Codable, Sendable, Equatable {
+            case set(Color)
+            case remove
+        }
+
+        /// The full name, with "/" between parent and child. Nil when the
+        /// name stays as it is.
+        public var newName: String?
+        public var oldName: String?
+        /// Nil when the color stays as it is.
+        public var newColor: ColorChange?
+        public var oldColor: Color?
+        /// For a child renamed with its parent: the parent's label, which is
+        /// renamed first.
+        public var parentLabelID: String?
+        /// The label as Gmail last listed it, for a delete.
+        public var deletedLabel: LabelRecord?
+        /// For a create Gmail refused because the label was there already:
+        /// Tern took that label, so undo must leave it in Gmail.
+        public var adoptedExisting: Bool?
+
+        public init(
+            newName: String? = nil,
+            oldName: String? = nil,
+            newColor: ColorChange? = nil,
+            oldColor: Color? = nil,
+            parentLabelID: String? = nil,
+            deletedLabel: LabelRecord? = nil,
+            adoptedExisting: Bool? = nil
+        ) {
+            self.newName = newName
+            self.oldName = oldName
+            self.newColor = newColor
+            self.oldColor = oldColor
+            self.parentLabelID = parentLabelID
+            self.deletedLabel = deletedLabel
+            self.adoptedExisting = adoptedExisting
         }
     }
 
@@ -213,6 +279,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     public var sentAt: Date?
     /// The compose window's draft, for draft rows. Nil for label changes.
     public var localDraftID: String? = nil
+    /// The label a create, update or delete row changes.
+    public var labelID: String? = nil
+    public var labelChange: LabelChange? = nil
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID

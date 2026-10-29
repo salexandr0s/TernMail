@@ -4,6 +4,7 @@ struct SignInView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         VStack(spacing: Tokens.Space.s4) {
             Image(systemName: "envelope.open")
                 .font(.largeTitle)
@@ -46,9 +47,21 @@ struct SignInView: View {
                     .frame(maxWidth: 360)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            if case .signInRequired = model.phase {
+                Button("Sign Out…") { model.isConfirmingSignOut = true }
+                    .buttonStyle(.link)
+            }
         }
         .padding(Tokens.Space.s8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .confirmationDialog("Sign out of Tern?", isPresented: $model.isConfirmingSignOut) {
+            Button("Sign Out", role: .destructive) {
+                Task { await model.signOut() }
+            }
+        } message: {
+            Text(model.signOutMessage)
+        }
     }
 
     private var title: String {

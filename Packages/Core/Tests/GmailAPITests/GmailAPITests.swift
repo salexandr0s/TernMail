@@ -89,8 +89,9 @@ import Testing
         ])
     }
 
-    @Test func rateLimitReasonsAreRetryable() {
-        let rateLimited = Data(#"{"error":{"code":403,"errors":[{"reason":"rateLimitExceeded"}]}}"#.utf8)
+    @Test(arguments: ["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"])
+    func rateLimitReasonsAreRetryable(_ reason: String) {
+        let rateLimited = Data(#"{"error":{"code":403,"errors":[{"reason":"\#(reason)"}]}}"#.utf8)
         let forbidden = Data(#"{"error":{"code":403,"errors":[{"reason":"insufficientPermissions"}]}}"#.utf8)
 
         #expect(GmailError(status: 403, body: rateLimited) == .rateLimited)

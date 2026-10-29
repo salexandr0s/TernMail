@@ -40,6 +40,20 @@ import Testing
         #expect(keys.outcome(for: "a", shift: false, at: 40.1) == .perform(.replyAll))
     }
 
+    @Test func onlyJAndKRepeatWhenHeld() {
+        var keys = SingleKeyShortcuts()
+        #expect(keys.outcome(for: "e", shift: false, at: 0) == .perform(.archive))
+        #expect(keys.outcome(for: "e", shift: false, isRepeat: true, at: 0.1) == .held)
+        #expect(keys.outcome(for: "j", shift: false, isRepeat: true, at: 0.2) == .perform(.nextConversation))
+        #expect(keys.outcome(for: "k", shift: false, isRepeat: true, at: 0.3) == .perform(.previousConversation))
+        #expect(keys.outcome(for: "x", shift: false, isRepeat: true, at: 0.4) == .ignored)
+
+        // Holding "g" keeps it waiting for the mailbox key.
+        #expect(keys.outcome(for: "g", shift: false, at: 10) == .awaitingDestination)
+        #expect(keys.outcome(for: "g", shift: false, isRepeat: true, at: 10.5) == .held)
+        #expect(keys.outcome(for: "t", shift: false, at: 11) == .perform(.go(.sent)))
+    }
+
     @Test func onlyShiftMayBeHeld() {
         #expect(SingleKeyShortcuts.accepts([]))
         #expect(SingleKeyShortcuts.accepts([.shift, .capsLock]))

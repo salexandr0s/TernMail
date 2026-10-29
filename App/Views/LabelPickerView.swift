@@ -66,7 +66,8 @@ struct LabelSelection: Equatable {
 struct EditLabelsView: View {
     let labels: [LabelChoice]
     let onApply: (LabelSelection.Change) -> Void
-    let onCreateLabel: (String) -> Void
+    /// Gets the new label's name and the boxes changed so far.
+    let onCreateLabel: (String, LabelSelection.Change) -> Void
 
     @State private var selection: LabelSelection
 
@@ -74,7 +75,7 @@ struct EditLabelsView: View {
         labels: [LabelChoice],
         applied: [Set<String>],
         onApply: @escaping (LabelSelection.Change) -> Void,
-        onCreateLabel: @escaping (String) -> Void
+        onCreateLabel: @escaping (String, LabelSelection.Change) -> Void
     ) {
         self.labels = labels
         self.onApply = onApply
@@ -88,7 +89,7 @@ struct EditLabelsView: View {
                 choices: labels,
                 mark: { .check(selection.state(of: $0.id)) },
                 onPick: { selection.toggle($0.id) },
-                onCreate: onCreateLabel
+                onCreate: { onCreateLabel($0, selection.change) }
             )
             Divider()
             HStack {

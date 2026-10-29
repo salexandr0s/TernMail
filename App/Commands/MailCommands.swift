@@ -1,3 +1,4 @@
+import MailStore
 import MessageContent
 import SwiftUI
 
@@ -22,10 +23,20 @@ struct MailCommands: Commands {
             Button("Attach Files…") { compose?.isChoosingFiles = true }
                 .keyboardShortcut("a", modifiers: [.shift, .command])
                 .disabled(!canEdit)
+            Divider()
+            Button("Add Account…") { Task { await app.addAccount() } }
+                .disabled(mailbox == nil || app.isSigningIn)
         }
         CommandGroup(after: .undoRedo) {
+            // Compose windows can still send while the session has expired,
+            // and the mailbox window, showing sign-in, has no Undo then.
             Button("Undo Send") { undoSend() }
-                .disabled(mailbox?.undoableSendID == nil)
+                .disabled(app.mailbox?.undoableSendID == nil)
+        }
+        CommandGroup(after: .textEditing) {
+            Button("Search Mail") { mailbox?.search.focusField() }
+                .keyboardShortcut("f", modifiers: [.option, .command])
+                .disabled(mailbox == nil || compose != nil)
         }
         CommandMenu("Message") {
             Button("Send") { Task { await compose?.send() } }
@@ -44,10 +55,11 @@ struct MailCommands: Commands {
             Divider()
             Button("Archive") { mailbox?.perform(.archive) }
                 .keyboardShortcut("a", modifiers: [.control, .command])
-                .disabled(!(mailbox?.canArchive ?? false))
+                .disabled(compose != nil || !(mailbox?.canArchive ?? false))
+            // In a compose window ⌘⌫ deletes to the start of the line instead.
             Button("Move to Trash") { mailbox?.perform(.trash) }
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled(!(mailbox?.canTrash ?? false))
+                .disabled(compose != nil || !(mailbox?.canTrash ?? false))
             Divider()
             Button(isRead ? "Mark as Unread" : "Mark as Read") { mailbox?.toggleRead() }
                 .keyboardShortcut("u", modifiers: [.shift, .command])
@@ -55,14 +67,61 @@ struct MailCommands: Commands {
             Button(isStarred ? "Remove Star" : "Star") { mailbox?.toggleStar() }
                 .keyboardShortcut("l", modifiers: [.shift, .command])
                 .disabled(!hasSelection)
+            Divider()
+            Button("Edit Labels…") { mailbox?.showEditLabels() }
+                .keyboardShortcut("l", modifiers: [.option, .command])
+                .disabled(!hasSelection)
+            Button("Move to…") { mailbox?.showMoveTo() }
+                .keyboardShortcut("m", modifiers: [.control, .command])
+                .disabled(!hasSelection)
+            Divider()
+            Menu("Snooze") {
+                SnoozeMenuItems(
+                    onSnooze: { mailbox?.snooze(until: $0) },
+                    onChooseDate: { mailbox?.showSnoozeDate() }
+                )
+            }
+            .disabled(!canSnooze)
+            // A shortcut can't open the submenu, so it opens Choose Date & Time.
+            Button("Snooze…") { mailbox?.showSnoozeDate() }
+                .keyboardShortcut("b", modifiers: [.control, .command])
+                .disabled(!canSnooze)
+            if mailbox?.showsSnoozed ?? false {
+                Button("Unsnooze") { mailbox?.unsnooze() }
+                    .disabled(!hasSelection)
+            }
         }
         CommandMenu("Mailbox") {
             Button("Check for New Mail") { mailbox?.syncNow() }
                 .keyboardShortcut("n", modifiers: [.shift, .command])
                 .disabled(mailbox == nil)
+            Button("New Label…") { mailbox?.showNewLabel() }
+                .keyboardShortcut("n", modifiers: [.option, .command])
+                .disabled(mailbox == nil || compose != nil)
             Divider()
-            Button("Sign Out…") { app.isConfirmingSignOut = true }
-                .disabled(mailbox == nil)
+            if let mailbox, mailbox.hasSeveralAccounts {
+                Menu("Sign Out") {
+                    ForEach(mailbox.accounts, id: \.account.id) { owner in
+                        Button("\(owner.account.email)…") { app.accountToSignOut = owner.account }
+                    }
+                }
+            } else {
+                Button("Sign Out…") { app.isConfirmingSignOut = true }
+                    .disabled(!app.canSignOut)
+            }
+        }
+        CommandMenu("Go") {
+            // In the sidebar's order, so each number matches a row.
+            ForEach(Array(SystemMailbox.numbered.enumerated()), id: \.element.id) { index, box in
+                Button(box.title) { mailbox?.go(to: box.id) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
+                    .disabled(mailbox == nil || compose != nil)
+            }
+            Button("All Mail") { mailbox?.go(to: SystemLabel.allMail) }
+                .disabled(mailbox == nil || compose != nil)
+        }
+        CommandGroup(replacing: .help) {
+            Button("Keyboard Shortcuts") { openWindow(id: KeyboardShortcutsView.sceneID) }
         }
         CommandMenu("Format") {
             Group {
@@ -79,7 +138,7 @@ struct MailCommands: Commands {
                 Button(compose?.format.link == true ? "Edit Link…" : "Add Link…") { compose?.isEditingLink = true }
                     .keyboardShortcut("k")
             }
-            .disabled(!canEdit)
+            .disabled(!(compose?.canFormat ?? false))
         }
     }
 
@@ -96,14 +155,14 @@ struct MailCommands: Commands {
     private func reply(_ kind: ReplyKind) {
         guard let mailbox else { return }
         Task {
-            guard let messageID = await mailbox.replyTargetMessageID() else { return }
-            open(.reply(kind, messageID: messageID))
+            guard let start = await mailbox.replyStart(kind) else { return }
+            open(start)
         }
     }
 
     /// Stops the newest send and reopens its window.
     private func undoSend() {
-        guard let mailbox, let id = mailbox.undoableSendID else { return }
+        guard let mailbox = app.mailbox, let id = mailbox.undoableSendID else { return }
         Task {
             if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) }
         }
@@ -118,8 +177,13 @@ struct MailCommands: Commands {
         }
     }
 
+    /// Conversations are selected in the mailbox window, which is in front.
     private var hasSelection: Bool {
-        !(mailbox?.selectedThreadIDs.isEmpty ?? true)
+        compose == nil && !(mailbox?.selectedThreadIDs.isEmpty ?? true)
+    }
+
+    private var canSnooze: Bool {
+        compose == nil && (mailbox?.canSnooze ?? false)
     }
 
     private var isRead: Bool {

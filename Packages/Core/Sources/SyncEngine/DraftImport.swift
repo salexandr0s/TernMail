@@ -69,6 +69,65 @@ extension SyncEngine {
         return try await cache.read { tx in try tx.localDraft(id: draft.id) } ?? draft
     }
 
+    /// Moves a new message to `destination`'s account, as the From menu does.
+    /// The copy gets its own ID, Message-ID and files, and holds `content`,
+    /// the window's text. The original's discard is queued in the same
+    /// transaction, so the message is never in both accounts. Returns nil
+    /// when the draft isn't a new message or no longer takes edits, and
+    /// throws `CancellationError` when `destination` is stopping or stopped.
+    public func moveDraft(_ localDraftID: String, content: DraftContent, to destination: SyncEngine) async throws -> LocalDraft? {
+        guard destination !== self else { return nil }
+        // This engine writes the destination's rows, so its write gate alone
+        // can't keep them out of an account that is being removed.
+        let destinationStopped = destination.stopRequested
+        if destinationStopped.withLock({ $0 }) { throw CancellationError() }
+        let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: localDraftID) }
+        let moved = LocalDraft(
+            accountID: destination.accountID, kind: .new, content: content,
+            rfcMessageID: MIMEMessage.newMessageID(for: destination.sender), now: now()
+        )
+        // The copy's files are all in its own new folder, removed if the move fails.
+        let folder = destination.outgoingDirectory.appending(path: moved.id, directoryHint: .isDirectory)
+        let copies: [OutgoingAttachment]
+        do {
+            copies = try copyFiles(files, for: moved.id, into: destination.outgoingDirectory)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+        let now = now()
+        let result: (draft: LocalDraft, saves: Bool)?
+        do {
+            result = try await write { tx -> (LocalDraft, Bool)? in
+                // Checked again here, so nothing lands after the destination's data is deleted.
+                if destinationStopped.withLock({ $0 }) { throw CancellationError() }
+                // Read here, since a send or discard may have taken the draft during the copy.
+                guard let original = try tx.localDraft(id: localDraftID), original.kind == .new, original.state == .editing
+                else { return nil }
+                _ = try tx.enqueueDiscard(localDraftID: localDraftID, now: now, notBefore: now)
+                var draft = moved
+                // Edits carry over, so closing the window keeps the copy as it would the original.
+                draft.revision = original.revision + (content == original.content ? 0 : 1)
+                try tx.insertLocalDraft(draft)
+                for copy in copies { _ = try tx.addOutgoingAttachment(copy, now: now) }
+                // Gmail held the original, so the copy goes there at once.
+                let saves = original.gmailDraftID != nil
+                if saves { _ = try tx.enqueueSave(localDraftID: draft.id, now: now, notBefore: now) }
+                return (try tx.localDraft(id: draft.id) ?? draft, saves)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+        guard let result else {
+            try? FileManager.default.removeItem(at: folder)
+            return nil
+        }
+        scheduleSending()
+        if result.saves { await destination.scheduleSending() }
+        return result.draft
+    }
+
     /// A message in `full` format, with any text Gmail stores as an attachment.
     private func fullMessage(_ messageID: String) async throws -> (message: GmailMessage, original: OriginalMessage) {
         let results = try await gmail.messages(ids: [messageID], format: .full, metadataHeaders: [])
@@ -108,11 +167,13 @@ extension SyncEngine {
     }
 
     /// Opens a Gmail draft. One already open here comes back as it is unless
-    /// another app changed it since: then Gmail's copy is imported, and local
-    /// changes Gmail hasn't seen go on as a new draft.
+    /// another app changed it since and no save of it is uploading: then
+    /// Gmail's copy is imported, and local changes Gmail hasn't seen go on as
+    /// a new draft.
     public func openDraft(id: String) async throws -> OpenedDraft {
         let accountID = accountID
-        let existing = try await cache.read { tx in try tx.localDraft(gmailDraftID: id, accountID: accountID) }
+        let lookup = { @Sendable (tx: CacheTransaction) in try tx.localDraft(gmailDraftID: id, accountID: accountID) }
+        let existing = try await cache.read(lookup)
         if let existing, existing.state != .editing { return OpenedDraft(draft: existing, droppedFormatting: false) }
         let fetched: GmailDraft
         do {
@@ -123,8 +184,14 @@ extension SyncEngine {
             throw ComposeError.draftGone
         }
         guard let message = fetched.message, !message.id.isEmpty else { throw GmailError.decoding("Draft message") }
-        if let existing, existing.savedMessageID == message.id { return OpenedDraft(draft: existing, droppedFormatting: false) }
-        return try await importDraft(id, message: message, replacing: existing)
+        // Read again, since a save may have started or finished during the
+        // fetch. Gmail's message may be Tern's own upload, still in flight
+        // or with its answer lost, rather than another app's change.
+        let current = try await cache.read(lookup)
+        if let current, current.state != .editing || Self.isOwnUpload(message, of: current) {
+            return OpenedDraft(draft: current, droppedFormatting: false)
+        }
+        return try await importDraft(id, message: message, replacing: current)
     }
 
     private func importDraft(_ gmailDraftID: String, message: GmailMessage, replacing existing: LocalDraft?) async throws -> OpenedDraft {
@@ -172,12 +239,20 @@ extension SyncEngine {
         let record = DraftRecord(accountID: accountID, id: gmailDraftID, messageID: message.id, threadID: message.threadId)
         let metadata = try? Mapping.message(message, accountID: accountID)
         let now = now()
-        let result: (draft: LocalDraft, removed: [OutgoingAttachment], copiedID: String?, stale: Set<String>)
+        let result: (draft: LocalDraft, removed: [OutgoingAttachment], copiedID: String?, stale: Set<String>, imported: Bool)
         do {
             result = try await write { tx in
                 let current = try tx.localDraft(gmailDraftID: gmailDraftID, accountID: accountID)
-                // Another open imported it while this one downloaded.
-                if let current, current != existing { return (current, copies, nil, []) }
+                if let current {
+                    // Another open imported it while this one downloaded.
+                    let replaced = current != existing
+                    // A save of the open copy that's uploading has already picked
+                    // this Gmail draft, and its answer is recorded on the open copy.
+                    // If the other app's change outlasts it, the next save keeps both.
+                    let uploading = try tx.composeRows(localDraftID: current.id)
+                        .contains { $0.kind == .saveDraft && $0.state == .sending }
+                    if replaced || uploading { return (current, copies, nil, [], false) }
+                }
                 var removed: [OutgoingAttachment] = []
                 var copiedID: String?
                 var stale = Set([try tx.draft(id: gmailDraftID, accountID: accountID)?.messageID].compactMap { $0 })
@@ -198,7 +273,7 @@ extension SyncEngine {
                 let threads = try tx.deleteMessages(ids: stale, accountID: accountID)
                 stale.formUnion(try tx.recordDraftSave(record, localDraftID: localID, revision: revision, message: metadata))
                 try tx.rebuildThreads(threads, accountID: accountID)
-                return (try tx.localDraft(id: localID) ?? imported, removed, copiedID, stale)
+                return (try tx.localDraft(id: localID) ?? imported, removed, copiedID, stale, true)
             }
         } catch {
             removeFiles(copies)
@@ -211,7 +286,7 @@ extension SyncEngine {
             continuation.yield(.draftCopied(localDraftID: copiedID))
             scheduleSending()
         }
-        return OpenedDraft(draft: result.draft, droppedFormatting: droppedFormatting && result.draft.id == localID)
+        return OpenedDraft(draft: result.draft, droppedFormatting: droppedFormatting && result.imported)
     }
 
     // MARK: Files
@@ -231,8 +306,7 @@ extension SyncEngine {
                 } else {
                     throw GmailError.decoding("Attachment data")
                 }
-                let ext = (part.filename as NSString).pathExtension
-                let path = "\(localDraftID)/\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
+                let path = Self.outgoingPath(for: localDraftID, filename: part.filename)
                 let url = outgoingDirectory.appending(path: path)
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: url)
@@ -243,6 +317,22 @@ extension SyncEngine {
             throw error
         }
         return copies
+    }
+
+    /// Copies another draft's files under `directory` for `localDraftID`.
+    /// The caller removes the copies if one fails.
+    private func copyFiles(_ files: [OutgoingAttachment], for localDraftID: String, into directory: URL) throws -> [OutgoingAttachment] {
+        try files.map { file in
+            let path = Self.outgoingPath(for: localDraftID, filename: file.filename)
+            let url = directory.appending(path: path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            do {
+                try FileManager.default.copyItem(at: outgoingDirectory.appending(path: file.path), to: url)
+            } catch CocoaError.fileReadNoSuchFile {
+                throw ComposeError.missingAttachment(file.filename)
+            }
+            return OutgoingAttachment(localDraftID: localDraftID, filename: file.filename, mimeType: file.mimeType, size: file.size, path: path)
+        }
     }
 
     /// The part with `id` in a `full`-format payload.

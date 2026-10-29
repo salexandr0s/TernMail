@@ -1,13 +1,11 @@
 import AppAuth
 import AppAuthCore
 import AppKit
-import GmailAPI
 
-/// Google OAuth for one account. Sign-in runs in `ASWebAuthenticationSession`,
-/// the auth state is archived in the Keychain, and the API client asks this
-/// object for fresh access tokens.
+/// Google sign-in. It runs in `ASWebAuthenticationSession` and hands back
+/// an `AccountSession`, which keeps the account's tokens.
 @MainActor
-final class GoogleAuth: AccessTokenProvider {
+final class GoogleAuth {
     struct Configuration {
         let clientID: String
         let redirectURL: URL
@@ -29,6 +27,8 @@ final class GoogleAuth: AccessTokenProvider {
         let email: String
         let displayName: String?
         let grantedScopes: [String]
+        /// The new session, not yet saved to the Keychain.
+        let state: OIDAuthState
     }
 
     enum AuthError: LocalizedError {
@@ -52,14 +52,7 @@ final class GoogleAuth: AccessTokenProvider {
     static let gmailScope = "https://www.googleapis.com/auth/gmail.modify"
     private static let scopes = [OIDScopeOpenID, OIDScopeEmail, OIDScopeProfile, gmailScope]
 
-    /// Called when Google rejects the refresh token, for example after a
-    /// testing-mode consent expires.
-    var onSignInRequired: (@MainActor () -> Void)?
-
     private let configuration: Configuration?
-    private var authState: OIDAuthState?
-    private var keychainAccount: String?
-    private var persistedAccessToken: String?
     private var session: (any OIDExternalUserAgentSession)?
 
     init(configuration: Configuration?) {
@@ -68,19 +61,9 @@ final class GoogleAuth: AccessTokenProvider {
 
     var isConfigured: Bool { configuration != nil }
 
-    /// Loads the saved session for `accountID`. Returns false if there is none.
-    func restore(accountID: String) -> Bool {
-        guard let data = try? KeychainStore.load(account: accountID),
-              let state = try? NSKeyedUnarchiver.unarchivedObject(ofClass: OIDAuthState.self, from: data),
-              state.isAuthorized
-        else { return false }
-        authState = state
-        keychainAccount = accountID
-        persistedAccessToken = state.lastTokenResponse?.accessToken
-        return true
-    }
-
-    func signIn() async throws -> SignedInUser {
+    /// Asks Google for an account. `loginHint` suggests the address when an
+    /// account signs in again. The caller decides whether to keep the session.
+    func signIn(loginHint: String? = nil) async throws -> SignedInUser {
         guard let configuration else { throw AuthError.notConfigured }
         guard let window = NSApp.keyWindow ?? NSApp.windows.first else { throw AuthError.noWindow }
 
@@ -90,7 +73,7 @@ final class GoogleAuth: AccessTokenProvider {
             scopes: Self.scopes,
             redirectURL: configuration.redirectURL,
             responseType: OIDResponseTypeCode,
-            additionalParameters: nil
+            additionalParameters: loginHint.map { ["login_hint": $0] }
         )
         let state = try await present(request, from: window)
 
@@ -103,50 +86,13 @@ final class GoogleAuth: AccessTokenProvider {
         let granted = (state.scope ?? "").split(separator: " ").map(String.init)
         guard granted.contains(Self.gmailScope) else { throw AuthError.gmailAccessNotGranted }
 
-        authState = state
-        keychainAccount = idToken.subject
-        try persist(state)
         return SignedInUser(
             id: idToken.subject,
             email: email,
             displayName: idToken.claims["name"] as? String,
-            grantedScopes: granted
+            grantedScopes: granted,
+            state: state
         )
-    }
-
-    func signOut() {
-        if let keychainAccount {
-            try? KeychainStore.delete(account: keychainAccount)
-        }
-        authState = nil
-        keychainAccount = nil
-        persistedAccessToken = nil
-    }
-
-    // MARK: AccessTokenProvider
-
-    func accessToken(forceRefresh: Bool) async throws -> String {
-        guard let state = authState else { throw AuthError.signInRequired }
-        if forceRefresh { state.setNeedsTokenRefresh() }
-        do {
-            let token = try await freshToken(from: state)
-            try Task.checkCancellation()
-            guard authState === state else { throw AuthError.signInRequired }
-            if token != persistedAccessToken {
-                try? persist(state)
-            }
-            return token
-        } catch {
-            // A refresh from an older mailbox must not clear a new sign-in.
-            guard authState === state else { throw AuthError.signInRequired }
-            let nsError = error as NSError
-            if nsError.domain == OIDOAuthTokenErrorDomain, nsError.code == OIDErrorCodeOAuth.invalidGrant.rawValue {
-                signOut()
-                onSignInRequired?()
-                throw AuthError.signInRequired
-            }
-            throw error
-        }
     }
 
     // MARK: Private
@@ -157,31 +103,16 @@ final class GoogleAuth: AccessTokenProvider {
             session = OIDAuthState.authState(byPresenting: request, presenting: window) { state, error in
                 if let state {
                     continuation.resume(returning: AuthStateBox(state: state))
+                } else if let error = error as NSError?, error.domain == OIDGeneralErrorDomain,
+                          error.code == OIDErrorCode.userCanceledAuthorizationFlow.rawValue {
+                    // Closing Google's page isn't a failure to report.
+                    continuation.resume(throwing: CancellationError())
                 } else {
                     continuation.resume(throwing: error ?? AuthError.missingIdentity)
                 }
             }
         }
         return box.state
-    }
-
-    private func freshToken(from state: OIDAuthState) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            state.performAction { accessToken, _, error in
-                if let accessToken {
-                    continuation.resume(returning: accessToken)
-                } else {
-                    continuation.resume(throwing: error ?? AuthError.signInRequired)
-                }
-            }
-        }
-    }
-
-    private func persist(_ state: OIDAuthState) throws {
-        guard let keychainAccount else { return }
-        let data = try NSKeyedArchiver.archivedData(withRootObject: state, requiringSecureCoding: true)
-        try KeychainStore.save(data, account: keychainAccount)
-        persistedAccessToken = state.lastTokenResponse?.accessToken
     }
 
     private static func serviceConfiguration() throws -> OIDServiceConfiguration {

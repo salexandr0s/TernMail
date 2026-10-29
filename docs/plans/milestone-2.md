@@ -1,6 +1,6 @@
 # Milestone 2 plan: compose
 
-Status: approved 2026-10-29 after a plan review. Research input: the "Compose and send" section and milestone list in `docs/research/mimestream-behavior.md`. Branch `feat/milestone-2`, cut from `feat/milestone-1` at `90f2bf2`.
+Status: approved 2026-10-29 after a plan review, and built on `feat/milestone-2`. Where the build differs from this plan, see Deviations at the end. Research input: the "Compose and send" section and milestone list in `docs/research/mimestream-behavior.md`. Branch `feat/milestone-2`, cut from `feat/milestone-1` at `90f2bf2`.
 
 ## Scope
 
@@ -168,3 +168,48 @@ Answered on 2026-10-29:
 2. The undo send delay defaults to 10 seconds.
 3. The phases run back to back, each tested and committed, with no approval stops except the gate.
 4. The audit branch is merged at the gate once you say the audit is done.
+
+## Deviations
+
+Recorded 2026-10-29, after phase 6.
+
+### Process
+
+- Phases 3 to 5 went out as more, smaller commits than the table lists. Six of them still touch more than five files: the compose lane in `SyncEngine` (7), recipient fields (6), attaching files (8), the undo notices (6), the Outbox (6) and received attachments (6).
+- The phase 6 review found problems in both the app and `Packages/Core`. Each fix has its own commit. The core fixes were made on `fix/m2-core-review` and merged.
+
+### Data model
+
+- `LocalDraft.state` is editing, sending or discarding. A sent draft is deleted rather than marked sent, and discarding is a state of its own so that undo can bring the draft back.
+- `localDraft` has no column for an imported draft's tail. The `gmail_quote` block and everything after it go into `quotedHTML`, which replies already use.
+- A second migration, `compose-v2`, adds `hasUnrecordedUpload` and `sendRequested` to `localDraft`. The first is set before each upload and cleared when a save is recorded. The second is set before `drafts.send` and cleared when the draft returns to editing. They replace the queue row's attempt count, which was wrong in two cases: a send or discard that replaces a waiting save row starts again at one attempt, and claiming a row raises its count even if the app quits before the row starts.
+
+### Compose flow
+
+- Drafts edited elsewhere: when Gmail's copy of a draft holds a message Tern didn't upload, the next save creates a new draft instead of importing the other copy, and the main window says "Another app changed this draft, so Tern kept both versions." Neither version is lost.
+- Edit Draft on a draft whose save is still uploading opens the copy that is already open, even when another app changed the draft in the meantime. That upload has already picked the Gmail draft, and importing the other version under the same draft ID made the save fail against the unique index on `localDraft`. If the other app's change lands after Tern's upload, the next save keeps both versions. If Tern's lands last, it replaces the other change, as with any two apps saving one Gmail draft at the same time.
+- After an upload whose answer was lost, the retry looks for the draft by its `Message-ID` header, with a `drafts.list` query on `rfc822msgid:`, instead of comparing content, and a discard looks the same way. If Gmail doesn't keep a client-supplied `Message-ID`, the worst case is still one extra draft.
+- A 404 from `drafts.send` counts as sent only when an earlier send request may have reached Gmail (`sendRequested`). A relaunch alone no longer counts.
+- An address that doesn't parse stays in its field as plain text instead of a token, and Send shows an alert naming it. Saves leave such addresses out of the uploaded message.
+- The thread view lists inline parts, such as images a message refers to by `cid:`, along with ordinary attachments, so each one can be opened or saved.
+
+### Sign-out, expired sessions and quitting
+
+- An expired session keeps the whole open mailbox, so compose windows, Undo Send and the Outbox keep working until the person signs in again.
+- Signing in as a different Google account while the old one still has local data is refused, since replacing it would delete its drafts and unsent messages. The sign-in screen offers Sign Out for that case, with the same confirmation as the menu command.
+- After signing in again, a save or send that failed while the session was expired waits out its retry backoff, up to five minutes, before it goes out. Signing in starts a sync but doesn't reset the backoff.
+- Quitting stores what each open compose window shows and queues its save to Gmail, so no typing is lost.
+- When quitting sends waiting messages and Gmail refuses one, its window opens again with the reason, the draft stays in the Outbox, and a separate alert asks before quitting. The alert for an unreachable Gmail still says the message goes out at the next launch.
+- Sign-out waits for every send under way before it stops the engine, including one that a quit attempt started, not only one the compose queue started.
+
+### UI
+
+- Format commands and the format bar work only while the cursor is in the message, so ⌘B in Subject leaves the message's typing style alone.
+- The To, Cc and Bcc fields align on a fixed baseline and are measured on an off-screen copy. Asking a token field that is being edited for its size or baseline made SwiftUI and AppKit lay each other out in a loop until AppKit raised an exception.
+
+### Not done yet
+
+- Live testing against Gmail. The work so far ran in unit tests and against the synthetic mailbox of `--ui-audit` mode, so the two unconfirmed API facts above, the 35 MB limit and whether Gmail keeps a client-supplied `Message-ID`, are still unchecked.
+- In background screenshots of the audit app, thread message bodies looked blank. Milestone 2 didn't change `MessageWebView`, and WebKit pausing a hidden view is the likely cause, but nobody has checked with the window in front.
+- Core review finding 6, deferred: when Edit Draft can't find a draft's message, Tern lists Gmail's drafts again to repair the stale entry, which costs one extra `drafts.list`. Preferring the local record would hide a newer edit made in another app, and a proper fix needs ordering that `drafts.list` doesn't return.
+- `feat/milestone-3` and `feat/milestone-4` register the migrations `labels-v1` and `search-v1`. Their order relative to `compose-v1` and `compose-v2` needs settling when those branches take in this one.

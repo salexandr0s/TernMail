@@ -20,12 +20,67 @@ struct SingleKeyShortcuts {
         case perform(Action)
         /// "g" was pressed; the next key picks a mailbox.
         case awaitingDestination
+        /// A held shortcut key repeating. Only J and K repeat; the monitor
+        /// drops the rest so holding E archives one conversation.
+        case held
         /// Not a shortcut. The monitor lets the event through.
         case ignored
     }
 
+    /// One key's command, as the lookup and Help ▸ Keyboard Shortcuts use it.
+    struct Key: Sendable {
+        /// What the event's characters must be, with Shift applied.
+        let characters: [String]
+        let action: Action
+        let title: String
+
+        /// The keys as Help shows them.
+        var label: String {
+            characters.map { character in
+                if character == "\r" { return "Return" }
+                return character.first?.isUppercase == true ? "⇧" + character : character
+            }
+            .joined(separator: " or ")
+        }
+    }
+
+    /// The Settings switch, off until the user turns it on.
+    static let settingKey = "singleKeyShortcuts"
+
     /// How long after "g" the second key still counts.
     static let destinationTimeout: TimeInterval = 1.5
+
+    /// Every key, in the order Help lists them.
+    static let keys = [
+        Key(characters: ["j"], action: .nextConversation, title: "Next conversation"),
+        Key(characters: ["k"], action: .previousConversation, title: "Previous conversation"),
+        Key(characters: ["o", "\r"], action: .openConversation, title: "Open conversation"),
+        Key(characters: ["e"], action: .archive, title: "Archive"),
+        Key(characters: ["#"], action: .trash, title: "Move to Trash"),
+        Key(characters: ["s"], action: .toggleStar, title: "Star or remove star"),
+        Key(characters: ["I"], action: .markRead, title: "Mark as read"),
+        Key(characters: ["U"], action: .markUnread, title: "Mark as unread"),
+        Key(characters: ["l"], action: .editLabels, title: "Edit labels"),
+        Key(characters: ["v"], action: .moveTo, title: "Move to"),
+        Key(characters: ["b"], action: .snooze, title: "Snooze"),
+        Key(characters: ["/"], action: .search, title: "Search"),
+        Key(characters: ["c"], action: .newMessage, title: "New message"),
+        Key(characters: ["r"], action: .reply, title: "Reply"),
+        Key(characters: ["a"], action: .replyAll, title: "Reply all"),
+        Key(characters: ["f"], action: .forward, title: "Forward"),
+        Key(characters: ["z"], action: .undo, title: "Undo"),
+        Key(characters: ["?"], action: .showShortcuts, title: "Keyboard shortcuts"),
+    ]
+
+    /// The second key after "g", in the order Help lists them.
+    static let destinationKeys = [
+        Key(characters: ["i"], action: .go(.inbox), title: "Go to Inbox"),
+        Key(characters: ["s"], action: .go(.starred), title: "Go to Starred"),
+        Key(characters: ["b"], action: .go(.snoozed), title: "Go to Snoozed"),
+        Key(characters: ["d"], action: .go(.drafts), title: "Go to Drafts"),
+        Key(characters: ["t"], action: .go(.sent), title: "Go to Sent"),
+        Key(characters: ["a"], action: .go(.allMail), title: "Go to All Mail"),
+    ]
 
     private var prefixTime: TimeInterval?
 
@@ -38,15 +93,24 @@ struct SingleKeyShortcuts {
     ///   - characters: The event's characters, with Shift applied.
     ///   - shift: Whether Shift is held. Without it, letters count as lowercase,
     ///     so Caps Lock neither breaks "e" nor turns "i" into Mark as Read.
+    ///   - isRepeat: Whether the event is a repeat of a held key.
     ///   - time: The event's timestamp, in seconds.
-    mutating func outcome(for characters: String, shift: Bool, at time: TimeInterval) -> Outcome {
+    mutating func outcome(for characters: String, shift: Bool, isRepeat: Bool = false, at time: TimeInterval) -> Outcome {
+        guard characters.count == 1 else {
+            prefixTime = nil
+            return .ignored
+        }
+        let key = shift ? characters : characters.lowercased()
+        if isRepeat {
+            // A repeat leaves a pending "g" alone, so holding it still waits.
+            guard let action = Self.actions[key] else { return key == "g" ? .held : .ignored }
+            return [.nextConversation, .previousConversation].contains(action) ? .perform(action) : .held
+        }
         let prefix = prefixTime
         prefixTime = nil
-        guard characters.count == 1 else { return .ignored }
-        let key = shift ? characters : characters.lowercased()
 
         if let prefix, time - prefix <= Self.destinationTimeout {
-            return Self.destinations[key].map { .perform(.go($0)) } ?? .ignored
+            return Self.destinations[key].map(Outcome.perform) ?? .ignored
         }
         if key == "g" {
             prefixTime = time
@@ -60,18 +124,10 @@ struct SingleKeyShortcuts {
         prefixTime = nil
     }
 
-    private static let actions: [String: Action] = [
-        "j": .nextConversation, "k": .previousConversation,
-        "o": .openConversation, "\r": .openConversation,
-        "e": .archive, "#": .trash, "s": .toggleStar,
-        "I": .markRead, "U": .markUnread,
-        "l": .editLabels, "v": .moveTo, "b": .snooze,
-        "/": .search, "c": .newMessage,
-        "r": .reply, "a": .replyAll, "f": .forward,
-        "z": .undo, "?": .showShortcuts,
-    ]
+    private static let actions = lookup(keys)
+    private static let destinations = lookup(destinationKeys)
 
-    private static let destinations: [String: Destination] = [
-        "i": .inbox, "s": .starred, "b": .snoozed, "d": .drafts, "t": .sent, "a": .allMail,
-    ]
+    private static func lookup(_ keys: [Key]) -> [String: Action] {
+        Dictionary(uniqueKeysWithValues: keys.flatMap { key in key.characters.map { ($0, key.action) } })
+    }
 }

@@ -94,7 +94,7 @@ Not stated on the current pages, so checked in live testing (the plan works eith
 | Engines | One `SyncEngine` and one `SnoozeKeeper` per account, sharing one `cache.sqlite` | Every cache table already has `accountID`, apart from `outgoingAttachment`, which hangs off `localDraft` |
 | Sessions | `GoogleAuth` splits into a sign-in coordinator and an `AccountSession` per account that implements `AccessTokenProvider` and owns its Keychain item | One expired session then can't block the other accounts |
 | Identity | `ThreadKey(accountID, threadID)` identifies rows and selection. A mailbox is `.combined(id)` or `.account(accountID, id)`, where `id` is a label ID or one of the virtual mailboxes (All Mail, Outbox, Snoozed), each with its own data source | Gmail IDs are only unique within one mailbox, and SwiftUI lists need stable IDs |
-| Sidebar | With one account, unchanged. With more, a combined section (Inbox, Starred, Snoozed, Drafts, Sent, and Outbox while it has items) above one section per account with all its mailboxes and labels | Those mailboxes mean the same thing in every account; labels don't |
+| Sidebar | Changed in phase 10d at the owner's request. With one account, a flat list as before. With more, one mailbox list: Inbox, Starred, Snoozed, Sent, Drafts, All Mail, Spam and Trash appear once each, plus the Outbox while it has items. Each row shows every account's mail and expands to a row per account. A collapsed row's badge is the total; an expanded row leaves it to the account rows. Tern remembers which rows are expanded, and Inbox starts expanded. Below the list, each account's section holds its header and labels. Each system mailbox has its own color. Account rows use the account's color, from a fixed palette stored by account ID, and the part of its address before the @. Labels Gmail gives a color have filled tags | A mailbox sits in one place however many accounts there are; labels belong to one account |
 | Mixed selections | Actions are grouped by account and go through each account's queue, with one notice and one undo | Undo should reverse what the user did, not part of it |
 | Sign-out | Per account. Stops that account's keeper, search tasks and engine, in that order. Reads its local draft IDs, closes its compose windows, then deletes its cache rows, Keychain item, snooze records and `Outgoing/<draft>` folders. The confirmation counts its Outbox items and snoozed conversations, which stay archived in Gmail. At launch, cache rows for accounts no longer in `config.sqlite` are deleted | The other accounts keep working. Outgoing folders can only be found through local drafts, and the launch cleanup finishes a sign-out interrupted by a crash |
 | Compose From | Replies and forwards keep the conversation's account, and From isn't editable for them. A new message starts with the selected mailbox's account (the first account in a combined mailbox) and From is a menu. Changing it after a save moves the draft in one cache transaction: a new local draft in the new account and a discard of the old Gmail draft through the old account's queue | A Gmail draft belongs to one mailbox, and a reply's thread ID only means something in its own account |
@@ -189,7 +189,7 @@ In `GmailAPI`:
 ## UI
 
 - Search: the toolbar field, the results list and its Gmail row. In combined mailboxes each row names its account.
-- Sidebar: labels as an outline split on "/", pending labels dimmed, a context menu with Rename, Color and Delete, and a `+` for New Label. With several accounts, the combined section and one section per account. Snoozed sits under Starred.
+- Sidebar: labels as an outline split on "/", pending labels dimmed, a context menu with Rename, Color and Delete, and a `+` for New Label. With several accounts, one mailbox list whose rows expand to each account, then one section of labels per account. Snoozed sits under Starred.
 - Edit Labels and Move to are popovers from toolbar buttons; the menu commands open the same popovers.
 - Snooze is a toolbar menu with the presets and a date and time sheet.
 - Settings gains an Accounts pane (list, Add Account, Sign Out) and a single-key shortcuts switch.
@@ -252,6 +252,7 @@ Milestone 2 gates: before each phase that changes a file milestone 2 also change
 | 9g | Sidebar sections, account names on rows, sign-in again per account, per-account sign-out with launch cleanup, Add Account, distinct mail for the second fake account | `SidebarView.swift`, `ThreadListView.swift`, `MainView.swift`, `MailCommands.swift`, `AuditGmail.swift` | Launch |
 | 9h | Compose From menu for new messages and moving a draft between accounts; Accounts pane in Settings | Milestone 2's `ComposeModel.swift` and `ComposeView.swift`, its Settings view, `Drafts.swift`, `ComposeQueue.swift`; split if Settings needs more | Launch |
 | 10 | Single keys: event monitor, Go menu, Keyboard Shortcuts window, Settings switch | `MailCommands.swift`, `TernApp.swift`, milestone 2's Settings view; `ShortcutMonitor.swift`, `KeyboardShortcutsView.swift` (new) | Launch |
+| 10d | Added after phase 10 at the owner's request. Sidebar regroup: one mailbox list with rows per account, remembered expansion, mailbox and account colors, filled label tags. All Mail, Spam and Trash join the combined mailboxes. Split into the app change and its tests to stay within five files | `SidebarView.swift`, `MailboxModel.swift`, `MailCommands.swift`, `AccountAppearance.swift` (new); then `MailboxModelTests.swift` and a test file (new) | Launch |
 | 11 | Review pass and fixes | As found | Full checks |
 
 Phases 1 to 3b add files, apart from phase 2's small change to `GmailClient.swift`, which milestone 2 doesn't touch. They run before any merge. Core phases that change an API the app calls use "App" checks.
@@ -307,6 +308,76 @@ Answered on 2026-10-29:
 1. No background body download in this milestone. Gmail's results cover bodies Tern hasn't downloaded.
 2. Gmail search uses `threads.list`, not `messages.list`.
 3. Single-key shortcuts are off by default.
-4. Combined mailboxes: Inbox, Starred, Snoozed, Drafts, Sent and Outbox. All Mail, Spam, Trash and labels stay per account.
+4. Combined mailboxes: Inbox, Starred, Snoozed, Drafts, Sent and Outbox. All Mail, Spam, Trash and labels stay per account. Phase 10d changed this: All Mail, Spam and Trash are combined too, and only labels stay per account.
 5. Gates: when milestone 2 hasn't moved since the last merge, the phase goes ahead without asking. Otherwise I ask each time.
 6. The phases run back to back, each tested and committed, stopping only at the gates.
+
+## Deviations
+
+Recorded 2026-10-29, after phase 11.
+
+### Process
+
+- Several phases split to stay within five files: 4 into 4a (index) and 4b (holds), 6b into 6b1 (`MailStore`) and 6b2 (`SyncEngine`), 9h into four steps and 10 into three. From phase 8a on, tests went into their own `test(...)` commits.
+- Phase 2 extended `GmailAPITests.swift` instead of adding a test file, since the new tests share its private stubs. A separate commit (`20bdaf7`) records the `Package.resolved` origin hash as `swift test` computes it.
+- Phase 3b added `Tokens.Popover` and `Tokens.Sheet` for the popover and sheet sizes, and a pure `LabelSelection` type with its own test.
+- Phase 9a found nothing to remove in `MailboxModel.swift`, so it has no commit.
+- Phase 10d was added after phase 10 at the owner's request. The phase table and answered question 4 describe it.
+- The phase 11 review found problems in both the app and `Packages/Core`. Each fix has its own commit. The core fixes were made on `fix/m3-core-review` and merged.
+- Milestone 2 merges: `fcd4d08`, `7c6fbad`, `ad42199`, `b695c3a`, `bb9d720`, `c95d156` and `929eeb8`. The `b695c3a` merge was approved for `9f446f8`, but milestone 2 committed `b695c3a` seconds before it ran; the user kept it. After the `bb9d720` gate the user asked for merges without asking (this replaces answered question 5), and later gates merged the exact commit checked.
+- The cache migrations run in the order `compose-v1`, `compose-v2`, `search-v1`, `labels-v1`, `wake-v1`. `config.sqlite` gets `snooze-v1` after `config-v1`.
+
+### Search
+
+- `loadOlder` takes `before:`, the oldest date the list shows. Without it, Gmail's first page is the label's newest mail, which the cache already holds.
+- Load Older Conversations is hidden in Inbox, Drafts, Snoozed and the Outbox, which are fully cached. It's also hidden in combined mailboxes, since Gmail pages one account at a time.
+- Search covers the accounts the selected mailbox shows: one account for an account's mailbox or label, all of them for a combined mailbox. If one account's search fails, the others' results still show, followed by the failure.
+- Archiving or trashing from search results doesn't move the selection. Local results follow Gmail's labels, so they change after the next sync pass.
+- Only choosing another mailbox clears the search. Clicking the selected one doesn't, so a stray selection write can't clear the field while someone types.
+- `SyncEngine`'s recent-mail query takes its 30 days from `CacheHolds.recentDays`, so releasing holds and the full sync use the same window.
+- A Gmail result that a hold release prunes while its page is being fetched is fetched again before the page lands.
+
+### Labels
+
+- `LabelColor` pairs text by WCAG contrast, which picks black on a few mid reds where Gmail uses white.
+- A queued conversation change that adds a label Gmail never created (the create was refused, undone or deleted while queued) is dropped whole instead of stripped, so a move into that label can't leave the conversation with no label. Deleting a real label still strips it as planned.
+- Refused label changes report through `SyncEvent.actionFailed`. When Gmail refuses a rename, the queued renames of the labels nested under it go too, so they keep their names under the parent's old one. A 403 for Gmail's daily limit retries later, like the other rate limits, instead of counting as a refusal.
+- Adopting an existing label after a 409 ignores the requested color. Undoing that create leaves the label in Gmail and says so in a notice, and an undo queued before the 409 arrived is dropped the same way.
+- The sidebar label menu has Edit Label… (name, nesting and color in one sheet) and Delete Label… in place of separate Rename and Color items. Saving a new name and color makes two Undo entries.
+- Create Label in Edit Labels first applies the popover's other checkbox changes, then queues the create and adds the label's temporary ID to the conversations. Undoing the create drops only the changes that use the new label.
+
+### Snooze
+
+- Woken conversations sort by the later of their last message and the scheduled wake time. `wokenThread` is cleared when a conversation leaves the Inbox.
+- The keeper wakes a conversation by queuing the Inbox label on its messages outside Trash and Spam, so a partly trashed conversation still wakes. It reconciles at every check, not only at launch, so a failed refetch retries. It doesn't watch the engine's events: the app calls `check()` after each sync pass and when the Mac wakes. When a wake is overdue because a check couldn't finish it, the keeper checks again a minute later.
+- A check ends or wakes a snooze only if its hold still has the wake time the check read, so a snooze changed or undone during the check waits for the next one.
+- Snoozing a conversation that is already snoozed and then undoing puts back the earlier snooze.
+- The Message menu has a Snooze submenu and Snooze… (⌃⌘B), which opens Choose Date & Time, since a shortcut can't open a submenu.
+- Snooze presets come from a clock that ticks each minute, so the menus don't keep offering a time that passed while the window sat open. A preset chosen after its time has passed is refused with a notice.
+- Next Week keeps the plan's rule (8 AM on the next first day of the week), so with a US calendar it wakes on Sunday.
+- Snoozed offers Snooze, to change the time, and Unsnooze, which has no Undo.
+- The sign-out confirmation counts snoozed conversations, which stay archived.
+
+### Accounts
+
+- Attachments download to `downloads/<accountID>/…`. They used to share one folder keyed by message ID, so two accounts with the same message ID could open each other's file.
+- With several accounts the status line at the bottom of the sidebar leaves out the address, and each account header shows a warning icon when its sync fails.
+- Only a new message can change account in compose. Replies and drafts from Gmail show their account as text. Moving a new message copies it with a new ID, a new `Message-ID` and copies of its files, and queues the original's discard in the same transaction. The window can't be edited until the move finishes, and a move into an account that is signing out is refused.
+- Signing out of one account drops its part of pending Undo entries and clears its notices, Undo Send and a draft waiting to reopen. Signing in again, signing out and adding an account run one at a time.
+- Deleting an account's cached mail stays one transaction: 10,000 messages with indexed bodies took 0.21 s, under the 1 s limit set in Risks.
+
+### Shortcuts
+
+- ⌘1 to ⌘5 follow the sidebar order (Inbox, Starred, Snoozed, Sent, Drafts) rather than the plan's, which had Drafts before Sent.
+- O and Return select the first conversation when none is selected. With a selection, they go on to the list. Moving keyboard focus into the reading pane isn't done.
+- A single key whose menu command is disabled goes on to the focused view. Only J and K repeat while held, so holding E archives one conversation.
+- B opens Choose Date & Time, since a key can't open the toolbar's Snooze menu.
+- Message HTML loses its form controls: `input`, `select` and `button` are removed, `textarea` keeps only its text and `contenteditable` is stripped. A message then has no field for single keys to fire in.
+- The menu shortcuts in the Keyboard Shortcuts window are a static list, kept in step with `MailCommands.swift` by hand.
+
+### Not done yet
+
+- Live testing against Gmail. Search, label changes, snooze and a second account ran only in tests and in `--ui-audit` mode.
+- FTS5 on macOS 14 is untested; it's confirmed only on this Mac's SQLite.
+- The sign-in and sign-out ordering fixes in `AppModel` have no tests, since `AppModel` can't take a fake sign-in yet.
+- The keeper's reconcile can hold a conversation again if an undo lands between a hold's release and its record's deletion.
