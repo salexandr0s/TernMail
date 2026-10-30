@@ -7,32 +7,133 @@ struct ProfilesView: View {
     @State private var deleting: MailProfile?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack {
-                Text("Profiles group accounts for the mailbox and notifications.").font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button("Add Profile", systemImage: "plus") { editing = MailProfile(name: "", sortOrder: model.profiles.count) }
+        SettingsPage {
+            HStack(spacing: Tokens.Space.s3) {
+                profileIcon("tray.2", color: .accentColor)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text("All accounts").font(.body.weight(.medium))
+                    Text("\(accountCount(model.records.count)) · Always includes every account")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                if model.activeProfileID == nil { activeBadge }
             }
-            List {
-                Label("All accounts", systemImage: "tray.2")
-                ForEach(model.profiles) { profile in
-                    HStack {
-                        Label(profile.name, systemImage: profile.symbol).foregroundStyle(AccountAppearance.color(at: profile.colorIndex))
-                        Spacer()
-                        Button("Edit") { editing = profile }
-                        Button("Delete", role: .destructive) { deleting = profile }
+            .padding(.horizontal, Tokens.Space.s4)
+            .padding(.vertical, Tokens.Space.s2)
+            .settingsSurface()
+
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                HStack {
+                    Text("Your profiles").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("\(model.profiles.count)").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Add Profile", systemImage: "plus") {
+                        editing = MailProfile(name: "", sortOrder: model.profiles.count)
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                if model.profiles.isEmpty { emptyProfiles }
+                else {
+                    ForEach(model.profiles) { profile in profileCard(profile) }
                 }
             }
-            Text("Assign each account to a profile in Account Preferences. All always includes every account.")
-                .font(.caption).foregroundStyle(.secondary)
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
+
+            SettingsNote("Assign accounts in Accounts → Preferences. Switch profiles from the mailbox toolbar. Each profile can have its own notification hours.", systemImage: "person.2")
+            if let error = model.error {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.callout).foregroundStyle(.red)
+            }
         }
-        .padding(Tokens.Space.s4)
         .sheet(item: $editing) { profile in ProfileEditor(profile: profile, model: model) }
         .confirmationDialog("Delete this profile?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Delete Profile", role: .destructive) { if let deleting { Task { await model.deleteProfile(deleting) } }; deleting = nil }
+            Button("Delete Profile", role: .destructive) {
+                if let deleting { Task { await model.deleteProfile(deleting) } }
+                deleting = nil
+            }
         } message: { Text("Its accounts remain in All. Cached mail stays on this Mac.") }
+    }
+
+    private var emptyProfiles: some View {
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            profileIcon("person.2", color: .secondary)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("No profiles yet").font(.body)
+                Text("Group accounts for work or personal mail, with notification hours for each profile.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s3)
+        .settingsSurface()
+    }
+
+    private func profileCard(_ profile: MailProfile) -> some View {
+        let accounts = model.orderedRecords.filter { model.preferences(for: $0.id).profileID == profile.id }
+        return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(spacing: Tokens.Space.s3) {
+                profileIcon(profile.symbol, color: AccountAppearance.color(at: profile.colorIndex))
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(profile.name).font(.body.weight(.medium)).lineLimit(2)
+                    Text(accountCount(accounts.count)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                if model.activeProfileID == profile.id { activeBadge }
+                Button("Edit") { editing = profile }
+                    .accessibilityLabel("Edit \(profile.name)")
+                Menu {
+                    Button("Delete Profile…", role: .destructive) { deleting = profile }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("More options for \(profile.name)")
+            }
+            Divider()
+            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                Label(accounts.isEmpty ? "No accounts assigned" : accounts.map { model.displayName(for: $0) }.joined(separator: ", "), systemImage: "envelope")
+                    .lineLimit(2)
+                Spacer(minLength: Tokens.Space.s2)
+                Label(scheduleSummary(profile.notificationSchedule), systemImage: "bell")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s2)
+        .settingsSurface()
+    }
+
+    private var activeBadge: some View {
+        Label("Active", systemImage: "checkmark")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func profileIcon(_ symbol: String, color: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.body.weight(.medium))
+            .foregroundStyle(color)
+            .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
+            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .accessibilityHidden(true)
+    }
+
+    private func accountCount(_ count: Int) -> String { count == 1 ? "1 account" : "\(count) accounts" }
+
+    private func scheduleSummary(_ schedule: ProfileNotificationSchedule) -> String {
+        switch schedule {
+        case .unrestricted: "Any time"
+        case .off: "Notifications off"
+        case .everyDay: "Daily hours"
+        case .weekdays: "Weekday hours"
+        case .custom: "Custom hours"
+        }
     }
 }
 
@@ -40,32 +141,103 @@ private struct ProfileEditor: View {
     @State var profile: MailProfile
     @Bindable var model: AccountPreferencesModel
     @Environment(\.dismiss) private var dismiss
-    private let symbols = ["person.2", "briefcase", "house", "leaf", "graduationcap", "star", "heart", "tray.2"]
+    @State private var isSaving = false
+    private let symbols = [
+        ("person.2", "People"), ("briefcase", "Work"), ("house", "Home"), ("leaf", "Leaf"),
+        ("graduationcap", "Study"), ("star", "Star"), ("heart", "Heart"), ("tray.2", "Mail")
+    ]
+    private let colors = ["Blue", "Pink", "Orange", "Green", "Purple", "Teal", "Indigo", "Brown"]
+    private var isNew: Bool { !model.profiles.contains { $0.id == profile.id } }
+
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("Profile").font(.title2.weight(.semibold))
-            Form {
-                TextField("Name", text: $profile.name)
-                Picker("Symbol", selection: $profile.symbol) {
-                    ForEach(symbols, id: \.self) { symbol in Label(symbol, systemImage: symbol).tag(symbol) }
-                }
-                Picker("Color", selection: $profile.colorIndex) {
-                    ForEach(AccountAppearance.palette.indices, id: \.self) { index in Text("Color \(index + 1)").tag(index) }
+        SettingsEditorSheet(
+            title: isNew ? "New Profile" : "Edit Profile",
+            messages: [profile.notificationSchedule.isValid ? nil : "Each range must end after it starts.", model.error].compactMap { $0 }
+        ) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                appearanceFields
+                    .disabled(isSaving)
+                Divider()
+                ProfileScheduleView(schedule: $profile.notificationSchedule)
+                    .disabled(isSaving)
+            }
+        } actions: {
+            if isSaving { ProgressView().controlSize(.small) }
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isSaving)
+            Button(isNew ? "Create Profile" : "Save Changes") {
+                isSaving = true
+                Task {
+                    if await model.saveProfile(profile) { dismiss() }
+                    isSaving = false
                 }
             }
-            .formStyle(.grouped)
-            ProfileScheduleView(schedule: $profile.notificationSchedule)
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
-            HStack {
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save") { Task { if await model.saveProfile(profile) { dismiss() } } }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !profile.notificationSchedule.isValid)
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(isSaving || profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !profile.notificationSchedule.isValid)
+        }
+        .defaultFocus($nameFocused, true)
+        .interactiveDismissDisabled(isSaving)
+    }
+
+    private var appearanceFields: some View {
+        Grid(alignment: .leading, horizontalSpacing: Tokens.Space.s3, verticalSpacing: Tokens.Space.s2) {
+            GridRow {
+                fieldLabel("Name")
+                TextField("Work, Personal…", text: $profile.name)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Profile name")
+                    .focused($nameFocused)
+            }
+            GridRow {
+                fieldLabel("Icon")
+                HStack(spacing: Tokens.Space.s2) {
+                    ForEach(symbols, id: \.0) { symbol, title in
+                        Button { profile.symbol = symbol } label: {
+                            Image(systemName: symbol)
+                                .font(.body)
+                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                                .background(profile.symbol == symbol ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                                        .strokeBorder(profile.symbol == symbol ? Color.accentColor : Color.clear, lineWidth: Tokens.Border.hairline)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .help(title).accessibilityLabel(title)
+                        .accessibilityAddTraits(profile.symbol == symbol ? .isSelected : [])
+                    }
+                }
+            }
+            GridRow {
+                fieldLabel("Color")
+                HStack(spacing: Tokens.Space.s2) {
+                    ForEach(AccountAppearance.palette.indices, id: \.self) { index in
+                        Button { profile.colorIndex = index } label: {
+                            Circle().fill(AccountAppearance.palette[index])
+                                .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
+                                .overlay {
+                                    if profile.colorIndex == index {
+                                        Image(systemName: "checkmark")
+                                            .font(.caption.weight(.bold)).foregroundStyle(.white)
+                                    }
+                                }
+                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(colors[index]).accessibilityLabel(colors[index])
+                        .accessibilityAddTraits(profile.colorIndex == index ? .isSelected : [])
+                    }
+                }
             }
         }
-        .padding(Tokens.Space.s4)
-        .frame(width: Tokens.Layout.settingsWidth, height: Tokens.Assistant.settingsHeight)
+    }
+
+    private func fieldLabel(_ title: String) -> some View {
+        Text(title).frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
     }
 }

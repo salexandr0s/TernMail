@@ -8,12 +8,23 @@ struct SignaturesPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Toggle("Include signature in replies and forwards", isOn: $signatureOnReplies)
-                .onChange(of: signatureOnReplies) { _, enabled in Task { await model.setSignatureOnReplies(enabled) } }
-            Picker("From address", selection: $selectedAddress) {
-                ForEach(model.identities, id: \.lowercasedAddress) { identity in
-                    Text(identity.address + (identity.isPrimary ? " (primary)" : "")).tag(identity.address)
+            SettingsGroup("Signature defaults", systemImage: "signature") {
+                SettingsToggleRow("Include in replies and forwards", isOn: $signatureOnReplies)
+                    .onChange(of: signatureOnReplies) { _, enabled in Task { await model.setSignatureOnReplies(enabled) } }
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                HStack(spacing: Tokens.Space.s3) {
+                    Text("From address").font(.body)
+                        .fixedSize()
+                    Picker("From address", selection: $selectedAddress) {
+                        ForEach(model.identities, id: \.lowercasedAddress) { identity in
+                            Text(identity.address + (identity.isPrimary ? " (primary)" : "")).tag(identity.address)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
                 }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s2)
             }
             if let identity = model.identities.first(where: { $0.address == selectedAddress }) {
                 SignatureEditor(identity: identity, model: model).id(identity.lowercasedAddress)
@@ -42,20 +53,22 @@ private struct SignatureEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             if !identity.isPrimary {
-                Text("Gmail lets Tern edit the primary address's signature. Change alias signatures in Gmail.")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsNote("Gmail lets Tern edit the primary address's signature. Change alias signatures in Gmail.", systemImage: "lock")
             }
             SettingsMessageEditor(draft: draft, isEditable: model.canEdit && identity.isPrimary)
-            Button("Save Signature") {
-                let html = draft.savedHTML ?? ""
-                Task {
-                    if await model.saveSignature(html, previous: previousHTML, address: identity.address) {
-                        previousHTML = html
+            HStack {
+                Spacer(minLength: 0)
+                Button("Save Signature") {
+                    let html = draft.savedHTML ?? ""
+                    Task {
+                        if await model.saveSignature(html, previous: previousHTML, address: identity.address) {
+                            previousHTML = html
+                        }
                     }
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canEdit || !identity.isPrimary || draft.isReadOnly || (draft.savedHTML ?? "") == previousHTML)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canEdit || !identity.isPrimary || draft.isReadOnly || (draft.savedHTML ?? "") == previousHTML)
         }
         .onChange(of: model.revision) { _, _ in
             if (draft.savedHTML ?? "") == previousHTML {

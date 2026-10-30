@@ -35,15 +35,14 @@ struct ChatGPTSignInButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: Tokens.Space.s3) {
-                ChatGPTBrand(size: Tokens.Space.s5, ink: colorScheme == .dark ? .black : .white)
+            HStack(spacing: Tokens.Space.s2) {
+                ChatGPTBrand(size: Tokens.Space.s4, ink: colorScheme == .dark ? .black : .white)
                     .accessibilityHidden(true)
                 Text("Continue with ChatGPT")
                     .font(.body.weight(.medium))
             }
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: Tokens.Space.s12)
-            .padding(.horizontal, Tokens.Space.s4)
+            .frame(minHeight: Tokens.Space.s8)
+            .padding(.horizontal, Tokens.Space.s3)
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
         }
         .buttonStyle(ChatGPTSignInStyle())

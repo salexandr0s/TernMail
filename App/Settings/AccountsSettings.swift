@@ -7,44 +7,38 @@ struct AccountsSettings: View {
     @State private var accountToSignOut: AccountRecord?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                if let mailbox = app.mailbox, !mailbox.accounts.isEmpty {
-                    SettingsGroup("Google accounts", systemImage: "person.2") {
-                        ForEach(mailbox.accounts, id: \.account.id) { owner in
-                            if owner.account.id != mailbox.accounts.first?.account.id {
-                                Divider()
-                                    .padding(.leading, Tokens.Control.avatar + Tokens.Space.s3 * 2)
-                                    .padding(.trailing, Tokens.Space.s3)
-                            }
-                            row(owner.account)
-                            ConnectionsView(account: owner.account, app: app)
-                        }
+        SettingsPage {
+            if let mailbox = app.mailbox, !mailbox.accounts.isEmpty {
+                ForEach(mailbox.accounts, id: \.account.id) { owner in
+                    VStack(spacing: 0) {
+                        row(owner.account)
+                        Divider().padding(.horizontal, Tokens.Space.s4)
+                        ConnectionsView(account: owner.account, app: app)
                     }
-                } else {
-                    HStack(spacing: Tokens.Space.s3) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                        SettingsRowLabel("No accounts", detail: "Add a Google account.")
-                        Spacer(minLength: 0)
-                    }
-                    .padding(Tokens.Space.s3)
-                    .ternSurface()
+                    .settingsSurface()
                 }
-                if let error = app.signInError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .padding(Tokens.Space.s3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .ternSurface()
+            } else {
+                HStack(spacing: Tokens.Space.s3) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    SettingsRowLabel("No accounts", detail: "Add a Google account.")
+                    Spacer(minLength: 0)
                 }
+                .padding(Tokens.Space.s3)
+                .settingsSurface()
             }
-            .padding(Tokens.Space.s4)
+            if let error = app.signInError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(Tokens.Space.s3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .settingsSurface()
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             accountFooter
@@ -88,7 +82,7 @@ struct AccountsSettings: View {
                 .fixedSize()
             }
             .padding(.horizontal, Tokens.Space.s4)
-            .padding(.vertical, Tokens.Space.s3)
+            .padding(.vertical, Tokens.Space.s2)
         }
         .background(Tokens.Surface.muted)
     }
@@ -100,7 +94,7 @@ struct AccountsSettings: View {
             TernAvatar(name: name ?? account.email)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(name ?? account.email)
-                    .font(.body.weight(.semibold))
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(name ?? account.email)
@@ -135,6 +129,7 @@ struct AccountsSettings: View {
             .controlSize(.small)
             .fixedSize()
         }
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s2)
     }
 }

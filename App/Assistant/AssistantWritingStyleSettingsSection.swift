@@ -5,14 +5,14 @@ struct AssistantWritingStyleSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Label("Writing style", systemImage: "text.badge.star")
+            Text("Writing style")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, Tokens.Space.s1)
                 .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Learn how you write from up to 100 recent sent emails in each enabled account. Replies use that account’s style and follow any tone you request.")
-                    .font(.callout)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(Tokens.Space.s3)
@@ -41,14 +41,14 @@ struct AssistantWritingStyleSettingsSection: View {
                     .padding(Tokens.Space.s3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .ternSurface()
+            .settingsSurface()
         }
     }
 
     private func accountRow(_ entry: AssistantWritingStyleEntry) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s3) {
-                TernAvatar(name: entry.displayName ?? entry.email)
+                TernAvatar(name: entry.displayName ?? entry.email, size: Tokens.Space.s6)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(entry.displayName ?? entry.email)
                         .font(.body.weight(.medium))
@@ -71,6 +71,7 @@ struct AssistantWritingStyleSettingsSection: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .fixedSize()
                 .accessibilityLabel("Learn writing style for \(entry.email)")
                 .accessibilityHint("Turning this off deletes the account’s learned profile.")
@@ -113,6 +114,7 @@ struct AssistantWritingStyleSettingsSection: View {
                 }
             }
         }
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
     }
 }

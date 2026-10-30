@@ -3,25 +3,44 @@ import SwiftUI
 
 struct AssistantSettingsView: View {
     @Bindable var model: AssistantModel
+    var showsIntroduction = true
+    var isSheet = false
+    var showsMailScope = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-                introduction
-                connectionSection
-                if model.connection.canUsePlan { modelSection }
-                accountsSection
-                AssistantWritingStyleSettingsSection(model: model.writingStyle)
-                privacySection
+        Group {
+            if isSheet {
+                SettingsEditorSheet(title: "Assistant Settings", width: Tokens.Settings.editorWideWidth) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s3) { sections }
+                } actions: {
+                    Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                }
+            } else {
+                SettingsPage { sections }
             }
-            .padding(Tokens.Space.s5)
         }
-        .background(Tokens.Surface.canvas)
         .task { await model.refreshConnection() }
         .onChange(of: model.connection.connectionRevision) {
             model.refreshAccess()
             Task { await model.refreshConnection() }
         }
+    }
+
+    @ViewBuilder private var sections: some View {
+        if showsIntroduction { introduction }
+        if showsMailScope {
+            SettingsControlRow("Mail scope") {
+                Picker("Mail scope", selection: $model.selectedScope) {
+                    ForEach(AssistantScope.allCases) { scope in Text(scope.title).tag(scope) }
+                }
+            }
+        }
+        connectionSection
+        if model.connection.canUsePlan { modelSection }
+        accountsSection
+        AssistantWritingStyleSettingsSection(model: model.writingStyle)
+        privacySection
     }
 
     private var introduction: some View {
@@ -37,23 +56,26 @@ struct AssistantSettingsView: View {
     }
 
     private var connectionSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                ChatGPTBrand(size: Tokens.Space.s8)
-                    .padding(Tokens.Space.s2)
+                ChatGPTBrand(size: Tokens.Space.s6)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text("ChatGPT")
-                        .font(.title3.weight(.semibold))
+                        .font(.body.weight(.medium))
                     Text(model.connection.account == nil ? "Use your ChatGPT plan in Tern." : "Connected to Tern")
-                        .font(.callout)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+                if model.connection.account == nil, !model.connection.isConnecting, !model.connection.isDisconnecting {
+                    ChatGPTSignInButton(action: connect)
+                }
                 if model.connection.account != nil, !model.connection.isConnecting, !model.connection.isDisconnecting {
-                    TernBadge(text: model.connection.canUsePlan ? "Plan enabled" : "Identity only",
-                              systemImage: model.connection.canUsePlan ? "checkmark.circle.fill" : "person.crop.circle",
-                              tint: model.connection.canUsePlan ? .green : .secondary)
+                    Label(model.connection.canUsePlan ? "Plan enabled" : "Identity only",
+                          systemImage: model.connection.canUsePlan ? "checkmark.circle" : "person.crop.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -104,21 +126,20 @@ struct AssistantSettingsView: View {
                 errorMessage(error)
             }
         }
-        .padding(Tokens.Space.s4)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .ternSurface()
+        .settingsSurface()
     }
 
     private var connectionActions: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            if model.connection.account == nil || !model.connection.canUsePlan {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            if model.connection.account != nil && !model.connection.canUsePlan {
                 ChatGPTSignInButton(action: connect)
-                if model.connection.account == nil {
-                    Text("Eligible requests use your ChatGPT plan or credits.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
+            }
+            if model.connection.account == nil {
+                Text("Eligible requests use your ChatGPT plan or credits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if model.connection.account != nil {
                 HStack(spacing: Tokens.Space.s3) {
@@ -149,7 +170,7 @@ struct AssistantSettingsView: View {
     }
 
     private var modelSection: some View {
-        AssistantSettingsSection("Model", systemImage: "slider.horizontal.3") {
+        SettingsGroup("Model", systemImage: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 HStack(spacing: Tokens.Space.s3) {
                     if !model.models.isEmpty {
@@ -195,7 +216,7 @@ struct AssistantSettingsView: View {
     }
 
     private var accountsSection: some View {
-        AssistantSettingsSection("Mail access", systemImage: "envelope") {
+        SettingsGroup("Mail access", systemImage: "envelope") {
             VStack(alignment: .leading, spacing: 0) {
                 if model.availableAccounts.isEmpty {
                     Label("Add a mail account in Accounts settings.", systemImage: "person.crop.circle.badge.plus")
@@ -224,7 +245,7 @@ struct AssistantSettingsView: View {
     private func accountRow(_ account: AccountRecord) -> some View {
         let name = account.displayName.flatMap { $0.isEmpty ? nil : $0 }
         return HStack(spacing: Tokens.Space.s3) {
-            TernAvatar(name: name ?? account.email)
+            TernAvatar(name: name ?? account.email, size: Tokens.Space.s6)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(name ?? account.email)
                     .font(.body.weight(.medium))
@@ -247,15 +268,17 @@ struct AssistantSettingsView: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
+            .controlSize(.small)
             .fixedSize()
             .accessibilityLabel("Allow assistant access to \(account.email)")
             .accessibilityHint("Changing access clears the current chat.")
         }
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
     }
 
     private var privacySection: some View {
-        AssistantSettingsSection("Privacy", systemImage: "lock") {
+        SettingsGroup("Privacy", systemImage: "lock") {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 Text("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.")
                     .font(.caption)
@@ -295,31 +318,6 @@ struct AssistantSettingsView: View {
             await model.connection.connect()
             model.refreshAccess()
             await model.refreshConnection()
-        }
-    }
-}
-
-private struct AssistantSettingsSection<Content: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder let content: Content
-
-    init(_ title: String, systemImage: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.systemImage = systemImage
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, Tokens.Space.s1)
-                .accessibilityAddTraits(.isHeader)
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .ternSurface()
         }
     }
 }

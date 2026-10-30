@@ -9,31 +9,55 @@ struct FiltersPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack {
-                Text("Filters apply to new mail as it arrives.").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text("\(model.filters.count) \(model.filters.count == 1 ? "filter" : "filters")")
+                        .font(.body.weight(.medium))
+                    Text("Applies to new mail as it arrives.").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Add Filter", systemImage: "plus") { editor = FilterEditorSelection(filter: nil) }
+                    .buttonStyle(.borderedProminent)
                     .disabled(!model.canEdit || model.filters.count >= 1_000)
             }
             if model.filters.isEmpty {
-                ContentUnavailableView("No filters", systemImage: "line.3.horizontal.decrease.circle", description: Text("Create a filter to organize new messages."))
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text("No filters").font(.body.weight(.medium))
+                    Text("Create a filter to choose which messages to match and what happens when they arrive.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         ForEach(Array(model.filters.enumerated()), id: \.offset) { _, filter in
-                            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                                HStack(alignment: .top) {
-                                    Text(summary(filter)).font(.body.weight(.medium)).textSelection(.enabled)
-                                    Spacer()
-                                    if filter.id == nil { Text("Saving…").font(.caption).foregroundStyle(.secondary) }
+                            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                                    Text(summary(filter))
+                                        .font(.body.weight(.medium))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .textSelection(.enabled)
+                                    Text(actions(filter))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if filter.id == nil {
+                                        Text("Saving…").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                HStack(spacing: Tokens.Space.s2) {
                                     Button("Edit") { editor = FilterEditorSelection(filter: filter) }
                                         .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
                                     Button("Delete", role: .destructive) { deleting = filter }
                                         .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
                                 }
-                                Text(actions(filter)).font(.caption).foregroundStyle(.secondary)
+                                .controlSize(.small)
+                                .fixedSize()
                             }
                             .padding(Tokens.Space.s3)
-                            .ternSurface()
+                            .settingsSurface()
                         }
                     }
                 }

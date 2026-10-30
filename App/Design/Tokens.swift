@@ -76,6 +76,23 @@ enum Tokens {
         static let todayTint = 0.04
     }
 
+    enum Settings {
+        static let width: CGFloat = 800
+        static let height: CGFloat = 620
+        static let minWidth: CGFloat = 740
+        static let minHeight: CGFloat = 500
+        static let sidebarWidth: CGFloat = 208
+        static let contentWidth: CGFloat = 640
+        static let controlWidth: CGFloat = 280
+        static let navigationIcon = Space.s5
+        static let groupTint = 0.045
+        static let rowHeight = Space.s6 + Space.s1
+        static let editorWidth: CGFloat = 480
+        static let editorWideWidth: CGFloat = 560
+        static let editorMaxContentHeight: CGFloat = 440
+        static let editorLabelWidth: CGFloat = 80
+    }
+
     /// Native controls use the contract's compact dimensions.
     enum Control {
         static let icon = Space.s4

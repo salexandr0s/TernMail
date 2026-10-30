@@ -6,61 +6,32 @@ struct GeneralSettings: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                SettingsGroup("Email links", systemImage: "envelope") {
-                    DefaultMailAppView().padding(Tokens.Space.s3)
-                }
-                SettingsGroup("Sending", systemImage: "paperplane") {
-                    HStack(spacing: Tokens.Space.s3) {
-                        SettingsRowLabel("Undo Send", detail: "Wait before sending so you can undo.")
-                        Spacer(minLength: Tokens.Space.s3)
-                        Picker("Undo Send", selection: $undoSendDelay) {
-                            ForEach(UndoSendDelay.choices, id: \.self) { seconds in
-                                Text("\(seconds) seconds").tag(seconds)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .fixedSize()
-                        .accessibilityLabel("Undo Send delay")
-                    }
-                    .padding(Tokens.Space.s3)
-                }
-
-                SettingsGroup("Keyboard", systemImage: "keyboard") {
-                    HStack(spacing: Tokens.Space.s3) {
-                        SettingsRowLabel("Single-key shortcuts", detail: "Use letter keys when you aren't typing.")
-                        Spacer(minLength: Tokens.Space.s3)
-                        Toggle("Single-key shortcuts", isOn: $usesSingleKeys)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .fixedSize()
-                            .accessibilityLabel("Single-key shortcuts")
-                            .accessibilityHint("Use letter keys when you aren't typing.")
-                    }
-                    .padding(Tokens.Space.s3)
-
-                    Divider()
-                        .padding(.horizontal, Tokens.Space.s3)
-
-                    HStack {
-                        Button("View Shortcuts…") {
-                            openWindow(id: KeyboardShortcutsView.sceneID)
-                        }
-                        .buttonStyle(.link)
-                        .accessibilityHint("Opens Keyboard Shortcuts")
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.forward")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.horizontal, Tokens.Space.s3)
+        SettingsPage {
+            SettingsGroup("Default email app", systemImage: "envelope") {
+                DefaultMailAppView()
+                    .padding(.horizontal, Tokens.Space.s4)
                     .padding(.vertical, Tokens.Space.s2)
+            }
+            SettingsGroup("Sending", systemImage: "paperplane") {
+                SettingsControlRow("Undo Send", detail: "Delay sending so you can undo.") {
+                    Picker("Undo Send delay", selection: $undoSendDelay) {
+                        ForEach(UndoSendDelay.choices, id: \.self) { seconds in
+                            Text("\(seconds) seconds").tag(seconds)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
             }
-            .padding(Tokens.Space.s4)
+            SettingsGroup("Keyboard", systemImage: "keyboard") {
+                SettingsToggleRow("Single-key shortcuts", detail: "Use letter keys when you aren't typing.", isOn: $usesSingleKeys)
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                SettingsControlRow("Keyboard shortcuts") {
+                    Button("View Shortcuts…") {
+                        openWindow(id: KeyboardShortcutsView.sceneID)
+                    }
+                    .accessibilityHint("Opens Keyboard Shortcuts")
+                }
+            }
         }
     }
 }

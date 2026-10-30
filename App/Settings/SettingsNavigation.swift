@@ -42,6 +42,66 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .assistant: "sparkles"
         }
     }
+    var subtitle: String {
+        switch self {
+        case .general: "Default email app, sending, and keyboard shortcuts."
+        case .accounts: "Manage your Google accounts and connected services."
+        case .profiles: "Group your accounts and set notification hours."
+        case .notifications: "Choose which mail gets your attention."
+        case .reading: "Adjust message appearance and reading behavior."
+        case .messageList: "Choose how your inbox looks and responds."
+        case .composing: "Set up your writing defaults and reusable replies."
+        case .signatures: "Manage the signatures saved to your Gmail accounts."
+        case .filters: "Organize incoming mail with Gmail rules."
+        case .blocked: "Manage the senders you've blocked in Gmail."
+        case .vacation: "Let people know when you're away."
+        case .attachments: "Choose how Tern downloads and opens attachments."
+        case .assistant: "Ask about your mail, summarize threads, and prepare replies."
+        case .failedChanges: "Review mail changes that couldn't be completed."
+        case .maintenance: "Manage the mail and attachments stored on this Mac."
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .general, .maintenance: .gray
+        case .accounts, .profiles: .indigo
+        case .notifications: .red
+        case .reading, .messageList: .blue
+        case .composing, .signatures: .purple
+        case .filters, .blocked, .failedChanges: .orange
+        case .vacation: .teal
+        case .attachments: .cyan
+        case .assistant: .indigo
+        }
+    }
+
+    private var searchTerms: String {
+        switch self {
+        case .general: "default mail app email links undo send keyboard shortcuts archive trash snooze triage"
+        case .accounts: "google login sign in sync nickname color order connections calendar permissions"
+        case .profiles: "work personal groups focus notification schedule hours"
+        case .notifications: "alerts sound badge dock menu bar permission"
+        case .reading: "remote images privacy tracking dark mode conversation order mark read delay text size"
+        case .messageList: "density compact comfortable preview swipe sidebar mailbox count badges importance"
+        case .composing: "font reply format templates local signatures suggestions recipients"
+        case .signatures: "gmail send as identity footer"
+        case .filters: "rules forwarding labels delete archive"
+        case .blocked: "spam block email address"
+        case .vacation: "automatic reply out of office autoresponder dates"
+        case .attachments: "download files preview cache"
+        case .assistant: "chatgpt openai ai model writing style summaries privacy access"
+        case .failedChanges: "retry errors pending queue discard"
+        case .maintenance: "disk space storage cache budget reset trim database"
+        }
+    }
+
+    func matches(_ query: String) -> Bool {
+        let searchable = "\(title) \(subtitle) \(searchTerms)"
+        return query.split(whereSeparator: \.isWhitespace).allSatisfy {
+            searchable.localizedStandardContains(String($0))
+        }
+    }
 }
 
 struct SettingsNavigationSection: Identifiable, Sendable {

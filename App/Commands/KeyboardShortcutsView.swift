@@ -29,7 +29,7 @@ struct KeyboardShortcutsView: View {
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
 
     var body: some View {
-        Form {
+        List {
             Section("Menu shortcuts") {
                 ForEach(Self.menuShortcuts, id: \.title) { shortcut in
                     shortcutRow(shortcut.title, keys: shortcut.keys)
@@ -50,26 +50,25 @@ struct KeyboardShortcutsView: View {
                     : "Off. Enable in Settings.")
             }
         }
-        .formStyle(.grouped)
-        .frame(width: Tokens.Layout.shortcutsWidth, height: Tokens.Layout.shortcutsHeight)
+        .listStyle(.inset)
+        .environment(\.defaultMinListRowHeight, Tokens.Settings.rowHeight)
+        .frame(width: Tokens.Layout.shortcutsWidth,
+               height: Tokens.Settings.editorMaxContentHeight + Tokens.Space.s12)
     }
 
     private func shortcutRow(_ title: String, keys: String) -> some View {
-        LabeledContent {
+        HStack(spacing: Tokens.Space.s3) {
+            Text(title)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: Tokens.Space.s2)
             Text(keys)
                 .font(.callout.monospaced().weight(.medium))
                 .foregroundStyle(.primary)
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.vertical, Tokens.Space.s1)
+                .padding(.horizontal, Tokens.Space.s1_5)
+                .padding(.vertical, Tokens.Space.s0_5)
                 .frame(minWidth: Tokens.Space.s16)
-                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
-                }
-        } label: {
-            Text(title)
-                .fixedSize(horizontal: false, vertical: true)
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
+        .accessibilityElement(children: .combine)
     }
 }

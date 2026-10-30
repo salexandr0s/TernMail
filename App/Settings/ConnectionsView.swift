@@ -18,35 +18,36 @@ struct ConnectionsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("Connections").font(.headline)
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(features, id: \.rawValue) { feature in
-                Toggle(isOn: Binding(
+                if feature != features.first {
+                    Divider().padding(.horizontal, Tokens.Space.s4)
+                }
+                SettingsToggleRow(title(feature), detail: detail(feature), isOn: Binding(
                     get: { connection.isEnabled(feature) },
                     set: { enabled in Task { await set(feature, enabled: enabled) } }
-                )) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text(title(feature))
-                        Text(detail(feature)).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-                .accessibilityLabel(title(feature))
-                .accessibilityHint(detail(feature))
+                ))
                 .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(accountID))
             }
-            if let state = app.inboxWatcher(for: accountID)?.state {
-                Text(watcherStatus(state)).font(.caption).foregroundStyle(.secondary)
+            Divider().padding(.horizontal, Tokens.Space.s4)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                if let state = app.inboxWatcher(for: accountID)?.state {
+                    Text(watcherStatus(state)).font(.caption).foregroundStyle(.secondary)
+                }
+                if let error { Text(error).font(.caption).foregroundStyle(.red) }
+                Text("Turning connections off stops their use in Tern. Remove Tern from your Google Account to revoke permissions.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Tokens.Space.s2) {
+                    if let url = URL(string: "https://myaccount.google.com/permissions") {
+                        Link("Review Google permissions", destination: url).font(.caption)
+                    }
+                    if busy { ProgressView().controlSize(.small) }
+                }
             }
-            if busy { ProgressView().controlSize(.small) }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
-            Text("Turning a connection off stops its use in Tern. Google keeps the permission until you remove Tern from your Google Account.")
-                .font(.caption).foregroundStyle(.secondary)
-            if let url = URL(string: "https://myaccount.google.com/permissions") {
-                Link("Review Google permissions", destination: url).font(.caption)
-            }
+            .padding(.horizontal, Tokens.Space.s4)
+            .padding(.vertical, Tokens.Space.s2)
         }
-        .padding(Tokens.Space.s3)
         .task { await connection.observe() }
     }
 

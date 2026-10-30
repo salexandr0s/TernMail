@@ -49,14 +49,24 @@ struct TriagePreferencesPane: View {
     @AppStorage(MailSounds.enabledKey) private var sounds = false
 
     var body: some View {
-        Form {
-            Picker("Delete key", selection: $deleteBehavior) {
-                Text("Archive, or remove the current label").tag(DeleteKeyBehavior.archive.rawValue)
-                Text("Move to Trash").tag(DeleteKeyBehavior.trash.rawValue)
+        SettingsPage {
+            SettingsGroup("Keyboard action", systemImage: "delete.left") {
+                HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                    Text("Delete key")
+                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
+                    Picker("Delete key", selection: $deleteBehavior) {
+                        Text("Archive, or remove the current label").tag(DeleteKeyBehavior.archive.rawValue)
+                        Text("Move to Trash").tag(DeleteKeyBehavior.trash.rawValue)
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+                }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s2)
             }
-            Toggle("Play mail sounds", isOn: $sounds)
-            Text("Use macOS sounds for archive, Trash, sent mail and new mail.").font(.caption).foregroundStyle(.secondary)
+            SettingsGroup("Sound", systemImage: "speaker.wave.2") {
+                SettingsToggleRow("Play mail sounds", detail: "Use macOS sounds for archive, Trash, sent mail and new mail.", isOn: $sounds)
+            }
         }
-        .formStyle(.grouped)
     }
 }

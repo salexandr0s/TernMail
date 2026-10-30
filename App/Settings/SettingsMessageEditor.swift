@@ -50,6 +50,7 @@ struct SettingsMessageEditor: View {
     @Bindable var draft: SettingsMessageDraft
     let isEditable: Bool
     @State private var linkText = ""
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -66,16 +67,25 @@ struct SettingsMessageEditor: View {
             } onAttach: { _ in } onFocusChange: { draft.isFocused = $0 }
             .frame(minHeight: Tokens.Layout.quoteMaxHeight)
         }
-        .ternSurface()
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
+                              lineWidth: Tokens.Border.hairline)
+                .allowsHitTesting(false)
+        }
         .focusedValue(\.settingsEditor, focusedEditor)
         .popover(isPresented: $draft.showsLink) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 Text("Link").font(.headline)
                 TextField("https://example.com", text: $linkText)
+                    .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Link URL")
-                HStack {
+                HStack(spacing: Tokens.Space.s2) {
                     Button("Remove Link") { draft.editor?.setLink(nil); draft.showsLink = false }
-                    Spacer()
+                    Spacer(minLength: 0)
+                    Button("Cancel") { draft.showsLink = false }
+                        .keyboardShortcut(.cancelAction)
                     Button("Apply") {
                         if let url = safeURL { draft.editor?.setLink(url); draft.showsLink = false }
                     }
@@ -83,7 +93,8 @@ struct SettingsMessageEditor: View {
                     .keyboardShortcut(.defaultAction)
                 }
             }
-            .padding(Tokens.Space.s4)
+            .controlSize(.small)
+            .padding(Tokens.Space.s3)
             .frame(width: Tokens.Layout.linkEditorWidth)
         }
     }

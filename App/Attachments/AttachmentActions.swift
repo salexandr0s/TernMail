@@ -72,14 +72,25 @@ struct AttachmentPreferencesView: View {
     @AppStorage(AttachmentOpenLocation.key) private var location = AttachmentOpenLocation.application.rawValue
 
     var body: some View {
-        Form {
-            Picker("Open attachments from", selection: $location) {
-                Text("Tern's attachment folder").tag(AttachmentOpenLocation.application.rawValue)
-                Text("Downloads → Tern").tag(AttachmentOpenLocation.downloads.rawValue)
+        SettingsPage {
+            SettingsGroup("Opening attachments", systemImage: "folder") {
+                SettingsControlRow("Open attachments from") {
+                    Picker("Open attachments from", selection: $location) {
+                        Text("Tern's attachment folder").tag(AttachmentOpenLocation.application.rawValue)
+                        Text("Downloads → Tern").tag(AttachmentOpenLocation.downloads.rawValue)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                Text(location == AttachmentOpenLocation.downloads.rawValue
+                    ? "Opening from Downloads saves a separate copy. Existing files are kept."
+                    : "Attachments open from Tern's local storage. Use Save to keep a copy in a folder you choose.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Tokens.Space.s4)
+                    .padding(.bottom, Tokens.Space.s2)
             }
-            Text("Opening from Downloads saves a separate copy. Existing files are kept.")
-                .font(.caption).foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
     }
 }

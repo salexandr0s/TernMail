@@ -77,21 +77,7 @@ struct ThreadSummaryView: View {
         }
         .onDisappear { model.clear(); loadedIdentity = nil }
         .sheet(isPresented: $showsSettings) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Assistant settings").font(.headline)
-                    Spacer()
-                    Button("Done") { showsSettings = false }.keyboardShortcut(.cancelAction)
-                }
-                .padding(Tokens.Space.s4)
-                Divider()
-                Picker("Mail scope", selection: Binding(get: { assistant.selectedScope }, set: { assistant.selectedScope = $0 })) {
-                    ForEach(AssistantScope.allCases) { scope in Text(scope.title).tag(scope) }
-                }
-                .padding(Tokens.Space.s4)
-                AssistantSettingsView(model: assistant)
-            }
-            .frame(width: Tokens.Layout.settingsWidth, height: Tokens.Assistant.settingsHeight)
+            AssistantSettingsView(model: assistant, showsIntroduction: false, isSheet: true, showsMailScope: true)
         }
     }
 

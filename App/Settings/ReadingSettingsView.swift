@@ -10,33 +10,59 @@ struct ReadingSettingsView: View {
     @AppStorage(ReadingPreferences.sizeKey) private var showsSize = false
 
     var body: some View {
-        Section("Reading") {
-            Toggle("Block remote images", isOn: $blocksImages)
-            Text("Load Images allows HTTPS images for one message. Known tracking images stay blocked.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Adapt messages to Dark Mode", isOn: $adaptsDark)
-            Picker("Conversation order", selection: $order) {
-                Text("Oldest first").tag(ReadingPreferences.Order.oldestFirst.rawValue)
-                Text("Newest first").tag(ReadingPreferences.Order.newestFirst.rawValue)
+        SettingsPage {
+            SettingsGroup("Appearance", systemImage: "textformat.size") {
+                SettingsControlRow("Text size") {
+                    Picker("Text size", selection: $scale) {
+                        Text("Small").tag(0.85)
+                        Text("Default").tag(1.0)
+                        Text("Large").tag(1.15)
+                        Text("Extra large").tag(1.3)
+                        Text("Largest").tag(1.5)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                SettingsToggleRow("Adapt messages to Dark Mode", isOn: $adaptsDark)
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                SettingsToggleRow("Show message size", isOn: $showsSize)
             }
-            Picker("Mark as read", selection: $markRead) {
-                Text("Immediately").tag(ReadingPreferences.MarkRead.immediately.rawValue)
-                Text("After a delay").tag(ReadingPreferences.MarkRead.delayed.rawValue)
-                Text("Manually").tag(ReadingPreferences.MarkRead.manually.rawValue)
-            }
-            if markRead == ReadingPreferences.MarkRead.delayed.rawValue {
-                Picker("Read delay", selection: $delay) {
-                    ForEach([1.0, 3, 5, 10, 30], id: \.self) { Text("\(Int($0)) seconds").tag($0) }
+
+            SettingsGroup("Conversations", systemImage: "text.bubble") {
+                SettingsControlRow("Message order") {
+                    Picker("Conversation order", selection: $order) {
+                        Text("Oldest first").tag(ReadingPreferences.Order.oldestFirst.rawValue)
+                        Text("Newest first").tag(ReadingPreferences.Order.newestFirst.rawValue)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                SettingsControlRow("Mark as read") {
+                    Picker("Mark as read", selection: $markRead) {
+                        Text("Immediately").tag(ReadingPreferences.MarkRead.immediately.rawValue)
+                        Text("After a delay").tag(ReadingPreferences.MarkRead.delayed.rawValue)
+                        Text("Manually").tag(ReadingPreferences.MarkRead.manually.rawValue)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                if markRead == ReadingPreferences.MarkRead.delayed.rawValue {
+                    Divider().padding(.horizontal, Tokens.Space.s4)
+                    SettingsControlRow("Read delay") {
+                        Picker("Read delay", selection: $delay) {
+                            ForEach([1.0, 3, 5, 10, 30], id: \.self) { Text("\(Int($0)) seconds").tag($0) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
                 }
             }
-            Picker("Text size", selection: $scale) {
-                Text("Small").tag(0.85)
-                Text("Default").tag(1.0)
-                Text("Large").tag(1.15)
-                Text("Extra large").tag(1.3)
-                Text("Largest").tag(1.5)
+
+            SettingsGroup("Privacy", systemImage: "hand.raised") {
+                SettingsToggleRow("Block remote images", detail: "Choose Load Images to allow HTTPS images in one message. Known tracking images stay blocked.", isOn: $blocksImages)
             }
-            Toggle("Show message size", isOn: $showsSize)
         }
     }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ComposeTemplatesPane: View {
     let store: AccountStore
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var templates: [ComposeTemplate] = []
     @State private var selection: String?
     @State private var name = ""
@@ -15,37 +16,71 @@ struct ComposeTemplatesPane: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack {
-                Picker("Template", selection: $selection) {
-                    Text("New template").tag(String?.none)
-                    ForEach(templates) { Text($0.name).tag(Optional($0.id)) }
+        SettingsPage {
+            SettingsGroup("Templates", systemImage: "doc.on.doc") {
+                HStack(spacing: Tokens.Space.s3) {
+                    Text("Template")
+                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
+                    Picker("Template", selection: $selection) {
+                        Text("New template").tag(String?.none)
+                        ForEach(templates) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                    Button("New", systemImage: "plus") { selection = nil; name = ""; document = ComposeDocument() }
+                        .help("Create a new template")
                 }
-                Button("New") { selection = nil; name = ""; document = ComposeDocument() }
-            }
-            TextField("Name", text: $name)
-            FormatBar(format: format, isEnabled: focused, editor: editor) { editingLink = true }
-                .popover(isPresented: $editingLink) {
-                    LinkEditor(existingURL: format.linkURL, width: Tokens.Layout.linkEditorWidth) { editor?.setLink($0) }
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
+                Divider().padding(.horizontal, Tokens.Space.s3)
+                HStack(spacing: Tokens.Space.s3) {
+                    Text("Name")
+                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
+                    TextField("Template name", text: $name)
+                        .textFieldStyle(.roundedBorder)
                 }
-            RichTextEditor(document: $document, format: $format, isEditable: true) { editor = $0 }
-                onAttach: { _ in error = "Templates hold text and formatting. Add files when composing a message." }
-                onFocusChange: { focused = $0 }
-                .frame(minHeight: Tokens.Space.s16 * 3)
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
+                VStack(alignment: .leading, spacing: 0) {
+                    FormatBar(format: format, isEnabled: focused, editor: editor) { editingLink = true }
+                        .popover(isPresented: $editingLink) {
+                            LinkEditor(existingURL: format.linkURL, width: Tokens.Layout.linkEditorWidth) { editor?.setLink($0) }
+                        }
+                    RichTextEditor(document: $document, format: $format, isEditable: true) { editor = $0 }
+                        onAttach: { _ in error = "Templates hold text and formatting. Add files when composing a message." }
+                        onFocusChange: { focused = $0 }
+                        .frame(minHeight: Tokens.Layout.quoteMaxHeight)
+                }
                 .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            if let error { Text(error).font(.callout).foregroundStyle(.red) }
-            HStack {
-                Button("Delete", role: .destructive) {
-                    guard let selection else { return }
-                    Task { await delete(selection) }
-                }.disabled(selection == nil)
-                Spacer()
-                Button("Save Template") { Task { await save() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .overlay {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                        .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
+                                      lineWidth: Tokens.Border.hairline)
+                        .allowsHitTesting(false)
+                }
+                .padding(.horizontal, Tokens.Space.s3)
+                HStack {
+                    Button("Delete", role: .destructive) {
+                        guard let selection else { return }
+                        Task { await delete(selection) }
+                    }
+                    .disabled(selection == nil)
+                    Spacer()
+                    Button("Save Template") { Task { await save() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
+            }
+            SettingsNote("Templates hold text and formatting. Add attachments when composing a message.", systemImage: "doc.text")
+            if let error {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(Tokens.Space.s4)
         .task { await reload() }
         .focusedValue(\.settingsEditor, focusedEditor)
         .onChange(of: selection) { _, id in

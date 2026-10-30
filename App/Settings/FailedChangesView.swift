@@ -9,30 +9,75 @@ struct FailedChangesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("Gmail couldn't save these changes. Retry keeps the same queued intent; Discard removes the failed change from this Mac.")
-                .font(.callout).foregroundStyle(.secondary)
-            if let error { Text(error).foregroundStyle(.red).font(.callout) }
+            if let error {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
             if rows.isEmpty {
-                ContentUnavailableView("No failed changes", systemImage: "checkmark.circle")
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Label(error == nil ? "No failed changes" : "Couldn't load changes",
+                          systemImage: error == nil ? "checkmark.circle" : "exclamationmark.circle")
+                        .font(.body.weight(.medium))
+                    Text(error == nil ? "Changes that Gmail can't save will appear here." : "Check your account's connection and reopen this pane.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0)
             } else {
-                List(rows) { row in
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        HStack {
-                            Text(title(row.kind)).font(.headline)
-                            Spacer()
-                            Button("Retry") { Task { await retry(row) } }
-                            Button("Discard", role: .destructive) { Task { await discard(row) } }
+                HStack {
+                    Text("\(rows.count) failed \(rows.count == 1 ? "change" : "changes")")
+                        .font(.body.weight(.medium))
+                    Spacer(minLength: 0)
+                }
+                SettingsNote("Retry asks Gmail to save the change again. Discard removes the failed change from this Mac.")
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(rows) { row in
+                            if row.id != rows.first?.id {
+                                Divider().padding(.horizontal, Tokens.Space.s3)
+                            }
+                            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                                HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                                        Text(title(row.kind)).font(.body.weight(.semibold))
+                                        Text(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 0)
+                                    if row.id.map(busy.contains) == true {
+                                        ProgressView().controlSize(.small)
+                                    }
+                                    Button("Retry", systemImage: "arrow.clockwise") { Task { await retry(row) } }
+                                    Button("Discard", role: .destructive) { Task { await discard(row) } }
+                                }
+                                .controlSize(.small)
+                                Text(row.lastError ?? "Gmail refused this change.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
+                            .disabled(row.id.map(busy.contains) == true)
+                            .padding(.horizontal, Tokens.Space.s3)
+                            .padding(.vertical, Tokens.Space.s2)
                         }
-                        Text(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text(row.lastError ?? "Gmail refused this change.").font(.callout).textSelection(.enabled)
                     }
-                    .disabled(row.id.map(busy.contains) == true)
-                    .padding(.vertical, Tokens.Space.s2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .settingsSurface()
                 }
             }
         }
         .padding(Tokens.Space.s4)
+        .frame(maxWidth: Tokens.Settings.contentWidth, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: app.mailbox?.accounts.map(\.account.id) ?? []) {
             guard let mailbox = app.mailbox else { rows = []; return }
             do {

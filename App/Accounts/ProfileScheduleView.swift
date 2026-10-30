@@ -6,61 +6,111 @@ struct ProfileScheduleView: View {
     private enum Mode: String, CaseIterable { case unrestricted, off, everyDay, weekdays, custom }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Picker("Notification schedule", selection: Binding(get: { mode }, set: { mode in
-                let hours = [DailyTimeRange(startMinute: 9 * 60, endMinute: 17 * 60)]
-                schedule = switch mode {
-                case .unrestricted: .unrestricted
-                case .off: .off
-                case .everyDay: .everyDay(hours)
-                case .weekdays: .weekdays(hours)
-                case .custom: .custom(Dictionary(uniqueKeysWithValues: ISOWeekday.allCases.map { ($0, hours) }))
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(spacing: Tokens.Space.s3) {
+                Text("Notifications")
+                    .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
+                Picker("Notification schedule", selection: Binding(get: { mode }, set: { mode in
+                    let hours = [DailyTimeRange(startMinute: 9 * 60, endMinute: 17 * 60)]
+                    schedule = switch mode {
+                    case .unrestricted: .unrestricted
+                    case .off: .off
+                    case .everyDay: .everyDay(hours)
+                    case .weekdays: .weekdays(hours)
+                    case .custom: .custom(Dictionary(uniqueKeysWithValues: ISOWeekday.allCases.map { ($0, hours) }))
+                    }
+                })) {
+                    Text("Any time").tag(Mode.unrestricted)
+                    Text("Off").tag(Mode.off)
+                    Text("Every day").tag(Mode.everyDay)
+                    Text("Weekdays").tag(Mode.weekdays)
+                    Text("Custom days").tag(Mode.custom)
                 }
-            })) {
-                Text("Any time").tag(Mode.unrestricted)
-                Text("Off").tag(Mode.off)
-                Text("Every day").tag(Mode.everyDay)
-                Text("Weekdays").tag(Mode.weekdays)
-                Text("Custom days").tag(Mode.custom)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            ScrollView {
-                if mode == .custom {
+
+            if mode == .custom {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     ForEach(ISOWeekday.allCases, id: \.rawValue) { day in
                         rangeEditor(title: weekdayName(day), day: day)
                     }
-                } else if mode == .everyDay || mode == .weekdays {
-                    rangeEditor(title: mode == .weekdays ? "Monday–Friday" : "Every day", day: nil)
                 }
+            } else if mode == .everyDay || mode == .weekdays {
+                rangeEditor(title: "Hours", day: nil)
             }
-            Text("Times follow this Mac's local time zone. For overnight hours, add one range before midnight and another on the next day.")
+
+            Text(scheduleHelp)
                 .font(.caption).foregroundStyle(.secondary)
-            if !schedule.isValid { Text("Each range must end after it starts.").font(.caption).foregroundStyle(.red) }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, Tokens.Settings.editorLabelWidth + Tokens.Space.s3)
+        }
+    }
+
+    private var scheduleHelp: String {
+        switch mode {
+        case .unrestricted: "Notify at any time."
+        case .off: "Mail still syncs. Notifications are off."
+        default: "Uses this Mac's time zone. Split overnight hours at midnight."
         }
     }
 
     private func rangeEditor(title: String, day: ISOWeekday?) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            HStack {
-                Text(title).font(.headline)
-                Spacer()
-                Button("Add Hours", systemImage: "plus") {
-                    var values = ranges(day)
-                    values.append(DailyTimeRange(startMinute: 9 * 60, endMinute: 17 * 60))
-                    setRanges(values, day: day)
+        let accessibilityDay = day == nil ? (mode == .weekdays ? "weekdays" : "every day") : title
+        return HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            Text(title)
+                .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
+                .padding(.top, Tokens.Space.s1)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                if ranges(day).isEmpty {
+                    HStack {
+                        Text("No notifications").foregroundStyle(.secondary)
+                        Spacer(minLength: Tokens.Space.s2)
+                        addHoursButton(title: accessibilityDay, day: day)
+                    }
+                    .frame(minHeight: Tokens.Settings.rowHeight)
+                }
+                ForEach(Array(ranges(day).enumerated()), id: \.offset) { index, _ in
+                    HStack(spacing: Tokens.Space.s2) {
+                        DatePicker("From", selection: timeBinding(day: day, index: index, end: false), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .accessibilityLabel("Start time for \(accessibilityDay), range \(index + 1)")
+                        Text("–").foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        DatePicker("To", selection: timeBinding(day: day, index: index, end: true), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .accessibilityLabel("End time for \(accessibilityDay), range \(index + 1)")
+                        Spacer(minLength: 0)
+                        Button {
+                            var values = ranges(day)
+                            values.remove(at: index)
+                            setRanges(values, day: day)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Remove these hours")
+                        .accessibilityLabel("Remove hours for \(accessibilityDay), range \(index + 1)")
+                        if index == 0 { addHoursButton(title: accessibilityDay, day: day) }
+                        else { Color.clear.frame(width: Tokens.Control.icon).accessibilityHidden(true) }
+                    }
+                    .frame(minHeight: Tokens.Settings.rowHeight)
                 }
             }
-            ForEach(Array(ranges(day).enumerated()), id: \.offset) { index, _ in
-                HStack {
-                    DatePicker("From", selection: timeBinding(day: day, index: index, end: false), displayedComponents: .hourAndMinute)
-                    DatePicker("To", selection: timeBinding(day: day, index: index, end: true), displayedComponents: .hourAndMinute)
-                    Button("Remove", systemImage: "minus.circle") {
-                        var values = ranges(day); values.remove(at: index); setRanges(values, day: day)
-                    }.labelStyle(.iconOnly).help("Remove these hours")
-                }
-            }
-            if ranges(day).isEmpty { Text("No notifications").font(.caption).foregroundStyle(.secondary) }
         }
-        .padding(.vertical, Tokens.Space.s2)
+    }
+
+    private func addHoursButton(title: String, day: ISOWeekday?) -> some View {
+        Button {
+            var values = ranges(day)
+            values.append(DailyTimeRange(startMinute: 9 * 60, endMinute: 17 * 60))
+            setRanges(values, day: day)
+        } label: {
+            Image(systemName: "plus.circle")
+        }
+        .buttonStyle(.borderless)
+        .help("Add hours")
+        .accessibilityLabel("Add hours for \(title)")
     }
 
     private var mode: Mode {

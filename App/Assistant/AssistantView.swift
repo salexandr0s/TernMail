@@ -51,17 +51,7 @@ struct AssistantView: View {
         }
         .onChange(of: model.availableAccounts.map(\.id)) { model.refreshAccess() }
         .sheet(isPresented: $showsSettings) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Assistant settings").font(.headline)
-                    Spacer()
-                    Button("Done") { showsSettings = false }.keyboardShortcut(.cancelAction)
-                }
-                .padding(Tokens.Space.s4)
-                Divider()
-                AssistantSettingsView(model: model)
-            }
-            .frame(width: Tokens.Layout.settingsWidth, height: Tokens.Assistant.settingsHeight)
+            AssistantSettingsView(model: model, showsIntroduction: false, isSheet: true)
         }
     }
 

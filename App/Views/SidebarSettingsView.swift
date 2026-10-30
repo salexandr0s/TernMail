@@ -6,23 +6,46 @@ struct SidebarSettingsView: View {
     let mailbox: MailboxModel
     var body: some View {
         ForEach(mailbox.accounts, id: \.account.id) { owner in
-            Section("Inbox Categories — \(mailbox.accountTitle(owner.account))") {
-                ForEach(InboxCategory.allCases, id: \.rawValue) { category in
-                    Toggle(category.rawValue.capitalized, isOn: Binding(
-                        get: { mailbox.accountPresentation[owner.account.id]?.inboxCategories.contains(category) == true },
-                        set: { enabled in Task { await mailbox.setCategory(category, enabled: enabled, accountID: owner.account.id) } }
-                    ))
-                }
-            }
-            Section("Label Visibility — \(mailbox.accountTitle(owner.account))") {
-                ForEach(owner.labels.filter { !$0.isSystem }, id: \.id) { label in
-                    Picker(label.name, selection: Binding(
-                        get: { LabelListVisibility(rawValue: label.labelListVisibility ?? "") ?? .show },
-                        set: { mailbox.setLabelVisibility(label, to: $0) }
-                    )) {
-                        ForEach(LabelListVisibility.allCases, id: \.rawValue) { Text($0.sidebarTitle).tag($0) }
+            SettingsGroup(mailbox.accountTitle(owner.account), systemImage: "person.crop.circle") {
+                DisclosureGroup("Inbox categories") {
+                    VStack(spacing: 0) {
+                        ForEach(InboxCategory.allCases, id: \.rawValue) { category in
+                            SettingsToggleRow(category.rawValue.capitalized, isOn: Binding(
+                                get: { mailbox.accountPresentation[owner.account.id]?.inboxCategories.contains(category) == true },
+                                set: { enabled in Task { await mailbox.setCategory(category, enabled: enabled, accountID: owner.account.id) } }
+                            ))
+                        }
                     }
                 }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s2)
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                DisclosureGroup("Label visibility") {
+                    VStack(spacing: 0) {
+                        let labels = owner.labels.filter { !$0.isSystem }
+                        if labels.isEmpty {
+                            Text("No custom labels")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, Tokens.Space.s2)
+                        }
+                        ForEach(labels, id: \.id) { label in
+                            SettingsControlRow(label.name) {
+                                Picker(label.name, selection: Binding(
+                                    get: { LabelListVisibility(rawValue: label.labelListVisibility ?? "") ?? .show },
+                                    set: { mailbox.setLabelVisibility(label, to: $0) }
+                                )) {
+                                    ForEach(LabelListVisibility.allCases, id: \.rawValue) { Text($0.sidebarTitle).tag($0) }
+                                }
+                                .labelsHidden()
+                                .fixedSize()
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s2)
             }
         }
     }
