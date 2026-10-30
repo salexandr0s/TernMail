@@ -5,7 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @State private var selection: SettingsTab = .general
-    private enum SettingsTab: Hashable { case general, accounts, assistant }
+    private enum SettingsTab: Hashable { case general, accounts, signatures, filters, vacation, assistant }
 
     var body: some View {
         TabView(selection: $selection) {
@@ -15,12 +15,21 @@ struct SettingsView: View {
             AccountsSettings()
                 .tabItem { Label("Accounts", systemImage: "person.crop.circle") }
                 .tag(SettingsTab.accounts)
+            IntegrationSettingsView(pane: .signatures)
+                .tabItem { Label("Signatures", systemImage: "signature") }
+                .tag(SettingsTab.signatures)
+            IntegrationSettingsView(pane: .filters)
+                .tabItem { Label("Filters", systemImage: "line.3.horizontal.decrease.circle") }
+                .tag(SettingsTab.filters)
+            IntegrationSettingsView(pane: .vacation)
+                .tabItem { Label("Vacation", systemImage: "sun.max") }
+                .tag(SettingsTab.vacation)
             AssistantSettingsView(model: app.assistant)
                 .tabItem { Label("Assistant", systemImage: "sparkles") }
                 .tag(SettingsTab.assistant)
         }
         .frame(width: Tokens.Layout.settingsWidth,
-               height: selection == .assistant ? Tokens.Assistant.settingsHeight : Tokens.Layout.settingsHeight)
+               height: selection == .general ? Tokens.Layout.settingsHeight : Tokens.Assistant.settingsHeight)
         .background(Tokens.Surface.canvas)
     }
 }
@@ -104,6 +113,7 @@ private struct AccountsSettings: View {
                                     .padding(.trailing, Tokens.Space.s3)
                             }
                             row(owner.account)
+                            ConnectionsView(account: owner.account, app: app)
                         }
                     }
                 } else {

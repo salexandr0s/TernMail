@@ -20,6 +20,7 @@ struct MailCommands: Commands {
     }
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.composeModel) private var compose
+    @FocusedValue(\.settingsEditor) private var settingsEditor
     @FocusedValue(\.mailboxModel) private var focusedMailbox
     @FocusedValue(\.isMainWindow) private var isMainWindow
 
@@ -164,28 +165,33 @@ struct MailCommands: Commands {
         }
         CommandMenu("Format") {
             Group {
-                Button("Bold", systemImage: "bold") { compose?.editor?.toggleBold() }
+                Button("Bold", systemImage: "bold") { formattingEditor?.toggleBold() }
                     .labelStyle(.titleAndIcon)
                     .keyboardShortcut("b")
-                Button("Italic", systemImage: "italic") { compose?.editor?.toggleItalic() }
+                Button("Italic", systemImage: "italic") { formattingEditor?.toggleItalic() }
                     .labelStyle(.titleAndIcon)
                     .keyboardShortcut("i")
-                Button("Underline", systemImage: "underline") { compose?.editor?.toggleUnderline() }
+                Button("Underline", systemImage: "underline") { formattingEditor?.toggleUnderline() }
                     .labelStyle(.titleAndIcon)
                     .keyboardShortcut("u")
                 Divider()
-                Button("Bulleted List", systemImage: "list.bullet") { compose?.editor?.toggleList(.bulleted) }
+                Button("Bulleted List", systemImage: "list.bullet") { formattingEditor?.toggleList(.bulleted) }
                     .labelStyle(.titleAndIcon)
-                Button("Numbered List", systemImage: "list.number") { compose?.editor?.toggleList(.numbered) }
+                Button("Numbered List", systemImage: "list.number") { formattingEditor?.toggleList(.numbered) }
                     .labelStyle(.titleAndIcon)
                 Divider()
-                Button(compose?.format.link == true ? "Edit Link…" : "Add Link…", systemImage: "link") { compose?.isEditingLink = true }
+                Button((settingsEditor?.format.link ?? compose?.format.link) == true ? "Edit Link…" : "Add Link…", systemImage: "link") {
+                    if let settingsEditor { settingsEditor.editLink() }
+                    else { compose?.isEditingLink = true }
+                }
                     .labelStyle(.titleAndIcon)
                     .keyboardShortcut("k")
             }
-            .disabled(!(compose?.canFormat ?? false))
+            .disabled(settingsEditor == nil && !(compose?.canFormat ?? false))
         }
     }
+
+    private var formattingEditor: (any RichTextEditing)? { settingsEditor?.editor ?? compose?.editor }
 
     /// A compose window is in front and its draft takes edits.
     private var canEdit: Bool {
