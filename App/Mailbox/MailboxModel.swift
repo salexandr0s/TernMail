@@ -208,7 +208,7 @@ final class MailboxModel {
         switch selectedMailbox {
         case .account(id, _)?:
             selectedMailbox = .account(defaultAccount.account.id, SystemLabel.inbox)
-        case .combined(let box)? where !hasSeveralAccounts:
+        case .combined(let box)? where !hasSeveralAccounts && box != AttachmentLibraryModel.mailboxID:
             selectedMailbox = .account(defaultAccount.account.id, box)
         default:
             selectedThreadIDs = selectedThreadIDs.filter { $0.accountID != id }
@@ -812,6 +812,7 @@ final class MailboxModel {
     /// Leaves a label that's gone for its account's Inbox.
     private func labelsChanged() {
         guard !isStopped, case .account(let accountID, let id)? = selectedMailbox, id != Self.outboxID,
+              id != AttachmentLibraryModel.mailboxID,
               !SystemMailbox.all.contains(where: { $0.id == id }),
               let owner = account(id: accountID), !owner.labels.contains(where: { $0.id == id })
         else { return }

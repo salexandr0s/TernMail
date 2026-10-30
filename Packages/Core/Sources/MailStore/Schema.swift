@@ -367,6 +367,7 @@ enum Schema {
                 t.add(column: "calendarPart", .text)
             }
         }
+        AttachmentLibrarySchema.register(in: &migrator)
         return migrator
     }
 

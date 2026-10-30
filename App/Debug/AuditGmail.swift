@@ -17,6 +17,7 @@ actor AuditGmail: GmailService {
         var from = "River <river@example.invalid>"
         /// The name of a small text file the message carries.
         var attachment: String?
+        var ageDays: Int?
     }
 
     private struct UserLabel {
@@ -69,6 +70,17 @@ actor AuditGmail: GmailService {
                 Message(id: "list6", thread: "list5", subject: "A quick update", text: "Everything is ready for tomorrow.", html: false, labels: ["INBOX"], from: "Casey <casey@example.invalid>"),
             ]
         }
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit-attachments") {
+            mail += (0..<125).map { index in
+                Message(id: "attachment-\(index)", thread: "attachment-thread-\(index)",
+                    subject: index == 124 ? "Your October 2024 invoice" : "Project documents \(index + 1)",
+                    text: "Synthetic email for attachment-library verification. The attached document is test data.",
+                    html: false, labels: index == 124 ? ["Label_1"] : ["INBOX"],
+                    from: index == 124 ? "Mira Chen <billing@example.invalid>" : "Rowan Ellis <rowan@example.invalid>",
+                    attachment: index == 124 ? "Invoice-2024-1042.pdf" : "Project-notes-\(index + 1).txt",
+                    ageDays: index == 124 ? 730 : index)
+            }
+        }
     }
 
     private static let secondMail: [Message] = [
@@ -109,6 +121,14 @@ actor AuditGmail: GmailService {
     func listMessages(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) throws -> MessageListPage {
         let selected = mail.filter { message in
             labelIDs.allSatisfy(message.labels.contains) && (includeSpamTrash || message.labels.isDisjoint(with: ["TRASH", "SPAM"]))
+                && (query != "has:attachment" || message.attachment != nil)
+        }
+        if query == "has:attachment" {
+            let offset = Int(pageToken ?? "0") ?? 0
+            let page = selected.dropFirst(offset).prefix(maxResults)
+            var json: [String: Any] = ["messages": page.map { ["id": $0.id, "threadId": $0.thread] }]
+            if offset + page.count < selected.count { json["nextPageToken"] = String(offset + page.count) }
+            return try decode(json)
         }
         return try decode(["messages": selected.map { ["id": $0.id, "threadId": $0.thread] }])
     }
@@ -155,7 +175,8 @@ actor AuditGmail: GmailService {
 
     func attachment(messageID: String, attachmentID: String) throws -> Data {
         guard mail.contains(where: { $0.id == messageID && $0.attachment != nil }) else { throw GmailError.notFound }
-        return Self.attachmentData
+        let filename = mail.first { $0.id == messageID }?.attachment ?? ""
+        return filename.hasSuffix(".pdf") ? AttachmentAuditFixtures.invoicePDF : Self.attachmentData
     }
 
     func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
@@ -280,7 +301,7 @@ actor AuditGmail: GmailService {
 
     private func messageJSON(_ message: Message) -> [String: Any] {
         let index = mail.firstIndex { $0.id == message.id } ?? 0
-        let ageHours = message.id == "m2" ? 3 : Double(index)
+        let ageHours = message.ageDays.map { Double($0 * 24) } ?? (message.id == "m2" ? 3 : Double(index))
         return ["id": message.id, "threadId": message.thread, "labelIds": Array(message.labels),
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
                 "snippet": message.id.hasPrefix("list") ? message.text : "Synthetic mail for the UI audit", "payload": payload(message)]
@@ -291,9 +312,9 @@ actor AuditGmail: GmailService {
         let text: [String: Any] = ["mimeType": message.html ? "text/html" : "text/plain", "body": ["data": Data(message.text.utf8).base64EncodedString()]]
         guard let name = message.attachment else { return text.merging(["headers": headers]) { $1 } }
         let file: [String: Any] = [
-            "partId": "1", "mimeType": "text/plain", "filename": name,
+            "partId": "1", "mimeType": name.hasSuffix(".pdf") ? "application/pdf" : "text/plain", "filename": name,
             "headers": [["name": "Content-Disposition", "value": "attachment; filename=\"\(name)\""]],
-            "body": ["attachmentId": "a-\(message.id)", "size": Self.attachmentData.count],
+            "body": ["attachmentId": "a-\(message.id)", "size": name.hasSuffix(".pdf") ? AttachmentAuditFixtures.invoicePDF.count : Self.attachmentData.count],
         ]
         return ["mimeType": "multipart/mixed", "headers": headers, "parts": [text.merging(["partId": "0"]) { $1 }, file]]
     }

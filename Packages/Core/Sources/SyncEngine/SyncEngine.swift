@@ -69,12 +69,15 @@ public actor SyncEngine {
     let sleep: @Sendable (Duration) async throws -> Void
     let undoHold: TimeInterval
     let sendsAutomatically: Bool
+    let indexesAttachmentsAutomatically: Bool
 
     /// The running pass. It clears itself, so a caller that resumes after it
     /// ends never joins a finished pass.
     private var pass: Task<Bool, any Error>?
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
+    var attachmentIndexTask: Task<Void, Never>?
+    var attachmentIndexPass: Task<AttachmentIndexState, any Error>?
     /// Runs the passes `requestSync()` asks for, then clears itself.
     private(set) var requestedPasses: Task<Void, Never>?
     /// Set by `requestSync()`, cleared as a requested pass starts.
@@ -132,6 +135,7 @@ public actor SyncEngine {
         cache: MailCache,
         undoHold: TimeInterval = 2,
         sendsAutomatically: Bool = true,
+        indexesAttachmentsAutomatically: Bool = false,
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
@@ -146,6 +150,7 @@ public actor SyncEngine {
         self.cache = cache
         self.undoHold = undoHold
         self.sendsAutomatically = sendsAutomatically
+        self.indexesAttachmentsAutomatically = indexesAttachmentsAutomatically
         self.sleep = sleep
         self.now = now
         (events, continuation) = AsyncStream.makeStream(of: SyncEvent.self, bufferingPolicy: .bufferingNewest(16))
@@ -185,6 +190,7 @@ public actor SyncEngine {
                 if self == nil { return }
             }
         }
+        if indexesAttachmentsAutomatically { startAttachmentIndexing() }
     }
 
     /// Errors wait for the next run, since the window has no status for
@@ -207,9 +213,12 @@ public actor SyncEngine {
         isStopped = true
         pollTask?.cancel()
         pollTask = nil
-        let background = [peopleTask, requestedPasses].compactMap { $0 }
+        let background = [peopleTask, requestedPasses, attachmentIndexTask].compactMap { $0 }
         peopleTask = nil
+        attachmentIndexTask = nil
         background.forEach { $0.cancel() }
+        let attachmentPass = attachmentIndexPass
+        attachmentPass?.cancel()
         let contacts = contactSyncTask
         contacts?.cancel()
         let drains = Array(drainTasks.values)
@@ -221,6 +230,7 @@ public actor SyncEngine {
         for task in background { await task.value }
         _ = try? await contacts?.value
         _ = try? await running?.value
+        _ = try? await attachmentPass?.value
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
         }

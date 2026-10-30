@@ -55,6 +55,7 @@ public struct CacheTransaction {
         "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
         "contactEmail", "contact", "contactSync", "invitationReply",
+        "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
     ]
 
     // MARK: Labels
@@ -94,6 +95,7 @@ public struct CacheTransaction {
                 threads.insert(stored.threadID)
             }
             try record.upsert(db)
+            try updateLibraryMetadata(record, labelIDs: update.labelIDs)
             try db.execute(
                 sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ?",
                 arguments: [record.accountID, record.id]
@@ -115,6 +117,7 @@ public struct CacheTransaction {
     public func applyLabelChange(
         messageID: String, added: [String], removed: [String], historyID: Int64, accountID: String
     ) throws -> String? {
+        try applyLibraryLabelChange(messageID: messageID, added: added, removed: removed, historyID: historyID, accountID: accountID)
         guard var message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
             return nil
         }

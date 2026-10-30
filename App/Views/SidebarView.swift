@@ -11,6 +11,10 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $mailbox.selectedMailbox) {
+            Section("Library") {
+                Label("Attachments", systemImage: "paperclip")
+                    .tag(MailboxID.combined(AttachmentLibraryModel.mailboxID))
+            }
             if mailbox.hasSeveralAccounts {
                 let colors = accountColors
                 let names = AccountAppearance.shortNames(mailbox.accounts.map(\.account))

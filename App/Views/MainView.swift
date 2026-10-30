@@ -61,10 +61,10 @@ struct MainView: View {
             }
         }
         .background {
-            ShortcutMonitor(isEnabled: usesSingleKeys, perform: perform)
+            ShortcutMonitor(isEnabled: usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
         }
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
-        .focusedSceneValue(\.mailboxModel, mailbox)
+        .focusedSceneValue(\.mailboxModel, mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID ? mailbox : nil)
         .onAppear { mailbox.undoManager = undoManager }
         .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
@@ -97,6 +97,7 @@ struct MainView: View {
             mailbox.draftToReopen = nil
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
+        .modifier(AttachmentLibraryPresentation(mailbox: mailbox))
     }
 
     private var mailContent: some View {
@@ -136,18 +137,24 @@ struct MainView: View {
                 max: showsAssistant ? AssistantSidebarLayout.listMinimum : nil
             )
             .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button(action: newMessage) {
-                        Label("New Message", systemImage: "square.and.pencil")
+                if mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
+                    ToolbarItem(placement: .navigation) {
+                        Button(action: newMessage) {
+                            Label("New Message", systemImage: "square.and.pencil")
+                        }
+                        .help("New Message")
                     }
-                    .help("New Message")
                 }
             }
         } detail: {
             DetailView(mailbox: mailbox)
                 .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
                 .background(Tokens.Surface.canvas)
-                .toolbar { MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow) }
+                .toolbar {
+                    if mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
+                        MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow)
+                    }
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .overlay(alignment: .bottomTrailing) {

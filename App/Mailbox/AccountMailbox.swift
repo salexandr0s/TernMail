@@ -63,7 +63,9 @@ final class AccountMailbox {
             gmail: gmail,
             people: people,
             accounts: snoozeStore,
-            cache: cache
+            cache: cache,
+            indexesAttachmentsAutomatically: !ProcessInfo.processInfo.arguments.contains("--ui-audit")
+                || ProcessInfo.processInfo.arguments.contains("--ui-audit-attachments")
         )
         self.engine = engine
         snoozeKeeper = snoozeStore.map { SnoozeKeeper(engine: engine, accounts: $0) }

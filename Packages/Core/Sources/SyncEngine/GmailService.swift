@@ -35,6 +35,10 @@ public protocol GmailService: Sendable {
         metadataHeaders: [String]
     ) async throws -> [String: Result<GmailThread, GmailError>]
     func attachment(messageID: String, attachmentID: String) async throws -> Data
+    /// MIME structure and file metadata, without file contents.
+    func attachmentMetadata(ids: [String]) async throws -> [String: Result<GmailMessage, GmailError>]
+    /// A small history page reserved for the persistent attachment index.
+    func attachmentHistory(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
     func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError]
     func trashThreads(ids: [String]) async throws -> [String: GmailError]
