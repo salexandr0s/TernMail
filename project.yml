@@ -64,6 +64,8 @@ targets:
         product: SyncEngine
       - package: Core
         product: TernAI
+      - package: Core
+        product: IMAPIdle
       - package: AppAuth
         product: AppAuth
   TernTests:

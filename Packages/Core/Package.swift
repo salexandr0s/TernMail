@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "MessageContent", targets: ["MessageContent"]),
         .library(name: "SyncEngine", targets: ["SyncEngine"]),
         .library(name: "TernAI", targets: ["TernAI"]),
+        .library(name: "IMAPIdle", targets: ["IMAPIdle"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.11.1"),

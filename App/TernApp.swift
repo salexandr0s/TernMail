@@ -84,12 +84,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let unsent = await model.sendingDraftIDs().count
             if unsent > 0 {
-                sender.reply(toApplicationShouldTerminate: Self.confirmQuit(unsent: unsent))
+                let shouldQuit = Self.confirmQuit(unsent: unsent)
+                if !shouldQuit { await model.cancelQuit() }
+                sender.reply(toApplicationShouldTerminate: shouldQuit)
                 return
             }
             // Nothing waits any more, so Gmail refused what didn't go out.
             let refused = await model.refusedDraftCount(among: waiting)
-            sender.reply(toApplicationShouldTerminate: refused == 0 || Self.confirmQuit(refused: refused))
+            let shouldQuit = refused == 0 || Self.confirmQuit(refused: refused)
+            if !shouldQuit { await model.cancelQuit() }
+            sender.reply(toApplicationShouldTerminate: shouldQuit)
         }
         return .terminateLater
     }

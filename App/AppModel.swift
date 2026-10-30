@@ -1,5 +1,6 @@
 import Foundation
 import GmailAPI
+import IMAPIdle
 import MailStore
 import Observation
 
@@ -80,6 +81,63 @@ final class AppModel {
     private var accounts: AccountStore?
     /// Each signed-in account's tokens, by account ID.
     private var sessions: [String: AccountSession] = [:]
+    @ObservationIgnored private var inboxWatchers: [String: InboxWatcher] = [:]
+    @ObservationIgnored private var inboxUpdatesAreStopped = false
+    @ObservationIgnored private var inboxReconciliationRevision = 0
+
+    var settingsAccountStore: AccountStore? { accounts }
+
+    func settingsClient(for accountID: String) -> GmailClient? {
+        guard mailbox?.account(id: accountID) != nil,
+              let session = sessions[accountID], session.isSignedIn,
+              !accountsNeedingSignIn.contains(accountID) else { return nil }
+        return GmailClient(tokens: session)
+    }
+
+    func inboxWatcher(for accountID: String) -> InboxWatcher? { inboxWatchers[accountID] }
+
+    /// Read current configuration after each authorization or feature change.
+    /// A mailbox's initial AccountRecord may predate that change.
+    private func refreshInboxUpdates() async {
+        guard let accounts, !inboxUpdatesAreStopped else { return }
+        inboxReconciliationRevision += 1
+        let revision = inboxReconciliationRevision
+        let records: [AccountRecord]
+        do { records = try await accounts.accounts() }
+        catch { return }
+        guard !inboxUpdatesAreStopped, revision == inboxReconciliationRevision else { return }
+        let eligible = records.filter { account in
+            account.enabledFeatures.contains(AccountFeature.inboxUpdates.rawValue)
+                && GoogleScopes.isCovered(.inboxUpdates, by: account.grantedScopes)
+                && sessions[account.id]?.isSignedIn == true
+                && !accountsNeedingSignIn.contains(account.id)
+                && mailbox?.account(id: account.id) != nil
+        }
+        let ids = Set(eligible.map(\.id))
+        for id in Array(inboxWatchers.keys) where !ids.contains(id) {
+            await inboxWatchers.removeValue(forKey: id)?.stop()
+        }
+        for record in eligible {
+            guard !inboxUpdatesAreStopped, revision == inboxReconciliationRevision else { return }
+            guard inboxWatchers[record.id] == nil,
+                  let session = sessions[record.id], session.isSignedIn,
+                  !accountsNeedingSignIn.contains(record.id),
+                  let owner = mailbox?.account(id: record.id) else { continue }
+            let engine = owner.engine
+            let watcher = InboxWatcher(monitor: InboxMonitor(address: record.email, tokens: session)) {
+                await engine.requestSync()
+            }
+            inboxWatchers[record.id] = watcher
+            watcher.start()
+        }
+    }
+
+    private func stopInboxUpdates() async {
+        inboxReconciliationRevision += 1
+        let watchers = Array(inboxWatchers.values)
+        inboxWatchers = [:]
+        for watcher in watchers { await watcher.stop() }
+    }
     /// Copies of the files attached to drafts, kept until the draft is sent or discarded.
     private var outgoingDirectory: URL?
     /// Mailboxes still stopping, so data is deleted only after they finish.
@@ -268,6 +326,9 @@ final class AppModel {
                     phase = .signedIn(mailbox.account)
                 }
             }
+            // A new grant may restore an expired token or remove IMAP access.
+            await inboxWatchers.removeValue(forKey: account.id)?.stop()
+            await refreshInboxUpdates()
         } catch {
             reportSignInError(error.localizedDescription)
         }
@@ -342,6 +403,8 @@ final class AppModel {
                 account.enabledFeatures = AccountFeature.names(of: wanted.filter { GoogleScopes.isCovered($0, by: granted) })
             }
             await calendarModel?.refresh()
+            await inboxWatchers.removeValue(forKey: accountID)?.stop()
+            await refreshInboxUpdates()
             return user.grant
         })
     }
@@ -358,6 +421,7 @@ final class AppModel {
             if feature == .contacts {
                 try await cache.write { tx in try tx.deleteContacts(accountID: accountID) }
             }
+            await refreshInboxUpdates()
             if feature == .calendar {
                 await calendarModel?.removeAccount(accountID)
             } else if feature == .calendarManagement || feature == .calendarSharing {
@@ -451,6 +515,7 @@ final class AppModel {
         signInError = nil
         assistantModel?.setAccountEnabled(accountID, enabled: false)
         AccountProfileImages.shared.remove(accountID: accountID)
+        await inboxWatchers.removeValue(forKey: accountID)?.stop()
         await mailbox.removeAccount(id: accountID)
         let session = sessions.removeValue(forKey: accountID)
         accountsNeedingSignIn.remove(accountID)
@@ -509,6 +574,12 @@ final class AppModel {
     /// With several accounts only this one's section asks for sign-in.
     private func sessionExpired(_ accountID: String) {
         guard let mailbox, mailbox.account(id: accountID) != nil else { return }
+        inboxReconciliationRevision += 1
+        let watcher = inboxWatchers.removeValue(forKey: accountID)
+        Task { [weak self] in
+            await watcher?.stop()
+            await self?.refreshInboxUpdates()
+        }
         if mailbox.hasSeveralAccounts {
             accountsNeedingSignIn.insert(accountID)
         } else if case .signedIn(let account) = phase {
@@ -522,10 +593,20 @@ final class AppModel {
 
     /// Stores what open compose windows show, so quitting loses no typing.
     func prepareToQuit() async {
+        inboxUpdatesAreStopped = true
+        await stopInboxUpdates()
         assistantModel?.stop()
         assistantModel?.connection.cancelSignIn()
         await calendarModel?.stop()
         await mailbox?.prepareToQuit()
+    }
+
+    /// A user can keep Tern open after its final send attempt fails.
+    func cancelQuit() async {
+        inboxUpdatesAreStopped = false
+        await refreshInboxUpdates()
+        await calendarModel?.start()
+        assistantModel?.refreshAccess()
     }
 
     /// Drafts whose send waits out its undo delay or a retry, which quitting
@@ -589,11 +670,13 @@ final class AppModel {
         if mailbox.hasSeveralAccounts { mailbox.selectedMailbox = .combined(SystemLabel.inbox) }
         self.mailbox = mailbox
         phase = .signedIn(first)
+        await refreshInboxUpdates()
         Task { await mailbox.start() }
     }
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        await stopInboxUpdates()
         assistantNavigationTask?.cancel()
         assistantModel?.newChat()
         if let mailbox {

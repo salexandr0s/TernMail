@@ -46,6 +46,7 @@ public actor InboxMonitor {
     /// finishes after `stop()`, and throws a `Failure`, or the token
     /// provider's error, when watching can't go on.
     public func signals() -> AsyncThrowingStream<Void, any Error> {
+        let previous = watching
         stop()
         generation += 1
         let current = generation
@@ -53,13 +54,22 @@ public actor InboxMonitor {
         output.onTermination = { [weak self] _ in
             Task { await self?.streamEnded(current) }
         }
-        watching = Task { await self.watch(output) }
+        watching = Task {
+            // The old connection's defer clears input and backoff handles.
+            // Finish that teardown before a replacement installs its own.
+            await previous?.value
+            guard !Task.isCancelled, generation == current else {
+                output.finish()
+                return
+            }
+            await self.watch(output)
+        }
         return stream
     }
 
     public func stop() {
         watching?.cancel()
-        watching = nil
+        // Retain the canceled task so a later signals() can join teardown.
         backoffWait?.cancel()
     }
 

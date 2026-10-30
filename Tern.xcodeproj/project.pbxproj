@@ -15,9 +15,11 @@
 		0804BB24C1D8EE0EADDB9FF2 /* GoogleAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */; };
 		08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */; };
 		0A05B210B67A37E8DD8DC160 /* RichTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0C93981EA52DD5F7C918F3 /* RichTextEditor.swift */; };
+		0A38484F563B6ABD963D49CB /* InboxWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEEDA2C1D8D5723FFFB3569E /* InboxWatcher.swift */; };
 		0AF84405D50B690F0DEB7FB3 /* AssistantMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97DB9A716EFCE83460CACB71 /* AssistantMarkdownView.swift */; };
 		0EE88B91D3FD3CCA88C0B795 /* CalendarModel+Editing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E5796C3F49CF5D40413EB7 /* CalendarModel+Editing.swift */; };
 		1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B124379B5808528D2CE7BC /* SettingsView.swift */; };
+		138BF9A1E3C38250DB455AAF /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
 		13C61620FC78DF39AB175B88 /* AIKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EFA2021825E119521E4EBA5 /* AIKeychainStore.swift */; };
 		1414E892B3205CC6D6AC8224 /* CalendarNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3252143356B0A34447719E42 /* CalendarNotifications.swift */; };
 		1A801654E5A0E3D8AE2C52E1 /* CalendarManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E29A0B0B690F25D229A8C9B8 /* CalendarManagementView.swift */; };
@@ -35,6 +37,7 @@
 		249BBF2CE5BC834FA0BEF0AA /* ThreadSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3880AFFD0559D125D19C4525 /* ThreadSummaryView.swift */; };
 		249DEAD419414F93A921A3C3 /* CalendarEditorValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA54F34BBE40D26DEE4E7C69 /* CalendarEditorValues.swift */; };
 		24C9C29A67F8FB4020633EC8 /* MailAssistantToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC3DAA8F0AAD4C00E019B484 /* MailAssistantToolsTests.swift */; };
+		29CA8194A885564D66501125 /* InboxWatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */; };
 		2C5D3D7718C073EF6FC3B4EB /* TernAI in Frameworks */ = {isa = PBXBuildFile; productRef = A98EAE975A66BB4128C1753A /* TernAI */; };
 		2D2B4D505F78857DA9E10C7A /* AttachmentLibraryFilters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDFDBB329E0F39EBCDA9FE2 /* AttachmentLibraryFilters.swift */; };
 		2E41BE8DEC34702C71C79DCC /* ChatGPTConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58168BBE9F19A18A62CE8E1 /* ChatGPTConnectionTests.swift */; };
@@ -126,7 +129,7 @@
 		C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */; };
 		C81104E181F04A6859292A0B /* AttachmentFileExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B59943CD76D18A7714F5AB8E /* AttachmentFileExport.swift */; };
 		C87E44DAF2E8A974EAAD2D78 /* ChatGPTConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3159E9F9C7778DBB772A909A /* ChatGPTConnection.swift */; };
-		C9F93EC0F459BA6B59F18FDB /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
+		C9F93EC0F459BA6B59F18FDB /* IMAPIdle in Frameworks */ = {isa = PBXBuildFile; productRef = B377FC7FA97187E953734A13 /* IMAPIdle */; };
 		CE5838DB32E85E4BC42F3C83 /* ThreadListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 313612542F6E2902BDDD3B95 /* ThreadListView.swift */; };
 		CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298461CDC5883F34E395CE4F /* AuditGmail.swift */; };
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
@@ -272,6 +275,7 @@
 		C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxModelTests.swift; sourceTree = "<group>"; };
 		C3C3D66F81396CF7D41A4F18 /* AssistantSummaryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSummaryService.swift; sourceTree = "<group>"; };
 		C3FD5B3BF5EE8A73A8F5F011 /* AttachmentLibraryCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibraryCollection.swift; sourceTree = "<group>"; };
+		C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWatcherTests.swift; sourceTree = "<group>"; };
 		C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModelTests.swift; sourceTree = "<group>"; };
 		C6B1962F97D1AE340138E9E8 /* Tern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tern.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7933280D38A1A0D09A09D81 /* AssistantLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantLauncher.swift; sourceTree = "<group>"; };
@@ -300,6 +304,7 @@
 		EBB8E313E484591248110FD3 /* AssistantCalendarActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCalendarActionsView.swift; sourceTree = "<group>"; };
 		EBC065B40FE60E04F167878A /* AccountProfileImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileImages.swift; sourceTree = "<group>"; };
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
+		EEEDA2C1D8D5723FFFB3569E /* InboxWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWatcher.swift; sourceTree = "<group>"; };
 		F07C7F388D831253FD5749C5 /* NoticeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeView.swift; sourceTree = "<group>"; };
 		F0EB3C8158C8A6AFF45439BC /* TernApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TernApp.swift; sourceTree = "<group>"; };
 		F164596E243171F4DF5361CD /* SplitDividerHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitDividerHandle.swift; sourceTree = "<group>"; };
@@ -329,7 +334,8 @@
 				44C15A8C7042454C99FD8246 /* MessageContent in Frameworks */,
 				FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */,
 				2C5D3D7718C073EF6FC3B4EB /* TernAI in Frameworks */,
-				C9F93EC0F459BA6B59F18FDB /* AppAuth in Frameworks */,
+				C9F93EC0F459BA6B59F18FDB /* IMAPIdle in Frameworks */,
+				138BF9A1E3C38250DB455AAF /* AppAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -461,6 +467,7 @@
 				E58168BBE9F19A18A62CE8E1 /* ChatGPTConnectionTests.swift */,
 				C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */,
 				3B1C246205C901405B0F5BFC /* EmailCalendarTests.swift */,
+				C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */,
 				A9EEDB8790E068A6F2E388A7 /* LabelAppearanceTests.swift */,
 				4CBCB6C2893A66D630A93636 /* LabelNodeTests.swift */,
 				07898683B01BE7A2DBB2E477 /* LabelSelectionTests.swift */,
@@ -490,6 +497,7 @@
 			isa = PBXGroup;
 			children = (
 				31521AC242C20212C9EB1C94 /* AccountMailbox.swift */,
+				EEEDA2C1D8D5723FFFB3569E /* InboxWatcher.swift */,
 				5E9ECAA922136B06A807EEDB /* MailboxModel.swift */,
 				F280CA7E16FF57B883537DF5 /* MailboxModel+Labels.swift */,
 				1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */,
@@ -668,6 +676,7 @@
 				1D2F537B3CC39297117479CF /* MessageContent */,
 				83A833DCF26A2C49025C1785 /* SyncEngine */,
 				A98EAE975A66BB4128C1753A /* TernAI */,
+				B377FC7FA97187E953734A13 /* IMAPIdle */,
 				B58851480C2185F8DD3A87A4 /* AppAuth */,
 			);
 			productName = Tern;
@@ -746,6 +755,7 @@
 				2E41BE8DEC34702C71C79DCC /* ChatGPTConnectionTests.swift in Sources */,
 				38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */,
 				764CF8F05D3F2EE8619C9AEA /* EmailCalendarTests.swift in Sources */,
+				29CA8194A885564D66501125 /* InboxWatcherTests.swift in Sources */,
 				92B0E8BF0444B82243348870 /* LabelAppearanceTests.swift in Sources */,
 				AB23A5C1FBDAB6AA9E34EBB0 /* LabelNodeTests.swift in Sources */,
 				C0D7959AB5FBA76225CF3B65 /* LabelSelectionTests.swift in Sources */,
@@ -837,6 +847,7 @@
 				3F23C3555CE584681643645C /* EmailCalendarPresentation.swift in Sources */,
 				967922D7F6060CDF43D34828 /* EmailCalendarSuggestionsView.swift in Sources */,
 				0804BB24C1D8EE0EADDB9FF2 /* GoogleAuth.swift in Sources */,
+				0A38484F563B6ABD963D49CB /* InboxWatcher.swift in Sources */,
 				D5939A9A28A12206E59092AD /* KeyboardShortcutsView.swift in Sources */,
 				07073AF8859012972375BDA0 /* KeychainStore.swift in Sources */,
 				D7A2EB76C8ECDD984AF53BEC /* LabelAppearance.swift in Sources */,
@@ -1157,6 +1168,10 @@
 		A98EAE975A66BB4128C1753A /* TernAI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TernAI;
+		};
+		B377FC7FA97187E953734A13 /* IMAPIdle */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = IMAPIdle;
 		};
 		B58851480C2185F8DD3A87A4 /* AppAuth */ = {
 			isa = XCSwiftPackageProductDependency;
