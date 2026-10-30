@@ -11,6 +11,7 @@ struct RecipientField: NSViewRepresentable {
     @Binding var requestsFocus: Bool
     var isEditable: Bool
     var onFocusChange: @MainActor (Bool) -> Void = { _ in }
+    var directorySuggestions: @MainActor (String) async -> [EmailAddress] = { _ in [] }
     let suggestions: @MainActor (String) async -> [EmailAddress]
 
     func makeCoordinator() -> Coordinator {
@@ -125,6 +126,7 @@ struct RecipientField: NSViewRepresentable {
         /// are left out of its completion string, since a comma ends a token.
         private var completions: [String: EmailAddress] = [:]
         private var loadTask: Task<Void, Never>?
+        private var queryGeneration = 0
         /// Never on screen or edited, so SwiftUI can measure it at any time.
         private let sizingField = RecipientField.makeField()
         private var sizedAddresses: [EmailAddress]?
@@ -190,23 +192,48 @@ struct RecipientField: NSViewRepresentable {
             indexOfSelectedItem selectedIndex: UnsafeMutablePointer<Int>?
         ) -> [Any]? {
             let query = substring.trimmingCharacters(in: .whitespaces).lowercased()
-            guard !query.isEmpty else { return [] }
+            guard !query.isEmpty else {
+                loadTask?.cancel()
+                queryGeneration += 1
+                loadedQuery = nil
+                loaded = []
+                completions = [:]
+                return []
+            }
             if query == loadedQuery {
                 // Return picks the first match for a name, but never replaces an address being typed.
                 selectedIndex?.pointee = query.contains("@") || loaded.isEmpty ? -1 : 0
                 return loaded.map(completionString)
             }
             loadTask?.cancel()
+            // A return to the previous text must start a new request rather
+            // than reuse its rows while a different query is still in flight.
+            loadedQuery = nil
+            loaded = []
+            completions = [:]
+            queryGeneration += 1
+            let generation = queryGeneration
             let suggestions = parent.suggestions
+            let directory = parent.directorySuggestions
             loadTask = Task { [weak self, weak tokenField] in
                 let results = await suggestions(query)
-                guard let self, !Task.isCancelled else { return }
+                guard let self, !Task.isCancelled, queryGeneration == generation else { return }
                 loadedQuery = query
                 loaded = results
+                completions = [:]
                 // Asks again for completions, which now come from `loaded`.
                 if !results.isEmpty, let editor = tokenField?.currentEditor() as? NSTextView {
                     editor.complete(nil)
                 }
+                guard query.count >= 2 else { return }
+                do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+                let remote = await directory(query)
+                guard !Task.isCancelled, queryGeneration == generation else { return }
+                var seen = Set(loaded.map(\.normalized))
+                let additions = remote.filter { seen.insert($0.normalized).inserted }
+                guard !additions.isEmpty else { return }
+                loaded += additions
+                if let editor = tokenField?.currentEditor() as? NSTextView { editor.complete(nil) }
             }
             return []
         }

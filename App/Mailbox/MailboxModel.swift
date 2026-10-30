@@ -56,6 +56,7 @@ final class MailboxModel {
     let downloadsDirectory: URL
     @ObservationIgnored private let outgoingDirectory: URL
     @ObservationIgnored private let snoozeStore: AccountStore?
+    var accountStore: AccountStore? { snoozeStore }
     @ObservationIgnored private var isStarted = false
     /// While the search field has text, the list shows its results.
     let search: SearchModel

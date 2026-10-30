@@ -4,6 +4,7 @@ import SwiftUI
 /// Uses a rendered image so the native menu and its selected value share the avatar.
 struct SenderAccountLabel: View {
     let account: AccountRecord
+    var address: String?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -11,7 +12,7 @@ struct SenderAccountLabel: View {
 
     var body: some View {
         Label {
-            Text(account.email)
+            Text(address ?? account.email)
                 .lineLimit(1)
                 .truncationMode(.middle)
         } icon: {

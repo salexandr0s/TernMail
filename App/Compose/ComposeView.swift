@@ -146,6 +146,9 @@ struct ComposeView: View {
                     model.removeAttachment($0)
                 }
             }
+            if let signature = model.content.signatureHTML, !signature.isEmpty {
+                ComposeSignatureView(html: signature)
+            }
             if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
                 quotedText(quote)
             }
@@ -221,68 +224,56 @@ struct ComposeView: View {
         .ternAnimation(value: focusedRecipient)
     }
 
-    /// A new message can move to another account. A reply or a Gmail draft
-    /// stays in the account of its thread.
-    @ViewBuilder private var fromField: some View {
-        if model.canChangeAccount {
-            Menu {
-                Picker("From", selection: Binding(get: { model.draft?.accountID ?? "" }, set: { model.move(to: $0) })) {
-                    ForEach(model.accountChoices, id: \.id) { account in
-                        SenderAccountLabel(account: account).tag(account.id)
+    /// Replies keep their account while allowing any of its verified From addresses.
+    private var fromField: some View {
+        Menu {
+            ForEach(model.accountChoices, id: \.id) { account in
+                let choices = model.senderChoices.filter { $0.account.id == account.id }
+                if !choices.isEmpty {
+                    Section(account.displayName ?? account.email) {
+                        ForEach(choices) { sender in
+                            Button { model.selectSender(sender) } label: {
+                                HStack {
+                                    SenderAccountLabel(account: account, address: sender.label)
+                                    if sender.id == model.selectedSender?.id { Image(systemName: "checkmark") }
+                                }
+                            }
+                        }
                     }
                 }
-                .pickerStyle(.inline)
-            } label: {
-                fromLabel
-                    .padding(.horizontal, Tokens.Space.s2)
-                    .padding(.vertical, Tokens.Space.s1_5)
-                    .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton)
-                    .contentShape(Rectangle())
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .controlSize(.regular)
-            .focused($focus, equals: .from)
-            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            .overlay { fieldOutline(isFocused: focus == .from) }
-            .help(model.fromEmail)
-            .accessibilityLabel("From")
-            .accessibilityValue(model.fromEmail)
-        } else {
-            fromLabel
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.vertical, Tokens.Space.s1_5)
-                .frame(minHeight: Tokens.Control.iconButton)
-                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay { fieldOutline(isFocused: false) }
-                .help("Replies and Gmail drafts stay with their original account.")
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("From \(model.fromEmail)")
-        }
-    }
-
-    private var fromLabel: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-            fieldLabel("From:")
-            Group {
-                if let account = model.accountChoices.first(where: { $0.id == model.draft?.accountID }) {
-                    SenderAccountLabel(account: account)
-                } else {
-                    Text(model.fromEmail)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                fieldLabel("From:")
+                if let sender = model.selectedSender {
+                    SenderAccountLabel(account: sender.account, address: sender.label)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                } else {
+                    Text(model.fromEmail).lineLimit(1).truncationMode(.middle)
                 }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
             .font(.body)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: Tokens.Popover.width, alignment: .leading)
-            Spacer(minLength: 0)
-            Image(systemName: model.canChangeAccount ? "chevron.up.chevron.down" : "lock")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+            .padding(.horizontal, Tokens.Space.s2)
+            .padding(.vertical, Tokens.Space.s1_5)
+            .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton)
+            .contentShape(Rectangle())
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .controlSize(.regular)
+        .focused($focus, equals: .from)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .overlay { fieldOutline(isFocused: focus == .from) }
+        .help(model.canChangeAccount ? "Choose a sending address." : "Choose a sending address from this conversation’s account.")
+        .accessibilityLabel("From")
+        .accessibilityValue(model.fromEmail)
     }
 
     private func fieldRow<Content: View>(
@@ -356,7 +347,8 @@ struct ComposeView: View {
                 } else if focusedRecipient == field {
                     focusedRecipient = nil
                 }
-            }
+            },
+            directorySuggestions: { [model] text in await model.directorySuggestions(for: text) }
         ) { [model] text in
             await model.suggestions(for: text)
         }
@@ -472,48 +464,9 @@ struct ComposeView: View {
     }
 
     private var formattingBar: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            ControlGroup {
-                formatToggle("Bold", systemImage: "bold", isOn: model.format.bold) { $0.toggleBold() }
-                formatToggle("Italic", systemImage: "italic", isOn: model.format.italic) { $0.toggleItalic() }
-                formatToggle("Underline", systemImage: "underline", isOn: model.format.underline) { $0.toggleUnderline() }
-            }
-            ControlGroup {
-                formatToggle("Bulleted List", systemImage: "list.bullet", isOn: model.format.list == .bulleted) {
-                    $0.toggleList(.bulleted)
-                }
-                formatToggle("Numbered List", systemImage: "list.number", isOn: model.format.list == .numbered) {
-                    $0.toggleList(.numbered)
-                }
-            }
-            Button {
-                model.isEditingLink = true
-            } label: {
-                Label(model.format.link ? "Edit Link" : "Add Link", systemImage: "link")
-            }
-            .help(model.format.link ? "Edit Link" : "Add Link")
-            .disabled(!model.canFormat)
-            Spacer(minLength: 0)
+        FormatBar(format: model.format, isEnabled: model.canFormat, editor: model.editor) {
+            model.isEditingLink = true
         }
-        .labelStyle(.iconOnly)
-        .controlSize(.small)
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s1)
-        .background(Tokens.Surface.muted)
-        .overlay(alignment: .bottom) { Divider() }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Formatting")
-    }
-
-    private func formatToggle(
-        _ title: String, systemImage: String, isOn: Bool, action: @escaping (any RichTextEditing) -> Void
-    ) -> some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { _ in model.editor.map(action) })) {
-            Label(title, systemImage: systemImage)
-        }
-        .toggleStyle(.button)
-        .help(title)
-        .disabled(!model.canFormat)
     }
 
     // MARK: Private

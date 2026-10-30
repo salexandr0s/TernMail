@@ -23,6 +23,9 @@ final class AccountMailbox {
 
     let account: AccountRecord
     let engine: SyncEngine
+    @ObservationIgnored let people: PeopleClient?
+    /// A rejected directory stays off for this account until the next launch.
+    @ObservationIgnored var isDirectorySearchUnavailable = false
     /// Wakes this account's snoozes. Nil when there's no config store.
     @ObservationIgnored let snoozeKeeper: SnoozeKeeper?
 
@@ -56,6 +59,7 @@ final class AccountMailbox {
         self.account = account
         self.cache = cache
         let people = (gmail as? GmailClient).map { PeopleClient(session: $0.session) }
+        self.people = people
         let engine = SyncEngine(
             accountID: account.id,
             sender: EmailAddress(name: account.displayName, address: account.email),

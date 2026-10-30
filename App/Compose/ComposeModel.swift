@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MailStore
 import MessageContent
 import Observation
@@ -63,6 +64,7 @@ final class ComposeModel {
 
     private(set) var phase = Phase.loading
     private(set) var activity: DraftActivity?
+    private(set) var senderChoices: [ComposeSender] = []
     /// What the window shows. It runs ahead of the stored draft while edits wait to be stored.
     var content = DraftContent() {
         didSet {
@@ -86,6 +88,8 @@ final class ComposeModel {
     /// Changed in this window, so closing it keeps the draft. The stored
     /// revision can trail a store that just finished, so it can't tell.
     @ObservationIgnored private var isTouched = false
+    /// Default sender insertion raises the stored revision without making the draft a user edit.
+    @ObservationIgnored private var uneditedRevision = 0
     /// Changed since the last save to Gmail was asked for.
     @ObservationIgnored private var changedSinceSave = false
     /// Files still being copied into the draft, which `attachments` doesn't list yet.
@@ -101,6 +105,7 @@ final class ComposeModel {
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
     @ObservationIgnored private var lastWrite: Task<Void, Never>?
     @ObservationIgnored private var observation: Task<Void, Never>?
+    @ObservationIgnored private var integrationRefresh: Task<Void, Never>?
 
     init(localDraftID: String, mailbox: MailboxModel) {
         self.localDraftID = localDraftID
@@ -117,12 +122,15 @@ final class ComposeModel {
 
     var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
 
-    /// With several accounts, the window shows which one the message is from.
-    var showsFrom: Bool { mailbox.hasSeveralAccounts && draft != nil }
+    var showsFrom: Bool { draft != nil }
 
     var accountChoices: [AccountRecord] { mailbox.accounts.map(\.account) }
 
-    var fromEmail: String { owner?.account.email ?? "" }
+    var fromEmail: String { content.fromAddress ?? owner?.account.email ?? "" }
+
+    var selectedSender: ComposeSender? {
+        senderChoices.first { $0.account.id == draft?.accountID && $0.identity.lowercasedAddress == fromEmail.lowercased() }
+    }
 
     /// Only a new message can change accounts.
     var canChangeAccount: Bool { draft?.kind == .new }
@@ -168,7 +176,7 @@ final class ComposeModel {
             do {
                 for try await activity in stream {
                     guard let self, !Task.isCancelled else { return }
-                    apply(activity)
+                    await apply(activity)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -177,13 +185,52 @@ final class ComposeModel {
         }
     }
 
-    /// Addresses from stored mail for a recipient being typed, leaving out
-    /// this account and the recipients already added.
+    private var excludedSuggestions: Set<String> {
+        var excluded = Set<String>()
+        for address in content.to { excluded.insert(address.normalized) }
+        for address in content.cc { excluded.insert(address.normalized) }
+        for address in content.bcc { excluded.insert(address.normalized) }
+        for sender in senderChoices { excluded.insert(sender.identity.lowercasedAddress) }
+        if let ownAddress = owner?.account.email { excluded.insert(ownAddress.lowercased()) }
+        return excluded
+    }
+
+    /// Local correspondents and contacts appear without waiting for the directory.
     func suggestions(for text: String) async -> [EmailAddress] {
         guard let account = owner?.account else { return [] }
-        let excluded = Set((content.to + content.cc + content.bcc).map(\.normalized) + [account.email.lowercased()])
-        let found = try? await mailbox.cache.addressSuggestions(accountID: account.id, matching: text, excluding: excluded)
-        return found ?? []
+        let current = try? await mailbox.accountStore?.accounts().first(where: { $0.id == account.id })
+        let contacts = current.map { AccountFeature.named($0.enabledFeatures).contains(.contacts) } ?? false
+        let found = try? await mailbox.cache.recipientSuggestions(
+            accountID: account.id, matching: text, excluding: excludedSuggestions, includeContacts: contacts
+        )
+        guard !Task.isCancelled, draft?.accountID == account.id else { return [] }
+        if contacts {
+            let latest = try? await mailbox.accountStore?.accounts().first(where: { $0.id == account.id })
+            if latest.map({ AccountFeature.named($0.enabledFeatures).contains(.contacts) }) != true {
+                return (try? await mailbox.cache.addressSuggestions(
+                    accountID: account.id, matching: text, excluding: excludedSuggestions
+                )) ?? []
+            }
+        }
+        return (found ?? []).filter { !excludedSuggestions.contains($0.normalized) }
+    }
+
+    func directorySuggestions(for text: String) async -> [EmailAddress] {
+        guard let owner else { return [] }
+        return await owner.directorySuggestions(for: text, accounts: mailbox.accountStore, excluding: excludedSuggestions)
+    }
+
+    func selectSender(_ sender: ComposeSender) {
+        guard isEditable, senderChoices.contains(where: { $0.id == sender.id }), let draft else { return }
+        guard sender.account.id == draft.accountID else {
+            move(to: sender.account.id, sender: sender)
+            return
+        }
+        guard sender.identity.lowercasedAddress != fromEmail.lowercased() else { return }
+        var changed = content
+        changed.fromAddress = sender.address
+        changed.signatureHTML = sender.signature(for: draft.kind)
+        content = changed
     }
 
     // MARK: Actions
@@ -241,7 +288,7 @@ final class ComposeModel {
 
     /// Moves a new message to another account, after any edits and files
     /// still on their way. The window then shows the copy.
-    func move(to accountID: String) {
+    func move(to accountID: String, sender: ComposeSender? = nil) {
         guard isEditable, canChangeAccount, accountID != draft?.accountID,
               let engine = owner?.engine, let destination = mailbox.account(id: accountID)
         else { return }
@@ -251,7 +298,13 @@ final class ComposeModel {
             // A move that fails or doesn't happen opens the window again.
             defer { if phase == .moving { phase = .open } }
             do {
-                guard phase == .moving, let moved = try await engine.moveDraft(id, content: content, to: destination.engine) else { return }
+                let target = sender ?? ComposeSender.preferred(
+                    in: senderChoices.filter { $0.account.id == accountID }, original: nil, kind: .new
+                )
+                var movedContent = content
+                movedContent.fromAddress = target?.address ?? destination.account.email
+                movedContent.signatureHTML = target?.signature(for: .new)
+                guard phase == .moving, let moved = try await engine.moveDraft(id, content: movedContent, to: destination.engine) else { return }
                 cancelTimers()
                 observation?.cancel()
                 phase = .moved(to: moved.id)
@@ -314,6 +367,7 @@ final class ComposeModel {
     /// away; anything else stays in Drafts.
     func windowClosed() {
         observation?.cancel()
+        integrationRefresh?.cancel()
         guard isEditable else { return }
         phase = .closed
         keepOrDiscard()
@@ -332,7 +386,7 @@ final class ComposeModel {
         let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
             && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
             && attachments.isEmpty && attachmentsInProgress == 0
-        let untouched = draft.revision == 0 && !isTouched
+        let untouched = draft.revision == uneditedRevision && !isTouched
         if draft.gmailDraftID == nil, untouched || isBlank {
             cancelTimers()
             guard let engine = owner?.engine else { return }
@@ -376,7 +430,7 @@ final class ComposeModel {
 
     // MARK: Private
 
-    private func apply(_ activity: DraftActivity?) {
+    private func apply(_ activity: DraftActivity?) async {
         guard let activity else {
             // Sent or discarded, from this window or the Outbox.
             self.activity = nil
@@ -390,11 +444,67 @@ final class ComposeModel {
             showsCc = !draft.cc.isEmpty
             showsBcc = !draft.bcc.isEmpty
             knownUpdate = draft.updatedAt
+            await loadSenders()
+            guard !Task.isCancelled, phase == .loading else { return }
+            await initializeSender(for: draft)
+            guard !Task.isCancelled, phase == .loading else { return }
             phase = .open
+            refreshIntegrations()
         } else if draft.updatedAt > knownUpdate {
             knownUpdate = draft.updatedAt
             // Imported from Gmail after another app changed it.
             if !hasPendingEdits, draft.content != content { replaceContent(with: draft.content) }
+        }
+    }
+
+    private func loadSenders() async {
+        let stored = (try? await mailbox.accountStore?.accounts()) ?? []
+        var choices: [ComposeSender] = []
+        for owner in mailbox.accounts where canChangeAccount || owner.account.id == draft?.accountID {
+            let account = stored.first { $0.id == owner.account.id } ?? owner.account
+            let identities = (try? await mailbox.accountStore?.identities(accountID: account.id)) ?? []
+            choices += ComposeSender.choices(account: account, identities: identities)
+        }
+        guard !Task.isCancelled else { return }
+        senderChoices = choices
+    }
+
+    private func initializeSender(for draft: LocalDraft) async {
+        guard draft.revision == 0, draft.gmailDraftID == nil, content.fromAddress == nil,
+              draft.kind != .edit, draft.kind != .invitationReply, !isTouched else { return }
+        let original: MessageRecord?
+        if let sourceID = draft.sourceMessageID {
+            original = try? await mailbox.cache.read { try $0.message(id: sourceID, accountID: draft.accountID) }
+        } else { original = nil }
+        guard !Task.isCancelled, !isTouched,
+              let sender = ComposeSender.preferred(
+                in: senderChoices.filter { $0.account.id == draft.accountID }, original: original, kind: draft.kind
+              ) else { return }
+        var initialized = content
+        initialized.fromAddress = sender.address
+        initialized.signatureHTML = sender.signature(for: draft.kind)
+        guard let engine = owner?.engine else { return }
+        do {
+            guard let stored = try await engine.updateDraft(localDraftID, content: initialized), !Task.isCancelled else { return }
+            activity?.draft = stored
+            knownUpdate = max(knownUpdate, stored.updatedAt)
+            uneditedRevision = stored.revision
+            replaceContent(with: initialized)
+        } catch {
+            storeError = "Tern couldn't save this draft's sender on this Mac."
+        }
+    }
+
+    private func refreshIntegrations() {
+        integrationRefresh?.cancel()
+        integrationRefresh = Task { [weak self] in
+            guard let self else { return }
+            for owner in mailbox.accounts where canChangeAccount || owner.account.id == draft?.accountID {
+                guard !Task.isCancelled else { return }
+                try? await owner.engine.refreshIdentities(olderThan: 24 * 60 * 60)
+                try? await owner.engine.syncContacts(olderThan: 10 * 60)
+            }
+            await loadSenders()
         }
     }
 
@@ -471,6 +581,7 @@ final class ComposeModel {
     private func close() {
         cancelTimers()
         observation?.cancel()
+        integrationRefresh?.cancel()
         phase = .closed
     }
 
