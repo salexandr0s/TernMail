@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The sidebar and detached window share their conversation and unfinished input.
@@ -150,7 +151,9 @@ struct AssistantView: View {
                           text: $model.composerText, axis: .vertical)
                     .font(.body).textFieldStyle(.plain).lineLimit(2...6)
                     .focused($isComposerFocused)
+                    .onSubmit(submitComposer)
                     .accessibilityLabel("Message to assistant")
+                    .accessibilityHint("Return to send. Shift-Return for a new line.")
                 HStack(spacing: Tokens.Space.s2) {
                     composerHint
                         .font(.caption2).foregroundStyle(.secondary)
@@ -170,7 +173,7 @@ struct AssistantView: View {
                         }
                         .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(!canSubmit).help("Send message (⌘ Return)")
+                        .disabled(!canSubmit).help("Send message (Return or ⌘ Return)")
                         .accessibilityLabel("Send message")
                     }
                 }
@@ -196,7 +199,7 @@ struct AssistantView: View {
         } else if let setupPrompt {
             Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
         } else {
-            Text("⌘ Return to send")
+            Text("Return to send · ⇧ Return for a new line")
         }
     }
 
@@ -221,6 +224,16 @@ struct AssistantView: View {
 
     private var canSubmit: Bool {
         setupPrompt == nil && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func submitComposer() {
+        if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift),
+           let editor = event.window?.firstResponder as? NSTextView {
+            // Keep the native selection and undo behavior when inserting a line.
+            editor.insertNewlineIgnoringFieldEditor(nil)
+            return
+        }
+        submit()
     }
 
     private func submit() {

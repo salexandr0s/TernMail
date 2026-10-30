@@ -41,7 +41,7 @@ The assistant opens as a right sidebar inside the existing window. Mailbox navig
 
 The header shows the current model. Use the mail scope menu to choose which conversations to include, and the sliders button beside it to manage mail and calendar access. The welcome panel shows any setup step still needed, followed by suggestion cards with short descriptions. A new chat opens at the top of this panel, including in short windows.
 
-The composer supports multiple lines; press **⌘ Return** to send. Your messages appear in trailing bubbles, while assistant replies use the conversation width for text and email cards. Copy controls remain beside message timestamps.
+Press **Return** to send and **Shift-Return** to insert a new line. **⌘ Return** also sends. Your messages appear in trailing bubbles, while assistant replies use the conversation width for text and email cards. Copy controls remain beside message timestamps.
 
 Replies lead with the answer and default to short paragraphs or a few useful bullets. Ask for more detail when you need it. Headings, lists, emphasis, quotes, code, and tables have distinct formatting. Small workflows and decisions can include an embedded flowchart; its controls reveal or copy the diagram source. Unsupported or unfinished diagrams remain readable code.
 
