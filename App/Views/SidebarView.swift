@@ -427,8 +427,6 @@ private struct SyncStatusView: View {
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Tokens.Space.s3)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
     }
 }
 
