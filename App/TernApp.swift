@@ -1,4 +1,5 @@
 import AppKit
+import MessageContent
 import SwiftUI
 
 @main
@@ -10,12 +11,19 @@ struct TernApp: App {
         // One mailbox window: selection and undo live in the shared mailbox model.
         Window("Tern", id: "main") {
             RootView()
-                .environment(model)
                 .focusedSceneValue(\.isMainWindow, true)
+                .modifier(MailURLHandling())
+                .environment(model)
                 .task { await model.start() }
         }
         .defaultSize(width: Tokens.Layout.windowWidth, height: Tokens.Layout.windowHeight)
         .commands { MailCommands(app: model) }
+
+        WindowGroup("Conversation", id: ConversationWindow.sceneID, for: MailLink.self) { $link in
+            ConversationWindow(link: link).environment(model)
+        }
+        .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
+        .commandsRemoved()
 
         // One window per local draft. Opening a draft that has a window brings it forward.
         WindowGroup("New Message", id: ComposeWindow.sceneID, for: String.self) { $localDraftID in
@@ -32,6 +40,8 @@ struct TernApp: App {
             SettingsView()
                 .environment(model)
         }
+        .defaultSize(width: Tokens.Settings.width, height: Tokens.Settings.height)
+        .windowResizability(.contentMinSize)
 
         Window("Assistant", id: AssistantWindow.sceneID) {
             AssistantWindow(model: model.assistant, onOpenSource: model.openAssistantSource)
@@ -55,7 +65,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        CalendarNotificationRouter.shared.install()
+        MailNotificationRouter.shared.install()
+        MailScriptingBridge.shared.bind(model)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { model.mailURLs.receive(url) }
     }
 
     #if DEBUG

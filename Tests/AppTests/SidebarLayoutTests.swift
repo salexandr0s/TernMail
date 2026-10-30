@@ -14,6 +14,10 @@ import Testing
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(mailbox.hasSyncedOnce)
+        // This checks toolbar safe area without an intentional quick-filter header.
+        let quickFilters = mailbox.listPreferences.showsQuickFilters
+        mailbox.listPreferences.showsQuickFilters = false
+        defer { mailbox.listPreferences.showsQuickFilters = quickFilters }
         let suite = "SidebarLayoutTests.\(UUID().uuidString)"
         let settings = try #require(UserDefaults(suiteName: suite))
         settings.set("", forKey: SidebarView.expandedKey)
@@ -25,9 +29,11 @@ import Testing
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        window.contentViewController = controller
-        window.toolbar = NSToolbar(identifier: "WorkspaceLayoutTests")
+        let toolbar = NSToolbar(identifier: "Tern.MailWorkspace")
+        toolbar.autosavesConfiguration = true
+        window.toolbar = toolbar
         window.toolbarStyle = .unified
+        window.contentViewController = controller
         window.orderFront(nil)
         defer { window.close() }
 
@@ -40,6 +46,11 @@ import Testing
             try await settle()
             try await expectMailVisible(in: controller.view, window: window)
         }
+        app.destination = .calendar
+        try await settle()
+        app.destination = .mail
+        try await settle()
+        try await expectMailVisible(in: controller.view, window: window)
         await app.signOut()
     }
 
@@ -109,9 +120,11 @@ import Testing
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        window.contentViewController = controller
-        window.toolbar = NSToolbar(identifier: "SidebarLayoutTests")
+        let toolbar = NSToolbar(identifier: "Tern.MailWorkspace")
+        toolbar.autosavesConfiguration = true
+        window.toolbar = toolbar
         window.toolbarStyle = .unified
+        window.contentViewController = controller
         window.orderFront(nil)
         defer { window.close() }
         try await settle()
@@ -167,6 +180,45 @@ import Testing
         await app.signOut()
     }
 
+    @Test func categoriesRemainReachableWithoutAnInboxFavorite() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+        let account = try #require(mailbox.accounts.first?.account)
+        if let favorite = mailbox.navigation.favorites.first(where: { $0.target == .mailbox(labelID: SystemLabel.inbox, scope: .allAccounts) }) {
+            await mailbox.navigation.removeFavorite(favorite.id)
+        }
+        await mailbox.setCategory(.promotions, enabled: true, accountID: account.id)
+        let suite = "SidebarCategoryTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set(SystemLabel.inbox, forKey: SidebarView.expandedKey)
+        defer { settings.removePersistentDomain(forName: suite) }
+        let controller = NSHostingController(rootView: SidebarView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Tokens.Layout.sidebarWidth, height: Tokens.Layout.windowHeight),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderFront(nil)
+        defer { window.close() }
+        try await settle()
+        let table = try #require(tables(in: controller.view).first)
+        let category = MailboxID.account(account.id, InboxCategory.promotions.labelID)
+        _ = try await selectRow(in: table, matching: category, mailbox: mailbox)
+        #expect(mailbox.selectedMailbox == category)
+
+        mailbox.applyAccountPresentation(preferences: Array(mailbox.accountPresentation.values), visibleAccountIDs: [account.id])
+        try await settle()
+        let singleAccountTable = try #require(tables(in: controller.view).first)
+        _ = try await selectRow(in: singleAccountTable, matching: category, mailbox: mailbox)
+        #expect(mailbox.selectedMailbox == category)
+        await app.signOut()
+    }
+
     private func tables(in view: NSView) -> [NSTableView] {
         if let table = view as? NSTableView { return [table] }
         return view.subviews.flatMap { tables(in: $0) }
@@ -174,15 +226,21 @@ import Testing
 
     private func selectRow(in table: NSTableView, matching mailboxID: MailboxID, mailbox: MailboxModel) async throws -> Int {
         // Probe native selection tags so sections inserted before Mailboxes do
-        // not change which rows this test selects. Clearing each selection
-        // proves the next native selection updates the optional MailboxID.
-        for index in 0..<table.numberOfRows {
+        // not change which rows this test selects. An empty native selection
+        // sends no deselection callback, so reset the model too. The next
+        // native selection must update the optional MailboxID from nil.
+        // Account/profile changes may still insert rows during the first layout.
+        var index = 0
+        while index < table.numberOfRows {
             table.deselectAll(nil)
+            mailbox.selectedMailbox = nil
             try await settle()
             try #require(mailbox.selectedMailbox == nil)
+            try #require(table.selectedRow == -1)
             table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             try await settle()
             if mailbox.selectedMailbox == mailboxID { return index }
+            index += 1
         }
         throw SidebarSelectionError.mailboxNotFound(mailboxID)
     }

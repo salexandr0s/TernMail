@@ -20,17 +20,15 @@ struct AssistantLauncher: View {
 }
 
 /// Shared trailing controls for the active Mail or Calendar toolbar.
-struct WorkspaceAssistantToolbar: ToolbarContent {
+struct WorkspaceAssistantToolbar: CustomizableToolbarContent {
     @Environment(AppModel.self) private var app
     let isAssistantPresented: Bool
     let onToggleAssistant: () -> Void
+    var isAssistantAvailable = true
 
-    var body: some ToolbarContent {
+    var body: some CustomizableToolbarContent {
         let nextDestination: WorkspaceDestination = app.destination == .mail ? .calendar : .mail
-        if #available(macOS 26, *) {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-        }
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(id: "workspace.destination", placement: .primaryAction) {
             Button {
                 app.destination = nextDestination
             } label: {
@@ -40,11 +38,9 @@ struct WorkspaceAssistantToolbar: ToolbarContent {
             .labelStyle(.iconOnly)
             .help("Switch to \(nextDestination.title)")
         }
-        if #available(macOS 26, *) {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-        }
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(id: "workspace.assistant", placement: .primaryAction) {
             AssistantLauncher(isPresented: isAssistantPresented, onToggle: onToggleAssistant)
         }
+        .mailToolbarVisible(isAssistantAvailable)
     }
 }

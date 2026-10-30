@@ -4,88 +4,84 @@ import SwiftUI
 
 /// The main window's toolbar over the conversation: triage actions, then
 /// replies, then search, in the order mail apps on the Mac use.
-struct MailToolbar: ToolbarContent {
+struct MailToolbar: CustomizableToolbarContent {
     @Bindable var mailbox: MailboxModel
     let reply: (ReplyKind) -> Void
     var isCompact = false
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { mailbox.perform(.archive) } label: {
-                Label("Archive", systemImage: "archivebox")
-            }
-            .help("Archive")
-            .disabled(!mailbox.canArchive)
-
-            Button { mailbox.perform(.trash) } label: {
-                Label("Move to Trash", systemImage: "trash")
-            }
-            .help("Move to Trash")
-            .disabled(!mailbox.canTrash)
-
-            if isCompact {
-                Menu {
-                    readAction
-                    moveAction
-                    editLabelsAction
-                    snoozeMenu
-                } label: {
-                    Label("More mail actions", systemImage: "ellipsis")
-                }
+    var body: some CustomizableToolbarContent {
+        ToolbarItem(id: "mail.archive", placement: .primaryAction) {
+            Button { mailbox.perform(.archive) } label: { Label("Archive", systemImage: "archivebox") }
+                .help("Archive").disabled(!mailbox.canArchive)
+        }
+        ToolbarItem(id: "mail.trash", placement: .primaryAction) {
+            Button { mailbox.perform(.trash) } label: { Label("Move to Trash", systemImage: "trash") }
+                .help("Move to Trash").disabled(!mailbox.canTrash)
+        }
+        standardTriage
+        ToolbarItem(id: "mail.compactActions", placement: .primaryAction) {
+            Menu {
+                readAction
+                moveAction
+                editLabelsAction
+                snoozeMenu
+                TriageControls(mailbox: mailbox)
+            } label: { Label("More mail actions", systemImage: "ellipsis") }
                 .menuIndicator(.hidden)
                 .help("More mail actions")
                 .accessibilityLabel("More mail actions")
                 .popover(isPresented: isMoving, arrowEdge: .bottom) { movePicker }
                 .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
-            } else {
-                readAction
-                moveAction
-                    .popover(isPresented: isMoving, arrowEdge: .bottom) { movePicker }
-                editLabelsAction
-                    .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
-                snoozeMenu
+        }
+        .mailToolbarVisible(isCompact)
+        replies
+        ToolbarItem(id: "mail.search", placement: .primaryAction) {
+            SearchField(search: mailbox.search, text: mailbox.search.text,
+                        focusRequest: mailbox.search.fieldFocusRequest)
+                .frame(width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth)
+                .help("Search mail (⌥⌘F). Return searches Gmail.")
+        }
+        .customizationBehavior(.disabled)
+        ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
+            .mailToolbarVisible(!isCompact)
+    }
+
+    private var standardTriage: some CustomizableToolbarContent {
+        Group {
+            ToolbarItem(id: "mail.read", placement: .primaryAction) { readAction }
+            ToolbarItem(id: "mail.move", placement: .primaryAction) {
+                moveAction.popover(isPresented: isMoving, arrowEdge: .bottom) { movePicker }
             }
+            ToolbarItem(id: "mail.labels", placement: .primaryAction) {
+                editLabelsAction.popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
+            }
+            ToolbarItem(id: "mail.snooze", placement: .primaryAction) { snoozeMenu }
         }
+        .mailToolbarVisible(!isCompact)
+    }
 
-        // Liquid Glass draws each run of items as one capsule. Earlier
-        // systems space the groups apart on their own.
-        if #available(macOS 26, *) {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-        }
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            if isCompact {
-                Menu {
-                    replyActions
-                        .labelStyle(.titleAndIcon)
-                } label: {
+    private var replies: some CustomizableToolbarContent {
+        Group {
+            ToolbarItem(id: "mail.reply", placement: .primaryAction) { replyButton(.reply, title: "Reply", symbol: "arrowshape.turn.up.left") }
+                .mailToolbarVisible(!isCompact)
+            ToolbarItem(id: "mail.replyAll", placement: .primaryAction) { replyButton(.replyAll, title: "Reply All", symbol: "arrowshape.turn.up.left.2") }
+                .mailToolbarVisible(!isCompact)
+            ToolbarItem(id: "mail.forward", placement: .primaryAction) { replyButton(.forward, title: "Forward", symbol: "arrowshape.turn.up.right") }
+                .mailToolbarVisible(!isCompact)
+            ToolbarItem(id: "mail.compactReplies", placement: .primaryAction) {
+                Menu { replyActions.labelStyle(.titleAndIcon) } label: {
                     Label("Reply or Forward", systemImage: "arrowshape.turn.up.left")
                 }
-                .menuIndicator(.visible)
-                .help("Reply or Forward")
-                .accessibilityLabel("Reply or Forward")
-                .disabled(!mailbox.canReply)
-            } else {
-                replyActions
+                .menuIndicator(.visible).help("Reply or Forward")
+                .accessibilityLabel("Reply or Forward").disabled(!mailbox.canReply)
             }
+            .mailToolbarVisible(isCompact)
         }
+    }
 
-        if #available(macOS 26, *) {
-            ToolbarSpacer(.flexible, placement: .primaryAction)
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-            SearchField(
-                search: mailbox.search,
-                text: mailbox.search.text,
-                focusRequest: mailbox.search.fieldFocusRequest
-            )
-            .frame(
-                minWidth: Tokens.Layout.searchMinWidth,
-                maxWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchMaxWidth
-            )
-            .help("Search mail (⌥⌘F). Return searches Gmail.")
-        }
+    private func replyButton(_ kind: ReplyKind, title: String, symbol: String) -> some View {
+        Button { reply(kind) } label: { Label(title, systemImage: symbol) }
+            .help(title).disabled(!mailbox.canReply)
     }
 
     private var readAction: some View {
@@ -151,23 +147,9 @@ struct MailToolbar: ToolbarContent {
 
     @ViewBuilder
     private var replyActions: some View {
-        Button { reply(.reply) } label: {
-            Label("Reply", systemImage: "arrowshape.turn.up.left")
-        }
-        .help("Reply")
-        .disabled(!mailbox.canReply)
-
-        Button { reply(.replyAll) } label: {
-            Label("Reply All", systemImage: "arrowshape.turn.up.left.2")
-        }
-        .help("Reply All")
-        .disabled(!mailbox.canReply)
-
-        Button { reply(.forward) } label: {
-            Label("Forward", systemImage: "arrowshape.turn.up.right")
-        }
-        .help("Forward")
-        .disabled(!mailbox.canReply)
+        replyButton(.reply, title: "Reply", symbol: "arrowshape.turn.up.left")
+        replyButton(.replyAll, title: "Reply All", symbol: "arrowshape.turn.up.left.2")
+        replyButton(.forward, title: "Forward", symbol: "arrowshape.turn.up.right")
     }
 
     private var isEditingLabels: Binding<Bool> {
@@ -176,6 +158,16 @@ struct MailToolbar: ToolbarContent {
 
     private var isMoving: Binding<Bool> {
         Binding(get: { mailbox.moveTargets != nil }, set: { if !$0 { mailbox.moveTargets = nil } })
+    }
+}
+
+/// macOS 15 can suppress an item without removing its customization definition.
+/// Earlier systems retain the supported conditional-content behavior.
+extension CustomizableToolbarContent {
+    @ToolbarContentBuilder
+    func mailToolbarVisible(_ visible: Bool) -> some CustomizableToolbarContent {
+        if #available(macOS 15, *) { hidden(!visible) }
+        else if visible { self }
     }
 }
 

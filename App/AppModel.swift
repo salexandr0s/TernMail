@@ -3,6 +3,7 @@ import GmailAPI
 import IMAPIdle
 import MailStore
 import Observation
+import SyncEngine
 
 /// Composition root: opens the stores, restores the session and tracks the
 /// signed-in account.
@@ -26,8 +27,166 @@ final class AppModel {
     private(set) var mailbox: MailboxModel?
     @ObservationIgnored private var assistantModel: AssistantModel?
     @ObservationIgnored private var calendarModel: CalendarModel?
+    private(set) var accountPreferences: AccountPreferencesModel?
+    private(set) var mailNotifications: MailNotificationCoordinator?
+    private(set) var isResettingCache = false
+    private(set) var visibleConversationKeys: Set<ThreadKey> = []
+    @ObservationIgnored private var visibleConversationCounts: [ThreadKey: Int] = [:]
+    @ObservationIgnored private var maintenanceModel: CacheMaintenanceModel?
+    @ObservationIgnored private var maintenanceTask: Task<Void, Never>?
+    @ObservationIgnored private var mailURLRouter: MailURLRouter?
+    @ObservationIgnored private var mailBadges: MailBadgeController?
+    @ObservationIgnored private var preferenceReconciliation: Task<Void, Never>?
     var destination: WorkspaceDestination = .mail
     @ObservationIgnored var assistantNavigationTask: Task<Void, Never>?
+
+    var mailURLs: MailURLRouter {
+        if let mailURLRouter { return mailURLRouter }
+        let router = MailURLRouter(app: self)
+        mailURLRouter = router
+        return router
+    }
+
+    var maintenance: CacheMaintenanceModel {
+        if let maintenanceModel { return maintenanceModel }
+        let model = CacheMaintenanceModel(app: self)
+        maintenanceModel = model
+        return model
+    }
+
+    func conversationBecameVisible(_ key: ThreadKey) {
+        visibleConversationCounts[key, default: 0] += 1
+        visibleConversationKeys.insert(key)
+    }
+
+    func conversationStoppedBeingVisible(_ key: ThreadKey) {
+        let remaining = max(0, visibleConversationCounts[key, default: 0] - 1)
+        if remaining == 0 { visibleConversationCounts.removeValue(forKey: key); visibleConversationKeys.remove(key) }
+        else { visibleConversationCounts[key] = remaining }
+    }
+
+    private func startCacheMaintenance() {
+        guard maintenanceTask == nil, !ProcessInfo.processInfo.arguments.contains("--ui-audit") else { return }
+        maintenanceTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(600)) } catch { return }
+                guard let self else { return }
+                guard mailbox != nil, !isResettingCache, !inboxUpdatesAreStopped else { continue }
+                await maintenance.enforceBudget()
+            }
+        }
+    }
+
+    /// Reset keeps config and Calendar data. The final database transaction
+    /// rechecks recoverable work after all mailbox writers have stopped.
+    func resetMailCache() async throws {
+        guard !isResettingCache, !isSigningIn, let cache, let accounts else { return }
+        let readiness = try await cache.cacheResetReadiness()
+        guard readiness.canReset else { throw CacheMaintenanceError.recoverableWork(readiness) }
+        isResettingCache = true
+        await maintenance.suspend()
+        defer { isResettingCache = false; maintenance.resume(); startCacheMaintenance() }
+        let previousMaintenance = maintenanceTask
+        maintenanceTask = nil
+        previousMaintenance?.cancel()
+        await previousMaintenance?.value
+        try await changeAccounts(returning: { [self] in
+            let records = try await accounts.accounts()
+            let downloadedAttachments = mailbox?.downloadsDirectory
+            let categories = try await cache.attachmentCategorySnapshot()
+            try await accounts.importAttachmentCategoryOverrides(categories)
+            inboxUpdatesAreStopped = true
+            await closeMailbox()
+            do {
+                try await cache.resetDisposableCache()
+                if let downloadedAttachments { try? FileManager.default.removeItem(at: downloadedAttachments) }
+                try? await cache.compactDisposableCache()
+                inboxUpdatesAreStopped = false
+                await openMailbox(for: records)
+            } catch {
+                inboxUpdatesAreStopped = false
+                await openMailbox(for: records)
+                throw error
+            }
+        })
+    }
+
+    private func startMailPreferences(store: AccountStore, cache: MailCache) async {
+        guard accountPreferences == nil else { return }
+        let defaults: UserDefaults
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+            defaults = UserDefaults(suiteName: "tern.audit.runtime.\(UUID().uuidString)") ?? .standard
+        } else { defaults = .standard }
+        let preferences = AccountPreferencesModel(store: store, defaults: defaults)
+        accountPreferences = preferences
+        mailNotifications = MailNotificationCoordinator(store: store, cache: cache, preferences: preferences, defaults: defaults)
+        let badges = MailBadgeController(defaults: defaults)
+        badges.onOpenMailbox = { [weak self] in
+            guard let self else { return }
+            destination = .mail
+            mailbox?.selectedMailbox = .combined(SystemLabel.inbox)
+            mailURLs.openMainWindow?()
+        }
+        mailBadges = badges
+        preferences.onChange = { [weak self] in self?.schedulePreferenceReconciliation() }
+        await preferences.start()
+    }
+
+    private func bindMailNotificationRoutes() {
+        MailNotificationRouter.shared.bind { [weak self] target in await self?.routeMailNotification(target) }
+    }
+
+    private func configureMailRuntime(_ owner: AccountMailbox) {
+        owner.onMailSync = { [weak self] snapshot in await self?.mailNotifications?.process(snapshot) }
+        owner.onUnreadCountChange = { [weak self] in self?.refreshMailBadges() }
+    }
+
+    private func schedulePreferenceReconciliation() {
+        let previous = preferenceReconciliation
+        preferenceReconciliation = Task { [weak self] in
+            await previous?.value
+            guard let self, let mailbox, let preferences = accountPreferences, !inboxUpdatesAreStopped else { return }
+            mailbox.applyAccountPresentation(preferences: Array(preferences.preferencesByID.values), visibleAccountIDs: preferences.visibleAccountIDs)
+            for record in preferences.orderedRecords {
+                guard self.mailbox === mailbox, !inboxUpdatesAreStopped else { return }
+                guard let owner = mailbox.account(id: record.id), let gmail = mailboxService(for: record.id) else { continue }
+                let enabled = preferences.preferences(for: record.id).syncEnabled
+                if owner.syncEnabled != enabled {
+                    mailNotifications?.prepareAccount(record.id)
+                    await inboxWatchers.removeValue(forKey: record.id)?.stop()
+                    await mailbox.replaceAccountRuntime(record: record, gmail: gmail, syncEnabled: enabled)
+                    if let replacement = mailbox.account(id: record.id) { configureMailRuntime(replacement) }
+                }
+            }
+            await refreshInboxUpdates()
+            refreshMailBadges()
+        }
+    }
+
+    private func refreshMailBadges() {
+        guard let mailbox else { mailBadges?.update(unreadCount: 0); return }
+        let visible = accountPreferences?.visibleAccountIDs ?? Set(mailbox.accounts.map(\.account.id))
+        let count = mailbox.accounts.filter { visible.contains($0.account.id) }.reduce(0) { total, owner in
+            total + (owner.labels.first { $0.id == SystemLabel.inbox }?.threadsUnread ?? 0)
+        }
+        mailBadges?.update(unreadCount: count)
+    }
+
+    private func routeMailNotification(_ target: MailNotificationRouter.Target) async {
+        guard let mailbox, let owner = mailbox.account(id: target.accountID) else { return }
+        if let action = target.action {
+            do {
+                switch action {
+                case .archive: _ = try await owner.engine.perform(.archive, target: .messages([target.messageID]))
+                case .trash: _ = try await owner.engine.perform(.trash, target: .messages([target.messageID]))
+                case .markRead: _ = try await owner.engine.perform(.markRead, target: .messages([target.messageID]))
+                case .star: _ = try await owner.engine.perform(.star, target: .messages([target.messageID]))
+                }
+            } catch { mailbox.notice = .init(message: "Couldn't apply the notification action. Try again in Tern.", isError: true) }
+        } else {
+            mailURLs.openConversation(.init(accountID: target.accountID, threadID: target.threadID, messageID: target.messageID))
+        }
+    }
 
     /// All assistant presentations share one conversation and ChatGPT connection.
     var assistant: AssistantModel {
@@ -112,6 +271,7 @@ final class AppModel {
                 && sessions[account.id]?.isSignedIn == true
                 && !accountsNeedingSignIn.contains(account.id)
                 && mailbox?.account(id: account.id) != nil
+                && mailbox?.account(id: account.id)?.syncEnabled == true
         }
         let ids = Set(eligible.map(\.id))
         for id in Array(inboxWatchers.keys) where !ids.contains(id) {
@@ -140,6 +300,7 @@ final class AppModel {
     }
     /// Copies of the files attached to drafts, kept until the draft is sent or discarded.
     private var outgoingDirectory: URL?
+    @ObservationIgnored private var cacheDownloadDirectory = MailboxModel.defaultDownloadsDirectory
     /// Mailboxes still stopping, so data is deleted only after they finish.
     private var closing: Task<Void, Never>?
     /// The latest sign-out or end of a sign-in. They run one at a time, so a
@@ -162,11 +323,19 @@ final class AppModel {
                 try await accounts.save(second)
                 self.cache = cache
                 self.accounts = accounts
-                let outgoing = FileManager.default.temporaryDirectory.appending(path: "Tern-UIAudit-Outgoing", directoryHint: .isDirectory)
+                await startMailPreferences(store: accounts, cache: cache)
+                let auditDirectory = FileManager.default.temporaryDirectory.appending(path: "Tern-UIAudit-\(UUID().uuidString)", directoryHint: .isDirectory)
+                let outgoing = auditDirectory.appending(path: "Outgoing", directoryHint: .isDirectory)
+                cacheDownloadDirectory = auditDirectory.appending(path: "Attachments", directoryHint: .isDirectory)
+                self.outgoingDirectory = outgoing
                 let mailbox = MailboxModel(
-                    account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing, snoozeStore: accounts
+                    account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing,
+                    downloadsDirectory: cacheDownloadDirectory, snoozeStore: accounts
                 )
                 self.mailbox = mailbox
+                bindMailNotificationRoutes()
+                configureMailRuntime(mailbox.defaultAccount)
+                mailNotifications?.prepareAccount(account.id)
                 if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") { destination = .calendar }
                 phase = .signedIn(account)
                 AccountProfileImages.shared.setAuditImage(SenderAccountLabel.auditImage, for: account.id)
@@ -174,8 +343,10 @@ final class AppModel {
                     accountsNeedingSignIn.insert(second.id)
                 }
                 Task {
-                    await mailbox.addAccount(second, gmail: AuditGmail(.second))
+                    mailNotifications?.prepareAccount(second.id)
+                    await mailbox.addAccount(second, gmail: AuditGmail(.second), onCreate: configureMailRuntime)
                     mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+                    schedulePreferenceReconciliation()
                     await mailbox.start()
                 }
                 return
@@ -189,6 +360,7 @@ final class AppModel {
             cache = try await Task.detached(priority: .userInitiated) { try MailCache.open(at: cacheURL) }.value
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
+            if let cache { await startMailPreferences(store: accounts, cache: cache) }
 
             let stored = try await accounts.accounts()
             try await removeLeftovers(keeping: Set(stored.map(\.id)))
@@ -318,7 +490,9 @@ final class AppModel {
                 if case .signInRequired = phase { phase = .signedIn(mailbox.account) }
                 owner.syncNow()
             } else {
-                await mailbox.addAccount(account, gmail: GmailClient(tokens: session))
+                mailNotifications?.prepareAccount(account.id)
+                let syncEnabled = (try? await accounts.mailPreferences(accountID: account.id).syncEnabled) ?? true
+                await mailbox.addAccount(account, gmail: GmailClient(tokens: session), syncEnabled: syncEnabled, onCreate: configureMailRuntime)
                 if case .signInRequired(let old) = phase {
                     // Added from Settings while the only account needed
                     // sign-in. With several, its section asks instead.
@@ -329,6 +503,7 @@ final class AppModel {
             // A new grant may restore an expired token or remove IMAP access.
             await inboxWatchers.removeValue(forKey: account.id)?.stop()
             await refreshInboxUpdates()
+            await accountPreferences?.refresh()
         } catch {
             reportSignInError(error.localizedDescription)
         }
@@ -380,6 +555,21 @@ final class AppModel {
         isSigningIn = true
         defer { isSigningIn = false }
         guard let stored = try await accounts.accounts().first(where: { $0.id == accountID }) else { return nil }
+        // Several features use the same full-mail grant. Enabling another
+        // covered feature changes local use without another consent screen.
+        if let granted = session.grantedScopes, GoogleScopes.isCovered(feature, by: granted) {
+            return try await changeAccounts(returning: { [self] in
+                guard sessions[accountID] === session, session.isSignedIn else { return nil }
+                guard let updated = try await accounts.updateAccount(id: accountID, { account in
+                    account.enabledFeatures = AccountFeature.names(of:
+                        AccountFeature.named(account.enabledFeatures).union([feature]))
+                }) else { return nil }
+                await refreshInboxUpdates()
+                await calendarModel?.refresh()
+                return try FeatureGrant(subject: accountID, granted: granted, accountID: accountID,
+                    features: AccountFeature.named(updated.enabledFeatures))
+            })
+        }
         let user: GoogleAuth.SignedInUser
         do {
             user = try await auth.signIn(
@@ -490,7 +680,7 @@ final class AppModel {
             }
             // Only signed-in accounts keep downloaded attachments and the
             // files attached to their drafts.
-            try? FileManager.default.removeItem(at: MailboxModel.defaultDownloadsDirectory)
+            try? FileManager.default.removeItem(at: cacheDownloadDirectory)
             if let outgoingDirectory { try? FileManager.default.removeItem(at: outgoingDirectory) }
             phase = .signedOut
         } catch {
@@ -515,6 +705,7 @@ final class AppModel {
         signInError = nil
         assistantModel?.setAccountEnabled(accountID, enabled: false)
         AccountProfileImages.shared.remove(accountID: accountID)
+        await mailNotifications?.removeAccount(accountID)
         await inboxWatchers.removeValue(forKey: accountID)?.stop()
         await mailbox.removeAccount(id: accountID)
         let session = sessions.removeValue(forKey: accountID)
@@ -594,6 +785,10 @@ final class AppModel {
     /// Stores what open compose windows show, so quitting loses no typing.
     func prepareToQuit() async {
         inboxUpdatesAreStopped = true
+        await maintenanceModel?.suspend()
+        maintenanceTask?.cancel()
+        maintenanceTask = nil
+        mailURLRouter?.stop()
         await stopInboxUpdates()
         assistantModel?.stop()
         assistantModel?.connection.cancelSignIn()
@@ -604,16 +799,21 @@ final class AppModel {
     /// A user can keep Tern open after its final send attempt fails.
     func cancelQuit() async {
         inboxUpdatesAreStopped = false
+        maintenanceModel?.resume()
         await refreshInboxUpdates()
         await calendarModel?.start()
         assistantModel?.refreshAccess()
+        schedulePreferenceReconciliation()
+        mailURLRouter?.resume()
+        startCacheMaintenance()
     }
 
     /// Drafts whose send waits out its undo delay or a retry, which quitting
     /// sends at once. Read from the cache, since the Outbox can lag behind a
     /// send that just changed.
     func sendingDraftIDs() async -> Set<String> {
-        Set(await localDrafts().filter { $0.state == .sending }.map(\.id))
+        let paused = Set(mailbox?.accounts.filter { !$0.syncEnabled }.map(\.account.id) ?? [])
+        return Set(await localDrafts().filter { $0.state == .sending && !paused.contains($0.accountID) }.map(\.id))
     }
 
     /// How many of `ids` Gmail refused to send, which returns them to editing.
@@ -631,7 +831,7 @@ final class AppModel {
     /// running after the timeout keeps going, and the next launch finishes one
     /// cut off by quitting.
     func sendWaitingMessages(timeout: Duration = .seconds(10)) async -> Bool {
-        guard let engines = mailbox?.accounts.map(\.engine), !engines.isEmpty else { return true }
+        guard let engines = mailbox?.accounts.filter(\.syncEnabled).map(\.engine), !engines.isEmpty else { return true }
         let (outcome, continuation) = AsyncStream.makeStream(of: Bool.self)
         Task {
             let sent = await withTaskGroup(of: Bool.self) { group in
@@ -654,28 +854,50 @@ final class AppModel {
 
     /// Opens the window's mailbox with every signed-in account, starting in
     /// the combined Inbox when there are several.
+    private func mailboxService(for accountID: String) -> (any GmailService)? {
+        if let session = sessions[accountID] { return GmailClient(tokens: session) }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+            return accountID == "ui-audit-2" ? AuditGmail(.second) : AuditGmail()
+        }
+#endif
+        return nil
+    }
+
     private func openMailbox(for records: [AccountRecord]) async {
         guard let cache, let accounts, let outgoingDirectory,
-              let first = records.first, let session = sessions[first.id]
+              let first = records.first, let gmail = mailboxService(for: first.id)
         else { return }
         await closeMailbox()
         let mailbox = MailboxModel(
-            account: first, cache: cache, gmail: GmailClient(tokens: session),
-            outgoingDirectory: outgoingDirectory, snoozeStore: accounts
+            account: first, cache: cache, gmail: gmail,
+            outgoingDirectory: outgoingDirectory, downloadsDirectory: cacheDownloadDirectory, snoozeStore: accounts,
+            syncEnabled: (try? await accounts.mailPreferences(accountID: first.id).syncEnabled) ?? true
         )
+        configureMailRuntime(mailbox.defaultAccount)
+        mailNotifications?.prepareAccount(first.id)
         for record in records.dropFirst() {
-            guard let session = sessions[record.id] else { continue }
-            await mailbox.addAccount(record, gmail: GmailClient(tokens: session))
+            guard let gmail = mailboxService(for: record.id) else { continue }
+            mailNotifications?.prepareAccount(record.id)
+            let syncEnabled = (try? await accounts.mailPreferences(accountID: record.id).syncEnabled) ?? true
+            await mailbox.addAccount(record, gmail: gmail, syncEnabled: syncEnabled, onCreate: configureMailRuntime)
         }
         if mailbox.hasSeveralAccounts { mailbox.selectedMailbox = .combined(SystemLabel.inbox) }
         self.mailbox = mailbox
+        bindMailNotificationRoutes()
         phase = .signedIn(first)
+        if records.count == 1, let session = sessions[first.id], !session.isSignedIn { phase = .signInRequired(first) }
+        schedulePreferenceReconciliation()
+        mailURLRouter?.resume()
         await refreshInboxUpdates()
+        startCacheMaintenance()
         Task { await mailbox.start() }
     }
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        MailNotificationRouter.shared.unbind()
+        mailURLRouter?.stop()
         await stopInboxUpdates()
         assistantNavigationTask?.cancel()
         assistantModel?.newChat()
@@ -688,6 +910,7 @@ final class AppModel {
             }
         }
         await closing?.value
+        refreshMailBadges()
     }
 
     /// Deletes an account's record, snoozes, Keychain item, cache rows and
@@ -697,6 +920,7 @@ final class AppModel {
         _ account: AccountRecord, session: AccountSession?, from accounts: AccountStore
     ) async throws {
         assistantModel?.forgetAccount(account.id)
+        await mailNotifications?.removeAccount(account.id)
         try await accounts.deleteAccount(id: account.id)
         await calendarModel?.removeAccount(account.id)
         session?.signOut()
@@ -730,7 +954,7 @@ final class AppModel {
         }
         for accountID in accountIDs {
             try? FileManager.default.removeItem(
-                at: MailboxModel.defaultDownloadsDirectory.appending(path: accountID, directoryHint: .isDirectory)
+                at: cacheDownloadDirectory.appending(path: accountID, directoryHint: .isDirectory)
             )
         }
         guard let outgoingDirectory else { return }
@@ -756,6 +980,7 @@ extension AccountFeature {
         case .gmailSettings: "Gmail Settings"
         case .contacts: "Contacts"
         case .inboxUpdates: "Inbox Updates"
+        case .permanentDeletion: "Permanent Deletion"
         case .calendar: "Google Calendar"
         case .calendarManagement: "Calendar Management"
         case .calendarSharing: "Calendar Sharing"

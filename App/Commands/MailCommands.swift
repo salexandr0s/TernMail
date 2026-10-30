@@ -1,5 +1,7 @@
+import AppKit
 import MailStore
 import MessageContent
+import SyncEngine
 import SwiftUI
 
 extension FocusedValues {
@@ -23,8 +25,12 @@ struct MailCommands: Commands {
     @FocusedValue(\.settingsEditor) private var settingsEditor
     @FocusedValue(\.mailboxModel) private var focusedMailbox
     @FocusedValue(\.isMainWindow) private var isMainWindow
+    @FocusedValue(\.selectedMailQuote) private var selectedQuote
+    @FocusedValue(\.conversationLink) private var conversationLink
 
     var body: some Commands {
+        ComposeFeatureCommands()
+        MailViewCommands()
         CommandGroup(replacing: .newItem) {
             Button("New Message", systemImage: "square.and.pencil") { open(.newMessage) }
                 .labelStyle(.titleAndIcon)
@@ -71,15 +77,15 @@ struct MailCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.shift, .command])
                 .disabled(!canReply)
             Divider()
-            Button("Archive", systemImage: "archivebox") { focusedMailbox?.perform(.archive) }
+            Button("Archive", systemImage: "archivebox") { performMailAction(.archive) }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("a", modifiers: [.control, .command])
-                .disabled(!(focusedMailbox?.canArchive ?? false))
+                .disabled(conversationLink == nil && !(focusedMailbox?.canArchive ?? false))
             // In a compose window ⌘⌫ deletes to the start of the line instead.
-            Button("Move to Trash", systemImage: "trash") { focusedMailbox?.perform(.trash) }
+            Button("Move to Trash", systemImage: "trash") { performMailAction(.trash) }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled(!(focusedMailbox?.canTrash ?? false))
+                .disabled(conversationLink == nil && !(focusedMailbox?.canTrash ?? false))
             Divider()
             Button(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open") { focusedMailbox?.toggleRead() }
                 .labelStyle(.titleAndIcon)
@@ -148,6 +154,10 @@ struct MailCommands: Commands {
             }
         }
         CommandMenu("Go") {
+            Button("Go to Label…", systemImage: "tag") { focusedMailbox?.navigation.isShowingSwitcher = true }
+                .keyboardShortcut("l", modifiers: [.control, .option, .command])
+                .disabled(focusedMailbox == nil)
+            Divider()
             // In the sidebar's order, so each number matches a row.
             ForEach(Array(SystemMailbox.numbered.enumerated()), id: \.element.id) { index, box in
                 Button(box.title, systemImage: box.systemImage) { focusedMailbox?.go(to: box.id) }
@@ -200,15 +210,40 @@ struct MailCommands: Commands {
 
     /// Reply needs one conversation selected in the mailbox window, which is in front.
     private var canReply: Bool {
-        focusedMailbox?.canReply ?? false
+        if let conversationLink { return app.mailbox?.account(id: conversationLink.accountID) != nil }
+        return focusedMailbox?.canReply ?? false
     }
 
     private func reply(_ kind: ReplyKind) {
-        guard let mailbox = focusedMailbox else { return }
+        guard let mailbox = focusedMailbox ?? (conversationLink == nil ? nil : app.mailbox) else { return }
         Task {
+            if let link = conversationLink {
+                let quote = selectedQuote.flatMap { $0.belongsTo(accountID: link.accountID, threadID: link.threadID,
+                    messageID: link.messageID) ? $0 : nil }
+                guard let messageID = await mailbox.nativeReplyMessageID(for: link, preferredMessageID: quote?.messageID),
+                    let id = await mailbox.requestReply(kind, messageID: messageID,
+                    accountID: link.accountID, selectedText: quote?.text) else { return }
+                openWindow(id: ComposeWindow.sceneID, value: id)
+                return
+            }
+            if let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1,
+               let quote = selectedQuote, quote.belongsTo(accountID: key.accountID, threadID: key.threadID,
+                messageID: mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID) {
+                guard let id = await mailbox.requestReply(kind, messageID: quote.messageID,
+                    accountID: quote.accountID, selectedText: quote.text) else { return }
+                openWindow(id: ComposeWindow.sceneID, value: id)
+                return
+            }
             guard let start = await mailbox.replyStart(kind) else { return }
             open(start)
         }
+    }
+
+    private func performMailAction(_ action: MailAction) {
+        if let link = conversationLink, let mailbox = app.mailbox {
+            let manager = NSApp.keyWindow?.undoManager
+            Task { await mailbox.performNativeAction(action, link: link, undoManager: manager) }
+        } else { focusedMailbox?.perform(action) }
     }
 
     /// Stops the newest send and reopens its window.

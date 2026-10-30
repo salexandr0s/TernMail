@@ -7,20 +7,27 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
+    @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var isCompactWindow = false
     @State private var showsAssistant = false
     @State private var preferredAssistantWidth = Tokens.Assistant.sidebarWidth
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
     @State private var paneSizing = AssistantMailPaneSizing()
+    @State private var libraryToolbar = AttachmentLibraryToolbarState()
     @FocusState private var outboxFocused: Bool
     let mailbox: MailboxModel
     var isActive = true
+    var isCalendarAssistantPresented = false
+    var onCalendarAssistantToggle: (() -> Void)?
 
     private var showsOutbox: Bool {
         mailbox.selectedLabelID == MailboxModel.outboxID && !mailbox.search.isActive
     }
+
+    private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
 
     var body: some View {
         @Bindable var app = app
@@ -55,7 +62,7 @@ struct MainView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .onChange(of: layout.hidesMailboxNavigation, initial: true) { _, narrow in
-                updateNavigationVisibility(isNarrow: narrow)
+                updateNavigationVisibility(isNarrow: narrow && !hidesReader)
             }
             .onChange(of: layout.mailWidth, initial: true) { _, width in
                 isCompactWindow = width < Tokens.Layout.compactToolbarWidth
@@ -103,11 +110,11 @@ struct MainView: View {
             mailbox.draftToReopen = nil
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
-        .modifier(AttachmentLibraryPresentation(mailbox: mailbox))
+        .modifier(MainMailFeatures(mailbox: mailbox, libraryToolbar: libraryToolbar))
     }
 
     private func mailContent(topInset: CGFloat) -> some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        MailWorkspaceColumns(columnVisibility: $columnVisibility, showsReader: !hidesReader) {
             SidebarView(mailbox: mailbox)
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
@@ -145,35 +152,51 @@ struct MainView: View {
                 ideal: showsAssistant ? AssistantSidebarLayout.listMinimum : Tokens.Layout.listWidth + Tokens.Space.s3,
                 max: showsAssistant ? AssistantSidebarLayout.listMinimum : nil
             )
-            .toolbar {
-                if isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
-                    ToolbarItem(placement: .navigation) {
-                        Button(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
-                            columnVisibility = columnVisibility == .all ? .doubleColumn : .all
-                        }
-                        .help(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar")
-                    }
-                    ToolbarItem(placement: .navigation) {
-                        Button(action: newMessage) {
-                            Label("New Message", systemImage: "square.and.pencil")
-                        }
-                        .help("New Message")
-                    }
-                }
-            }
         } detail: {
             DetailView(mailbox: mailbox)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
                 .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
                 .background(Tokens.Surface.canvas)
-                .toolbar {
-                    if isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
-                        MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow)
-                    }
-                    if isActive {
-                        WorkspaceAssistantToolbar(isAssistantPresented: showsAssistant, onToggleAssistant: toggleAssistant)
-                    }
+        }
+        .toolbar(id: "Tern.MailWorkspace") {
+            ToolbarItem(id: "library.sidebar", placement: .navigation) {
+                Button(libraryToolbar.showsSidebar ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
+                    libraryToolbar.toggleSidebar()
                 }
+                .help(libraryToolbar.showsSidebar ? "Hide Sidebar" : "Show Sidebar")
+            }
+            .mailToolbarVisible(isActive && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
+            ToolbarItem(id: "library.find", placement: .primaryAction) {
+                Button { libraryToolbar.searchFocusRequest += 1 } label: {
+                    Label("Find attachment", systemImage: "magnifyingglass")
+                }
+                .keyboardShortcut("f", modifiers: .command).help("Find attachment (⌘F)")
+            }
+            .mailToolbarVisible(isActive && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
+            ToolbarItem(id: "mail.sidebar", placement: .navigation) {
+                Button(showsSidebar ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
+                    columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
+                }
+                .help(showsSidebar ? "Hide Sidebar" : "Show Sidebar")
+            }
+            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            ToolbarItem(id: "mail.compose", placement: .navigation) {
+                Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
+                    .help("New Message")
+            }
+            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            ToolbarItem(id: "mail.profile", placement: .navigation) {
+                if let preferences = app.accountPreferences { ProfilePicker(model: preferences) }
+            }
+            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && app.accountPreferences != nil)
+            MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow)
+                .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            WorkspaceAssistantToolbar(
+                isAssistantPresented: isActive ? showsAssistant : isCalendarAssistantPresented,
+                onToggleAssistant: { if isActive { toggleAssistant() } else { onCalendarAssistantToggle?() } },
+                isAssistantAvailable: !isActive || mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
+            )
+            .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
@@ -293,6 +316,14 @@ struct MainView: View {
 
     private func reply(_ kind: ReplyKind) {
         Task {
+            if let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1,
+               let quote = selectedQuote, quote.belongsTo(accountID: key.accountID, threadID: key.threadID,
+                messageID: mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID) {
+                guard let id = await mailbox.requestReply(kind, messageID: quote.messageID,
+                    accountID: quote.accountID, selectedText: quote.text) else { return }
+                openWindow(id: ComposeWindow.sceneID, value: id)
+                return
+            }
             guard let start = await mailbox.replyStart(kind), let id = await mailbox.startCompose(start) else { return }
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
@@ -324,6 +355,9 @@ struct MainView: View {
 
 private struct DetailView: View {
     let mailbox: MailboxModel
+    @Environment(AppModel.self) private var app
+
+    private struct ReaderIdentity: Hashable { let key: ThreadKey; let messageID: String? }
 
     var body: some View {
         let ids = mailbox.selectedThreadIDs
@@ -333,9 +367,13 @@ private struct DetailView: View {
                 systemImage: "tray.and.arrow.up",
                 message: "Messages wait here until Gmail receives them. Double-click to open."
             )
+        } else if !mailbox.listPreferences.conversations, mailbox.selectedMessageRows.count > 1 {
+            TernEmptyState(title: "\(mailbox.selectedMessageRows.count) messages selected", systemImage: "square.stack",
+                message: "Use the toolbar to organize your selection.")
         } else if ids.count == 1, let key = ids.first {
-            ThreadView(key: key, mailbox: mailbox)
-                .id(key)
+            let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
+            ThreadView(key: key, mailbox: mailbox, selectedMessageID: messageID, isReaderActive: app.destination == .mail)
+                .id(ReaderIdentity(key: key, messageID: messageID))
         } else if ids.count > 1 {
             TernEmptyState(
                 title: "\(ids.count) conversations selected",

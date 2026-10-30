@@ -37,6 +37,14 @@ targets:
         TernGoogleClientID: $(GOOGLE_CLIENT_ID)
         TernGoogleClientIDPrefix: $(GOOGLE_CLIENT_ID_PREFIX)
         TernGoogleRedirectScheme: $(GOOGLE_REDIRECT_SCHEME)
+        NSAppleScriptEnabled: true
+        OSAScriptingDefinition: Tern.sdef
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.tern.mail.links
+            CFBundleTypeRole: Editor
+            CFBundleURLSchemes:
+              - mailto
+              - tern
     entitlements:
       path: App/Tern.entitlements
       properties:
@@ -46,6 +54,7 @@ targets:
         com.apple.security.network.server: true
         # Attaching chosen files, and saving received ones where the user picks.
         com.apple.security.files.user-selected.read-write: true
+        com.apple.security.files.downloads.read-write: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail

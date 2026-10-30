@@ -5,34 +5,25 @@ import SwiftUI
 struct AttachmentLibraryDestination: View {
     @Environment(AppModel.self) private var app
     @State private var model: AttachmentLibraryModel
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @Bindable var toolbar: AttachmentLibraryToolbarState
     let mailbox: MailboxModel
 
-    init(mailbox: MailboxModel) {
+    init(mailbox: MailboxModel, toolbar: AttachmentLibraryToolbarState) {
         self.mailbox = mailbox
+        self.toolbar = toolbar
         _model = State(initialValue: AttachmentLibraryModel(mailbox: mailbox))
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $toolbar.columnVisibility) {
             SidebarView(mailbox: mailbox)
                 .toolbar(removing: .sidebarToggle)
                 .navigationSplitViewColumnWidth(min: Tokens.Layout.sidebarMinWidth,
                     ideal: Tokens.Layout.sidebarWidth, max: Tokens.Layout.sidebarMaxWidth)
         } detail: {
-            AttachmentLibraryView(model: model, onOpenSource: {})
+            AttachmentLibraryView(model: model, onOpenSource: {}, searchFocusRequest: toolbar.searchFocusRequest)
         }
         .toolbar(removing: .sidebarToggle)
-        .toolbar {
-            if app.destination == .mail {
-                ToolbarItem(placement: .navigation) {
-                    Button(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
-                        columnVisibility = columnVisibility == .all ? .detailOnly : .all
-                    }
-                    .help(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar")
-                }
-            }
-        }
         .onChange(of: app.accountsNeedingSignIn, initial: true) { _, ids in model.unavailableAccountIDs = ids }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, ids in
             if let key = model.sourceThreadKey, !ids.contains(key.accountID) { model.sourceThreadKey = nil }
@@ -62,6 +53,7 @@ struct AttachmentLibraryDestination: View {
 /// Keeps Mail's selection and pane sizes mounted while the library is visible.
 struct AttachmentLibraryPresentation: ViewModifier {
     let mailbox: MailboxModel
+    let toolbar: AttachmentLibraryToolbarState
 
     func body(content: Content) -> some View {
         let isPresented = mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
@@ -70,7 +62,7 @@ struct AttachmentLibraryPresentation: ViewModifier {
                 .opacity(isPresented ? 0 : 1)
                 .allowsHitTesting(!isPresented)
                 .accessibilityHidden(isPresented)
-            if isPresented { AttachmentLibraryDestination(mailbox: mailbox) }
+            if isPresented { AttachmentLibraryDestination(mailbox: mailbox, toolbar: toolbar) }
         }
     }
 }

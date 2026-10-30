@@ -16,7 +16,9 @@ struct WorkspaceView: View {
 
     var body: some View {
         ZStack {
-            MainView(mailbox: mailbox, isActive: app.destination == .mail)
+            MainView(mailbox: mailbox, isActive: app.destination == .mail,
+                isCalendarAssistantPresented: showsCalendarAssistant,
+                onCalendarAssistantToggle: { showsCalendarAssistant.toggle() })
                 .opacity(app.destination == .mail ? 1 : 0)
                 .allowsHitTesting(app.destination == .mail)
                 .accessibilityHidden(app.destination != .mail)
@@ -40,12 +42,6 @@ struct WorkspaceView: View {
             : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
         .navigationSubtitle(app.destination == .calendar || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
             ? "" : mailbox.selectedMailboxSubtitle)
-        .toolbar {
-            if app.destination == .calendar {
-                WorkspaceAssistantToolbar(isAssistantPresented: showsCalendarAssistant,
-                    onToggleAssistant: { showsCalendarAssistant.toggle() })
-            }
-        }
         .task { await app.calendar.start() }
         .onChange(of: app.destination, initial: true) { _, destination in
             app.calendar.isVisible = destination == .calendar
