@@ -4,19 +4,19 @@ import Testing
 
 @Suite struct GmailClientTests {
     @Test func externalMessagePartUsesTheMessageScopedEndpointAndDecodesData() async throws {
-        let transport = StubTransport([.init(status: 200, body: #"{"data":"Y2Fmw6k","size":5}"#)])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let transport = RecordingTransport([.init(status: 200, body: #"{"data":"Y2Fmw6k","size":5}"#)])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let data = try await client.attachment(messageID: "m1", attachmentID: "part1")
         #expect(String(data: data, encoding: .utf8) == "café")
         #expect(await transport.requests.first?.url?.path == "/gmail/v1/users/me/messages/m1/attachments/part1")
     }
 
     @Test func unauthorizedBatchPartsRefreshOnceWithoutResendingSuccesses() async throws {
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             batchResponse([(0, 200, #"{"id":"a","threadId":"t1"}"#), (1, 401, "{}")]),
             batchResponse([(0, 401, "{}")]),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport, retryDelays: [.zero])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport, retryDelays: [.zero])
         let results = try await client.messages(ids: ["a", "b"], format: .minimal)
         #expect(try results["a"]?.get().id == "a")
         #expect(results["b"].flatMap(failure) == .unauthorized)
@@ -28,10 +28,10 @@ import Testing
     }
 
     @Test func batchUsesCompleteRequestLinesAndIgnoresBoundaryTextInJSON() async throws {
-        let transport = StubTransport([batchResponse([
+        let transport = RecordingTransport([batchResponse([
             (0, 200, #"{"id":"a","threadId":"t1","snippet":"text --resp inside JSON"}"#),
         ])])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let results = try await client.messages(ids: ["a"], format: .metadata)
         #expect(try results["a"]?.get().snippet == "text --resp inside JSON")
         let body = String(decoding: try #require(await transport.requests.first?.httpBody), as: UTF8.self)
@@ -50,8 +50,8 @@ import Testing
             (1, 200, #"{"id":"d","threadId":"t3"}"#),
             (0, 200, #"{"id":"b","threadId":"t2"}"#),
         ])
-        let transport = StubTransport([first, retry])
-        let client = GmailClient(tokens: StubTokens(), transport: transport, retryDelays: [.zero])
+        let transport = RecordingTransport([first, retry])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport, retryDelays: [.zero])
 
         let results = try await client.messages(ids: ["a", "b", "c", "d"], format: .minimal)
 
@@ -71,8 +71,8 @@ import Testing
 
     @Test func unauthorizedIsRetriedOnceWithForcedRefresh() async throws {
         let profile = #"{"emailAddress":"user@example.com","historyId":"42"}"#
-        let tokens = StubTokens()
-        let transport = StubTransport([
+        let tokens = CountingTokens()
+        let transport = RecordingTransport([
             .init(status: 401, body: "{}"),
             .init(status: 200, body: profile),
             .init(status: 401, body: "{}"),
@@ -100,9 +100,22 @@ import Testing
         #expect(!GmailError(status: 403, body: forbidden).isRetryable)
     }
 
+    @Test func theErrorInfoReasonWinsButUsageLimitsStillRetry() {
+        let help = #"{"@type": "type.googleapis.com/google.rpc.Help", "links": [{"url": "https://example.com/help"}]}"#
+        let info = #"{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}"#
+        let scope = Data(#"{"error": {"code": 403, "errors": [{"reason": "insufficientPermissions"}], "details": [\#(help), \#(info)]}}"#.utf8)
+        let limited = Data(#"{"error": {"code": 403, "errors": [{"reason": "rateLimitExceeded"}], "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}]}}"#.utf8)
+        // A detail whose fields aren't strings doesn't lose the errors[] reason.
+        let odd = Data(#"{"error": {"code": 400, "errors": [{"reason": "badRequest"}], "details": [{"@type": 7, "reason": ["x"]}]}}"#.utf8)
+
+        #expect(GmailError(status: 403, body: scope) == .http(status: 403, reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+        #expect(GmailError(status: 403, body: limited) == .rateLimited)
+        #expect(GmailError(status: 400, body: odd) == .http(status: 400, reason: "badRequest"))
+    }
+
     @Test func queryEscapesPlusSigns() async throws {
-        let transport = StubTransport([.init(status: 200, body: "{}")])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let transport = RecordingTransport([.init(status: 200, body: "{}")])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
 
         _ = try await client.listMessages(query: "from:a+b@example.com newer_than:30d")
 
@@ -137,8 +150,8 @@ import Testing
     private let draftJSON = #"{"id":"d1","message":{"id":"m1","threadId":"t1","labelIds":["DRAFT"]}}"#
 
     @Test func smallDraftsUploadAsMultipartRelated() async throws {
-        let transport = StubTransport([.init(status: 200, body: draftJSON)])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let transport = RecordingTransport([.init(status: 200, body: draftJSON)])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let raw = Data("Subject: Hi\r\n\r\nBody\r\n".utf8)
 
         let draft = try await client.createDraft(OutgoingMessage(raw: raw, threadID: "t1"))
@@ -162,12 +175,12 @@ import Testing
 
     @Test func updateAndSendCarryTheDraftID() async throws {
         let sent = #"{"id":"m2","threadId":"t1","labelIds":["SENT"]}"#
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             .init(status: 200, body: draftJSON),
             .init(status: 200, body: sent),
             .init(status: 200, body: sent),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let message = OutgoingMessage(raw: Data("Subject: Hi\r\n\r\nBody\r\n".utf8))
 
         _ = try await client.updateDraft(id: "d1", with: message)
@@ -191,11 +204,11 @@ import Testing
 
     @Test func largeDraftsUseAResumableSession() async throws {
         let session = "https://gmail.googleapis.com/upload/gmail/v1/users/me/drafts?uploadType=resumable&upload_id=abc"
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             .init(status: 200, headers: ["Location": session], body: ""),
             .init(status: 200, body: draftJSON),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let raw = Data(repeating: UInt8(ascii: "a"), count: GmailClient.multipartUploadLimit + 1)
 
         #expect(try await client.createDraft(OutgoingMessage(raw: raw)).id == "d1")
@@ -213,10 +226,10 @@ import Testing
     }
 
     @Test func resumableSessionsOutsideGoogleAreRefused() async throws {
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             .init(status: 200, headers: ["Location": "https://uploads.example.com/session"], body: ""),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let raw = Data(count: GmailClient.multipartUploadLimit + 1)
 
         await #expect(throws: GmailError.self) { try await client.createDraft(OutgoingMessage(raw: raw)) }
@@ -224,11 +237,11 @@ import Testing
     }
 
     @Test func aLostUploadSessionIsRetryableNotAMissingDraft() async throws {
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             .init(status: 200, headers: ["Location": "https://gmail.googleapis.com/upload/session"], body: ""),
             .init(status: 404, body: "{}"),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let raw = Data(count: GmailClient.multipartUploadLimit + 1)
 
         await #expect(throws: GmailError.uploadSessionLost) {
@@ -242,8 +255,8 @@ import Testing
     private let labelJSON = #"{"id":"Label_1","name":"Trips","type":"user"}"#
 
     @Test func labelPatchSendsOnlyTheGivenFieldsAndNullToRemoveAColor() async throws {
-        let transport = StubTransport(Array(repeating: .init(status: 200, body: labelJSON), count: 3))
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let transport = RecordingTransport(Array(repeating: .init(status: 200, body: labelJSON), count: 3))
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
         let blue = try #require(LabelColor(backgroundColor: "#1C4587"))
 
         _ = try await client.patchLabel(id: "Label_1", name: "Trips")
@@ -263,12 +276,12 @@ import Testing
     }
 
     @Test func createLabelIsVisibleAndDeleteTreatsMissingAsDone() async throws {
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             .init(status: 200, body: labelJSON),
             .init(status: 404, body: #"{"error":{"code":404}}"#),
             .init(status: 400, body: #"{"error":{"code":400}}"#),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
 
         #expect(try await client.createLabel(name: "Trips", color: nil).id == "Label_1")
         try await client.deleteLabel(id: "Label_1")
@@ -293,11 +306,11 @@ import Testing
     }
 
     @Test func threadSearchListsThenFetchesMetadataInOneBatch() async throws {
-        let transport = StubTransport([
+        let transport = RecordingTransport([
             .init(status: 200, body: #"{"threads":[{"id":"t1","snippet":"hi"}],"nextPageToken":"p2"}"#),
             batchResponse([(0, 200, #"{"id":"t1","messages":[{"id":"m1","threadId":"t1"}]}"#)]),
         ])
-        let client = GmailClient(tokens: StubTokens(), transport: transport)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
 
         let page = try await client.listThreads(query: "trail", pageToken: "p1")
         let threads = try await client.threads(ids: ["t1", "t1"], format: .metadata, metadataHeaders: ["Subject"])
@@ -313,7 +326,7 @@ import Testing
     }
 
     @Test func defaultTransportHasNoURLCache() {
-        #expect(GmailClient.defaultSession.configuration.urlCache == nil)
+        #expect(GoogleSession.defaultTransport.configuration.urlCache == nil)
     }
 }
 
@@ -325,7 +338,7 @@ private func failure<T>(_ result: Result<T, GmailError>) -> GmailError? {
 }
 
 /// A `/batch` response whose parts are (request index, status, JSON body).
-private func batchResponse(_ parts: [(Int, Int, String)]) -> StubTransport.Response {
+private func batchResponse(_ parts: [(Int, Int, String)]) -> RecordingTransport.Response {
     var body = ""
     for (index, status, json) in parts {
         body += "--resp\r\nContent-Type: application/http\r\nContent-ID: <response-item-\(index)>\r\n\r\n"
@@ -334,39 +347,4 @@ private func batchResponse(_ parts: [(Int, Int, String)]) -> StubTransport.Respo
     }
     body += "--resp--\r\n"
     return .init(status: 200, headers: ["Content-Type": "multipart/mixed; boundary=resp"], body: body)
-}
-
-private actor StubTransport: HTTPTransport {
-    struct Response {
-        var status: Int
-        var headers: [String: String] = ["Content-Type": "application/json"]
-        var body: String
-    }
-
-    private var responses: [Response]
-    private(set) var requests: [URLRequest] = []
-
-    init(_ responses: [Response]) {
-        self.responses = responses
-    }
-
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        requests.append(request)
-        guard !responses.isEmpty, let url = request.url else { throw URLError(.badServerResponse) }
-        let next = responses.removeFirst()
-        guard let response = HTTPURLResponse(url: url, statusCode: next.status, httpVersion: "HTTP/1.1", headerFields: next.headers) else {
-            throw URLError(.badServerResponse)
-        }
-        return (Data(next.body.utf8), response)
-    }
-}
-
-/// Returns "token-N", where N counts forced refreshes so far.
-private actor StubTokens: AccessTokenProvider {
-    private var refreshes = 0
-
-    func accessToken(forceRefresh: Bool) async throws -> String {
-        if forceRefresh { refreshes += 1 }
-        return "token-\(refreshes)"
-    }
 }

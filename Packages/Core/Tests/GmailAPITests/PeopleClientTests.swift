@@ -70,6 +70,14 @@ import Testing
         }
     }
 
+    @Test func anExpiredSyncTokenIsReportedAsExpired() async throws {
+        let expired = #"{"error": {"code": 400, "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "EXPIRED_SYNC_TOKEN"}]}}"#
+        let (people, _, _) = client([.init(status: 400, body: expired)])
+        await #expect(throws: PeopleError.syncTokenExpired) {
+            try await people.page(.otherContacts, syncToken: "old")
+        }
+    }
+
     @Test func requestsGoToThePeopleHostAndRefreshTheTokenOnceAfterA401() async throws {
         let (people, transport, tokens) = client([
             .init(status: 401, body: "{}"),
@@ -103,15 +111,23 @@ import Testing
     @Test func aRefusedDirectoryReadsAsUnavailableButAMissingScopeDoesNot() async throws {
         let refused = #"{"error": {"code": 403, "status": "PERMISSION_DENIED"}}"#
         let scope = #"{"error": {"code": 403, "errors": [{"reason": "insufficientPermissions"}]}}"#
-        let (people, transport, _) = client([.init(status: 403, body: refused), .init(status: 403, body: scope)])
+        let scopeDetail = #"{"error": {"code": 403, "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}"#
+        let (people, transport, _) = client([
+            .init(status: 403, body: refused),
+            .init(status: 403, body: scope),
+            .init(status: 403, body: scopeDetail),
+        ])
         await #expect(throws: PeopleError.directoryUnavailable) { try await people.searchDirectory("ann") }
         await #expect(throws: GmailError.http(status: 403, reason: "insufficientPermissions")) {
+            try await people.searchDirectory("ann")
+        }
+        await #expect(throws: GmailError.http(status: 403, reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
             try await people.searchDirectory("ann")
         }
 
         // Blank text never reaches the API.
         #expect(try await people.searchDirectory("  ").people.isEmpty)
-        #expect(await transport.requests.count == 2)
+        #expect(await transport.requests.count == 3)
     }
 
     // MARK: Person

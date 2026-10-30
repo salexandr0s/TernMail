@@ -293,6 +293,80 @@ enum Schema {
                 t.primaryKey(["accountID", "threadID"])
             }
         }
+
+        migrator.registerMigration("settings-v1") { db in
+            // A filter, vacation or signature change, with what undo restores.
+            try db.alter(table: "pendingAction") { t in
+                t.add(column: "settingsChange", .jsonText)
+            }
+        }
+
+        migrator.registerMigration("contacts-v1") { db in
+            try db.create(table: "contact") { t in
+                t.column("accountID", .text).notNull()
+                t.column("source", .text).notNull()
+                t.column("resourceName", .text).notNull()
+                t.column("displayName", .text)
+                t.column("updatedAt", .datetime).notNull()
+                t.primaryKey(["accountID", "source", "resourceName"])
+            }
+            try db.create(table: "contactEmail") { t in
+                t.column("accountID", .text).notNull()
+                t.column("source", .text).notNull()
+                t.column("resourceName", .text).notNull()
+                t.column("lowercasedAddress", .text).notNull()
+                t.column("address", .text).notNull()
+                t.column("isPrimary", .boolean).notNull()
+                t.primaryKey(["accountID", "source", "resourceName", "lowercasedAddress"])
+                t.foreignKey(["accountID", "source", "resourceName"], references: "contact", onDelete: .cascade)
+            }
+            try db.create(index: "contactEmail_address", on: "contactEmail", columns: ["accountID", "lowercasedAddress"])
+            // A sync token works only with the fields that issued it.
+            try db.create(table: "contactSync") { t in
+                t.column("accountID", .text).notNull()
+                t.column("source", .text).notNull()
+                t.column("syncToken", .text)
+                t.column("fields", .text).notNull()
+                t.column("lastFullSyncAt", .datetime).notNull()
+                t.primaryKey(["accountID", "source"])
+            }
+        }
+
+        migrator.registerMigration("invitations-v1") { db in
+            // An empty recurrenceKey stands for the whole event, since SQLite
+            // would treat NULLs in a key as distinct.
+            try db.create(table: "messageCalendar") { t in
+                t.column("accountID", .text).notNull()
+                t.column("messageID", .text).notNull()
+                t.column("uid", .text).notNull()
+                t.column("recurrenceKey", .text).notNull()
+                t.column("sequence", .integer).notNull()
+                t.column("stamp", .datetime)
+                t.column("method", .text)
+                t.column("invitation", .jsonText).notNull()
+                t.primaryKey(["accountID", "messageID"])
+                t.foreignKey(["accountID", "messageID"], references: "message", onDelete: .cascade)
+            }
+            try db.create(index: "messageCalendar_event", on: "messageCalendar", columns: ["accountID", "uid", "recurrenceKey"])
+            // Outlives its draft, so the banner keeps showing the answer sent.
+            try db.create(table: "invitationReply") { t in
+                t.column("accountID", .text).notNull()
+                t.column("uid", .text).notNull()
+                t.column("recurrenceKey", .text).notNull()
+                t.column("participationStatus", .text).notNull()
+                t.column("localDraftID", .text).notNull()
+                t.column("queuedAt", .datetime).notNull()
+                t.primaryKey(["accountID", "uid", "recurrenceKey"])
+            }
+        }
+
+        migrator.registerMigration("identity-v1") { db in
+            try db.alter(table: "localDraft") { t in
+                t.add(column: "fromAddress", .text)
+                t.add(column: "signatureHTML", .text)
+                t.add(column: "calendarPart", .text)
+            }
+        }
         return migrator
     }
 
@@ -315,6 +389,28 @@ enum Schema {
                 t.column("wakeAt", .datetime).notNull()
                 t.column("createdAt", .datetime).notNull()
                 t.primaryKey(["accountID", "threadID"])
+            }
+        }
+        migrator.registerMigration("integrations-v1") { db in
+            try db.alter(table: "account") { t in
+                t.add(column: "hostedDomain", .text)
+                t.add(column: "enabledFeatures", .jsonText).notNull().defaults(to: "[]")
+                t.add(column: "signatureOnReplies", .boolean).notNull().defaults(to: false)
+            }
+            // The addresses each account can send as, from `sendAs.list`.
+            try db.create(table: "sendAsIdentity") { t in
+                t.column("accountID", .text).notNull().references("account", onDelete: .cascade)
+                t.column("address", .text).notNull()
+                t.column("lowercasedAddress", .text).notNull()
+                t.column("displayName", .text)
+                t.column("replyTo", .text)
+                t.column("signatureHTML", .text)
+                t.column("isPrimary", .boolean).notNull()
+                t.column("isDefault", .boolean).notNull()
+                t.column("treatAsAlias", .boolean).notNull()
+                t.column("verificationStatus", .text).notNull()
+                t.column("fetchedAt", .datetime).notNull()
+                t.primaryKey(["accountID", "lowercasedAddress"])
             }
         }
         return migrator

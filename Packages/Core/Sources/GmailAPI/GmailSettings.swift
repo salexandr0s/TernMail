@@ -40,7 +40,7 @@ public struct GmailFilter: Codable, Sendable, Equatable {
     public struct Action: Codable, Sendable, Equatable {
         public var addLabelIds: [String]?
         public var removeLabelIds: [String]?
-        /// A verified forwarding address. Tern shows it but never sets it.
+        /// A forwarding address, which Gmail accepts only once it is verified.
         public var forward: String?
 
         public init(addLabelIds: [String]? = nil, removeLabelIds: [String]? = nil, forward: String? = nil) {
@@ -79,8 +79,8 @@ public struct GmailFilter: Codable, Sendable, Equatable {
     }
 
     /// Whether two filters match the same mail and do the same thing, ignoring
-    /// the ID, surrounding spaces, label order, and unset values written as
-    /// empty, false or `unspecified`.
+    /// the ID, surrounding spaces, label order, a forward address's case, and
+    /// unset values written as empty, false or `unspecified`.
     public func hasSameRules(as other: GmailFilter) -> Bool {
         criteria.normalized == other.criteria.normalized && action.normalized == other.action.normalized
     }
@@ -107,7 +107,7 @@ extension GmailFilter.Action {
         GmailFilter.Action(
             addLabelIds: addLabelIds.sortedNonEmpty,
             removeLabelIds: removeLabelIds.sortedNonEmpty,
-            forward: forward.trimmedNonEmpty
+            forward: forward.trimmedNonEmpty?.lowercased()
         )
     }
 }
@@ -217,7 +217,7 @@ public struct VacationSettings: Codable, Sendable, Equatable {
 
 /// An address the account can send as, with its signature.
 public struct SendAsIdentity: Decodable, Sendable, Equatable {
-    public enum VerificationStatus: String, Decodable, Sendable {
+    public enum VerificationStatus: String, Codable, Sendable {
         case accepted, pending, unspecified = "verificationStatusUnspecified"
 
         public init(from decoder: any Decoder) throws {

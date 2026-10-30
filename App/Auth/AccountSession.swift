@@ -37,8 +37,21 @@ final class AccountSession: AccessTokenProvider {
 
     var isSignedIn: Bool { authState != nil }
 
-    /// Takes the state from a new sign-in to this account and stores it.
-    /// Clients holding this session carry on with it.
+    /// The scopes the stored grant covers. Nil without a session.
+    var grantedScopes: [String]? {
+        authState.map { ($0.scope ?? "").split(separator: " ").map(String.init) }
+    }
+
+    /// The `hd` claim of the stored ID token. Nil for personal accounts, and
+    /// when the last token response carried no ID token.
+    var idTokenHostedDomain: String? {
+        guard let idToken = authState?.lastTokenResponse?.idToken.flatMap(OIDIDToken.init(idTokenString:)) else { return nil }
+        return idToken.claims["hd"] as? String
+    }
+
+    /// Swaps in the state from a new authorization of this account, then
+    /// stores it. Clients holding this session use it from their next token
+    /// request, and a request already waiting retries with it.
     func replace(with state: OIDAuthState) throws {
         authState = state
         try persist(state)
@@ -59,26 +72,43 @@ final class AccountSession: AccessTokenProvider {
     // MARK: AccessTokenProvider
 
     func accessToken(forceRefresh: Bool) async throws -> String {
-        guard let state = authState else { throw GoogleAuth.AuthError.signInRequired }
-        if forceRefresh { state.setNeedsTokenRefresh() }
-        do {
-            let token = try await freshToken(from: state)
+        var forceRefresh = forceRefresh
+        var retried = false
+        while true {
+            guard let state = authState else { throw GoogleAuth.AuthError.signInRequired }
+            if forceRefresh { state.setNeedsTokenRefresh() }
+            let result: Result<String, any Error>
+            do {
+                result = .success(try await freshToken(from: state))
+            } catch {
+                result = .failure(error)
+            }
             try Task.checkCancellation()
-            guard authState === state else { throw GoogleAuth.AuthError.signInRequired }
-            if token != persistedAccessToken {
-                try? persist(state)
+            guard authState === state else {
+                // A new authorization replaced the state while this request
+                // waited, so its outcome, a failed refresh included, belongs
+                // to the old grant. The new tokens need no forced refresh.
+                // After a sign-out, or a second swap, sign-in is reported.
+                guard !retried, authState != nil else { throw GoogleAuth.AuthError.signInRequired }
+                retried = true
+                forceRefresh = false
+                continue
             }
-            return token
-        } catch {
-            // A refresh started before a new sign-in must not clear it.
-            guard authState === state else { throw GoogleAuth.AuthError.signInRequired }
-            let nsError = error as NSError
-            if nsError.domain == OIDOAuthTokenErrorDomain, nsError.code == OIDErrorCodeOAuth.invalidGrant.rawValue {
-                signOut()
-                onSignInRequired?()
-                throw GoogleAuth.AuthError.signInRequired
+            switch result {
+            case .success(let token):
+                if token != persistedAccessToken {
+                    try? persist(state)
+                }
+                return token
+            case .failure(let error):
+                let nsError = error as NSError
+                if nsError.domain == OIDOAuthTokenErrorDomain, nsError.code == OIDErrorCodeOAuth.invalidGrant.rawValue {
+                    signOut()
+                    onSignInRequired?()
+                    throw GoogleAuth.AuthError.signInRequired
+                }
+                throw error
             }
-            throw error
         }
     }
 

@@ -15,7 +15,6 @@ public enum MailAction: Sendable, Equatable {
 /// One user command can affect several threads. Each target has its own
 /// durable queue row, while undo still treats the command as one operation.
 public final class ActionReceipt: Sendable, Equatable {
-    public let id: Int64?
     // The engine enriches rows before sending; UI undo can read them safely
     // after history has removed the durable rows. All access holds this lock.
     private let rows: OSAllocatedUnfairLock<[PendingAction]>
@@ -24,7 +23,6 @@ public final class ActionReceipt: Sendable, Equatable {
     let snooze: SnoozeChange?
 
     init(actions: [PendingAction], snooze: SnoozeChange? = nil) {
-        id = actions.first?.id
         rows = OSAllocatedUnfairLock(initialState: actions)
         self.snooze = snooze
     }
@@ -187,6 +185,8 @@ extension SyncEngine {
             return
         case .createLabel, .updateLabel, .deleteLabel:
             try enqueueLabelInverse(of: action, accountID: accountID, now: now, in: tx)
+        case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
+            try enqueueSettingsInverse(of: action, accountID: accountID, now: now, in: tx)
         case .modifyThreads, .modifyMessages:
             // Restore each message exactly: archiving a thread removed INBOX only
             // from the messages that had it, so only those get it back. A label
@@ -211,7 +211,8 @@ extension SyncEngine {
     /// Starts a send loop for each lane that isn't running.
     func scheduleSending() {
         guard sendsAutomatically, !isStopped else { return }
-        for lane in [PendingAction.Lane.labels, .compose] {
+        let lanes: [PendingAction.Lane] = settings == nil ? [.labels, .compose] : [.labels, .compose, .settings]
+        for lane in lanes {
             wakeRequests.insert(lane)
             if drainTasks[lane] == nil {
                 drainTasks[lane] = Task { await drainQueue(lane) }
@@ -250,6 +251,7 @@ extension SyncEngine {
         switch lane {
         case .labels: await sendDueActions()
         case .compose: await sendDueDrafts()
+        case .settings: await sendDueSettings()
         }
     }
 
@@ -432,6 +434,9 @@ extension SyncEngine {
             return [:]
         case .createLabel, .updateLabel, .deleteLabel:
             // Sent one at a time by `sendLabelChange(_:)`.
+            return [:]
+        case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
+            // Claimed only by the settings lane.
             return [:]
         }
     }

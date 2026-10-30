@@ -77,14 +77,6 @@ extension GmailClient {
     }
 }
 
-extension GmailError {
-    /// Google refuses a call the token's scopes don't cover with 403 `insufficientPermissions`.
-    public var isMissingScope: Bool {
-        guard case .http(status: 403, reason: let reason) = self else { return false }
-        return reason == "insufficientPermissions"
-    }
-}
-
 extension CharacterSet {
     /// RFC 3986 unreserved characters, the only ones a path segment keeps as is.
     static let urlUnreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")

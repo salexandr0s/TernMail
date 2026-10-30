@@ -9,16 +9,23 @@ public struct DraftContent: Sendable, Equatable {
     public var bcc: [EmailAddress]
     public var subject: String
     public var body: ComposeDocument
+    /// The address the message goes out from. Nil for the account's own address.
+    public var fromAddress: String?
+    /// The From address's signature as inserted, kept if the identity changes later.
+    public var signatureHTML: String?
 
     public init(
         to: [EmailAddress] = [], cc: [EmailAddress] = [], bcc: [EmailAddress] = [],
-        subject: String = "", body: ComposeDocument = ComposeDocument()
+        subject: String = "", body: ComposeDocument = ComposeDocument(),
+        fromAddress: String? = nil, signatureHTML: String? = nil
     ) {
         self.to = to
         self.cc = cc
         self.bcc = bcc
         self.subject = subject
         self.body = body
+        self.fromAddress = fromAddress
+        self.signatureHTML = signatureHTML
     }
 }
 
@@ -31,6 +38,8 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         case new, reply, replyAll, forward
         /// A draft that already exists in Gmail, opened from the Drafts label.
         case edit
+        /// An answer to an invitation, sent without a compose window.
+        case invitationReply
     }
 
     public enum State: String, Codable, Sendable {
@@ -56,6 +65,10 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     public var bcc: [EmailAddress]
     public var subject: String
     public var body: ComposeDocument
+    public var fromAddress: String?
+    public var signatureHTML: String?
+    /// For an invitation reply, the `text/calendar` REPLY it sends.
+    public var calendarPart: String?
     /// The quoted original, or an imported draft's quote, sent unchanged after the new text.
     public var quotedHTML: String?
     public var quotedPlainText: String?
@@ -82,7 +95,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     enum CodingKeys: String, CodingKey {
         case id, accountID, gmailDraftID, savedMessageID, threadID, kind, sourceMessageID
         case to = "toAddresses", cc = "ccAddresses", bcc = "bccAddresses"
-        case subject, body, quotedHTML, quotedPlainText, rfcMessageID, inReplyTo
+        case subject, body, fromAddress, signatureHTML, calendarPart, quotedHTML, quotedPlainText, rfcMessageID, inReplyTo
         case references = "referencesHeader"
         case revision, savedRevision, state, sendError, hasUnrecordedUpload, sendRequested, createdAt, updatedAt
     }
@@ -101,6 +114,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         references: [String] = [],
         quotedHTML: String? = nil,
         quotedPlainText: String? = nil,
+        calendarPart: String? = nil,
         now: Date
     ) {
         self.id = id
@@ -115,6 +129,9 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         bcc = content.bcc
         subject = content.subject
         body = content.body
+        fromAddress = content.fromAddress
+        signatureHTML = content.signatureHTML
+        self.calendarPart = calendarPart
         self.quotedHTML = quotedHTML
         self.quotedPlainText = quotedPlainText
         self.rfcMessageID = rfcMessageID
@@ -131,13 +148,20 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     }
 
     public var content: DraftContent {
-        get { DraftContent(to: to, cc: cc, bcc: bcc, subject: subject, body: body) }
+        get {
+            DraftContent(
+                to: to, cc: cc, bcc: bcc, subject: subject, body: body,
+                fromAddress: fromAddress, signatureHTML: signatureHTML
+            )
+        }
         set {
             to = newValue.to
             cc = newValue.cc
             bcc = newValue.bcc
             subject = newValue.subject
             body = newValue.body
+            fromAddress = newValue.fromAddress
+            signatureHTML = newValue.signatureHTML
         }
     }
 

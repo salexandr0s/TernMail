@@ -35,9 +35,9 @@ public struct MailCache: Sendable {
 public struct CacheTransaction {
     let db: Database
 
-    /// Removes everything cached for an account, including unsent actions and
-    /// drafts. Outgoing attachment rows go with their local drafts, and search
-    /// text with its messages.
+    /// Removes everything cached for an account, including unsent actions,
+    /// drafts, contacts and invitation answers. Outgoing attachment rows go
+    /// with their local drafts, and search text with its messages.
     public func deleteAccountData(accountID: String) throws {
         for table in Self.accountTables {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
@@ -52,8 +52,9 @@ public struct CacheTransaction {
     }
 
     private static let accountTables = [
-        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "message", "label",
+        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
+        "contactEmail", "contact", "contactSync", "invitationReply",
     ]
 
     // MARK: Labels
@@ -298,6 +299,22 @@ public struct CacheTransaction {
         return action
     }
 
+    /// Queues a change to Gmail's settings. No conversation changes, so
+    /// nothing is rebuilt.
+    public func enqueueSettingsChange(
+        _ change: PendingAction.SettingsChange, accountID: String, now: Date, notBefore: Date
+    ) throws -> PendingAction {
+        var row = PendingAction(
+            id: nil, accountID: accountID, kind: change.kind,
+            threadIDs: [], messageIDs: [], addLabelIDs: [], removeLabelIDs: [], diff: [:],
+            state: .queued, attempts: 0, lastError: nil,
+            createdAt: now, notBefore: notBefore, sentAt: nil,
+            settingsChange: change
+        )
+        try row.insert(db)
+        return row
+    }
+
     public func pendingActions(accountID: String) throws -> [PendingAction] {
         try PendingAction.filter(Column("accountID") == accountID).order(Column("id")).fetchAll(db)
     }
@@ -338,9 +355,20 @@ public struct CacheTransaction {
     /// its parent's label too, shared, so it follows the parent's rename. A
     /// conversation row holds its threads exclusively and the labels it adds
     /// or removes shared, so one label goes onto many conversations together
-    /// while a rename or delete of that label waits its turn.
+    /// while a rename or delete of that label waits its turn. A settings row
+    /// holds what it changes exclusively: every filter row one key, the
+    /// vacation responder another, and each address's signature its own, so
+    /// an undo goes out after the change it reverses.
     func claimKeys(of action: PendingAction) throws -> (exclusive: Set<String>, shared: Set<String>) {
         if let localDraftID = action.localDraftID { return (["draft:" + localDraftID], []) }
+        if let change = action.settingsChange {
+            let key = switch change {
+            case .createFilter, .deleteFilter, .replaceFilter: "settings:filters"
+            case .vacation: "settings:vacation"
+            case .signature(let address, _, _): "settings:signature:" + address.lowercased()
+            }
+            return ([key], [])
+        }
         if action.kind.changesLabel {
             let own = action.labelID.map { Set(["label:" + $0]) } ?? []
             let parent = action.labelChange?.parentLabelID.map { Set(["label:" + $0]) } ?? []
@@ -494,6 +522,8 @@ enum ThreadRules {
                 deleted.formUnion(action.labelID.map { [$0] } ?? [])
                 targets = []
             case .saveDraft, .sendDraft, .discardDraft, .createLabel, .updateLabel:
+                targets = []
+            case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
                 targets = []
             }
             for messageID in targets {

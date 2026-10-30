@@ -1,10 +1,7 @@
 import Foundation
 
-/// Reads contacts from the People API for address suggestions.
-///
-/// Requests go through a `GmailClient` built from the same token provider and
-/// transport, so the bearer token and the single refresh after a 401 are the
-/// same code for both APIs.
+/// Reads contacts from the People API for address suggestions. Requests go
+/// through the same `GoogleSession` code as Gmail's.
 public struct PeopleClient: Sendable {
     public enum Source: String, Sendable, CaseIterable {
         /// Saved contacts, `people.connections.list`. Needs `contacts.readonly`.
@@ -20,18 +17,23 @@ public struct PeopleClient: Sendable {
     /// fields that issued it, so callers store this with the token.
     public static let fields = "names,emailAddresses,metadata"
 
-    private let http: GmailClient
+    private let session: GoogleSession
 
-    public init(tokens: any AccessTokenProvider, transport: any HTTPTransport = GmailClient.defaultSession) {
-        http = GmailClient(tokens: tokens, transport: transport)
+    public init(session: GoogleSession) {
+        self.session = session
+    }
+
+    public init(tokens: any AccessTokenProvider, transport: any HTTPTransport = GoogleSession.defaultTransport) {
+        self.init(session: GoogleSession(tokens: tokens, transport: transport))
     }
 
     /// One page of `source`. Pass `syncToken` for an incremental sync and
     /// `pageToken` for later pages; every other parameter stays the same, as
     /// the API requires.
     ///
-    /// - Throws: `PeopleError.syncTokenRejected` when a request with a sync
-    ///   token fails with 400 or 410.
+    /// - Throws: For a request with a sync token, `PeopleError.syncTokenExpired`
+    ///   when Google says the token has expired, and otherwise
+    ///   `PeopleError.syncTokenRejected` for a 400 or 410.
     public func page(_ source: Source, syncToken: String? = nil, pageToken: String? = nil) async throws -> ContactPage {
         var query = [
             URLQueryItem(name: source == .connections ? "personFields" : "readMask", value: Self.fields),
@@ -44,16 +46,19 @@ public struct PeopleClient: Sendable {
 
         let data: Data
         do {
-            data = try await http.send(request(path: path, query: query)).data
+            data = try await session.send(request(path: path, query: query)).data
+        } catch GmailError.http(_, let reason) where syncToken != nil && reason == "EXPIRED_SYNC_TOKEN" {
+            // The People API names the reason but not the status.
+            throw PeopleError.syncTokenExpired
         } catch GmailError.http(let status, _) where syncToken != nil && (status == 400 || status == 410) {
             throw PeopleError.syncTokenRejected(status: status)
         }
         switch source {
         case .connections:
-            let page: ConnectionsResponse = try http.decode(data)
+            let page: ConnectionsResponse = try session.decode(data)
             return ContactPage(people: page.connections ?? [], nextPageToken: page.nextPageToken, nextSyncToken: page.nextSyncToken)
         case .otherContacts:
-            let page: OtherContactsResponse = try http.decode(data)
+            let page: OtherContactsResponse = try session.decode(data)
             return ContactPage(people: page.otherContacts ?? [], nextPageToken: page.nextPageToken, nextSyncToken: page.nextSyncToken)
         }
     }
@@ -82,8 +87,7 @@ public struct PeopleClient: Sendable {
     /// required. `pageSize` is kept within the API's 1 to 500.
     ///
     /// - Throws: `PeopleError.directoryUnavailable` for a 403 that isn't a
-    ///   missing scope or a rate limit. Until errors keep `details[].reason`,
-    ///   a missing scope reported only there also reads as unavailable.
+    ///   missing scope or a rate limit.
     public func searchDirectory(_ text: String, pageSize: Int = 10, pageToken: String? = nil) async throws -> DirectoryPage {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return DirectoryPage(people: [], nextPageToken: nil) }
@@ -98,12 +102,12 @@ public struct PeopleClient: Sendable {
 
         let data: Data
         do {
-            data = try await http.send(request(path: "/v1/people:searchDirectoryPeople", query: query)).data
+            data = try await session.send(request(path: "/v1/people:searchDirectoryPeople", query: query)).data
         } catch let error as GmailError where !error.isMissingScope {
             guard case .http(status: 403, _) = error else { throw error }
             throw PeopleError.directoryUnavailable
         }
-        let page: DirectoryResponse = try http.decode(data)
+        let page: DirectoryResponse = try session.decode(data)
         return DirectoryPage(people: page.people ?? [], nextPageToken: page.nextPageToken)
     }
 
