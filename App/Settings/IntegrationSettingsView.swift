@@ -1,7 +1,7 @@
 import MailStore
 import SwiftUI
 
-enum IntegrationSettingsPane { case signatures, filters, vacation }
+enum IntegrationSettingsPane { case signatures, filters, blocked, vacation }
 
 struct IntegrationSettingsView: View {
     let pane: IntegrationSettingsPane
@@ -69,6 +69,7 @@ private struct IntegrationSettingsContent: View {
                 switch pane {
                 case .signatures: SignaturesPane(model: model)
                 case .filters: FiltersPane(model: model)
+                case .blocked: BlockedSendersPane(model: model)
                 case .vacation: VacationPane(model: model)
                 }
             } else if !model.isLoading {

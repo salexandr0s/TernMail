@@ -9,7 +9,7 @@ struct ConnectionsView: View {
     @State private var busy = false
     @State private var error: String?
 
-    private let features: [AccountFeature] = [.gmailSettings, .contacts, .inboxUpdates]
+    private let features: [AccountFeature] = [.gmailSettings, .contacts, .inboxUpdates, .permanentDeletion]
 
     init(account: AccountRecord, app: AppModel) {
         self.app = app
@@ -69,6 +69,7 @@ struct ConnectionsView: View {
         case .gmailSettings: "Gmail Settings"
         case .contacts: "Contacts"
         case .inboxUpdates: "Inbox Updates"
+        case .permanentDeletion: "Permanent Deletion"
         default: "Calendar"
         }
     }
@@ -78,6 +79,7 @@ struct ConnectionsView: View {
         case .gmailSettings: "Edit filters, your primary signature and the vacation responder."
         case .contacts: "Suggest saved and other contacts, plus your Workspace directory when available."
         case .inboxUpdates: "Check for Inbox changes immediately. This requires Google's full mail permission."
+        case .permanentDeletion: "Delete messages forever from Trash and Spam. This requires Google's full mail permission."
         default: "Connect your Google calendars."
         }
     }

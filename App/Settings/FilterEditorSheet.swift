@@ -7,10 +7,11 @@ struct FilterEditorSheet: View {
     @State private var draft: FilterEditorDraft
     @Environment(\.dismiss) private var dismiss
 
-    init(model: SettingsModel, original: GmailFilter?) {
+    init(model: SettingsModel, original: GmailFilter?, initialCriteria: GmailFilter.Criteria? = nil) {
         self.model = model
         self.original = original
-        _draft = State(initialValue: FilterEditorDraft(filter: original, labels: model.labels))
+        let initial = original ?? initialCriteria.map { GmailFilter(criteria: $0, action: .init()) }
+        _draft = State(initialValue: FilterEditorDraft(filter: initial, labels: model.labels))
     }
 
     var body: some View {
