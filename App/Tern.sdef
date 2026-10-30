@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Tern Mail">
+  <suite name="Tern Mail" code="TrnS" description="Read metadata for the currently selected mail. No mail changes are supported.">
+    <class name="application" code="capp" description="Tern's current mail selection.">
+      <cocoa class="NSApplication"/>
+      <property name="selected conversations" code="TsCv" access="r" description="The selected conversations, limited to the selected messages in message mode.">
+        <cocoa key="ternSelectedConversations"/>
+        <type type="conversation" list="yes"/>
+      </property>
+      <property name="selected messages" code="TsMs" access="r" description="The messages in the current selection.">
+        <cocoa key="ternSelectedMessages"/>
+        <type type="message" list="yes"/>
+      </property>
+      <element type="conversation" access="r"><cocoa key="ternConversations"/></element>
+      <element type="message" access="r"><cocoa key="ternMessages"/></element>
+    </class>
+    <class name="mail object" code="TmOb" hidden="yes" description="Read-only account-qualified mail metadata.">
+      <cocoa class="TernScriptMailObject"/>
+      <property name="id" code="ID  " type="text" access="r" description="The stable account-qualified scripting identifier."><cocoa key="scriptID"/></property>
+      <property name="account id" code="TaID" type="text" access="r" description="The account's opaque identifier."><cocoa key="accountID"/></property>
+      <property name="thread id" code="TtID" type="text" access="r" description="Gmail's conversation identifier within this account."><cocoa key="threadID"/></property>
+      <property name="subject" code="Tsub" type="text" access="r" description="The mail subject."/>
+      <property name="sender" code="Tsen" type="text" access="r" description="The sender header; conversations use the latest selected message."/>
+      <property name="date" code="Tdat" type="date" access="r" description="The message date; conversations use their last selected message."><cocoa key="sentDate"/></property>
+      <property name="tern link" code="Tlnk" type="text" access="r" description="An account-qualified link that opens this mail in Tern."><cocoa key="ternLink"/></property>
+      <property name="gmail link" code="Tgln" type="text" access="r" description="A Gmail web link for this account."><cocoa key="gmailLink"/></property>
+    </class>
+    <class name="conversation" code="Tcnv" inherits="mail object" description="One currently selected conversation.">
+      <cocoa class="TernScriptConversation"/>
+      <element type="message" access="r"><cocoa key="selectedMessages"/></element>
+    </class>
+    <class name="message" code="Tmsg" inherits="mail object" description="One currently selected message.">
+      <cocoa class="TernScriptMessage"/>
+      <property name="message id" code="TmID" type="text" access="r" description="Gmail's message identifier within this account."><cocoa key="messageID"/></property>
+    </class>
+  </suite>
+</dictionary>
