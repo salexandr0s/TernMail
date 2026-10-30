@@ -1,6 +1,6 @@
 # Milestone 5 plan: Mimestream parity
 
-Status: scope approved 2026-10-29. File-level phases are written and reviewed after milestone 4 merges. Branch `feat/milestone-5`, cut from `feat/milestone-4` at `5d4d385`.
+Status: scope approved 2026-10-29. Preserved in the unified branch `codex/tern-unified` on 2026-10-30. Milestone 4 is complete through B5b; continue with B6a before planning the remaining milestone 5 phases. The original planning branch was `feat/milestone-5`, cut from `feat/milestone-4` at `5d4d385`.
 
 Inputs: the owner's screenshots of Mimestream 1.10.8 (Inbox, Sent, Spam and every Settings pane), `docs/research/mimestream-behavior.md`, the milestone 1 to 3 plans, and milestone 4's plan (approved 2026-10-29 at `621772c` and amended at `36c6455`, on `feat/milestone-4`). The screenshots are a feature checklist only. Layout, wording, icons and sounds stay Tern's own (project rule).
 
@@ -14,7 +14,7 @@ Every feature visible in the screenshots or named in the research notes was chec
 
 1. Remote content: a setting to block remote images (on by default, today's behavior), Load Images per message, and Always Load for a sender. Allowed messages get a per-message content rule list, and the CSP opens to `https:` images only for them.
 2. Tracker blocking: with remote content allowed, known tracking hosts and 1×1 images stay blocked, and the message says how many were blocked. The host list is an openly licensed list (license checked before adoption) or our own.
-3. Dark message backgrounds: a setting (on by default) that adapts HTML mail to dark mode by rewriting colors at sanitize time (lightness inverted, hue kept, images untouched). Mail with its own dark styles keeps them. Show with Light Background per message.
+3. Dark message backgrounds: automatic adaptation already exists in `MessageDocument+DarkMode.swift`. Remaining: an on-by-default setting, Show with Light Background per message, and verification of mail with its own dark styles. Preserve the existing hue/contrast handling and untouched image pixels.
 4. Inline `cid:` images (audit A24): MIME image parts cached as resources. The sanitizer rewrites `cid:` to a Tern scheme served by a `WKURLSchemeHandler`, limited to the same message.
 5. Conversation order: oldest first (today) or newest first.
 6. Mark as read: immediately (today), after a delay, or by hand only. The delayed form queues mark-read only if the conversation is still open when the delay ends.
