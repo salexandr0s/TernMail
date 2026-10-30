@@ -1,6 +1,6 @@
 # Milestone 5 verification
 
-Implementation and acceptance are tracked separately. The scope is the 72 items in [the execution checklist](plans/milestone-5-execution.md). Work is integrated on `codex/tern-unified` in `/Users/developer/GitHub/REA_Mime`.
+Implementation and acceptance are tracked separately. The scope is the 72 items in [the execution checklist](plans/milestone-5-execution.md). Work is integrated on `main` in `/Users/developer/GitHub/REA_Mime`. The 2026-10-30 consolidation also includes the completed settings, Calendar and Assistant follow-ups; see [the current handoff](../SESSION_HANDOFF.md).
 
 ## Integration checkpoints
 
@@ -8,7 +8,7 @@ Milestone 4 completed before Milestone 5 implementation: 398 Core tests in 63 su
 
 Milestone 5 Core passes **471 tests in 82 suites** (`/tmp/tern-m5-core-final.log`). The full hosted suite passes **242 tests in 44 suites** in both the shared checkout (`/tmp/tern-m5-hosted-complete.log`) and the frozen source snapshot (`/tmp/tern-m5-frozen-hosted.log`). Source revision: `8457537`. The snapshot is `/tmp/tern-m5-release-snapshot-hgnbweka/REA_Mime`.
 
-The universal **Release build passed for arm64 and x86_64**, and strict code-signature verification passed (`/tmp/tern-m5-frozen-release.log`). The verified bundle is `build/Milestone5/Tern.app`; `build/Milestone5/BUILD_INFO.txt` records the source revision, architecture and executable hash. The separate “Redesign settings popup” chat is editing the shared checkout; its later visual changes are outside this milestone artifact. They remain intact.
+The milestone's universal **Release build passed for arm64 and x86_64**, and strict code-signature verification passed (`/tmp/tern-m5-frozen-release.log`). Its former `build/Milestone5/Tern.app` bundle was removed during consolidation. The installed `/Users/developer/Applications/Tern.app` includes the subsequent settings redesign and Calendar/Assistant changes; `build/Tern-build-info.json` records its source revision and executable hash. The combined build passed 265 hosted tests, 471 Core tests and universal Release verification.
 
 Review found and corrected timestamp precision in Snooze Undo, read timing for inactive readers, account/message boundaries in detached actions and URL routing, draft attachment ownership, contact expansion after permission changes, and cache eviction of active snoozes and newer organizer invitations. Final workflow review connected missing Send Again, category navigation and action-sound hooks. Links now route Spam/Trash correctly and open a conversation window with validated account/message scope, independent of list filtering, pagination or a hidden reader. The hosted regressions pass.
 
