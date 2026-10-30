@@ -8,15 +8,43 @@ struct AssistantLauncher: View {
     var body: some View {
         Button(action: onToggle) {
             Label("Assistant", systemImage: "bubble.left.and.text.bubble.right")
-                .font(.callout.weight(.medium))
-                .padding(.horizontal, Tokens.Space.s3)
-                .frame(minHeight: Tokens.Control.avatarLarge)
+                .labelStyle(.iconOnly)
+                .frame(width: Tokens.Control.icon, height: Tokens.Control.icon)
         }
         .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .background(.regularMaterial, in: Capsule())
+        .buttonBorderShape(.circle)
         .help(isPresented ? "Close assistant sidebar" : "Ask about your mail")
         .accessibilityLabel(isPresented ? "Close assistant sidebar" : "Open assistant sidebar")
         .accessibilityValue(isPresented ? "Open" : "Closed")
+    }
+}
+
+/// Shared trailing controls for the active Mail or Calendar toolbar.
+struct WorkspaceAssistantToolbar: ToolbarContent {
+    @Environment(AppModel.self) private var app
+    let isAssistantPresented: Bool
+    let onToggleAssistant: () -> Void
+
+    var body: some ToolbarContent {
+        let nextDestination: WorkspaceDestination = app.destination == .mail ? .calendar : .mail
+        if #available(macOS 26, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                app.destination = nextDestination
+            } label: {
+                Label("Switch to \(nextDestination.title)",
+                    systemImage: nextDestination == .calendar ? "calendar" : "envelope")
+            }
+            .labelStyle(.iconOnly)
+            .help("Switch to \(nextDestination.title)")
+        }
+        if #available(macOS 26, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            AssistantLauncher(isPresented: isAssistantPresented, onToggle: onToggleAssistant)
+        }
     }
 }

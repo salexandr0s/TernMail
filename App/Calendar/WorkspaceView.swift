@@ -15,7 +15,6 @@ struct WorkspaceView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        let nextDestination: WorkspaceDestination = app.destination == .mail ? .calendar : .mail
         ZStack {
             MainView(mailbox: mailbox, isActive: app.destination == .mail)
                 .opacity(app.destination == .mail ? 1 : 0)
@@ -32,12 +31,6 @@ struct WorkspaceView: View {
                         .frame(width: Tokens.Assistant.sidebarWidth)
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if !showsCalendarAssistant {
-                    AssistantLauncher(isPresented: false, onToggle: { showsCalendarAssistant = true })
-                        .padding(Tokens.Space.s4)
-                }
-            }
             .opacity(app.destination == .calendar ? 1 : 0)
             .allowsHitTesting(app.destination == .calendar)
             .accessibilityHidden(app.destination != .calendar)
@@ -48,15 +41,9 @@ struct WorkspaceView: View {
         .navigationSubtitle(app.destination == .calendar || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
             ? "" : mailbox.selectedMailboxSubtitle)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Button {
-                    app.destination = nextDestination
-                } label: {
-                    Label("Switch to \(nextDestination.title)",
-                        systemImage: nextDestination == .calendar ? "calendar" : "envelope")
-                }
-                .labelStyle(.iconOnly)
-                .help("Switch to \(nextDestination.title)")
+            if app.destination == .calendar {
+                WorkspaceAssistantToolbar(isAssistantPresented: showsCalendarAssistant,
+                    onToggleAssistant: { showsCalendarAssistant.toggle() })
             }
         }
         .task { await app.calendar.start() }

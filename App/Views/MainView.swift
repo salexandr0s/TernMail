@@ -170,6 +170,9 @@ struct MainView: View {
                     if isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
                         MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow)
                     }
+                    if isActive {
+                        WorkspaceAssistantToolbar(isAssistantPresented: showsAssistant, onToggleAssistant: toggleAssistant)
+                    }
                 }
         }
         .navigationSplitViewStyle(.balanced)
@@ -198,7 +201,6 @@ struct MainView: View {
                     .transition(.opacity)
                     .id(notice.id)
                 }
-                AssistantLauncher(isPresented: showsAssistant, onToggle: toggleAssistant)
             }
             .padding(Tokens.Space.s4)
             .ternAnimation(value: mailbox.notice)

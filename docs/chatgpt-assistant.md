@@ -27,6 +27,8 @@ If a draft is requested during learning, Tern waits briefly for the profile befo
 
 ## Chat controls and data
 
+Use the round Assistant icon at the far right of the window toolbar to open or close the sidebar. The button immediately to its left switches between Mail and Calendar. These controls stay in the same position in both views.
+
 The assistant opens as a right sidebar inside the existing window. Mailbox navigation and the conversation list shrink while it is open. At narrow widths, mailbox navigation temporarily closes. Closing the assistant restores the earlier layout. Drag its left edge to resize it, or use **Options** to open a separate window or full-screen view. All three views share the conversation and unfinished message.
 
 Replies support headings, lists, emphasis, quotes, code, and tables. Email cards show verified sender details, dates, labels, unread/starred status, and a reason for inclusion. Available local profile pictures appear beside senders; otherwise Tern shows initials. Cards link to the original conversation. Generated text and images do not create navigation links; use the validated cards and sources.
