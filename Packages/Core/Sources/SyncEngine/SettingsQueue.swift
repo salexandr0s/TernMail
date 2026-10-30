@@ -102,7 +102,7 @@ extension SyncEngine {
     /// time, and returns how many it claimed.
     @discardableResult
     func sendDueSettings() async -> Int {
-        guard let settings else { return 0 }
+        guard let settings, await settingsAreEnabled() else { return 0 }
         let accountID = accountID
         let now = now()
         guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now, lane: .settings) }) else {
@@ -118,6 +118,17 @@ extension SyncEngine {
         let current = try? await cache.read { tx in try tx.action(id: id) }
         guard var row = current ?? nil, row.state == .sending else {
             _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
+            return
+        }
+        // Each row checks current consent just before beginning. A replace
+        // already in progress finishes its create/delete pair as one change.
+        guard await settingsAreEnabled() else {
+            _ = try? await write { tx in
+                guard var stored = try tx.action(id: id), stored.state == .sending else { return }
+                stored.state = .queued
+                stored.attempts = max(0, stored.attempts - 1)
+                try tx.updateAction(stored)
+            }
             return
         }
         do {
@@ -177,6 +188,13 @@ extension SyncEngine {
                 await refuseSettingsChange(row, error: error)
             }
         }
+    }
+
+    private func settingsAreEnabled() async -> Bool {
+        guard let accounts else { return true }
+        guard let stored = try? await accounts.accounts().first(where: { $0.id == accountID }) else { return false }
+        return stored.enabledFeatures.contains(AccountFeature.gmailSettings.rawValue)
+            && GoogleScopes.isCovered(.gmailSettings, by: stored.grantedScopes)
     }
 
     /// Writes what the row has learned into its payload, before the next

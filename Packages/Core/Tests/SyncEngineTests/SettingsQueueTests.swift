@@ -115,6 +115,59 @@ import Testing
             "Gmail didn't save the change because Tern can't edit this account's settings. Turn on Gmail Settings for the account, then make the change again."
         )])
     }
+
+    @Test func disablingSettingsPausesQueuedRowsUntilTheFeatureIsEnabledAgain() async throws {
+        let accounts = try AccountStore.inMemory()
+        try await accounts.save(AccountRecord(
+            id: account, email: "me@example.com", displayName: "Me",
+            grantedScopes: GoogleScopes.base + [GoogleScopes.gmailSettings], addedAt: .now,
+            enabledFeatures: [AccountFeature.gmailSettings.rawValue]
+        ))
+        let (engine, cache, settings, clock) = try await makeSettingsEngine(accounts: accounts)
+        _ = try await engine.createFilter(news)
+        clock.advance(3)
+        try await accounts.updateAccount(id: account) { $0.enabledFeatures = [] }
+
+        #expect(await engine.sendDueSettings() == 0)
+        #expect(await settings.calls.isEmpty)
+        let paused = try #require(try await rows(cache).first)
+        #expect(paused.state == .queued)
+        #expect(paused.attempts == 0)
+
+        try await accounts.updateAccount(id: account) { $0.enabledFeatures = [AccountFeature.gmailSettings.rawValue] }
+        #expect(await engine.sendDueSettings() == 1)
+        #expect(await settings.calls == ["list", "create"])
+        #expect(try await rows(cache).first?.state == .sent)
+        await engine.stop()
+    }
+
+    @Test func disablingDuringReplaceFinishesThatChangeAndPausesTheNextRow() async throws {
+        let accounts = try AccountStore.inMemory()
+        try await accounts.save(AccountRecord(
+            id: account, email: "me@example.com", displayName: "Me",
+            grantedScopes: GoogleScopes.base + [GoogleScopes.gmailSettings], addedAt: .now,
+            enabledFeatures: [AccountFeature.gmailSettings.rawValue]
+        ))
+        let (engine, cache, settings, clock) = try await makeSettingsEngine(filters: [mine], accounts: accounts)
+        let edited = GmailFilter(criteria: mine.criteria, action: .init(addLabelIds: [SystemLabel.important]))
+        _ = try await engine.replaceFilter(mine, with: edited)
+        _ = try await engine.updateSignature("<p>New</p>", previousHTML: "", for: "me@example.com")
+        await settings.duringNextCreate {
+            _ = try? await accounts.updateAccount(id: account) { $0.enabledFeatures = [] }
+        }
+        clock.advance(3)
+
+        #expect(await engine.sendDueSettings() == 2)
+        #expect(await settings.calls == ["list", "create", "delete mine"])
+        let signature = try #require(try await rows(cache).first { $0.kind == .updateSignature })
+        #expect(signature.state == .queued)
+        #expect(signature.attempts == 0)
+
+        try await accounts.updateAccount(id: account) { $0.enabledFeatures = [AccountFeature.gmailSettings.rawValue] }
+        #expect(await engine.sendDueSettings() == 1)
+        #expect(await settings.calls.last == "signature me@example.com")
+        await engine.stop()
+    }
 }
 
 /// Gmail's settings for one account. IDs go "f1", "f2" and so on.
@@ -206,7 +259,7 @@ actor FakeSettings: SettingsService {
 }
 
 func makeSettingsEngine(
-    filters: [GmailFilter] = [], vacation: VacationSettings = VacationSettings()
+    filters: [GmailFilter] = [], vacation: VacationSettings = VacationSettings(), accounts: AccountStore? = nil
 ) async throws -> (SyncEngine, MailCache, FakeSettings, TestClock) {
     let cache = try MailCache.inMemory()
     let settings = FakeSettings(filters: filters, vacation: vacation)
@@ -217,6 +270,7 @@ func makeSettingsEngine(
         outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: "TernTests-\(UUID().uuidString)", directoryHint: .isDirectory),
         gmail: FakeGmail(),
         settings: settings,
+        accounts: accounts,
         cache: cache,
         sendsAutomatically: false,
         now: clock.now
