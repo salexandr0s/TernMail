@@ -14,7 +14,28 @@ public struct MIMEMessage: Sendable, Equatable {
         }
     }
 
+    /// A validated calendar alternative whose MIME method matches its body.
+    public struct CalendarPart: Sendable, Equatable {
+        public let text: String
+        public let method: String
+
+        public init(text: String) throws {
+            let calendar = try ICalendar.parse(Data(text.utf8))
+            let methods = calendar.properties(named: "METHOD")
+            guard methods.count == 1, let method = methods.first?.value, !method.isEmpty,
+                  // A folded " method=" prefix leaves 990 bytes on the line.
+                  method.utf8.count <= 990,
+                  method.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") })
+            else { throw ICalendarError.malformed }
+            self.method = method
+            // Keep only the component that was validated, with canonical CRLF
+            // and folding. The parser may ignore data after its first root.
+            self.text = calendar.serialized()
+        }
+    }
+
     public var from: EmailAddress
+    public var replyTo: [EmailAddress] = []
     public var to: [EmailAddress] = []
     public var cc: [EmailAddress] = []
     /// Gmail drops the Bcc header from what recipients get, so it belongs in
@@ -28,6 +49,7 @@ public struct MIMEMessage: Sendable, Equatable {
     public var references: [String] = []
     public var plainText = ""
     public var html: String?
+    public var calendarPart: CalendarPart?
     public var attachments: [Attachment] = []
 
     public init(from: EmailAddress) {
@@ -47,6 +69,7 @@ public struct MIMEMessage: Sendable, Equatable {
             MIMEWriter.header("Date", MIMEWriter.dateString(date, timeZone: timeZone)),
             MIMEWriter.addressHeader("From", [from]),
         ]
+        if !replyTo.isEmpty { headers.append(MIMEWriter.addressHeader("Reply-To", replyTo)) }
         if !to.isEmpty { headers.append(MIMEWriter.addressHeader("To", to)) }
         if !cc.isEmpty { headers.append(MIMEWriter.addressHeader("Cc", cc)) }
         if !bcc.isEmpty { headers.append(MIMEWriter.addressHeader("Bcc", bcc)) }
@@ -84,10 +107,10 @@ enum MIMEWriter {
 
     static func body(of message: MIMEMessage) -> Entity {
         let plain = textEntity(message.plainText, subtype: "plain")
-        var main = plain
-        if let html = message.html {
-            main = multipart("alternative", [plain, textEntity(html, subtype: "html")])
-        }
+        var alternatives = [plain]
+        if let html = message.html { alternatives.append(textEntity(html, subtype: "html")) }
+        if let calendar = message.calendarPart { alternatives.append(calendarEntity(calendar)) }
+        let main = alternatives.count == 1 ? plain : multipart("alternative", alternatives)
         guard !message.attachments.isEmpty else { return main }
         return multipart("mixed", [main] + message.attachments.map(attachmentEntity))
     }
@@ -99,6 +122,17 @@ enum MIMEWriter {
                 "Content-Transfer-Encoding: quoted-printable",
             ],
             content: quotedPrintable(text)
+        )
+    }
+
+    private static func calendarEntity(_ calendar: MIMEMessage.CalendarPart) -> Entity {
+        Entity(
+            headers: [
+                fold("Content-Type", ["text/calendar;", "charset=UTF-8;", "method=\(calendar.method)"], separator: ""),
+                "Content-Disposition: inline",
+                "Content-Transfer-Encoding: quoted-printable",
+            ],
+            content: quotedPrintable(calendar.text)
         )
     }
 

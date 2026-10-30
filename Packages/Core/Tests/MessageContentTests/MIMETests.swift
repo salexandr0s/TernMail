@@ -4,8 +4,17 @@ import Testing
 @testable import MessageContent
 
 @Suite struct MIMEWriterTests {
+    private func calendar(_ methodLines: [String]) -> String {
+        (["BEGIN:VCALENDAR", "VERSION:2.0"] + methodLines + [
+            "BEGIN:VEVENT", "UID:meeting@example.com", "DTSTAMP:20261030T120000Z",
+            "SUMMARY:Café planning", "ORGANIZER:mailto:organizer@example.com",
+            "ATTENDEE;CN=Zoë:mailto:zoe@example.com", "END:VEVENT", "END:VCALENDAR", "",
+        ]).joined(separator: "\r\n")
+    }
+
     @Test func roundTripKeepsNonASCIIHeadersBodiesAndAttachmentBytes() throws {
         var message = MIMEMessage(from: EmailAddress(name: "Zoë Martín", address: "zoe@example.com"))
+        message.replyTo = [EmailAddress(name: "Équipe", address: "team@example.com"), EmailAddress(address: "backup@example.com")]
         message.to = [EmailAddress(name: "Doe, Jane", address: "jane@example.com"), EmailAddress(address: "bob@example.com")]
         message.cc = [EmailAddress(name: "Ünal", address: "unal@example.com")]
         message.bcc = [EmailAddress(address: "hidden@example.com")]
@@ -33,6 +42,7 @@ import Testing
         let parsed = MIMEReader.parse(raw)
         #expect(parsed.header("Subject").map(MIMEReader.decodeEncodedWords) == message.subject)
         #expect(parsed.header("From").map(EmailAddress.parseList) == [message.from])
+        #expect(parsed.header("Reply-To").map(EmailAddress.parseList) == message.replyTo)
         #expect(parsed.header("To").map(EmailAddress.parseList) == message.to)
         #expect(parsed.header("Cc").map(EmailAddress.parseList) == message.cc)
         #expect(parsed.header("Bcc").map(EmailAddress.parseList) == message.bcc)
@@ -56,12 +66,97 @@ import Testing
         var message = MIMEMessage(from: EmailAddress(name: "A\r\nBcc: evil@example.com", address: "a@example.com"))
         message.subject = "Hi\r\nBcc: evil@example.com"
         message.to = [EmailAddress(address: "b@example.com\r\nCc: evil@example.com")]
+        message.replyTo = [EmailAddress(name: "Reply\r\nX-Reply: injected", address: "reply@example.com\r\nX-Address: injected")]
 
         let parsed = MIMEReader.parse(message.encoded())
 
         #expect(parsed.header("Bcc") == nil)
         #expect(parsed.header("Cc") == nil)
+        #expect(parsed.header("X-Reply") == nil)
+        #expect(parsed.header("X-Address") == nil)
         #expect(parsed.headers.filter { $0.name == "Subject" }.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func invitationRepliesAreInlineAlternativesWithOptionalHTMLAndAttachments(includeExtras: Bool) throws {
+        let invitation = try Invitation(data: Data(calendar(["METHOD:REQUEST"]).utf8))
+        let attendee = try #require(invitation.attendees.first)
+        let stamp = try #require(ISO8601DateFormatter().date(from: "2026-10-30T13:00:00Z"))
+        let reply = InvitationReply.calendar(replyingTo: invitation, as: attendee, answer: .accepted, now: stamp)
+        var message = MIMEMessage(from: EmailAddress(name: attendee.name, address: "zoe@example.com"))
+        message.plainText = "Accepted: Café planning"
+        message.calendarPart = try MIMEMessage.CalendarPart(text: reply)
+        if includeExtras {
+            message.html = "<p>Accepted: Café planning</p>"
+            message.attachments = [.init(filename: "notes.txt", mimeType: "text/plain", data: Data("Notes".utf8))]
+        }
+        let raw = message.encoded()
+        let text = String(decoding: raw, as: UTF8.self)
+        #expect(raw.allSatisfy { $0 < 0x80 })
+        #expect(!text.replacingOccurrences(of: "\r\n", with: "").contains(where: { $0 == "\n" || $0 == "\r" }))
+        #expect(text.components(separatedBy: "\r\n").allSatisfy { $0.utf8.count <= 998 })
+
+        let parsed = MIMEReader.parse(raw)
+        #expect(parsed.header("Reply-To") == nil)
+        #expect(parsed.mimeType == (includeExtras ? "multipart/mixed" : "multipart/alternative"))
+        let alternative: MIMEEntity
+        if includeExtras {
+            #expect(parsed.parts.map(\.mimeType) == ["multipart/alternative", "text/plain"])
+            #expect(parsed.parts[1].filename == "notes.txt")
+            #expect(parsed.parts[1].body == Data("Notes".utf8))
+            alternative = try #require(parsed.parts.first)
+        } else {
+            alternative = parsed
+        }
+        #expect(alternative.parts.map(\.mimeType) == (includeExtras ? ["text/plain", "text/html", "text/calendar"] : ["text/plain", "text/calendar"]))
+        #expect(alternative.parts.first?.text == message.plainText)
+        let calendarPart = try #require(alternative.parts.last)
+        let parameters = MIMEReader.parameters(of: try #require(calendarPart.header("Content-Type")))
+        #expect(parameters["charset"] == "UTF-8")
+        #expect(parameters["method"] == "REPLY")
+        #expect(calendarPart.header("Content-Disposition") == "inline")
+        #expect(calendarPart.filename == nil)
+        #expect(calendarPart.text == reply)
+        let roundTrip = try Invitation(data: calendarPart.body)
+        #expect(roundTrip.uid == invitation.uid)
+        #expect(roundTrip.stamp == stamp)
+        #expect(roundTrip.method == .reply)
+        #expect(roundTrip.attendees.first?.status == .accepted)
+    }
+
+    @Test(arguments: [
+        [], ["METHOD:"], ["METHOD:REPLY", "METHOD:CANCEL"],
+        ["METHOD:REPLY; X-Evil=injected"], ["METHOD:RÉPLY"],
+        ["METHOD:" + String(repeating: "A", count: 991)],
+    ])
+    func calendarMethodsMustBeSingleSafeTokens(methodLines: [String]) {
+        #expect(throws: ICalendarError.malformed) {
+            try MIMEMessage.CalendarPart(text: self.calendar(methodLines))
+        }
+    }
+
+    @Test func calendarValidationDropsTrailingRootsAndPreservesMethodSpelling() throws {
+        let expected = calendar(["METHOD:reply"])
+        let part = try MIMEMessage.CalendarPart(text: expected + calendar(["METHOD:CANCEL"]))
+        #expect(part.method == "reply")
+        #expect(part.text == expected)
+        var message = MIMEMessage(from: EmailAddress(address: "zoe@example.com"))
+        message.calendarPart = part
+        let encodedCalendar = try #require(MIMEReader.parse(message.encoded()).parts.last)
+        #expect(MIMEReader.parameters(of: try #require(encodedCalendar.header("Content-Type")))["method"] == "reply")
+        #expect(encodedCalendar.text == expected)
+    }
+
+    @Test func longCalendarMethodStaysWithinTheHeaderLineLimit() throws {
+        let method = String(repeating: "A", count: 990)
+        var message = MIMEMessage(from: EmailAddress(address: "zoe@example.com"))
+        message.calendarPart = try MIMEMessage.CalendarPart(text: calendar(["METHOD:" + method]))
+        let raw = message.encoded()
+        let text = String(decoding: raw, as: UTF8.self)
+        #expect(text.components(separatedBy: "\r\n").allSatisfy { $0.utf8.count <= 998 })
+        let part = try #require(MIMEReader.parse(raw).parts.last)
+        #expect(MIMEReader.parameters(of: try #require(part.header("Content-Type")))["method"] == method)
+        #expect(try ICalendar.parse(part.body).property("METHOD")?.value == method)
     }
 }
 

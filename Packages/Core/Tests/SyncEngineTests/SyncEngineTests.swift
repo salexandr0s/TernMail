@@ -606,7 +606,7 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).isEmpty)
     }
 
-    @Test func aRepeatedSendThatFindsTheDraftGoneCountsAsSent() async throws {
+    @Test func aSendWhoseResponseWasLostIsReconciledWithoutSendingAgain() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         let draft = makeDraft()
         try await engine.createDraft(draft)
@@ -620,7 +620,8 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         clock.advance(10)
         await engine.sendDueDrafts()
 
-        #expect(await gmail.draftCalls == ["create", "send D1", "send D1"])
+        // The retry finds the consumed draft through metadata and finishes locally.
+        #expect(await gmail.draftCalls == ["create", "send D1"])
         #expect(try await cache.read { tx in try tx.localDraft(id: draft.id) } == nil)
         #expect(try await pendingActions(cache).isEmpty)
     }

@@ -11,6 +11,9 @@ public enum ComposeError: Error, Equatable, LocalizedError {
     case draftGone
     case folder(String)
     case fileTooLarge(String)
+    case senderUnavailable
+    case invalidReplyTo
+    case invalidCalendar
 
     public var errorDescription: String? {
         switch self {
@@ -24,6 +27,12 @@ public enum ComposeError: Error, Equatable, LocalizedError {
             "“\(name)” is a folder. Compress it in Finder, then attach the compressed file."
         case .fileTooLarge(let name):
             "“\(name)” doesn't fit in this message. Gmail accepts about 25 MB of attachments per message."
+        case .senderUnavailable:
+            "This sender is no longer available. Choose another From address and try again."
+        case .invalidReplyTo:
+            "This sender's Reply-To address is invalid. Update it in Gmail and try again."
+        case .invalidCalendar:
+            "This calendar reply is invalid. Open the invitation and choose your answer again."
         }
     }
 }
@@ -71,7 +80,21 @@ extension SyncEngine {
 
     /// Cancels a send that hasn't started. Returns false once it has.
     public func undoSend(_ localDraftID: String) async throws -> Bool {
-        try await write { tx in try tx.cancelExit(localDraftID: localDraftID) }
+        let accountID = accountID
+        let now = now()
+        let cancelled = try await write { tx in
+            guard let draft = try tx.localDraft(id: localDraftID), draft.accountID == accountID,
+                  draft.state == .sending, try tx.cancelExit(localDraftID: localDraftID) else { return false }
+            if draft.kind == .invitationReply {
+                try tx.deleteInvitationReply(localDraftID: localDraftID, accountID: accountID)
+                // Keep durable cleanup behind any in-flight autosave, so its
+                // eventual Gmail draft is removed too.
+                _ = try tx.enqueueDiscard(localDraftID: localDraftID, now: now, notBefore: now)
+            }
+            return true
+        }
+        if cancelled { scheduleSending() }
+        return cancelled
     }
 
     /// Queues the discard for after `hold`, while its notice offers undo.
@@ -258,6 +281,17 @@ extension SyncEngine {
     }
 
     private func deliver(_ row: PendingAction, localDraftID: String) async throws {
+        let accountID = accountID
+        if let previous = try await cache.read({ tx in try tx.localDraft(id: localDraftID) }),
+           previous.accountID == accountID, previous.sendRequested, let id = previous.gmailDraftID {
+            // A lost send response can outlive an identity's availability.
+            // Reconcile the consumed Gmail draft before validating a new upload.
+            do {
+                _ = try await gmail.draft(id: id, format: .metadata)
+            } catch GmailError.notFound {
+                return try await finishRemoving(localDraftID, sentMessageID: nil, sent: true)
+            }
+        }
         guard let prepared = try await prepare(localDraftID) else { return try await drop(row) }
         // A draft that never reached Gmail, or whose Gmail copy another app
         // changed, is saved first, so a retry finds it instead of creating another.
@@ -332,11 +366,14 @@ extension SyncEngine {
 
     /// The local draft and its encoded message, or nil when the draft is gone.
     private func prepare(_ localDraftID: String) async throws -> Prepared? {
+        let accountID = accountID
         let stored = try await cache.read { tx -> (LocalDraft, [OutgoingAttachment])? in
-            guard let draft = try tx.localDraft(id: localDraftID) else { return nil }
+            guard let draft = try tx.localDraft(id: localDraftID), draft.accountID == accountID else { return nil }
             return (draft, try tx.outgoingAttachments(localDraftID: localDraftID))
         }
         guard let (draft, attachments) = stored else { return nil }
+        let identity = try await outgoingIdentity(for: draft)
+        let calendar = try Self.outgoingCalendar(for: draft)
         var files: [MIMEMessage.Attachment] = []
         for attachment in attachments {
             guard let data = try? Data(contentsOf: outgoingDirectory.appending(path: attachment.path)) else {
@@ -344,12 +381,49 @@ extension SyncEngine {
             }
             files.append(MIMEMessage.Attachment(filename: attachment.filename, mimeType: attachment.mimeType, data: data))
         }
-        let raw = Self.message(for: draft, attachments: files, sender: sender, date: now()).encoded()
+        let raw = Self.message(
+            for: draft, attachments: files, sender: identity.from, date: now(),
+            replyTo: identity.replyTo, calendarPart: calendar
+        ).encoded()
         guard raw.count <= Self.maxMessageSize else { throw ComposeError.tooLarge }
         if raw.count > Self.largeMessageSize {
             nextLargeSave[localDraftID] = now().addingTimeInterval(Self.largeSaveInterval)
         }
         return Prepared(draft: draft, message: OutgoingMessage(raw: raw, threadID: draft.threadID))
+    }
+
+    private func outgoingIdentity(for draft: LocalDraft) async throws -> (from: EmailAddress, replyTo: [EmailAddress]) {
+        let address = EmailAddress(address: draft.fromAddress ?? sender.address)
+        guard address.isValid else { throw ComposeError.senderUnavailable }
+        let identities = try await accounts?.identities(accountID: draft.accountID) ?? []
+        guard let identity = identities.first(where: { $0.lowercasedAddress == address.normalized }) else {
+            // The primary address works before the first identity sync. An
+            // explicit alias must never silently become the account address.
+            guard address.normalized == sender.normalized else { throw ComposeError.senderUnavailable }
+            return (sender, [])
+        }
+        guard identity.canSend else { throw ComposeError.senderUnavailable }
+        var replyTo: [EmailAddress] = []
+        if let value = identity.replyTo {
+            let address = EmailAddress(address: value)
+            guard address.isValid else { throw ComposeError.invalidReplyTo }
+            replyTo = [address]
+        }
+        return (EmailAddress(name: identity.displayName ?? sender.name, address: identity.address), replyTo)
+    }
+
+    private static func outgoingCalendar(for draft: LocalDraft) throws -> MIMEMessage.CalendarPart? {
+        guard let text = draft.calendarPart else {
+            if draft.kind == .invitationReply { throw ComposeError.invalidCalendar }
+            return nil
+        }
+        guard let part = try? MIMEMessage.CalendarPart(text: text) else { throw ComposeError.invalidCalendar }
+        if draft.kind == .invitationReply {
+            guard let invitation = try? Invitation(data: Data(part.text.utf8)), invitation.method == .reply else {
+                throw ComposeError.invalidCalendar
+            }
+        }
+        return part
     }
 
     /// Creates or updates the Gmail draft and records it, replacing the
@@ -405,8 +479,10 @@ extension SyncEngine {
     /// Removes a sent or discarded draft locally, with its files.
     private func finishRemoving(_ localDraftID: String, sentMessageID: String?, sent: Bool) async throws {
         let sentMessage = if let sentMessageID { try? await fetchMetadata([sentMessageID]).updates.first } else { nil as CacheTransaction.MessageUpdate? }
+        let accountID = accountID
         let deleted = deletedMessageIDs
         try await write { tx in
+            if !sent { try tx.deleteInvitationReply(localDraftID: localDraftID, accountID: accountID) }
             let removed = try tx.removeFinishedDraft(localDraftID: localDraftID, sentMessage: sentMessage)
             deleted.withLock { $0.formUnion(removed.removedMessageIDs) }
         }
@@ -476,9 +552,13 @@ extension SyncEngine {
         }
     }
 
-    /// The draft as an RFC 5322 message: the new text, then the quote.
-    static func message(for draft: LocalDraft, attachments: [MIMEMessage.Attachment], sender: EmailAddress, date: Date) -> MIMEMessage {
+    /// The draft as an RFC 5322 message: new text, its saved signature, then the quote.
+    static func message(
+        for draft: LocalDraft, attachments: [MIMEMessage.Attachment], sender: EmailAddress, date: Date,
+        replyTo: [EmailAddress] = [], calendarPart: MIMEMessage.CalendarPart? = nil
+    ) -> MIMEMessage {
         var message = MIMEMessage(from: sender)
+        message.replyTo = replyTo
         // A recipient still being typed stays in the local draft. Gmail would
         // refuse the whole upload over it.
         message.to = draft.to.filter(\.isValid)
@@ -489,9 +569,12 @@ extension SyncEngine {
         message.messageID = draft.rfcMessageID
         message.inReplyTo = draft.inReplyTo
         message.references = draft.references
-        message.html = draft.body.html() + (draft.quotedHTML ?? "")
-        let text = draft.body.plainText()
-        message.plainText = draft.quotedPlainText.map { text + "\n\n" + $0 } ?? text
+        let signature = draft.signatureHTML.map { "<div class=\"gmail_signature\">" + $0 + "</div>" } ?? ""
+        message.html = draft.body.html() + signature + (draft.quotedHTML ?? "")
+        let signatureText = draft.signatureHTML.map { HTMLImporter.importHTML($0, detachingQuote: false).document.plainText() }
+        message.plainText = [draft.body.plainText(), signatureText, draft.quotedPlainText]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        message.calendarPart = calendarPart
         message.attachments = attachments
         return message
     }
