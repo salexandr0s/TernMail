@@ -56,6 +56,8 @@ final class CalendarModel {
     @ObservationIgnored var undoActions: [CalendarUndoAction] = []
     @ObservationIgnored var savedDraftOperations: [UUID: String] = [:]
     @ObservationIgnored var savingDrafts = Set<UUID>()
+    @ObservationIgnored var savingEvents = Set<String>()
+    @ObservationIgnored var interactionsInFlight = Set<String>()
     @ObservationIgnored var emailResponsesInFlight = Set<String>()
     @ObservationIgnored var proposalTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var stoppingEngines: [String: Task<Void, Never>] = [:]
@@ -276,6 +278,7 @@ final class CalendarModel {
     func reloadOccurrences() async {
         rangeRevision += 1
         let revision = rangeRevision
+        let lifecycle = lifecycleRevision
         let interval = displayInterval
         var found: [CalendarDisplayEvent] = []
         var stale = false
@@ -287,15 +290,21 @@ final class CalendarModel {
                 stale = stale || result.isStale || !result.isComplete
                 found += result.events.filter { !$0.isCancelled }.map {
                     CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
-                        colorHex: owner.colorHex, canEdit: owner.canWrite && ($0.eventType == nil || $0.eventType == "default"),
+                        colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
                         fallbackTimeZoneID: calendar.timeZone.identifier)
                 }
             } catch { stale = true }
         }
-        guard revision == rangeRevision else { return }
-        events = found
+        await reloadOperations()
+        guard revision == rangeRevision, lifecycle == lifecycleRevision else { return }
+        events = CalendarPendingEvents.project(found, operations: operations, calendars: calendars, interval: interval,
+                                               calendar: calendar)
         statusText = calendars.isEmpty ? "Connect Google Calendar to see your events."
-            : stale ? "Showing cached events. Some calendars could not be checked." : "Calendars are up to date."
+            : operations.contains(where: { $0.status == .failed || $0.status == .conflicted })
+                ? "Some calendar changes need review in Calendar activity."
+                : operations.contains(where: { $0.status == .queued || $0.status == .running })
+                ? "Calendar changes are waiting to sync."
+                : stale ? "Showing cached events. Some calendars could not be checked." : "Calendars are up to date."
     }
 
     var displayInterval: DateInterval {

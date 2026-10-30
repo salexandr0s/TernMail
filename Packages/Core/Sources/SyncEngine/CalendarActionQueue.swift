@@ -20,15 +20,18 @@ extension CalendarSyncEngine {
 
     @discardableResult
     public func enqueue(_ mutation: CalendarMutation, calendarID: String, sendUpdates: String = "all",
-                        sourceSuggestionID: String? = nil) async throws -> CalendarOperation {
+                        sourceSuggestionID: String? = nil, beforeEvent: GoogleCalendarEvent? = nil) async throws -> CalendarOperation {
         try beginRequest()
         defer { endRequest() }
         let epoch = try checkpoint()
         try Self.validate(mutation)
         guard try await calendar(calendarID).canWrite else { throw CalendarEngineError.permissionDenied }
         try checkpoint(epoch)
-        let operation = CalendarOperation(accountID: accountID, calendarID: calendarID, mutation: mutation,
+        var operation = CalendarOperation(accountID: accountID, calendarID: calendarID, mutation: mutation,
                                            sendUpdates: sendUpdates, status: .queued, sourceSuggestionID: sourceSuggestionID)
+        // Retain the reviewed source in the same transaction as the queue receipt.
+        // Offline UI projection must not wait for a network fetch to obtain it.
+        operation.beforeEvent = beforeEvent
         return try await store.enqueueOperation(operation)
     }
 
@@ -54,7 +57,8 @@ extension CalendarSyncEngine {
 
     @discardableResult
     public func revise(operationID: String, mutation: CalendarMutation, calendarID: String,
-                       sendUpdates: String = "all", sourceSuggestionID: String? = nil) async throws -> CalendarOperation {
+                       sendUpdates: String = "all", sourceSuggestionID: String? = nil,
+                       beforeEvent: GoogleCalendarEvent? = nil) async throws -> CalendarOperation {
         try beginRequest()
         defer { endRequest() }
         let epoch = try checkpoint()
@@ -62,9 +66,10 @@ extension CalendarSyncEngine {
         guard try await calendar(calendarID).canWrite else { throw CalendarEngineError.permissionDenied }
         let original = try await store.operation(accountID: accountID, id: operationID)
         try checkpoint(epoch)
-        let replacement = CalendarOperation(accountID: accountID, calendarID: calendarID,
+        var replacement = CalendarOperation(accountID: accountID, calendarID: calendarID,
             mutation: mutation, sendUpdates: sendUpdates, status: .queued,
             sourceSuggestionID: sourceSuggestionID ?? original?.sourceSuggestionID)
+        replacement.beforeEvent = beforeEvent
         try await store.replaceOperation(accountID: accountID, id: operationID, with: replacement)
         return replacement
     }

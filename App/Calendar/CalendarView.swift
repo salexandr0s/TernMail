@@ -1,5 +1,4 @@
 import AppKit
-import GmailAPI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -138,7 +137,7 @@ struct CalendarView: View {
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Tokens.Space.s4) {
-                    viewPicker.frame(width: Tokens.Calendar.viewPickerWidth)
+                    viewPicker.frame(width: Tokens.Calendar.viewPickerWidth + Tokens.Space.s16)
                     Spacer(minLength: 0)
                     searchField.frame(width: Tokens.Layout.sidebarWidth)
                 }
@@ -164,7 +163,7 @@ struct CalendarView: View {
         let style: Date.FormatStyle = switch model.mode {
         case .day: .dateTime.year().month(.wide).day()
         case .year: .dateTime.year()
-        case .week, .month: .dateTime.month(.wide).year()
+        case .week, .month, .schedule: .dateTime.month(.wide).year()
         }
         return CalendarLayout.format(model.date, style: style, calendar: model.calendar)
     }
@@ -263,20 +262,22 @@ struct CalendarView: View {
                     Button("Done") { model.searchText = "" }.buttonStyle(.borderless)
                 }.padding(Tokens.Space.s4)
                 Divider()
-                CalendarSearchResults(events: model.searchResults, calendar: model.calendar, selectedID: $model.selectedEventID, edit: model.edit)
+                CalendarSearchResults(events: model.searchResults, calendar: model.calendar, selectedID: $model.selectedEventID,
+                                      edit: model.edit, delete: { deleteTarget = $0 }, duplicate: model.duplicate)
             }
         } else {
             CalendarGridViews(mode: $model.mode, date: $model.date, calendar: model.calendar, events: model.events,
-                              selectedID: $model.selectedEventID, newEvent: model.beginNew, newAllDay: beginAllDay, edit: model.edit,
-                              move: prepareMove, resize: prepareResize,
+                              selectedID: $model.selectedEventID, create: model.beginNew(in:), edit: model.edit,
+                              change: prepareChange,
                               delete: { deleteTarget = $0 }, duplicate: model.duplicate)
                 .focusable().focused($hasKeyboardFocus)
-                .onDeleteCommand { if isActive, let selected { deleteTarget = selected } }
+                .onDeleteCommand { if isActive, let selected, selected.canEdit { deleteTarget = selected } }
                 .onCopyCommand { copyProviders() }
                 .onPasteCommand(of: [.plainText]) { providers in paste(providers) }
                 .onKeyPress(.return) { guard isActive, let selected else { return .ignored }; model.edit(selected); return .handled }
                 .onKeyPress(.leftArrow) { guard isActive else { return .ignored }; navigate(-1); return .handled }
                 .onKeyPress(.rightArrow) { guard isActive else { return .ignored }; navigate(1); return .handled }
+                .onKeyPress(characters: CharacterSet(charactersIn: "cdwmyatg/e12345"), phases: .down, action: calendarShortcut)
         }
     }
 
@@ -334,35 +335,28 @@ struct CalendarView: View {
     private func exportEvents() {
         do { try CalendarImportExport.save(model.events.map { CalendarImportExport.standaloneOccurrence($0.event) }) } catch { model.errorMessage = error.localizedDescription }
     }
-    private func beginAllDay(_ date: Date) {
-        model.beginNew(on: date)
-        let start = model.calendar.startOfDay(for: date)
-        let end = model.calendar.date(byAdding: .day, value: 1, to: start) ?? start
-        model.editor?.event.start = CalendarDateTime(date: start, timeZone: model.calendar.timeZone, allDay: true)
-        model.editor?.event.end = CalendarDateTime(date: end, timeZone: model.calendar.timeZone, allDay: true)
+    private func prepareChange(_ event: CalendarDisplayEvent, range: CalendarEventRange) {
+        perform { try await model.change(event, to: range) }
     }
-    private func prepareMove(_ event: CalendarDisplayEvent, to date: Date) {
-        guard event.isRecurring || !(event.event.attendees ?? []).isEmpty else {
-            perform { try await model.move(event, to: date) }; return
+    private func calendarShortcut(_ key: KeyPress) -> KeyPress.Result {
+        guard hasKeyboardFocus, canHandleCalendarUndo,
+              key.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+        switch key.characters.lowercased() {
+        case "c": model.beginNew(on: CalendarLayout.date(at: 9 * 60, on: model.date, calendar: model.calendar))
+        case "d", "1": model.mode = .day
+        case "w", "2": model.mode = .week
+        case "m", "3": model.mode = .month
+        case "y", "4": model.mode = .year
+        case "a", "5": model.mode = .schedule
+        case "t": model.date = .now
+        case "g": showDatePicker = true
+        case "/": searchHasFocus = true
+        case "e":
+            guard let selected else { return .ignored }
+            model.edit(selected)
+        default: return .ignored
         }
-        var changed = event.event
-        let zone = TimeZone(identifier: changed.start?.timeZone ?? "") ?? model.calendar.timeZone
-        let end: Date
-        if event.isAllDay {
-            let days = max(1, model.calendar.dateComponents([.day], from: event.start, to: event.end).day ?? 1)
-            end = model.calendar.date(byAdding: .day, value: days, to: date) ?? date
-        } else { end = date.addingTimeInterval(event.end.timeIntervalSince(event.start)) }
-        changed.start = CalendarDateTime(date: date, timeZone: zone, allDay: event.isAllDay)
-        changed.end = CalendarDateTime(date: end, timeZone: zone, allDay: event.isAllDay)
-        model.edit(event, proposedEvent: changed)
-    }
-    private func prepareResize(_ event: CalendarDisplayEvent, end: Date) {
-        guard event.isRecurring || !(event.event.attendees ?? []).isEmpty else {
-            perform { try await model.resize(event, end: end) }; return
-        }
-        var changed = event.event
-        changed.end = CalendarDateTime(date: end, timeZone: model.calendar.timeZone, allDay: event.isAllDay)
-        model.edit(event, proposedEvent: changed)
+        return .handled
     }
     private func copyProviders() -> [NSItemProvider] {
         guard isActive, let selected else { return [] }

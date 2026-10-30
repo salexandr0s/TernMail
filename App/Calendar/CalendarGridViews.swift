@@ -6,11 +6,9 @@ struct CalendarGridViews: View {
     let calendar: Calendar
     let events: [CalendarDisplayEvent]
     @Binding var selectedID: String?
-    let newEvent: (Date) -> Void
-    let newAllDay: (Date) -> Void
+    let create: (CalendarEventRange) -> Void
     let edit: (CalendarDisplayEvent) -> Void
-    let move: (CalendarDisplayEvent, Date) -> Void
-    let resize: (CalendarDisplayEvent, Date) -> Void
+    let change: (CalendarDisplayEvent, CalendarEventRange) -> Void
     let delete: (CalendarDisplayEvent) -> Void
     let duplicate: (CalendarDisplayEvent) -> Void
 
@@ -18,94 +16,18 @@ struct CalendarGridViews: View {
         switch mode {
         case .day, .week:
             CalendarTimeGrid(date: date, isWeek: mode == .week, calendar: calendar, events: events,
-                             selectedID: $selectedID, newEvent: newEvent, newAllDay: newAllDay, edit: edit, move: move,
-                             resize: resize, delete: delete, duplicate: duplicate)
+                             selectedID: $selectedID, create: create, edit: edit, change: change,
+                             delete: delete, duplicate: duplicate)
         case .month:
-            month
+            CalendarMonthGrid(date: $date, calendar: calendar, events: events, selectedID: $selectedID,
+                              create: create, edit: edit, change: change, delete: delete, duplicate: duplicate,
+                              openDay: { date = $0; mode = .day })
+        case .schedule:
+            CalendarScheduleView(date: date, calendar: calendar, events: events, selectedID: $selectedID,
+                                 create: create, edit: edit, delete: delete, duplicate: duplicate)
         case .year:
             year
         }
-    }
-
-    private var month: some View {
-        GeometryReader { geometry in
-            let days = CalendarLayout.monthDays(containing: date, calendar: calendar)
-            VStack(spacing: 0) {
-                CalendarWeekdayHeader(calendar: calendar)
-                    .background(Tokens.Surface.muted)
-                Divider()
-                ScrollView(.vertical) {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
-                        ForEach(days, id: \.self) { day in
-                            monthCell(day, height: max(Tokens.Space.s16 + Tokens.Space.s8,
-                                                      (geometry.size.height - Tokens.Space.s8 - Tokens.Border.hairline) / 6))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func monthCell(_ day: Date, height: CGFloat) -> some View {
-        let dayEvents = CalendarLayout.events(events, on: day, calendar: calendar)
-        let capacity = max(1, Int((height - Tokens.Space.s10) / (Tokens.Space.s6 + Tokens.Space.s0_5)))
-        let rowLimit = dayEvents.count > capacity ? max(1, capacity - 1) : capacity
-        let isCurrentMonth = calendar.isDate(day, equalTo: date, toGranularity: .month)
-        let isSelectedDay = calendar.isDate(day, inSameDayAs: date)
-        return VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-            HStack {
-                if calendar.component(.day, from: day) == 1 {
-                    Text(CalendarLayout.format(day, style: .dateTime.month(.abbreviated), calendar: calendar))
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer()
-                Text("\(calendar.component(.day, from: day))")
-                    .font(.callout.weight(isSelectedDay || calendar.isDateInToday(day) ? .semibold : .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(isCurrentMonth ? Color.primary : Color.secondary)
-                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                    .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
-            }
-            ForEach(dayEvents.prefix(rowLimit)) { event in
-                CalendarEventChip(event: event, selected: selectedID == event.id, showsTime: !event.isAllDay)
-                    .onTapGesture(count: 2) { edit(event) }
-                    .onTapGesture { selectedID = event.id; date = day }
-                    .draggable(event.canEdit ? event.id : "")
-                    .contextMenu { eventMenu(event) }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { edit(event) }
-                    .accessibilityAction(named: "Duplicate") { duplicate(event) }
-            }
-            if dayEvents.count > rowLimit {
-                Button("\(dayEvents.count - rowLimit) more") { date = day; mode = .day }
-                    .font(.caption.weight(.medium)).buttonStyle(.plain).foregroundStyle(Color.accentColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Tokens.Space.s1)
-                    .help("Show all events on this day")
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(Tokens.Space.s1)
-        .frame(maxWidth: .infinity).frame(height: height)
-        .background(isCurrentMonth && !calendar.isDateInWeekend(day) ? Tokens.Surface.primary : Tokens.Surface.muted)
-        .overlay { if isSelectedDay { Rectangle().strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus).allowsHitTesting(false) } }
-        .overlay(alignment: .bottom) { Divider() }
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Tokens.Surface.border).frame(width: Tokens.Border.hairline).allowsHitTesting(false)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { newEvent(CalendarLayout.date(at: 9 * 60, on: day, calendar: calendar)) }
-        .onTapGesture { selectedID = nil; date = day }
-        .dropDestination(for: String.self) { values, _ in
-            guard let id = values.first, let event = events.first(where: { $0.id == id }), event.canEdit else { return false }
-            let time = calendar.dateComponents([.hour, .minute], from: event.start)
-            move(event, CalendarLayout.date(at: (time.hour ?? 0) * 60 + (time.minute ?? 0), on: day, calendar: calendar))
-            return true
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month().day(), calendar: calendar))
-        .accessibilityValue(isSelectedDay ? "Selected day" : calendar.isDateInToday(day) ? "Today" : "")
-        .accessibilityAction(named: "Select day") { selectedID = nil; date = day }
     }
 
     private var year: some View {
@@ -138,11 +60,7 @@ struct CalendarGridViews: View {
         }.background(Tokens.Surface.canvas)
     }
 
-    @ViewBuilder private func eventMenu(_ event: CalendarDisplayEvent) -> some View {
-        Button("Open event") { edit(event) }
-        Button("Duplicate") { duplicate(event) }
-        Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
-    }
+
 }
 
 struct CalendarEventChip: View {
@@ -287,6 +205,8 @@ struct CalendarSearchResults: View {
     let calendar: Calendar
     @Binding var selectedID: String?
     let edit: (CalendarDisplayEvent) -> Void
+    let delete: (CalendarDisplayEvent) -> Void
+    let duplicate: (CalendarDisplayEvent) -> Void
     var body: some View {
         if events.isEmpty {
             TernEmptyState(title: "No matching events", systemImage: "magnifyingglass", message: "Try another title or location, or choose a different date window.")
@@ -332,9 +252,16 @@ struct CalendarSearchResults: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { edit(event) }
-                .contextMenu { Button("Open event") { edit(event) } }
+                .contextMenu {
+                    Button("Open event") { edit(event) }
+                    Button("Duplicate") { duplicate(event) }
+                    Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
+                }
             }
             .listStyle(.inset)
+            .onDeleteCommand {
+                if let event = events.first(where: { $0.id == selectedID }), event.canEdit { delete(event) }
+            }
             .onKeyPress(.return) {
                 guard let event = events.first(where: { $0.id == selectedID }) else { return .ignored }
                 edit(event)

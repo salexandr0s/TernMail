@@ -30,7 +30,8 @@ extension CalendarModel {
                 guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
                 found += matches.filter { !$0.isCancelled }.map {
                     CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
-                        colorHex: owner.colorHex, canEdit: owner.canWrite, fallbackTimeZoneID: calendar.timeZone.identifier)
+                        colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
+                        fallbackTimeZoneID: calendar.timeZone.identifier)
                 }
             } catch {
                 if Task.isCancelled { return }
@@ -42,8 +43,14 @@ extension CalendarModel {
             }
         }
         guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+        await reloadOperations()
+        guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
         var ids = Set<String>()
-        searchResults = found.filter { ids.insert($0.id).inserted }.sorted { $0.start < $1.start }
+        searchResults = found.filter { ids.insert($0.id).inserted }.map { event in
+            var value = event
+            if operations.contains(where: { CalendarPendingEvents.blocksEditing($0, event: event) }) { value.canEdit = false }
+            return value
+        }.sorted { $0.start < $1.start }
         let interval = DateIntervalFormatter()
         interval.dateStyle = .medium; interval.timeStyle = .none; interval.timeZone = calendar.timeZone
         let scope = interval.string(from: start, to: end)

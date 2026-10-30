@@ -4,6 +4,15 @@ import Testing
 @testable import Tern
 
 @Suite struct CalendarLayoutTests {
+    @Test func monthDragFindsDaysAcrossWeekRowsAndRejectsOutsideCanvas() {
+        #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 699, y: 99), width: 700, rowHeight: 100) == 6)
+        #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 0, y: 100), width: 700, rowHeight: 100) == 7)
+        #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 699, y: 599), width: 700, rowHeight: 100) == 41)
+        #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 700, y: 50), width: 700, rowHeight: 100) == nil)
+        #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 10, y: -1), width: 700, rowHeight: 100) == nil)
+        #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 10, y: 600), width: 700, rowHeight: 100) == nil)
+    }
+
     private func calendar() throws -> Calendar {
         var value = Calendar(identifier: .gregorian)
         value.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))

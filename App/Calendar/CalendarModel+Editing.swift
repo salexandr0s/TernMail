@@ -5,18 +5,16 @@ import SyncEngine
 
 extension CalendarModel {
     func beginNew(on start: Date) {
-        guard let owner = calendars.first(where: { $0.canWrite && $0.isVisible }) ?? calendars.first(where: \.canWrite) else {
-            errorMessage = "Connect a writable Google calendar before adding an event."; return
-        }
-        let zone = calendar.timeZone
-        let event = GoogleCalendarEvent(summary: "", start: CalendarDateTime(date: start, timeZone: zone),
-            end: CalendarDateTime(date: start.addingTimeInterval(1800), timeZone: zone))
-        editor = CalendarEditorDraft(event: event, calendarKey: owner.id)
+        beginNew(in: CalendarEventRange(start: start, end: start.addingTimeInterval(1800), isAllDay: false))
     }
 
     func edit(_ display: CalendarDisplayEvent) { edit(display, proposedEvent: nil) }
 
     func edit(_ display: CalendarDisplayEvent, proposedEvent: GoogleCalendarEvent?) {
+        var display = display
+        display.canEdit = display.canEdit && calendars.first(where: { $0.id == display.calendarKey })
+            .map { CalendarEventPermissions.canEdit(display.event, in: $0) } == true
+            && !operations.contains(where: { CalendarPendingEvents.blocksEditing($0, event: display) })
         selectedEventID = display.id
         editRevision += 1
         let revision = editRevision
@@ -68,12 +66,21 @@ extension CalendarModel {
     }
 
     func duplicate(_ display: CalendarDisplayEvent) {
+        guard let owner = calendars.first(where: { $0.id == display.calendarKey && $0.canWrite })
+                ?? calendars.first(where: { $0.canWrite && $0.isVisible }) ?? calendars.first(where: \.canWrite) else {
+            errorMessage = "Connect a writable Google calendar before adding an event."; return
+        }
         var event = display.event
-        for key in ["id", "etag", "iCalUID", "created", "updated", "organizer", "creator", "recurringEventId", "originalStartTime", "conferenceData", "hangoutLink"] {
+        for key in ["id", "etag", "iCalUID", "created", "updated", "organizer", "creator", "recurringEventId", "originalStartTime", "recurrence", "conferenceData", "hangoutLink", "locked"] {
             event.rawValue[key] = nil
         }
         event.attendees = nil
-        editor = CalendarEditorDraft(event: event, calendarKey: display.calendarKey)
+        event.eventType = nil
+        for key in ["birthdayProperties", "outOfOfficeProperties", "focusTimeProperties", "workingLocationProperties"] {
+            event.rawValue[key] = nil
+        }
+        editRevision += 1
+        editor = CalendarEditorDraft(event: event, calendarKey: owner.id)
     }
 
     func save(_ draft: CalendarEditorDraft) async throws {
@@ -83,15 +90,20 @@ extension CalendarModel {
         }
         guard savingDrafts.insert(draft.id).inserted else { return }
         defer { savingDrafts.remove(draft.id) }
+        if let source = draft.source, !savingEvents.insert(source.id).inserted {
+            throw CalendarModelError.unsupported("This event is being saved. Wait for it to finish before changing it again.")
+        }
+        defer { if let source = draft.source { savingEvents.remove(source.id) } }
         guard let owner = calendars.first(where: { $0.id == draft.calendarKey }),
               let engine = engines[owner.accountID] else { throw CalendarModelError.unavailable }
         guard owner.canWrite else { throw CalendarModelError.readOnly }
         let revision = lifecycleRevision
+        if let source = draft.source { try await validateMutationSource(source, replacing: draft.operationID) }
         var event = draft.event
         if let sourceID = draft.sourceID, let suggestion = try await store?.suggestion(id: sourceID), suggestion.accountID != owner.accountID {
             throw CalendarModelError.unsupported("Choose a calendar belonging to the source email account.")
         }
-        guard !(event.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard (draft.source != nil || !(event.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
               let start = event.start?.resolvedDate(fallbackTimeZone: calendar.timeZone),
               let end = event.end?.resolvedDate(fallbackTimeZone: calendar.timeZone), end > start,
               event.start?.isAllDay == event.end?.isAllDay else { throw CalendarModelError.invalidEvent }
@@ -130,7 +142,7 @@ extension CalendarModel {
             } else {
                 if event.changedFields(from: source.event).isEmpty { editor = nil; return }
                 change = try await mutation(for: event, source: source, scope: draft.editScope,
-                    master: draft.seriesMaster, confirmedReset: draft.acknowledgesFollowingReset, engine: engine)
+                    master: draft.seriesMaster, confirmedReset: draft.acknowledgesFollowingReset)
                 if case .update = change { before = draft.editScope == .series ? draft.seriesMaster : source.event }
             }
         } else if draft.isImport {
@@ -142,12 +154,14 @@ extension CalendarModel {
         }
         guard revision == lifecycleRevision else { throw CalendarModelError.unavailable }
         let operation: CalendarOperation
+        let reviewedSource = draft.editScope == .occurrence ? draft.source?.event : draft.seriesMaster
         if let previous = draft.operationID {
             operation = try await engine.revise(operationID: previous, mutation: change,
-                calendarID: targetCalendarID, sendUpdates: draft.isImport ? "none" : "all", sourceSuggestionID: draft.sourceID)
+                calendarID: targetCalendarID, sendUpdates: draft.isImport ? "none" : "all", sourceSuggestionID: draft.sourceID,
+                beforeEvent: reviewedSource)
         } else {
             operation = try await engine.enqueue(change, calendarID: targetCalendarID, sendUpdates: draft.isImport ? "none" : "all",
-                sourceSuggestionID: draft.sourceID)
+                sourceSuggestionID: draft.sourceID, beforeEvent: reviewedSource)
         }
         // A durable queue receipt is success for this editor. Foreground network
         // failure must never leave a second Save capable of duplicating the event.
@@ -165,6 +179,7 @@ extension CalendarModel {
         }
         statusText = "Calendar change queued."
         await reloadOperations()
+        projectPendingEvents()
         do { try await engine.flush() }
         catch { statusText = "Calendar change saved locally; waiting for a connection." }
         guard revision == lifecycleRevision else { return }
@@ -176,7 +191,7 @@ extension CalendarModel {
     }
 
     private func mutation(for edited: GoogleCalendarEvent, source: CalendarDisplayEvent, scope: CalendarEditScope,
-                          master baseline: GoogleCalendarEvent?, confirmedReset: Bool, engine: CalendarSyncEngine) async throws -> CalendarMutation {
+                          master baseline: GoogleCalendarEvent?, confirmedReset: Bool) async throws -> CalendarMutation {
         guard source.isRecurring, scope != .occurrence else {
             var fields = edited.changedFields(from: source.event)
             if source.isRecurring { fields["recurrence"] = nil }
@@ -214,6 +229,11 @@ extension CalendarModel {
     }
 
     func delete(_ display: CalendarDisplayEvent, scope: CalendarEditScope = .occurrence) async throws {
+        guard savingEvents.insert(display.id).inserted else {
+            throw CalendarModelError.unsupported("This event is being saved. Wait for it to finish before changing it again.")
+        }
+        defer { savingEvents.remove(display.id) }
+        try await validateMutationSource(display)
         guard display.canEdit, let engine = engines[display.accountID] else { throw CalendarModelError.readOnly }
         let id = scope == .occurrence ? display.event.id : display.event.recurringEventId ?? display.event.id
         let original = id == display.event.id ? display.event : try await engine.readEvent(calendarID: display.calendarID, eventID: id, refresh: true)
@@ -236,32 +256,26 @@ extension CalendarModel {
             guard let start = display.event.originalStartTime ?? display.event.start else { throw CalendarModelError.invalidEvent }
             change = .deleteFollowing(eventID: id, etag: original.etag, originalStart: start)
         } else { change = .delete(eventID: id, etag: original.etag) }
-        let operation = try await engine.enqueue(change, calendarID: display.calendarID)
+        let operation = try await engine.enqueue(change, calendarID: display.calendarID, beforeEvent: original)
         if scope == .occurrence, !display.isRecurring {
             undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: display.accountID,
                 calendarID: display.calendarID, before: original))
         }
         await reloadOperations()
+        projectPendingEvents()
         do { try await engine.flush() } catch { statusText = "Deletion queued; waiting for a connection." }
         await reloadOperations(); await reloadOccurrences(); await refreshNotifications()
     }
 
     func move(_ display: CalendarDisplayEvent, to start: Date) async throws {
-        var changed = display.event
-        let zone = TimeZone(identifier: changed.start?.timeZone ?? "") ?? calendar.timeZone
-        let end: Date
-        if changed.isAllDay {
-            let days = max(1, calendar.dateComponents([.day], from: display.start, to: display.end).day ?? 1)
-            end = calendar.date(byAdding: .day, value: days, to: start) ?? start
-        } else { end = start.addingTimeInterval(display.end.timeIntervalSince(display.start)) }
-        changed.start = CalendarDateTime(date: start, timeZone: zone, allDay: changed.isAllDay)
-        changed.end = CalendarDateTime(date: end, timeZone: zone, allDay: changed.isAllDay)
+        let range = CalendarInteraction.moving(display, to: start, calendar: calendar)
+        let changed = range.applying(to: display.event, calendar: calendar)
         try await save(CalendarEditorDraft(event: changed, calendarKey: display.calendarKey, source: display))
     }
 
     func resize(_ display: CalendarDisplayEvent, end: Date) async throws {
-        var changed = display.event
-        changed.end = CalendarDateTime(date: end, timeZone: TimeZone(identifier: changed.end?.timeZone ?? "") ?? calendar.timeZone, allDay: changed.isAllDay)
+        let range = CalendarEventRange(start: display.start, end: end, isAllDay: display.isAllDay)
+        let changed = range.applying(to: display.event, calendar: calendar)
         try await save(CalendarEditorDraft(event: changed, calendarKey: display.calendarKey, source: display))
     }
 
@@ -311,8 +325,10 @@ extension CalendarModel {
                 mutation = .create(before)
             default: throw CalendarModelError.unsupported("This change must be reversed by editing the event.")
             }
-            _ = try await engine.enqueue(mutation, calendarID: action.calendarID)
+            _ = try await engine.enqueue(mutation, calendarID: action.calendarID, beforeEvent: operation.resultEvent)
             undoActions.removeAll { $0.operationID == action.operationID }
+            await reloadOperations()
+            projectPendingEvents()
             try await engine.flush()
         } catch { errorMessage = error.localizedDescription }
         await reloadOperations(); await reloadOccurrences(); await refreshNotifications()

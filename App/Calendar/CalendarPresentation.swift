@@ -3,11 +3,11 @@ import GmailAPI
 import SwiftUI
 
 enum CalendarDisplayMode: String, CaseIterable, Identifiable {
-    case day, week, month, year
+    case day, week, month, year, schedule
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var component: Calendar.Component {
-        switch self { case .day: .day; case .week: .weekOfYear; case .month: .month; case .year: .year }
+        switch self { case .day: .day; case .week: .weekOfYear; case .month, .schedule: .month; case .year: .year }
     }
 }
 
