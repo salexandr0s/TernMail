@@ -414,6 +414,14 @@ enum Schema {
                 t.primaryKey(["accountID", "lowercasedAddress"])
             }
         }
+        migrator.registerMigration("calendar-preferences-v1") { db in
+            try db.create(table: "calendarPreference") { t in
+                t.column("accountID", .text).notNull().references("account", onDelete: .cascade)
+                t.column("calendarID", .text).notNull()
+                t.column("payload", .jsonText).notNull()
+                t.primaryKey(["accountID", "calendarID"])
+            }
+        }
         return migrator
     }
 }

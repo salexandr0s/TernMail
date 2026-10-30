@@ -94,7 +94,31 @@ public struct Invitation: Codable, Sendable, Equatable {
     public var isCancelled: Bool
     public var organizer: Participant?
     public var attendees: [Participant]
+    public var isAttendeeMessage: Bool {
+        switch method {
+        case .reply: true
+        case .other(let name): ["COUNTER", "REFRESH"].contains(name.uppercased())
+        default: false
+        }
+    }
+    /// Optional additions keep calendar records written by earlier versions readable.
+    public var recurrenceLines: [String]?
+    public var notes: String?
+    public var url: String?
+    public var alarms: [Alarm]?
+    /// Other VEVENT components carried by the same MIME part. Flat imports leave this nil.
+    public var additionalEvents: [Invitation]?
+    /// Preserve unrecognized properties and custom time zones when exporting again.
+    public var originalEvent: ICalendarComponent?
+    public var timeZoneDefinitions: [ICalendarComponent]?
     var replySource: ReplySource
+
+    public struct Alarm: Codable, Sendable, Equatable {
+        public var action: String
+        public var relativeSeconds: Int?
+        public var absoluteDate: Date?
+        public var relatesToEnd: Bool
+    }
 
     public init(data: Data, charset: String? = nil) throws {
         try self.init(calendar: ICalendar.parse(data, charset: charset))
@@ -108,6 +132,22 @@ public struct Invitation: Codable, Sendable, Equatable {
         guard let event = events.first(where: { $0.property("RECURRENCE-ID") == nil }) ?? events.first else {
             throw ICalendarError.noEvent
         }
+        try self.init(calendar: calendar, event: event)
+    }
+
+    /// Every VEVENT, including separate events and exceptions to repeating events.
+    public static func parseAll(data: Data, charset: String? = nil) throws -> [Invitation] {
+        try parseAll(calendar: ICalendar.parse(data, charset: charset))
+    }
+
+    public static func parseAll(calendar: ICalendarComponent) throws -> [Invitation] {
+        guard calendar.name == "VCALENDAR" else { throw ICalendarError.noCalendar }
+        let events = calendar.components(named: "VEVENT")
+        guard !events.isEmpty else { throw ICalendarError.noEvent }
+        return try events.map { try Invitation(calendar: calendar, event: $0) }
+    }
+
+    private init(calendar: ICalendarComponent, event: ICalendarComponent) throws {
         guard let uid = event.property("UID")?.value.trimmingCharacters(in: .whitespaces), !uid.isEmpty else {
             throw ICalendarError.missingUID
         }
@@ -123,6 +163,23 @@ public struct Invitation: Codable, Sendable, Equatable {
         isCancelled = method == .cancel || event.property("STATUS")?.value.trimmingCharacters(in: .whitespaces).uppercased() == "CANCELLED"
         organizer = event.property("ORGANIZER").map(Participant.init)
         attendees = event.properties(named: "ATTENDEE").map(Participant.init)
+        recurrenceLines = event.properties.filter { ["RRULE", "RDATE", "EXRULE", "EXDATE"].contains($0.name) }.map(\.contentLine)
+        notes = event.property("DESCRIPTION")?.text
+        url = event.property("URL")?.value
+        originalEvent = event
+        timeZoneDefinitions = calendar.components(named: "VTIMEZONE")
+        alarms = event.components(named: "VALARM").compactMap { alarm in
+            guard let trigger = alarm.property("TRIGGER") else { return nil }
+            let duration = ICalendarDuration(trigger.value)
+            let absolute = ICalendarTime(trigger).flatMap { resolver.resolve($0).date }
+            guard duration != nil || absolute != nil else { return nil }
+            return Alarm(
+                action: alarm.property("ACTION")?.value.uppercased() ?? "DISPLAY",
+                relativeSeconds: duration.map { $0.days * 86_400 + $0.seconds },
+                absoluteDate: absolute,
+                relatesToEnd: trigger.parameter("RELATED")?.uppercased() == "END"
+            )
+        }
 
         let startTime = event.property("DTSTART").flatMap(ICalendarTime.init)
         start = startTime.map(resolver.resolve)
@@ -241,6 +298,13 @@ public enum CalendarParts {
         return nil
     }
 
+    public static func invitations(in message: GmailMessage, attachments: [String: Data] = [:]) -> [Invitation] {
+        guard let primary = invitation(in: message, attachments: attachments) else { return [] }
+        var first = primary
+        first.additionalEvents = nil
+        return [first] + (primary.additionalEvents ?? [])
+    }
+
     private static func isWithinSizeLimit(_ candidate: CalendarPart) -> Bool {
         (0...ICalendar.maxSize).contains(candidate.size)
     }
@@ -251,8 +315,18 @@ public enum CalendarParts {
 
     private static func invitation(from candidate: CalendarPart, data: Data) -> Invitation? {
         guard isWithinSizeLimit(candidate), data.count <= ICalendar.maxSize,
-              let invitation = try? Invitation(data: data, charset: candidate.charset),
+              var invitation = try? Invitation(data: data, charset: candidate.charset),
+              let events = try? Invitation.parseAll(data: data, charset: candidate.charset),
               !candidate.isAttachment || invitation.method != nil else { return nil }
+        var skippedPrimary = false
+        invitation.additionalEvents = events.filter { event in
+            if !skippedPrimary, event.uid == invitation.uid, event.recurrenceKey == invitation.recurrenceKey {
+                skippedPrimary = true
+                return false
+            }
+            return true
+        }
+        if invitation.additionalEvents?.isEmpty == true { invitation.additionalEvents = nil }
         return invitation
     }
 

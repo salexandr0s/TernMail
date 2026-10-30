@@ -393,7 +393,13 @@ struct VTimeZone {
         var best: (onset: LocalDateTime, offset: Int)?
         for observance in observances {
             guard let onset = observance.latestOnset(atOrBefore: local) else { continue }
-            if best.map({ onset >= $0.onset }) ?? true { best = (onset, observance.offsetTo) }
+            // RFC 5545 interprets a nonexistent wall-clock time using the
+            // offset before the forward transition, just as a repeated time
+            // denotes its first occurrence. The gap ends at onset + jump.
+            let jump = observance.offsetTo - observance.offsetFrom
+            let inGap = jump > 0 && local.epochSeconds < onset.epochSeconds + jump
+            let offset = inGap ? observance.offsetFrom : observance.offsetTo
+            if best.map({ onset >= $0.onset }) ?? true { best = (onset, offset) }
         }
         if let best { return best.offset }
         return observances.min { $0.start < $1.start }?.offsetFrom ?? 0

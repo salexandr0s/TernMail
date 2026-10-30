@@ -10,6 +10,12 @@ public enum AccountFeature: String, Sendable, CaseIterable {
     case contacts
     /// IMAP IDLE on the Inbox.
     case inboxUpdates
+    /// Google calendar events, calendar list and availability.
+    case calendar
+    /// Create and change calendar properties.
+    case calendarManagement
+    /// Manage sharing permissions on owned calendars.
+    case calendarSharing
 
     /// The features `names` lists. Names this version doesn't know are skipped.
     public static func named(_ names: some Sequence<String>) -> Set<AccountFeature> {
@@ -30,6 +36,12 @@ public enum GoogleScopes {
     public static let otherContacts = "https://www.googleapis.com/auth/contacts.other.readonly"
     public static let directory = "https://www.googleapis.com/auth/directory.readonly"
     public static let fullMail = "https://mail.google.com/"
+    public static let calendarEvents = "https://www.googleapis.com/auth/calendar.events"
+    public static let calendarList = "https://www.googleapis.com/auth/calendar.calendarlist"
+    public static let calendarFreeBusy = "https://www.googleapis.com/auth/calendar.events.freebusy"
+    public static let calendarManagement = "https://www.googleapis.com/auth/calendar.calendars"
+    public static let calendarSharing = "https://www.googleapis.com/auth/calendar.acls"
+    public static let fullCalendar = "https://www.googleapis.com/auth/calendar"
 
     /// Asked for at every authorization: the account's identity and its mail.
     public static let base = ["openid", "email", "profile", gmailModify]
@@ -40,6 +52,9 @@ public enum GoogleScopes {
         case .gmailSettings: [gmailSettings]
         case .contacts: [contacts, otherContacts]
         case .inboxUpdates: [fullMail]
+        case .calendar: [calendarEvents, calendarList, calendarFreeBusy]
+        case .calendarManagement: [calendarManagement]
+        case .calendarSharing: [calendarSharing]
         }
     }
 
@@ -78,6 +93,11 @@ public enum GoogleScopes {
     static let broader: [String: [String]] = [
         gmailModify: [fullMail],
         contacts: ["https://www.googleapis.com/auth/contacts"],
+        calendarEvents: [fullCalendar],
+        calendarList: [fullCalendar],
+        calendarFreeBusy: [fullCalendar, "https://www.googleapis.com/auth/calendar.readonly"],
+        calendarManagement: [fullCalendar],
+        calendarSharing: [fullCalendar],
     ]
 }
 
