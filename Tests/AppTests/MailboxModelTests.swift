@@ -178,7 +178,10 @@ import Testing
         #expect(mailbox.snooze(until: .now.addingTimeInterval(-60)) == nil)
         #expect(mailbox.notice?.isError == true)
 
-        let snooze = mailbox.snooze(until: .now.addingTimeInterval(3600))
+        // The receipt keeps sub-millisecond precision while SQLite stores
+        // milliseconds. Undo must still remove the archive queue row.
+        let wakeAt = Date(timeIntervalSince1970: floor(Date.now.timeIntervalSince1970) + 3600.123456)
+        let snooze = mailbox.snooze(until: wakeAt)
         #expect(mailbox.selectedThreadIDs == keys("t2"))
         await snooze?.value
         try await waitUntil { mailbox.threads.map(\.id) == ["t2"] && mailbox.snoozed.map(\.id) == ["t1"] }

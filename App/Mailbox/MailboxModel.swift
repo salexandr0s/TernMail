@@ -60,6 +60,7 @@ final class MailboxModel {
     @ObservationIgnored private var isStarted = false
     /// While the search field has text, the list shows its results.
     let search: SearchModel
+    let navigation: MailNavigationModel
 
     /// The mailbox the sidebar has selected.
     var selectedMailbox: MailboxID? {
@@ -69,11 +70,13 @@ final class MailboxModel {
             search.clear()
             updateSearchSources()
             selectedThreadIDs = []
+            selectedMessageRows = []
             threads = []
             threadLimit = Self.pageSize
             older?.cancel()
             older = nil
             observeThreads()
+            refreshSavedSearch()
             if selectedLabelID == SystemLabel.draft {
                 // Drafts made in other apps since the last sync.
                 for engine in selectedAccounts.map(\.engine) {
@@ -85,6 +88,14 @@ final class MailboxModel {
     /// The selected mailbox's label or virtual mailbox ID, whichever account it's in.
     var selectedLabelID: String? { selectedMailbox?.id }
     var selectedThreadIDs: Set<ThreadKey> = []
+    var selectedMessageRows: Set<MailListRowID> = []
+    var conversationWindowRequest: MailLink?
+    var listEntries: [MessageListEntry] = []
+    var listOwnAddresses: [String: Set<String>] = [:]
+    var accountPresentation: [String: AccountMailPreferences] = [:]
+    var visibleAccountIDs: Set<String>?
+    let listPreferences: MessageListPreferences
+    @ObservationIgnored lazy var triage = MailTriageModel(mailbox: self)
     var notice: Notice?
     /// The newest send's notice, above `notice` so other actions don't replace it.
     var sendNotice: Notice?
@@ -115,6 +126,7 @@ final class MailboxModel {
     var retainedUndoCount: Int { undoEntries.count }
     @ObservationIgnored private var isStopped = false
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
+    @ObservationIgnored private var navigationTask: Task<Void, Never>?
     /// Drafts opened from another app with formatting the editor drops, until their window warns.
     @ObservationIgnored private var droppedFormatting = Set<String>()
     /// A draft Gmail refused, whose window the mailbox window reopens.
@@ -122,13 +134,15 @@ final class MailboxModel {
     /// Edit Labels, open from its toolbar button while set.
     var labelEdit: LabelEdit?
     /// Move to, open from its toolbar button for these conversations while set.
-    var moveTargets: Set<ThreadKey>?
+    var moveTargets: Set<ThreadKey>? { didSet { if moveTargets == nil { moveMessageTargets = nil } } }
+    var moveMessageTargets: [String]?
     /// The New Label or Edit Label sheet.
     var labelEditor: LabelEditorRequest?
     /// The label whose deletion waits for confirmation.
     var labelToDelete: LabelRecord?
     /// Choose Date & Time, open for these conversations while set.
-    var snoozeDateTargets: Set<ThreadKey>?
+    var snoozeDateTargets: Set<ThreadKey>? { didSet { if snoozeDateTargets == nil { snoozeRowTargets = nil } } }
+    var snoozeRowTargets: Set<MailListRowID>?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
 
@@ -141,24 +155,61 @@ final class MailboxModel {
         gmail: any GmailService,
         outgoingDirectory: URL,
         downloadsDirectory: URL = MailboxModel.defaultDownloadsDirectory,
-        snoozeStore: AccountStore? = nil
+        snoozeStore: AccountStore? = nil,
+        syncEnabled: Bool = true,
+        listPreferences: MessageListPreferences? = nil
     ) {
         self.cache = cache
         self.downloadsDirectory = downloadsDirectory
         self.outgoingDirectory = outgoingDirectory
         self.snoozeStore = snoozeStore
+        self.listPreferences = listPreferences ?? .shared
+        navigation = MailNavigationModel(store: snoozeStore)
         selectedMailbox = .account(account.id, SystemLabel.inbox)
         let first = AccountMailbox(
-            account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore
+            account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore, syncEnabled: syncEnabled
         )
         defaultAccount = first
         search = SearchModel(cache: cache, sources: [.init(accountID: account.id, engine: first.engine)])
         search.onResultsChange = { [weak self] in self?.listChanged() }
         wire(first)
+        search.setMessageMode(!self.listPreferences.conversations)
     }
 
     /// Every signed-in account, the default one first.
     var accounts: [AccountMailbox] { [defaultAccount] + otherAccounts }
+
+    func applyAccountPresentation(preferences: [AccountMailPreferences], visibleAccountIDs: Set<String>) {
+        let previousSearchIDs = Set(searchedAccounts.map(\.account.id))
+        let previousMailboxIDs = Set(selectedAccounts.map(\.account.id))
+        accountPresentation = Dictionary(preferences.map { ($0.accountID, $0) }, uniquingKeysWith: { _, last in last })
+        self.visibleAccountIDs = visibleAccountIDs
+        var destination = selectedMailbox
+        if case .account(let id, _)? = destination, !visibleAccountIDs.contains(id) {
+            destination = .combined(SystemLabel.inbox)
+        }
+        if case .scoped(_, let ids)? = destination, Set(ids).isDisjoint(with: visibleAccountIDs) {
+            destination = .combined(SystemLabel.inbox)
+        }
+        if presentedAccounts.count == 1, let first = presentedAccounts.first,
+           case .combined(let label)? = destination,
+           (SystemMailbox.all + [.outbox]).contains(where: { $0.id == label }) {
+            destination = .account(first.account.id, label)
+        }
+        if destination != selectedMailbox {
+            selectedMailbox = destination
+        } else {
+            if previousSearchIDs != Set(searchedAccounts.map(\.account.id)) { updateSearchSources() }
+            if previousMailboxIDs != Set(selectedAccounts.map(\.account.id)) {
+                threads = []
+                listEntries = listEntries.filter { visibleAccountIDs.contains($0.message.accountID) }
+                selectedThreadIDs = selectedThreadIDs.filter { visibleAccountIDs.contains($0.accountID) }
+                selectedMessageRows = selectedMessageRows.filter { visibleAccountIDs.contains($0.accountID) }
+                observeThreads()
+            }
+            listChanged()
+        }
+    }
 
     private func isSignedIn(_ owner: AccountMailbox) -> Bool {
         accounts.contains { $0 === owner }
@@ -169,15 +220,46 @@ final class MailboxModel {
     }
 
     /// Adds a signed-in account, starting it if the mailbox has started.
-    func addAccount(_ account: AccountRecord, gmail: any GmailService) async {
+    func addAccount(_ account: AccountRecord, gmail: any GmailService, syncEnabled: Bool = true,
+                    onCreate: (@MainActor (AccountMailbox) -> Void)? = nil) async {
         guard !isStopped, self.account(id: account.id) == nil else { return }
         let added = AccountMailbox(
-            account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore
+            account: account, cache: cache, gmail: gmail, outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore, syncEnabled: syncEnabled
         )
         wire(added)
         otherAccounts.append(added)
         accountsChanged()
+        onCreate?(added)
         if isStarted { await added.start() }
+    }
+
+    /// Rebuilds one account's network runtime while retaining its local setup,
+    /// drafts, selection and undo receipts. Paused owners still observe cache.
+    func replaceAccountRuntime(record: AccountRecord, gmail: any GmailService, syncEnabled: Bool) async {
+        guard !isStopped, let old = account(id: record.id) else { return }
+        let onMailSync = old.onMailSync
+        let onUnreadCountChange = old.onUnreadCountChange
+        old.onLabelsChange = nil
+        old.onSnoozedChange = nil
+        old.onEvent = nil
+        old.onMailSync = nil
+        old.onUnreadCountChange = nil
+        await old.stop()
+        guard !isStopped, account(id: record.id) === old else { return }
+        let replacement = AccountMailbox(account: record, cache: cache, gmail: gmail,
+            outgoingDirectory: outgoingDirectory, snoozeStore: snoozeStore, syncEnabled: syncEnabled)
+        replacement.onMailSync = onMailSync
+        replacement.onUnreadCountChange = onUnreadCountChange
+        if old === defaultAccount { defaultAccount = replacement }
+        else if let index = otherAccounts.firstIndex(where: { $0 === old }) { otherAccounts[index] = replacement }
+        wire(replacement)
+        for entry in undoEntries.values {
+            entry.applied = entry.applied.map { applied in
+                .init(account: applied.account === old ? replacement : applied.account, receipt: applied.receipt)
+            }
+        }
+        accountsChanged()
+        if isStarted { await replacement.start() }
     }
 
     /// Takes an account out of the window and stops it, for its sign-out.
@@ -246,6 +328,8 @@ final class MailboxModel {
     func start() async {
         guard !isStopped, !isStarted else { return }
         isStarted = true
+        let navigation = navigation
+        navigationTask = Task { await navigation.observe() }
         observeThreads()
         await withTaskGroup(of: Void.self) { group in
             for account in accounts {
@@ -258,6 +342,7 @@ final class MailboxModel {
     func stop() async {
         isStopped = true
         threadsTask?.cancel()
+        navigationTask?.cancel()
         search.stop()
         older?.cancel()
         actionTask?.cancel()
@@ -334,7 +419,14 @@ final class MailboxModel {
     /// combined mailbox or while no mailbox is selected. The list shows the
     /// same accounts when a mailbox is selected.
     private var searchedAccounts: [AccountMailbox] {
-        selectedMailbox.map(owners(of:)) ?? accounts
+        let sources = selectedMailbox.map(owners(of:)) ?? presentedAccounts
+        if let saved = selectedSavedSearch {
+            switch saved.scope {
+            case .allAccounts: return sources
+            case .accounts(let ids): return sources.filter { ids.contains($0.account.id) }
+            }
+        }
+        return sources
     }
 
     /// The account under the list's title when there are several.
@@ -372,6 +464,7 @@ final class MailboxModel {
     }
 
     var selectedLabelTitle: String {
+        if let saved = selectedSavedSearch { return saved.name }
         if search.isActive { return "Search Results" }
         guard let id = selectedLabelID else { return "Tern" }
         if id == Self.outboxID { return "Outbox" }
@@ -383,10 +476,10 @@ final class MailboxModel {
     }
 
     /// Loads missing bodies and marks the thread read.
-    func open(_ key: ThreadKey) async -> Bool {
+    func open(_ key: ThreadKey, markRead: Bool = true) async -> Bool {
         guard let owner = account(id: key.accountID) else { return false }
         do {
-            try await owner.engine.openThread(key.threadID)
+            try await owner.engine.openThread(key.threadID, markRead: markRead)
             return true
         } catch {
             // Switching conversations cancels the load, which isn't a failure.
@@ -479,8 +572,9 @@ final class MailboxModel {
     /// The account a new message starts in: the selected mailbox's, or the
     /// default account in a combined mailbox.
     var composeAccount: AccountMailbox {
+        if let fixed = ComposePreferences.defaultAccountID, let owner = account(id: fixed) { return owner }
         if case .account(let accountID, _)? = selectedMailbox, let owner = account(id: accountID) { return owner }
-        return defaultAccount
+        return selectedAccounts.first ?? presentedAccounts.first ?? defaultAccount
     }
 
     /// The Go menu: a system mailbox across accounts, as the sidebar's top row
@@ -603,6 +697,10 @@ final class MailboxModel {
 
     @discardableResult
     func perform(_ action: MailAction, on keys: Set<ThreadKey>? = nil) -> Task<Void, Never>? {
+        if !listPreferences.conversations {
+            let rows = keys.map { keys in selectedMessageRows.filter { keys.contains($0.threadKey) } } ?? selectedMessageRows
+            return performListAction(action, rows: rows)
+        }
         let keys = keys ?? selectedThreadIDs
         guard !keys.isEmpty, !isStopped else { return nil }
         // Search results follow Gmail's labels, so they change after the next sync pass.
@@ -611,7 +709,7 @@ final class MailboxModel {
             || (action == .trash && selectedLabelID != SystemLabel.trash) {
             selectThread(after: keys)
         }
-        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: keys.count), for: keys) {
+        return queueUndoable(Self.undoName(action), confirmation: Self.confirmation(action, count: keys.count), for: keys, sound: MailSounds.event(for: action)) {
             owner, ids in try await owner.engine.perform(action, threadIDs: ids)
         }
     }
@@ -628,6 +726,7 @@ final class MailboxModel {
         confirmation: String? = nil,
         for keys: Set<ThreadKey>,
         revert: Revert? = nil,
+        sound: MailSounds.Event? = nil,
         _ change: @escaping @MainActor (AccountMailbox, [String]) async throws -> ActionReceipt?
     ) -> Task<Void, Never>? {
         let groups = Dictionary(grouping: keys, by: \.accountID).sorted { $0.key < $1.key }
@@ -636,7 +735,7 @@ final class MailboxModel {
             let ids = Self.threadIDs(Set(keys))
             return UndoStep(account: owner) { try await change(owner, ids) }
         }
-        return queueUndoable(name, confirmation: confirmation, steps: steps, revert: revert)
+        return queueUndoable(name, confirmation: confirmation, steps: steps, revert: revert, sound: sound)
     }
 
     /// Queues a command in one account, such as a label change, with Undo.
@@ -646,17 +745,18 @@ final class MailboxModel {
         confirmation: String? = nil,
         in owner: AccountMailbox,
         revert: Revert? = nil,
+        sound: MailSounds.Event? = nil,
         _ change: @escaping @MainActor (SyncEngine) async throws -> ActionReceipt?
     ) -> Task<Void, Never>? {
         let step = UndoStep(account: owner) { try await change(owner.engine) }
-        return queueUndoable(name, confirmation: confirmation, steps: [step], revert: revert)
+        return queueUndoable(name, confirmation: confirmation, steps: [step], revert: revert, sound: sound)
     }
 
     /// Queues the steps with Undo, in order after earlier commands. The undo
     /// entry is registered inside the initiating event, so it can remember
     /// an undo requested before the engines return the durable queue rows.
     /// `confirmation` shows in a notice with Undo.
-    private func queueUndoable(_ name: String, confirmation: String?, steps: [UndoStep], revert: Revert?) -> Task<Void, Never>? {
+    private func queueUndoable(_ name: String, confirmation: String?, steps: [UndoStep], revert: Revert?, sound: MailSounds.Event?) -> Task<Void, Never>? {
         guard !isStopped, !steps.isEmpty else { return nil }
         let entry = UndoEntry(name: name, revert: revert)
         registerUndo(entry)
@@ -683,6 +783,9 @@ final class MailboxModel {
                 removeUndo(entry)
                 if let failure { notice = Notice(message: Self.failureMessage(failure), isError: true) }
                 return
+            }
+            if let sound, failure == nil, !entry.undoRequested, !isStopped, !Task.isCancelled {
+                MailSounds.play(sound)
             }
             if entry.undoRequested {
                 await requestUndo(entry)?.value
@@ -744,10 +847,17 @@ final class MailboxModel {
 
     /// True when every thread in `ids` is read, so commands offer Mark as Unread.
     func allRead(_ keys: Set<ThreadKey>) -> Bool {
-        !listedThreads.contains { keys.contains($0.key) && $0.isUnread }
+        if !listPreferences.conversations {
+            return !listItems.contains { selectedMessageRows.contains($0.id) && keys.contains($0.id.threadKey) && $0.thread.isUnread }
+        }
+        return !listedThreads.contains { keys.contains($0.key) && $0.isUnread }
     }
 
     func allStarred(_ keys: Set<ThreadKey>) -> Bool {
+        if !listPreferences.conversations {
+            let matching = listItems.filter { selectedMessageRows.contains($0.id) && keys.contains($0.id.threadKey) }
+            return !matching.isEmpty && matching.allSatisfy { $0.thread.isStarred }
+        }
         let matching = listedThreads.filter { keys.contains($0.key) }
         return !matching.isEmpty && matching.allSatisfy(\.isStarred)
     }
@@ -814,6 +924,7 @@ final class MailboxModel {
     private func labelsChanged() {
         guard !isStopped, case .account(let accountID, let id)? = selectedMailbox, id != Self.outboxID,
               id != AttachmentLibraryModel.mailboxID,
+              !id.hasPrefix(MailNavigationModel.searchPrefix),
               !SystemMailbox.all.contains(where: { $0.id == id }),
               let owner = account(id: accountID), !owner.labels.contains(where: { $0.id == id })
         else { return }
@@ -827,8 +938,9 @@ final class MailboxModel {
 
     private func owners(of box: MailboxID) -> [AccountMailbox] {
         switch box {
-        case .account(let accountID, _): account(id: accountID).map { [$0] } ?? []
-        case .combined: accounts
+        case .account(let accountID, _): presentedAccounts.filter { $0.account.id == accountID }
+        case .combined: presentedAccounts
+        case .scoped(_, let ids): presentedAccounts.filter { ids.contains($0.account.id) }
         }
     }
 
@@ -854,6 +966,7 @@ final class MailboxModel {
     private func accountsChanged() {
         updateSearchSources()
         if case .combined? = selectedMailbox { observeThreads() }
+        if case .scoped? = selectedMailbox { observeThreads() }
     }
 
     private func updateSearchSources() {
@@ -887,6 +1000,7 @@ final class MailboxModel {
         case .draftCopied:
             notice = Notice(message: "This draft changed elsewhere. Both versions were kept.")
         case .draftSent(let id):
+            MailSounds.play(.send)
             finishSend(id)
             // A newer send keeps its notice and its Undo Send.
             if case .send = sendNotice?.undo { return }
@@ -903,7 +1017,15 @@ final class MailboxModel {
     /// The j and k keys: selects the conversation below or above the
     /// selection, stopping at the ends, or the first one when none is selected.
     func selectAdjacentThread(_ offset: Int) {
-        let threads = listedThreads
+        if !listPreferences.conversations {
+            let rows = listItems.map(\.id)
+            guard !rows.isEmpty else { return }
+            let indexes = rows.indices.filter { selectedMessageRows.contains(rows[$0]) }
+            let index = offset > 0 ? min((indexes.last ?? -1) + 1, rows.count - 1) : max((indexes.first ?? 1) - 1, 0)
+            selectListRows([rows[index]])
+            return
+        }
+        let threads = listEntries.isEmpty ? listedThreads : listItems.map(\.thread)
         guard !threads.isEmpty else { return }
         let selected = threads.indices.filter { selectedThreadIDs.contains(threads[$0].key) }
         let index = if offset > 0, let last = selected.last {
@@ -918,13 +1040,23 @@ final class MailboxModel {
 
     /// Moves the selection to the thread below the ones leaving the list, or above if none is below.
     func selectThread(after leaving: Set<ThreadKey>) {
-        let threads = listedThreads
+        if !listPreferences.conversations {
+            selectRow(after: selectedMessageRows.filter { leaving.contains($0.threadKey) })
+            return
+        }
+        let threads = listEntries.isEmpty ? listedThreads : listItems.map(\.thread)
         guard leaving == selectedThreadIDs,
               let lastIndex = threads.lastIndex(where: { leaving.contains($0.key) })
         else { return }
         let below = threads[(lastIndex + 1)...].first { !leaving.contains($0.key) }
         let above = threads[..<lastIndex].last { !leaving.contains($0.key) }
-        selectedThreadIDs = (below ?? above).map { [$0.key] } ?? []
+        let next: ThreadRecord?
+        switch listPreferences.nextSelection {
+        case .below: next = below ?? above
+        case .above: next = above ?? below
+        case .none: next = nil
+        }
+        selectedThreadIDs = next.map { [$0.key] } ?? []
     }
 
     /// The Gmail thread IDs the engine takes, in a stable order.
@@ -1035,10 +1167,11 @@ extension ThreadRecord {
 enum MailboxID: Hashable, Sendable {
     case combined(String)
     case account(String, String)
+    case scoped(String, [String])
 
     var id: String {
         switch self {
-        case .combined(let id), .account(_, let id): id
+        case .combined(let id), .account(_, let id), .scoped(let id, _): id
         }
     }
 }

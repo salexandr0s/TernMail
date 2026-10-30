@@ -1,4 +1,5 @@
 import MailStore
+import GmailAPI
 import SwiftUI
 
 struct SidebarView: View {
@@ -15,9 +16,11 @@ struct SidebarView: View {
                 Label("Attachments", systemImage: "paperclip")
                     .tag(MailboxID.combined(AttachmentLibraryModel.mailboxID))
             }
-            if mailbox.hasSeveralAccounts {
+            FavoritesView(mailbox: mailbox)
+            SavedSearchRows(mailbox: mailbox)
+            if mailbox.presentedAccounts.count > 1 {
                 let colors = accountColors
-                let names = AccountAppearance.shortNames(mailbox.accounts.map(\.account))
+                let names = sidebarNames
                 Section("Mailboxes") {
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))) { box in
                         CombinedMailboxRows(
@@ -25,25 +28,28 @@ struct SidebarView: View {
                         )
                     }
                 }
-                ForEach(mailbox.accounts, id: \.account.id) { owner in
+                ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
                     Section {
                         labelOutline(owner)
+                        moreMailboxes(owner)
                     } header: {
                         AccountHeader(mailbox: mailbox, owner: owner, color: colors[owner.account.id] ?? .secondary)
                     }
                 }
             } else {
-                let owner = mailbox.defaultAccount
+                if let owner = mailbox.presentedAccounts.first {
                 Section("Mailboxes") {
                     let outboxID = MailboxID.account(owner.account.id, MailboxModel.outboxID)
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
                         let boxID = MailboxID.account(owner.account.id, box.id)
                         MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarCount(boxID))
                             .tag(boxID)
+                        if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                     }
                 }
                 Section {
                     labelOutline(owner)
+                    moreMailboxes(owner)
                 } header: {
                     HStack {
                         Text("Labels")
@@ -60,9 +66,20 @@ struct SidebarView: View {
                         .accessibilityLabel("New Label")
                     }
                 }
+                }
             }
         }
         .listStyle(.sidebar)
+        .sheet(isPresented: Binding(get: { mailbox.navigation.isCreatingSearch }, set: { mailbox.navigation.isCreatingSearch = $0 })) {
+            SavedSearchEditor(mailbox: mailbox, existing: nil)
+        }
+        .sheet(item: Binding(get: { mailbox.navigation.searchToEdit }, set: { mailbox.navigation.searchToEdit = $0 })) { search in
+            SavedSearchEditor(mailbox: mailbox, existing: search)
+        }
+        .sheet(isPresented: Binding(get: { mailbox.navigation.isShowingSwitcher }, set: { mailbox.navigation.isShowingSwitcher = $0 })) {
+            MailboxSwitcher(mailbox: mailbox)
+        }
+        .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
         .safeAreaInset(edge: .bottom) {
             SyncStatusView(mailbox: mailbox)
         }
@@ -79,8 +96,8 @@ struct SidebarView: View {
         }
         .onChange(of: mailbox.selectedMailbox) { _, selected in
             // An account's mailbox chosen elsewhere shows under its expanded row.
-            if mailbox.hasSeveralAccounts, case .account(_, let id)? = selected,
-               boxes(showingOutbox: true).contains(where: { $0.id == id }) {
+            if mailbox.presentedAccounts.count > 1, case .account(_, let id)? = selected,
+               (SystemMailbox.all + [.outbox]).contains(where: { $0.id == id }) {
                 expansion(of: id).wrappedValue = true
             }
         }
@@ -110,9 +127,13 @@ struct SidebarView: View {
 
     /// System mailboxes in sidebar order, with the Outbox after Drafts.
     private func boxes(showingOutbox: Bool) -> [SystemMailbox] {
-        SystemMailbox.all.flatMap { box in
+        let favorites = Set(mailbox.navigation.favorites.compactMap { favorite -> String? in
+            if case .mailbox(let id, .allAccounts) = favorite.target { return id }
+            return nil
+        })
+        return SystemMailbox.all.flatMap { box in
             box.id == SystemLabel.draft && showingOutbox ? [box, .outbox] : [box]
-        }
+        }.filter { !favorites.contains($0.id) }
     }
 
     private var accountColors: [String: Color] {
@@ -124,8 +145,8 @@ struct SidebarView: View {
     /// Right Arrow shows a mailbox's account rows and Left Arrow hides them,
     /// or moves from an account row up to its mailbox, as in an outline.
     private func expandOrCollapse(_ key: KeyEquivalent) -> KeyPress.Result {
-        guard mailbox.hasSeveralAccounts, let selected = mailbox.selectedMailbox,
-              boxes(showingOutbox: true).contains(where: { $0.id == selected.id })
+        guard mailbox.presentedAccounts.count > 1, let selected = mailbox.selectedMailbox,
+              (SystemMailbox.all + [.outbox]).contains(where: { $0.id == selected.id })
         else { return .ignored }
         switch (selected, key) {
         case (.combined(let id), .rightArrow): expansion(of: id).wrappedValue = true
@@ -148,9 +169,35 @@ struct SidebarView: View {
     }
 
     private func labelOutline(_ owner: AccountMailbox) -> some View {
-        OutlineGroup(LabelNode.outline(owner.labels.filter { !$0.isSystem }), children: \.children) { node in
+        OutlineGroup(LabelNode.outline(owner.labels.filter { !$0.isSystem && mailbox.isVisibleInSidebar($0) }), children: \.children) { node in
             LabelRow(mailbox: mailbox, node: node)
         }
+    }
+
+    @ViewBuilder private func moreMailboxes(_ owner: AccountMailbox) -> some View {
+        if mailbox.listPreferences.showsMore {
+            DisclosureGroup("More") {
+                let primary = Set(SystemMailbox.all.map(\.id) + [SystemLabel.unread])
+                ForEach(owner.labels.filter { label in
+                    label.isSystem && !primary.contains(label.id)
+                        && !(mailbox.accountPresentation[owner.account.id]?.inboxCategories.map(\.labelID).contains(label.id) ?? false)
+                }, id: \.id) { label in
+                    Label(label.name, systemImage: "tray").tag(MailboxID.account(owner.account.id, label.id))
+                        .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, label.id)))
+                }
+                ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
+                    LabelRow(mailbox: mailbox, node: LabelNode(label: label, title: label.name))
+                }
+            }
+        }
+    }
+
+    private var sidebarNames: [String: String] {
+        var names = AccountAppearance.shortNames(mailbox.accounts.map(\.account))
+        for owner in mailbox.accounts {
+            if let nickname = mailbox.accountPresentation[owner.account.id]?.nickname, !nickname.isEmpty { names[owner.account.id] = nickname }
+        }
+        return names
     }
 
     private static func editedLabel(_ request: MailboxModel.LabelEditorRequest) -> LabelRecord? {
@@ -230,7 +277,7 @@ private struct CombinedMailboxRows: View {
         .accessibilityHint(isExpanded ? "Hides accounts" : "Shows accounts")
         .accessibilityAction(.default, selectAndToggle)
         if isExpanded {
-            ForEach(mailbox.accounts, id: \.account.id) { owner in
+            ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
                 let boxID = MailboxID.account(owner.account.id, box.id)
                 if box.id != MailboxModel.outboxID || mailbox.showsOutbox(boxID) {
                     let name = names[owner.account.id] ?? owner.account.email
@@ -242,6 +289,7 @@ private struct CombinedMailboxRows: View {
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
                     .tag(boxID)
+                    if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                 }
             }
         }
@@ -272,7 +320,7 @@ private struct AccountHeader: View {
                     .imageScale(.small)
                     .foregroundStyle(color)
                     .accessibilityHidden(true)
-                Text(email)
+                Text(mailbox.accountTitle(owner.account))
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -350,6 +398,14 @@ private struct LabelRow: View {
         .tag(MailboxID.account(label.accountID, label.id))
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {
+            Button("Add to Favorites", systemImage: "star") {
+                Task { await mailbox.navigation.addFavorite(.label(accountID: label.accountID, labelID: label.id)) }
+            }
+            Menu("Show in Sidebar") {
+                ForEach(LabelListVisibility.allCases, id: \.rawValue) { visibility in
+                    Button(visibility.sidebarTitle) { mailbox.setLabelVisibility(label, to: visibility) }
+                }
+            }
             Button("Edit Label…", systemImage: "pencil") { mailbox.showEditLabel(label) }
                 .labelStyle(.titleAndIcon)
             Button("Delete Label…", systemImage: "trash") { mailbox.labelToDelete = label }
@@ -455,7 +511,7 @@ extension SystemMailbox {
 private extension MailboxModel {
     /// A sidebar row's number: the Outbox's messages, otherwise unread conversations.
     func sidebarCount(_ box: MailboxID) -> Int {
-        box.id == Self.outboxID ? outbox(in: box).count : unreadCount(box)
+        sidebarBadgeCount(box)
     }
 }
 

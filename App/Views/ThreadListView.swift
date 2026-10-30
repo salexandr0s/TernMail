@@ -1,16 +1,16 @@
 import MailStore
+import MessageContent
 import SwiftUI
 
 struct ThreadListView: View {
     @Bindable var mailbox: MailboxModel
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @FocusState private var listFocused: Bool
-    @State private var labelsByThread: [ThreadKey: [LabelRecord]] = [:]
 
     var body: some View {
         list
             .overlay {
-                if displayedThreads.isEmpty {
+                if mailbox.listItems.isEmpty {
                     if mailbox.search.isActive {
                         emptySearch
                     } else {
@@ -19,6 +19,7 @@ struct ThreadListView: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
+                MessageListHeader(mailbox: mailbox)
                 if mailbox.showsSnoozed {
                     Label("Snoozed on this Mac", systemImage: "desktopcomputer")
                         .font(.caption)
@@ -33,8 +34,17 @@ struct ThreadListView: View {
             .onChange(of: mailbox.search.listFocusRequest) {
                 listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
             }
-            .task(id: displayedThreads.map(\.key)) {
-                await observeLabels(for: displayedThreads.map(\.key))
+            .task(id: observationID) {
+                await observeEntries(for: displayedThreads.map(\.key))
+            }
+            .task(id: mailbox.accounts.map(\.account.id)) { await observeAddresses() }
+            .onChange(of: mailbox.listPreferences.conversations) { _, _ in
+                mailbox.search.setMessageMode(!mailbox.listPreferences.conversations)
+                mailbox.selectedMessageRows = []
+                mailbox.selectedThreadIDs = []
+            }
+            .onChange(of: mailbox.listItems.map(\.id)) { _, ids in
+                mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(ids))
             }
             .sheet(isPresented: isChoosingSnoozeDate) {
                 if let ids = mailbox.snoozeDateTargets {
@@ -56,28 +66,53 @@ struct ThreadListView: View {
         mailbox.search.isActive ? mailbox.search.results : mailbox.threads
     }
 
-    private func observeLabels(for keys: [ThreadKey]) async {
+    private var observationID: MessageListObservationID {
+        .init(keys: displayedThreads.map(\.key), query: mailbox.search.text,
+              remoteRevision: mailbox.search.gmail?.revision ?? 0, conversations: mailbox.listPreferences.conversations)
+    }
+
+    private func observeEntries(for keys: [ThreadKey]) async {
         guard !Task.isCancelled else { return }
         let visible = Set(keys)
-        labelsByThread = labelsByThread.filter { visible.contains($0.key) }
-        guard !keys.isEmpty else { return }
+        mailbox.listEntries = mailbox.listEntries.filter { visible.contains(ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID)) }
+        guard !keys.isEmpty else { mailbox.listEntries = []; return }
         let threadsByAccount = Dictionary(grouping: keys, by: \.accountID).mapValues { $0.map(\.threadID) }
         do {
-            for try await updates in mailbox.cache.threadLabels(threadsByAccount: threadsByAccount) {
+            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? SearchQuery(mailbox.search.text) : nil
+            for try await entries in mailbox.cache.messageListEntries(threadsByAccount: threadsByAccount, matching: query,
+                                                                      includingMessageIDs: mailbox.search.matchingMessageIDs, snoozedOnly: mailbox.showsSnoozed) {
                 guard !Task.isCancelled else { return }
-                labelsByThread = Dictionary(uniqueKeysWithValues: updates.map {
-                    (ThreadKey(accountID: $0.accountID, threadID: $0.threadID), $0.labels)
-                })
+                mailbox.listEntries = entries
+                if mailbox.listItems.isEmpty { mailbox.loadMoreThreads() }
             }
         } catch {
             guard !Task.isCancelled else { return }
-            labelsByThread = [:]
+            mailbox.listEntries = []
+        }
+    }
+
+    private func observeAddresses() async {
+        guard let store = mailbox.accountStore else { return }
+        do {
+            for try await identities in store.listIdentityChanges(accountIDs: mailbox.accounts.map(\.account.id)) {
+                guard !Task.isCancelled else { return }
+                mailbox.listOwnAddresses = Dictionary(grouping: identities.filter(\.canSend), by: \.accountID)
+                    .mapValues { Set($0.map(\.lowercasedAddress)) }
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            mailbox.listOwnAddresses = [:]
         }
     }
 
     @ViewBuilder
     private var emptyMailbox: some View {
-        if mailbox.selectedHaveSyncedOnce {
+        if !mailbox.listPreferences.filters.isEmpty {
+            VStack(spacing: Tokens.Space.s3) {
+                TernEmptyState(title: "No matching mail", systemImage: "line.3.horizontal.decrease.circle", message: "Try different filters or clear them to see all mail.", fillsSpace: false)
+                Button("Clear Filters") { mailbox.listPreferences.filters = [] }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if mailbox.selectedHaveSyncedOnce {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No conversations", systemImage: "tray", message: emptyDescription, fillsSpace: false)
                 if mailbox.offersOlderConversations {
@@ -136,31 +171,30 @@ struct ThreadListView: View {
 
     /// Keep the native scroll view mounted while mailbox and search states change.
     private var list: some View {
-        let threads = displayedThreads
+        let rows = mailbox.listItems
         let isSearching = mailbox.search.isActive
-        let wakeTimes = mailbox.showsSnoozed ? mailbox.wakeTimes : [:]
-        let namesAccounts = mailbox.listMixesAccounts
-        let accountMarks = namesAccounts ? compactAccountMarks : [:]
+        let accountMarks = compactAccountMarks
         let accountColors = AccountAppearance.colorIndexes(
             for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
         )
-        return List(selection: $mailbox.selectedThreadIDs) {
+        return List(selection: Binding(get: { mailbox.selectedListRowIDs }, set: { mailbox.selectListRows($0) })) {
             // Keyed by account too, since thread IDs repeat across accounts.
-            ForEach(threads, id: \.key) { thread in
-                ThreadRow(
-                    thread: thread,
-                    wakeAt: wakeTimes[thread.key],
-                    isWoken: mailbox.isWoken(thread),
-                    isSelected: mailbox.selectedThreadIDs.contains(thread.key),
-                    labels: labelsByThread[thread.key] ?? [],
-                    accountName: namesAccounts ? mailbox.account(id: thread.accountID)?.account.email : nil,
-                    accountMark: accountMarks[thread.accountID],
-                    accountColor: AccountAppearance.color(at: accountColors[thread.accountID])
+            ForEach(rows) { row in
+                MessageListRow(
+                    item: row, mailbox: mailbox, isSelected: mailbox.selectedListRowIDs.contains(row.id),
+                    accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
                 )
-                    .tag(thread.key)
+                    .tag(row.id)
                     .listRowInsets(EdgeInsets(top: 0, leading: Tokens.Space.s1_5, bottom: 0, trailing: Tokens.Space.s1_5))
+                    .onTapGesture(count: 2) { mailbox.requestConversationWindow(for: row.id) }
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row.id)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, row: row.id)
+                    }
                     .onAppear {
-                        if thread.key == threads.last?.key {
+                        if row.id == rows.last?.id {
                             if isSearching {
                                 mailbox.search.loadMoreResults()
                             } else {
@@ -171,7 +205,7 @@ struct ThreadListView: View {
             }
             // Restart row appearance and pagination when entering or leaving search.
             .id(isSearching)
-            if !threads.isEmpty {
+            if !rows.isEmpty {
                 if isSearching {
                     let gmail = mailbox.search.gmail?.state ?? .ready
                     if gmail != .finished {
@@ -183,10 +217,30 @@ struct ThreadListView: View {
             }
         }
         .listStyle(.inset)
-        .contextMenu(forSelectionType: ThreadKey.self) { ids in
-            ThreadMenuItems(mailbox: mailbox, ids: ids)
+        .contextMenu(forSelectionType: MailListRowID.self) { ids in
+            MessageListMenu(mailbox: mailbox, rows: ids)
         }
         .focused($listFocused)
+    }
+
+    @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, row: MailListRowID) -> some View {
+        // macOS 15 aligned the order with construction order on iOS.
+        if #available(macOS 15, *) {
+            swipeButton(first, row: row)
+            swipeButton(second, row: row)
+        } else {
+            swipeButton(second, row: row)
+            swipeButton(first, row: row)
+        }
+    }
+
+    @ViewBuilder private func swipeButton(_ action: MailSwipeAction, row: MailListRowID) -> some View {
+        if action != .none {
+            Button { mailbox.performSwipe(action, on: row) } label: { Label(action.title, systemImage: action.symbol) }
+                .tint(action == .trash || action == .spam ? .red : .accentColor)
+                .disabled((action == .archive && !mailbox.offersArchive) || (action == .trash && !mailbox.offersTrash)
+                          || (action == .snooze && !mailbox.offersArchive))
+        }
     }
 
     /// Use all accounts so a badge keeps its meaning when the list is filtered.

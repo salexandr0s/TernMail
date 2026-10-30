@@ -13,6 +13,7 @@ extension MailboxModel {
         let accountID: String
         let threadIDs: Set<ThreadKey>
         let applied: [Set<String>]
+        var messageIDs: [String]? = nil
     }
 
     /// What the label sheet edits.
@@ -27,6 +28,7 @@ extension MailboxModel {
         let accountID: String
         let kind: Kind
         let draft: LabelEditorSheet.Draft
+        var messageIDs: [String]? = nil
     }
 
     // MARK: Reading
@@ -74,6 +76,10 @@ extension MailboxModel {
     // MARK: Opening
 
     func showEditLabels(for keys: Set<ThreadKey>? = nil) {
+        if !listPreferences.conversations {
+            showEditLabels(forRows: selectedMessageRows.filter { keys?.contains($0.threadKey) ?? true })
+            return
+        }
         let ids = keys ?? selectedThreadIDs
         guard let accountID = oneAccount(of: ids, or: "Choose conversations from one account to edit their labels.")
         else { return }
@@ -93,20 +99,48 @@ extension MailboxModel {
     }
 
     func showMoveTo(for keys: Set<ThreadKey>? = nil) {
+        if !listPreferences.conversations {
+            showMoveTo(forRows: selectedMessageRows.filter { keys?.contains($0.threadKey) ?? true })
+            return
+        }
         let ids = keys ?? selectedThreadIDs
         guard oneAccount(of: ids, or: "Choose conversations from one account to move them.") != nil else { return }
         moveTargets = ids
+        moveMessageTargets = nil
+    }
+
+    func showEditLabels(forRows rows: Set<MailListRowID>) {
+        let keys = Set(rows.map(\.threadKey))
+        guard let accountID = oneAccount(of: keys, or: "Choose mail from one account to edit its labels.") else { return }
+        let messageIDs = rows.compactMap(\.messageID).sorted()
+        guard messageIDs.count == rows.count else {
+            if messageIDs.isEmpty { showEditLabels(for: keys) }
+            return
+        }
+        let chosen = Set(messageIDs)
+        let entries = listEntries.filter { $0.message.accountID == accountID && chosen.contains($0.message.id) }
+        guard entries.count == chosen.count else { return }
+        labelEdit = LabelEdit(accountID: accountID, threadIDs: keys, applied: entries.map(\.labels), messageIDs: messageIDs)
+    }
+
+    func showMoveTo(forRows rows: Set<MailListRowID>) {
+        let keys = Set(rows.map(\.threadKey))
+        guard oneAccount(of: keys, or: "Choose mail from one account to move it.") != nil else { return }
+        let messages = rows.compactMap(\.messageID).sorted()
+        guard messages.isEmpty || messages.count == rows.count else { return }
+        moveTargets = keys
+        moveMessageTargets = messages.isEmpty ? nil : messages
     }
 
     /// New Label, from the sidebar, the menu or Edit Labels' Create Label.
     /// It goes in `accountID`, else the account of the conversations it's
     /// for, else the current one.
-    func showNewLabel(named name: String = "", applyingTo threadIDs: Set<ThreadKey> = [], in accountID: String? = nil) {
+    func showNewLabel(named name: String = "", applyingTo threadIDs: Set<ThreadKey> = [], in accountID: String? = nil, messageIDs: [String]? = nil) {
         labelEdit = nil
         labelEditor = LabelEditorRequest(
             accountID: accountID ?? threadIDs.first?.accountID ?? currentAccount.account.id,
             kind: .new(applyingTo: threadIDs),
-            draft: .init(name: name, parent: nil, color: nil)
+            draft: .init(name: name, parent: nil, color: nil), messageIDs: messageIDs
         )
     }
 
@@ -146,7 +180,8 @@ extension MailboxModel {
                 }
                 // These wait for Gmail's ID, and undoing the new label drops them.
                 if !ids.isEmpty, let labelID = receipt.labelID {
-                    _ = try await engine.editLabels(threadIDs: ids, add: [labelID], remove: [])
+                    let target: MailActionTarget = request.messageIDs.map { .messages($0) } ?? .threads(ids)
+                    _ = try await engine.editLabels(target: target, add: [labelID], remove: [])
                 }
                 return receipt
             }
@@ -187,7 +222,7 @@ extension MailboxModel {
     func createLabel(named name: String, after change: LabelSelection.Change) -> Task<Void, Never>? {
         guard let edit = labelEdit else { return nil }
         let applying = applyLabels(change)
-        showNewLabel(named: name, applyingTo: edit.threadIDs)
+        showNewLabel(named: name, applyingTo: edit.threadIDs, messageIDs: edit.messageIDs)
         return applying
     }
 
@@ -198,7 +233,8 @@ extension MailboxModel {
         labelEdit = nil
         guard !change.isEmpty else { return nil }
         return queueUndoable("Edit Labels", for: edit.threadIDs) { owner, ids in
-            try await owner.engine.editLabels(threadIDs: ids, add: change.add.sorted(), remove: change.remove.sorted())
+            let target: MailActionTarget = edit.messageIDs.map { .messages($0) } ?? .threads(ids)
+            return try await owner.engine.editLabels(target: target, add: change.add.sorted(), remove: change.remove.sorted())
         }
     }
 
@@ -216,14 +252,17 @@ extension MailboxModel {
     func move(to labelID: String) -> Task<Void, Never>? {
         guard let targets = moveTargets else { return nil }
         let labelName = labelAccount.labels.first { $0.id == labelID }?.name
+        let messageIDs = moveMessageTargets
         moveTargets = nil
+        moveMessageTargets = nil
         let title = labelID == SystemLabel.inbox ? "Inbox" : labelName ?? "the label"
         let subject = targets.count == 1 ? "Conversation" : "\(targets.count) conversations"
         // Search results come from any mailbox, so they leave the Inbox.
         let from = search.isActive ? SystemLabel.inbox : selectedLabelID ?? SystemLabel.inbox
         if !search.isActive { selectThread(after: targets) }
         return queueUndoable("Move", confirmation: "\(subject) moved to “\(title)”", for: targets) { owner, ids in
-            try await owner.engine.move(threadIDs: ids, to: labelID, from: from)
+            let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(ids)
+            return try await owner.engine.move(target: target, to: labelID, from: from)
         }
     }
 

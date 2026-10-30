@@ -33,6 +33,18 @@ final class SearchModel {
     private(set) var fieldFocusRequest = 0
     /// Changes when Escape hands focus back to the list.
     private(set) var listFocusRequest = 0
+    private(set) var usesMessageMode = false
+
+    var matchingMessageIDs: [String: Set<String>] {
+        _ = gmail?.revision
+        return Dictionary(sources.map { ($0.accountID, gmail?.messageIDs(in: $0.accountID) ?? []) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func setMessageMode(_ enabled: Bool) {
+        guard usesMessageMode != enabled else { return }
+        usesMessageMode = enabled
+        restart()
+    }
 
     var isActive: Bool { !trimmedText.isEmpty }
 
@@ -120,6 +132,8 @@ final class SearchModel {
         // Results for another query or other accounts no longer count.
         found = [:]
         failedAccountIDs = []
+        results = []
+        onResultsChange?()
         guard isActive else {
             resultsTasks.forEach { $0.cancel() }
             resultsTasks = []
@@ -128,9 +142,13 @@ final class SearchModel {
             return
         }
         let query = query
+        let messageMode = usesMessageMode
         gmail = GmailPager(sources: Dictionary(uniqueKeysWithValues: sources.map { source in
             let engine = source.engine
-            return (source.accountID, { token in try await engine.searchGmail(query, timeZone: .current, pageToken: token) })
+            return (source.accountID, { token in
+                if messageMode { return try await engine.searchGmailMessages(query, timeZone: .current, pageToken: token) }
+                return try await engine.searchGmail(query, timeZone: .current, pageToken: token)
+            })
         }))
         observeResults()
         guard trimmedText.count >= Self.gmailMinimumLength else { return }
@@ -216,9 +234,11 @@ final class GmailPager {
     /// The accounts' states together: loading while any loads, then busy or
     /// failed if any is, then more if any has more.
     private(set) var state: State = .ready
+    private(set) var revision = 0
     @ObservationIgnored private var sources: [String: Source]
     /// Every conversation Gmail returned so far, by account.
     @ObservationIgnored private var returned: [String: Set<String>] = [:]
+    @ObservationIgnored private var returnedMessages: [String: Set<String>] = [:]
 
     init(sources: [String: Fetch]) {
         self.sources = sources.mapValues { Source(fetch: $0) }
@@ -232,6 +252,8 @@ final class GmailPager {
     func threadIDs(in accountID: String) -> Set<String> {
         returned[accountID] ?? []
     }
+
+    func messageIDs(in accountID: String) -> Set<String> { returnedMessages[accountID] ?? [] }
 
     /// Asks each account for its next page, or again for a page that
     /// failed, then passes each page's conversations to `onPage`.
@@ -263,6 +285,8 @@ final class GmailPager {
                 let page = try await fetch(token)
                 guard let self, !Task.isCancelled else { return }
                 returned[accountID, default: []].formUnion(page.threadIDs)
+                returnedMessages[accountID, default: []].formUnion(page.messageIDs)
+                revision += 1
                 sources[accountID]?.pageToken = page.nextPageToken
                 sources[accountID]?.state = page.nextPageToken == nil ? .finished : .more
                 updateState()

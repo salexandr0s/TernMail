@@ -22,6 +22,9 @@ final class AccountMailbox {
     static let cacheFailure = "Couldn't load saved mail."
 
     let account: AccountRecord
+    /// A paused runtime observes local mail and accepts draft/queue edits,
+    /// while a replacement runtime resumes network work later.
+    let syncEnabled: Bool
     let engine: SyncEngine
     @ObservationIgnored let people: PeopleClient?
     /// A rejected directory stays off for this account until the next launch.
@@ -46,6 +49,9 @@ final class AccountMailbox {
     @ObservationIgnored var onSnoozedChange: (() -> Void)?
     /// Engine events that aren't about syncing, which the window shows.
     @ObservationIgnored var onEvent: ((SyncEvent) -> Void)?
+    /// Receives only committed baseline/history snapshots for new-mail alerts.
+    @ObservationIgnored var onMailSync: ((MailSyncNotification) async -> Void)?
+    @ObservationIgnored var onUnreadCountChange: (() -> Void)?
 
     @ObservationIgnored private let cache: MailCache
     @ObservationIgnored private var isStopped = false
@@ -55,8 +61,9 @@ final class AccountMailbox {
     /// `outgoingDirectory` holds copies of the files attached to drafts.
     /// `snoozeStore` keeps snoozes, identities and feature settings. Without
     /// it, snoozes, identity refresh and contact sync are unavailable.
-    init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL, snoozeStore: AccountStore?) {
+    init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL, snoozeStore: AccountStore?, syncEnabled: Bool = true) {
         self.account = account
+        self.syncEnabled = syncEnabled
         self.cache = cache
         let people = (gmail as? GmailClient).map { PeopleClient(session: $0.session) }
         self.people = people
@@ -68,8 +75,9 @@ final class AccountMailbox {
             people: people,
             accounts: snoozeStore,
             cache: cache,
-            indexesAttachmentsAutomatically: !ProcessInfo.processInfo.arguments.contains("--ui-audit")
-                || ProcessInfo.processInfo.arguments.contains("--ui-audit-attachments")
+            sendsAutomatically: syncEnabled,
+            indexesAttachmentsAutomatically: syncEnabled && (!ProcessInfo.processInfo.arguments.contains("--ui-audit")
+                || ProcessInfo.processInfo.arguments.contains("--ui-audit-attachments"))
         )
         self.engine = engine
         snoozeKeeper = snoozeStore.map { SnoozeKeeper(engine: engine, accounts: $0) }
@@ -85,7 +93,7 @@ final class AccountMailbox {
         let snoozedStream = cache.snoozedThreads(accountID: account.id)
         let wokenStream = cache.wokenThreadIDs(accountID: account.id)
         let events = engine.events
-        observe(labelStream) { $0.labels = $1; $0.onLabelsChange?() }
+        observe(labelStream) { $0.labels = $1; $0.onLabelsChange?(); $0.onUnreadCountChange?() }
         observe(outboxStream) { $0.outbox = $1 }
         observe(snoozedStream) { $0.snoozed = $1; $0.onSnoozedChange?() }
         var isFirstWoken = true
@@ -101,6 +109,13 @@ final class AccountMailbox {
         tasks.append(Task { [weak self] in
             for await event in events { self?.handle(event) }
         })
+        let notifications = engine.mailNotifications
+        tasks.append(Task { [weak self] in
+            for await notification in notifications {
+                guard let self, !isStopped, !Task.isCancelled else { return }
+                await onMailSync?(notification)
+            }
+        })
         // Snoozes that came due while the Mac slept wake when it does.
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
@@ -108,6 +123,7 @@ final class AccountMailbox {
             // Delivered on the main queue, as requested above.
             MainActor.assumeIsolated { self?.checkSnoozes() }
         }
+        guard syncEnabled else { return }
         await engine.start()
         guard !isStopped else { return }
         await snoozeKeeper?.start()
@@ -126,13 +142,14 @@ final class AccountMailbox {
     }
 
     func syncNow() {
+        guard syncEnabled, !isStopped else { return }
         let engine = engine
         Task { await engine.syncReportingErrors() }
     }
 
     /// Wakes what is due. Runs after each sync pass and when the Mac wakes.
     func checkSnoozes() {
-        guard let keeper = snoozeKeeper, !isStopped else { return }
+        guard let keeper = snoozeKeeper, syncEnabled, !isStopped else { return }
         Task { await keeper.check() }
     }
 
