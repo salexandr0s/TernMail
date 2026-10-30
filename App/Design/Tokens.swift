@@ -37,6 +37,14 @@ enum Tokens {
         static let focus: CGFloat = 2
     }
 
+    /// Generated reading aids sit more quietly than the original message cards.
+    enum ConversationHeader {
+        static let surface = Surface.primary.opacity(0.45)
+        static let border = Surface.border.opacity(0.6)
+        static let dateTile = Space.s8
+        static let statusBadge = Space.s3
+    }
+
     enum Assistant {
         static let sidebarMinWidth: CGFloat = 320
         static let sidebarWidth: CGFloat = 380

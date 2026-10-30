@@ -50,7 +50,7 @@ import Testing
         let answered = try #require(model.items.first)
         #expect(answered.previousAnswer == .accepted)
         #expect(answered.authenticityWarning?.contains("organizer@example.com") == true)
-        #expect(EmailCalendarPresentation(item: answered, calendar: .current).status?.text.contains("Accepted") == true)
+        #expect(EmailCalendarPresentation(item: answered, calendar: .current).answerLine?.contains("Accepted") == true)
         model.update(messages: [message], addresses: ["me@example.com"])
         #expect(model.revision == revision)
         #expect(model.items.first?.previousAnswer == nil)

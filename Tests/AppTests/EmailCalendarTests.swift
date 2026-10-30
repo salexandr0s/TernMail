@@ -136,6 +136,50 @@ import TernAI
         #expect(ordered.map(\.id) == ["updated", "cancelled", "ordinary", "old"])
     }
 
+    @Test func eventBadgesDistinguishSuggestionsSavedEventsAndChanges() {
+        var event = GoogleCalendarEvent(summary: "Planning")
+        event.start = CalendarDateTime(date: "2031-07-15")
+        var item = EmailCalendarItem(id: "event", messageID: "message", title: "Planning", evidence: "", kind: .proposed, event: event)
+        func badge() -> EmailCalendarPresentation.Badge { EmailCalendarPresentation(item: item, calendar: .current).badge }
+        #expect(badge().symbol == "questionmark")
+        item.existingEventID = "saved"
+        #expect(badge().symbol == "checkmark")
+        item.calendarAnswer = .declined
+        #expect(badge().symbol == "xmark")
+        #expect(badge().tone == .negative)
+        item.calendarAnswer = .accepted
+        item.hasAmbiguousMatch = true
+        #expect(badge().tone == .caution)
+        item.hasAmbiguousMatch = false
+        item.uncertainties = ["Check the time zone."]
+        #expect(badge().symbol == "questionmark")
+        item.uncertainties = []
+        item.kind = .updated
+        #expect(badge().symbol == "arrow.triangle.2.circlepath")
+        item.kind = .cancelled
+        #expect(badge().symbol == "xmark")
+        item.isOutdated = true
+        #expect(badge().symbol == "clock.arrow.circlepath")
+    }
+
+    @Test func responseBadgesDoNotPresentMixedOrDeclinedAnswersAsAccepted() throws {
+        var invitation = try Invitation(data: Data(("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Tern Test//EN\r\nMETHOD:REPLY\r\n" +
+            "BEGIN:VEVENT\r\nUID:badge-test\r\nDTSTAMP:20310701T090000Z\r\nDTSTART:20310715T090000Z\r\n" +
+            "ATTENDEE;CN=River;PARTSTAT=ACCEPTED:mailto:river@example.invalid\r\n" +
+            "ATTENDEE;CN=Sky;PARTSTAT=ACCEPTED:mailto:sky@example.invalid\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n").utf8))
+        var item = EmailCalendarItem(id: "response", messageID: "message", title: "Planning", evidence: "", kind: .response, invitation: invitation)
+        #expect(EmailCalendarPresentation(item: item, calendar: .current).badge.tone == .positive)
+        invitation.attendees[1].status = .declined
+        item.invitation = invitation
+        let mixed = EmailCalendarPresentation(item: item, calendar: .current)
+        #expect(mixed.badge.symbol == "questionmark")
+        #expect(mixed.badge.tone == .caution)
+        #expect(mixed.responseLines.count == 2)
+        invitation.attendees[0].status = .declined
+        item.invitation = invitation
+        #expect(EmailCalendarPresentation(item: item, calendar: .current).badge.symbol == "xmark")
+    }
+
     private func response(source: String = "message", quote: String = "Meet July 15, 2031 at 14:00.") throws -> String {
         try AIJSON.object(["events": .array([.object([
             "title": .string("Planning"), "source_message_id": .string(source), "supporting_text": .string(quote),

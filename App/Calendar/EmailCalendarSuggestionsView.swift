@@ -11,6 +11,8 @@ struct EmailCalendarSuggestionsView: View {
     let onRespond: (EmailCalendarItem, InvitationReply.Answer) -> Void
     var onDismiss: (String) -> Void = { _ in }
     @State private var showsAll = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var orderedItems: [EmailCalendarItem] {
         EmailCalendarPresentation.ordered(model.visibleItems, messages: model.messages)
@@ -19,7 +21,6 @@ struct EmailCalendarSuggestionsView: View {
     var body: some View {
         if !orderedItems.isEmpty || model.isInterpreting || model.interpretationError != nil {
             VStack(alignment: .leading, spacing: 0) {
-                header
                 let displayed = showsAll ? orderedItems : Array(orderedItems.prefix(2))
                 ForEach(displayed) { item in
                     if item.id != displayed.first?.id {
@@ -34,6 +35,14 @@ struct EmailCalendarSuggestionsView: View {
                             model.dismiss(item.id)
                             onDismiss(item.id)
                         })
+                }
+                if model.isInterpreting {
+                    HStack(spacing: Tokens.Space.s2) {
+                        ProgressView().controlSize(.mini)
+                        Text("Checking events…").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, Tokens.Space.s3)
+                    .padding(.vertical, Tokens.Space.s2)
                 }
                 if orderedItems.count > 2 {
                     Divider().padding(.horizontal, Tokens.Space.s3)
@@ -60,33 +69,21 @@ struct EmailCalendarSuggestionsView: View {
                     Text("Some events could not be checked. \(error)")
                         .font(.caption).foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                        .padding([.horizontal, .bottom], Tokens.Space.s3)
+                        .padding(.horizontal, Tokens.Space.s3)
+                        .padding(.vertical, Tokens.Space.s2)
                 }
             }
-            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
+                in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .overlay {
                 RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                    .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
+                    .strokeBorder(contrast == .increased ? Tokens.Surface.border : Tokens.ConversationHeader.border,
+                        lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
             }
             .accessibilityElement(children: .contain)
             .onChange(of: model.messages.map(\.id)) { _, _ in showsAll = false }
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Text("From this conversation")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: Tokens.Space.s1)
-            if model.isInterpreting {
-                ProgressView().controlSize(.mini)
-                    .accessibilityLabel("Checking events")
-            }
-        }
-        .padding(.horizontal, Tokens.Space.s3)
-        .padding(.top, Tokens.Space.s3)
-        .padding(.bottom, Tokens.Space.s1)
     }
 
     private var hiddenChanges: Int {
@@ -109,53 +106,42 @@ private struct EmailCalendarSuggestionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                HStack(alignment: .center, spacing: Tokens.Space.s3) {
                     dateTile
-                    summary.frame(minWidth: Tokens.Space.s16 * 3)
-                    VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
+                    summary.frame(minWidth: Tokens.Space.s16 * 2)
+                    HStack(spacing: Tokens.Space.s1) {
                         primaryAction
                         moreMenu
                     }
                     .controlSize(.small)
                     .fixedSize()
                 }
-                HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                HStack(alignment: .center, spacing: Tokens.Space.s3) {
                     dateTile
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        summary
-                        HStack(spacing: Tokens.Space.s2) {
-                            primaryAction
-                            Spacer(minLength: 0)
-                            moreMenu
-                        }
-                        .controlSize(.small)
-                    }
+                    summary
+                    moreMenu.controlSize(.small).fixedSize()
                 }
             }
             if showsDetails { details }
         }
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.title)
+        .accessibilityValue(presentation.badge.text)
     }
 
     private var summary: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
             Text(presentation.title)
-                .font(.body.weight(.semibold))
-                .lineLimit(2)
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
                 .help(presentation.title)
                 .textSelection(.enabled)
             Text(presentation.dateLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let status = presentation.status {
-                Label(status.text, systemImage: status.symbol)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if let warning = item.authenticityWarning {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -167,26 +153,56 @@ private struct EmailCalendarSuggestionRow: View {
     }
 
     private var dateTile: some View {
+        Button { showsDetails.toggle() } label: {
+            dateTileFace
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: presentation.badge.symbol)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(badgeColor)
+                        .frame(width: Tokens.ConversationHeader.statusBadge, height: Tokens.ConversationHeader.statusBadge)
+                        .background(Tokens.Surface.muted, in: Circle())
+                        .overlay { Circle().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+                        .offset(x: Tokens.Space.s1_5, y: -Tokens.Space.s1_5)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(presentation.badge.text)
+        .accessibilityLabel("\(showsDetails ? "Hide" : "Show") event details: \(presentation.badge.text)")
+        .accessibilityValue(showsDetails ? "Expanded" : "Collapsed")
+    }
+
+    private var badgeColor: Color {
+        switch presentation.badge.tone {
+        case .positive: .green
+        case .caution: .orange
+        case .negative: .red
+        case .neutral: .secondary
+        }
+    }
+
+    private var dateTileFace: some View {
         VStack(spacing: 0) {
             if let month = presentation.month, let day = presentation.day {
                 Text(month)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(item.isOutdated || item.kind == .cancelled ? Color.secondary : .accentColor)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, Tokens.Space.s1)
+                    .frame(height: Tokens.Space.s3)
                     .background(Color.accentColor.opacity(Tokens.Calendar.eventTint))
                 Text(day)
-                    .font(.title2.weight(.medium).monospacedDigit())
+                    .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(item.isOutdated ? .secondary : .primary)
-                    .padding(.vertical, Tokens.Space.s1)
+                    .frame(height: Tokens.Space.s5)
             } else {
-                Image(systemName: "calendar.badge.questionmark")
-                    .font(.title2)
+                Image(systemName: "calendar")
+                    .font(.body)
                     .foregroundStyle(.secondary)
-                    .frame(height: Tokens.Space.s12)
+                    .frame(height: Tokens.ConversationHeader.dateTile)
             }
         }
-        .frame(width: Tokens.Space.s12)
+        .frame(width: Tokens.ConversationHeader.dateTile, height: Tokens.ConversationHeader.dateTile)
         .background(Tokens.Surface.muted)
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .overlay {
@@ -234,7 +250,8 @@ private struct EmailCalendarSuggestionRow: View {
             Divider()
             Button("Dismiss Suggestion", action: onDismiss)
         } label: {
-            Image(systemName: "ellipsis")
+            Label("Event details and actions", systemImage: "ellipsis")
+                .labelStyle(.iconOnly)
                 .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 .contentShape(Rectangle())
         }
@@ -253,6 +270,8 @@ private struct EmailCalendarSuggestionRow: View {
     private var details: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Divider()
+            Text(presentation.title).foregroundStyle(.primary).textSelection(.enabled)
+            Label(presentation.badge.text, systemImage: presentation.badge.symbol)
             if let location = presentation.location {
                 Label(location, systemImage: "mappin.and.ellipse")
                     .textSelection(.enabled)
@@ -267,10 +286,10 @@ private struct EmailCalendarSuggestionRow: View {
             if let recurrence = presentation.recurrenceNote {
                 Label(recurrence, systemImage: "repeat")
             }
-            if let answer = presentation.answerLine {
-                Label(answer, systemImage: "person.crop.circle.badge.checkmark")
+            if let answer = presentation.answerLine, answer != presentation.badge.text {
+                Label(answer, systemImage: "person.crop.circle")
             }
-            ForEach(Array(presentation.responseLines.enumerated()), id: \.offset) { _, answer in
+            ForEach(Array(presentation.responseLines.filter { $0 != presentation.badge.text }.enumerated()), id: \.offset) { _, answer in
                 Text(answer).textSelection(.enabled)
             }
             if let organizer = item.invitation?.organizer?.email, canRespond {

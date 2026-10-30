@@ -1,12 +1,12 @@
 # Events in mail threads
 
-The reader puts the conversation subject first, then a compact event group, a compact AI summary, and the messages. The summary uses a quiet text section beneath the bordered event group. See [Conversation summaries](../chatgpt-assistant.md#conversation-summaries) for generation, access, sources, and cache behavior.
+The reader puts the conversation subject first, then a compact event group, an AI summary card, and the messages. Events and the summary share a translucent fill and subtle border, distinct from the solid message cards. Reduce Transparency uses an opaque surface; Increased Contrast strengthens the border. See [Conversation summaries](../chatgpt-assistant.md#conversation-summaries) for generation, access, sources, and cache behavior.
 
 ## Event group
 
-Use a single rounded surface with a subtle border. Each event has a small month/day tile, its title, and a date/time line. The tile helps readers scan for the day; the title says what the event is. Titles wrap, with the full title available on hover. Keep the heading quieter than the conversation subject.
+Use a single rounded surface with no section heading. A normal event row is about 48 points tall, with a 32-point month/day tile, title and date/time line. The title occupies one line, with the full title available on hover and in details. Warnings and longer date ranges may increase the row height.
 
-Show two events initially. Current invitations and corrections take priority over superseded invitations. More events remain available through an explicit expansion control. Cancellations, updates, ambiguous matches, and missing dates remain visible without opening details. Additional uncertainty has a short visible cue and its explanation in details.
+Show two events initially. Current invitations and corrections take priority over superseded invitations. More events remain available through an explicit expansion control. A small badge overlays the date’s upper-right corner: a tick for a saved event or explicit acceptance, a question for a proposal or uncertainty, and a cross for a cancellation or decline. Updates and superseded invitations have distinct arrow/clock symbols. Color reinforces the symbol; tooltip and accessibility text give its meaning. Clicking the date opens the explanation and supporting details.
 
 ## Actions and details
 
@@ -18,9 +18,17 @@ The event menu contains details, dismissal, and secondary actions. Expanded deta
 
 Use Tern's selected time zone consistently for the tile and date/time line. Include the year, and show time ranges when known. Date-only all-day events retain their calendar date; show the final included day instead of the exclusive end supplied by calendar data. Undated suggestions use a neutral calendar symbol.
 
-At narrow reader widths, actions move below the title and metadata. Keep native keyboard focus, semantic text styles, and system colors. The reader separates the event group from the messages by 16 points; messages within the conversation remain closely grouped.
+Primary action and menu sit side by side. At narrow reader widths, all actions remain available in the menu so the row stays compact. Keep native keyboard focus, semantic text styles, and system colors. The reader separates the event and summary cards by 16 points; messages within the conversation remain closely grouped.
 
-## Verification
+## Compact card verification
+
+- The final production-source Debug build passed after removing temporary preview fixtures. Log: `/tmp/tern-header-compact-production-build.log`.
+- A standard event row now measures 48 points, with a 32-point date tile. The section heading and inline review-status text are gone. Status badges preserve the explanation in help, accessibility labels, and disclosed details.
+- All 20 tests in `EmailCalendarTests`, `CalendarLayoutTests`, and `InvitationBannerTests` passed. Two added regressions cover badge precedence and prevent mixed or declined attendee responses from displaying an acceptance tick. Log: `/tmp/tern-header-compact-tests.log`.
+- Native synthetic checks covered the full reader in light/dark appearance, the reader beside the assistant, a 288-point event card, accepted/declined badges, date-tile disclosure, action menus, and summary expansion. Inspection caught a date-tile hit-target gap; the entire tile now opens details. Independent review found no remaining blockers.
+- Screenshots: `tern-compact-header-light.png` and `tern-compact-header-dark.png` in `/Users/developer/.codex/visualizations/2026/10/30/01a18c3d-16cf-72f2-be86-90dd36323a55/`. The preview uses synthetic mail and a synthetic summary provider. Spoken VoiceOver and system Reduce Transparency/Increased Contrast settings were not exercised; their source-level fallbacks were reviewed.
+
+## Original design verification
 
 - Debug build passed. All 14 tests in `EmailCalendarTests` and `CalendarLayoutTests` passed, including four presentation regressions for date-only ranges, time-zone rollover, empty calendar locales, and event ordering. Log: `/tmp/tern-event-design-tests-final.log`.
 - Native synthetic checks covered light/dark appearance, 288-point card width, long titles, unknown dates, multi-day all-day ranges, current cancellation versus superseded invitation, primary Review and Respond callbacks, keyboard response-menu activation, source disclosure, dismissal, and expansion from two to five events.

@@ -17,6 +17,8 @@ struct ThreadSummaryView: View {
     @State private var attempt = 0
     @State private var handledAttempt = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private struct LoadIdentity: Equatable {
         let revision: String
@@ -51,8 +53,16 @@ struct ThreadSummaryView: View {
                 }
             }
         }
-        .padding(.horizontal, Tokens.Space.s1)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
+            in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                .strokeBorder(contrast == .increased ? Tokens.Surface.border : Tokens.ConversationHeader.border,
+                    lineWidth: Tokens.Border.hairline)
+                .allowsHitTesting(false)
+        }
         .task(id: identity) {
             let requested = identity
             loadedIdentity = nil

@@ -5,9 +5,12 @@ import MessageContent
 /// The tile and its date line share one calendar and time zone. Date-only values
 /// are civil dates; they must never shift when viewed in another time zone.
 struct EmailCalendarPresentation {
-    struct Status {
+    enum BadgeTone: Equatable { case positive, caution, negative, neutral }
+
+    struct Badge: Equatable {
         let text: String
         let symbol: String
+        let tone: BadgeTone
     }
 
     let item: EmailCalendarItem
@@ -58,19 +61,59 @@ struct EmailCalendarPresentation {
         return "\(firstDate), \(firstTime) \(zone) – \(format(end, dateStyle)), \(format(end, timeStyle)) \(endZone)"
     }
 
-    var status: Status? {
-        if item.isOutdated { return Status(text: "Replaced by a newer invitation", symbol: "clock.arrow.circlepath") }
-        if item.kind == .cancelled { return Status(text: "Cancelled", symbol: "calendar.badge.minus") }
-        if item.kind == .response {
-            let responses = responseLines
-            return Status(text: responses.count == 1 ? responses[0] : "\(responses.count) attendee responses", symbol: "person.crop.circle.badge.checkmark")
+    /// A tick means a saved event or an explicit acceptance, never just a
+    /// detected date. Warnings take precedence over an earlier acceptance.
+    var badge: Badge {
+        if item.isOutdated {
+            return Badge(text: "Replaced by a newer invitation", symbol: "clock.arrow.circlepath", tone: .neutral)
         }
-        if item.hasAmbiguousMatch { return Status(text: "Several calendar matches · Check details", symbol: "exclamationmark.circle") }
-        if item.kind == .updated { return Status(text: "Updated in this conversation", symbol: "arrow.triangle.2.circlepath") }
-        if let answerLine { return Status(text: answerLine, symbol: "person.crop.circle.badge.checkmark") }
-        if !item.uncertainties.isEmpty { return Status(text: "Details need review", symbol: "info.circle") }
-        if item.existingEventID != nil { return Status(text: "On your calendar", symbol: "checkmark.circle") }
-        return nil
+        if item.kind == .cancelled { return Badge(text: "Cancelled", symbol: "xmark", tone: .negative) }
+        if item.hasAmbiguousMatch {
+            return Badge(text: "Several calendar matches. Review details.", symbol: "questionmark", tone: .caution)
+        }
+        if let warning = item.authenticityWarning {
+            return Badge(text: warning, symbol: "questionmark", tone: .caution)
+        }
+        if !item.uncertainties.isEmpty {
+            return Badge(text: "Review event details", symbol: "questionmark", tone: .caution)
+        }
+        if item.kind == .updated {
+            return Badge(text: "Updated in this conversation", symbol: "arrow.triangle.2.circlepath", tone: .neutral)
+        }
+        if item.kind == .response { return responseBadge }
+        if item.existingEventID == nil, item.kind == .detected || item.kind == .proposed {
+            return Badge(text: "Event suggestion. Review before adding.", symbol: "questionmark", tone: .caution)
+        }
+        if let answer = item.previousAnswer ?? item.calendarAnswer, let answerLine {
+            return Self.badge(for: answer, text: answerLine)
+        }
+        if start == nil { return Badge(text: "Date to be confirmed", symbol: "questionmark", tone: .caution) }
+        if item.existingEventID != nil {
+            return Badge(text: "On your calendar", symbol: "checkmark", tone: .positive)
+        }
+        return Badge(text: "Invitation to review", symbol: "questionmark", tone: .caution)
+    }
+
+    private var responseBadge: Badge {
+        let attendees = item.invitation?.attendees ?? []
+        guard let answer = attendees.first?.status else {
+            return Badge(text: "Attendee response needs review", symbol: "questionmark", tone: .caution)
+        }
+        guard attendees.allSatisfy({ $0.status == answer }) else {
+            return Badge(text: "Mixed attendee responses", symbol: "questionmark", tone: .caution)
+        }
+        let text = attendees.count == 1 ? responseLines[0]
+            : "\(attendees.count) attendees: \(Self.answerText(answer))"
+        return Self.badge(for: answer, text: text)
+    }
+
+    private static func badge(for answer: Invitation.ParticipationStatus, text: String) -> Badge {
+        switch answer {
+        case .accepted: Badge(text: text, symbol: "checkmark", tone: .positive)
+        case .declined: Badge(text: text, symbol: "xmark", tone: .negative)
+        case .tentative, .needsAction: Badge(text: text, symbol: "questionmark", tone: .caution)
+        case .delegated: Badge(text: text, symbol: "arrow.turn.up.right", tone: .neutral)
+        }
     }
 
     var answerLine: String? {
