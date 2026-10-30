@@ -9,6 +9,8 @@ import TernAI
 final class AssistantModel {
     let connection: ChatGPTConnection
     private(set) var models: [AIModel] = []
+    private(set) var isLoadingModels = false
+    private(set) var modelErrorMessage: String?
     var selectedModelID: String {
         didSet { defaults?.set(selectedModelID, forKey: Self.modelKey) }
     }
@@ -34,6 +36,7 @@ final class AssistantModel {
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var conversationEpoch = 0
+    @ObservationIgnored private var retryContext: RetryContext?
     @ObservationIgnored private var catalogueRevision: Int?
     @ObservationIgnored private var catalogueTask: Task<[AIModel], any Error>?
     @ObservationIgnored private var catalogueTaskRevision: Int?
@@ -67,6 +70,60 @@ final class AssistantModel {
 
     var availableAccounts: [AccountRecord] { context().accounts }
 
+    var suggestions: [AssistantSuggestion] {
+        context().selectedThreads.isEmpty
+            ? [.priorities, .awaitingReplies, .summarizeThread, .draftReply]
+            : [.summarizeThread, .draftReply, .priorities, .awaitingReplies]
+    }
+
+    func title(for suggestion: AssistantSuggestion) -> String {
+        if selectedScope == .selectedThreads {
+            if suggestion == .priorities { return "Prioritize these conversations" }
+            if suggestion == .awaitingReplies { return "Which of these need a reply?" }
+        }
+        if suggestion == .summarizeThread, context().selectedThreads.count > 1 {
+            return "Summarize these conversations"
+        }
+        return suggestion.title
+    }
+
+    func requirement(for suggestion: AssistantSuggestion) -> String? {
+        if isRunning { return "Wait for this reply or stop it first." }
+        let current = context()
+        let selection = suggestionScope(suggestion)
+        let snapshot = scope(in: current, selection: selection)
+        do {
+            try validateStart(snapshot, selection: selection)
+            guard snapshot.accountIDs.isSubset(of: scope(in: current).accountIDs) else {
+                return "Select a conversation within the current mail scope."
+            }
+            if suggestion == .draftReply, snapshot.threadIDs?.count != 1 {
+                return "Select one conversation to draft a reply."
+            }
+            return nil
+        } catch { return Self.message(for: error) }
+    }
+
+    func canRun(_ suggestion: AssistantSuggestion) -> Bool { requirement(for: suggestion) == nil }
+
+    func run(_ suggestion: AssistantSuggestion) {
+        refreshAccess()
+        if let requirement = requirement(for: suggestion) { errorMessage = requirement; return }
+        selectedScope = suggestionScope(suggestion)
+        let prompt: String
+        if selectedScope == .selectedThreads, suggestion == .priorities {
+            prompt = "What needs my attention in the selected conversations? Identify open requests and upcoming deadlines, check for later replies that resolve them, and show the conversations in priority order."
+        } else if selectedScope == .selectedThreads, suggestion == .awaitingReplies {
+            prompt = "Which of the selected conversations need my reply? Read the latest messages, exclude anything already answered, and show the conversations with a short reason."
+        } else { prompt = suggestion.prompt }
+        send(prompt)
+    }
+
+    private func suggestionScope(_ suggestion: AssistantSuggestion) -> AssistantScope {
+        if suggestion.requiresSelection { return .selectedThreads }
+        return selectedScope
+    }
+
     func setAccountEnabled(_ id: String, enabled: Bool) {
         guard availableAccounts.contains(where: { $0.id == id }) else { return }
         if enabled { enabledAccountIDs.insert(id) } else { enabledAccountIDs.remove(id) }
@@ -87,6 +144,7 @@ final class AssistantModel {
             }
         }
         let snapshot = scope(in: current)
+        if observedScope?.connectionRevision != current.connectionRevision { modelErrorMessage = nil }
         if let previous = observedScope, previous != snapshot { clearConversation() }
         observedScope = snapshot
         if catalogueRevision != current.connectionRevision {
@@ -95,6 +153,7 @@ final class AssistantModel {
         }
         if let revision = catalogueTaskRevision, revision != current.connectionRevision {
             catalogueTask?.cancel(); catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil
+            isLoadingModels = false
         }
     }
 
@@ -102,7 +161,9 @@ final class AssistantModel {
         await connection.recoverPendingConnection()
         refreshAccess()
         let current = context()
-        guard current.canUsePlan else { models = []; return }
+        guard current.canUsePlan else { models = []; modelErrorMessage = nil; isLoadingModels = false; return }
+        isLoadingModels = true
+        modelErrorMessage = nil
         let revision = current.connectionRevision
         let request: Task<[AIModel], any Error>
         let requestID: UUID
@@ -115,7 +176,10 @@ final class AssistantModel {
             catalogueTask = request; catalogueTaskRevision = revision; catalogueTaskID = requestID
         }
         defer {
-            if catalogueTaskID == requestID { catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil }
+            if catalogueTaskID == requestID {
+                catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil
+                isLoadingModels = false
+            }
         }
         do {
             let choices = try await request.value
@@ -125,12 +189,11 @@ final class AssistantModel {
             models = choices
             catalogueRevision = revision
             if !choices.contains(where: { $0.id == selectedModelID }) { selectedModelID = choices.first?.id ?? "" }
-            if choices.isEmpty { errorMessage = "No models are available for this ChatGPT connection." }
-            else { errorMessage = nil }
+            modelErrorMessage = choices.isEmpty ? "No models are available for this ChatGPT connection." : nil
         } catch {
             guard context().connectionRevision == revision else { refreshAccess(); return }
             models = []
-            errorMessage = Self.message(for: error)
+            modelErrorMessage = Self.message(for: error)
         }
     }
 
@@ -143,19 +206,47 @@ final class AssistantModel {
         do {
             try validateStart(snapshot)
             guard prompt.utf8.count <= 32_768 else { throw AssistantError.historyLimit }
-            try checkHistory(history + [Self.userInput(prompt)])
+            let input = history + [Self.userInput(prompt)]
+            try checkHistory(input)
             let tools = try tools(for: snapshot)
-            let id = UUID()
             let messageID = UUID()
-            turnID = id; isRunning = true; errorMessage = nil; usage = nil
-            statusText = "Thinking…"
             messages.append(AssistantMessage(isUser: true, text: prompt))
             messages.append(AssistantMessage(id: messageID, isUser: false, text: "", state: .streaming))
-            let model = selectedModelID
-            task = Task { [weak self] in
-                await self?.run(prompt, model: model, snapshot: snapshot, tools: tools, turn: id, messageID: messageID)
-            }
+            retryContext = RetryContext(messageID: messageID, scope: snapshot, epoch: conversationEpoch)
+            history = input
+            start(input: input, snapshot: snapshot, tools: tools, messageID: messageID, isRetry: false)
         } catch { errorMessage = Self.message(for: error) }
+    }
+
+    func canRetry(_ messageID: UUID) -> Bool {
+        guard !isRunning, let retryContext, retryContext.messageID == messageID,
+              retryContext.epoch == conversationEpoch, retryContext.scope == scope(in: context()),
+              messages.last?.id == messageID, messages.last?.state == .failed else { return false }
+        do { try validateStart(retryContext.scope); try checkHistory(history); return true }
+        catch { return false }
+    }
+
+    func retry(_ messageID: UUID) {
+        refreshAccess()
+        guard canRetry(messageID), let retryContext else { return }
+        do {
+            let tools = try tools(for: retryContext.scope)
+            update(messageID) {
+                $0.text = ""; $0.state = .streaming; $0.errorMessage = nil
+            }
+            start(input: history, snapshot: retryContext.scope, tools: tools, messageID: messageID, isRetry: true)
+        } catch { errorMessage = Self.message(for: error) }
+    }
+
+    private func start(input: [AIJSON], snapshot: AssistantScopeSnapshot, tools: AssistantToolSession,
+                       messageID: UUID, isRetry: Bool) {
+        let id = UUID()
+        turnID = id; isRunning = true; errorMessage = nil; usage = nil; statusText = "Thinking…"
+        let model = selectedModelID
+        task = Task { [weak self] in
+            await self?.run(input: input, model: model, snapshot: snapshot, tools: tools,
+                            turn: id, messageID: messageID, isRetry: isRetry)
+        }
     }
 
     func stop() {
@@ -200,11 +291,11 @@ final class AssistantModel {
             connectionRevision: connection.connectionRevision, canUsePlan: connection.canUsePlan)
     }
 
-    private func scope(in current: AssistantContext) -> AssistantScopeSnapshot {
+    private func scope(in current: AssistantContext, selection: AssistantScope? = nil) -> AssistantScopeSnapshot {
         let enabled = enabledAccountIDs.intersection(current.accountInstances.keys)
         let accounts: Set<String>
         let threads: Set<ThreadKey>?
-        switch selectedScope {
+        switch selection ?? selectedScope {
         case .selectedThreads:
             let selected = current.selectedThreads.filter { enabled.contains($0.accountID) }
             threads = Set(selected); accounts = Set(selected.map(\.accountID))
@@ -218,9 +309,9 @@ final class AssistantModel {
             connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan)
     }
 
-    private func validateStart(_ snapshot: AssistantScopeSnapshot) throws {
+    private func validateStart(_ snapshot: AssistantScopeSnapshot, selection: AssistantScope? = nil) throws {
         guard snapshot.canUsePlan else { throw AIProviderError.signInRequired }
-        if selectedScope == .selectedThreads, snapshot.threadIDs?.isEmpty != false { throw AssistantError.noSelection }
+        if (selection ?? selectedScope) == .selectedThreads, snapshot.threadIDs?.isEmpty != false { throw AssistantError.noSelection }
         guard !snapshot.accountIDs.isEmpty else { throw AssistantError.noAccounts }
         guard !selectedModelID.isEmpty, models.contains(where: { $0.id == selectedModelID }),
               catalogueRevision == snapshot.connectionRevision else { throw AssistantError.noModel }
@@ -248,6 +339,7 @@ final class AssistantModel {
     private func clearConversation() {
         stop(); conversationEpoch += 1
         history = []; messages = []; toolSession = nil; composerText = ""
+        retryContext = nil
         errorMessage = nil; usage = nil
     }
 
@@ -259,27 +351,49 @@ final class AssistantModel {
         }
     }
 
-    private func run(_ prompt: String, model: String, snapshot: AssistantScopeSnapshot,
-                     tools: AssistantToolSession, turn: UUID, messageID: UUID) async {
-        var input = history + [Self.userInput(prompt)]
+    private func run(input initialInput: [AIJSON], model: String, snapshot: AssistantScopeSnapshot,
+                     tools: AssistantToolSession, turn: UUID, messageID: UUID, isRetry: Bool) async {
+        var input = initialInput
         var callCount = 0
+        var answerNext = false
+        var finalizeNext = false
+        let hasPreparedDraft = messages.first(where: { $0.id == messageID })?.draftIDs.isEmpty == false
+        let definitions = isRetry && hasPreparedDraft ? tools.definitions.filter { $0.name != "prepare_draft" } : tools.definitions
         do {
-            let instructions = try AssistantInstructions.chat(scope: snapshot, accounts: context().accounts)
-            for _ in 0..<Self.maximumRounds {
+            var instructions = try AssistantInstructions.chat(scope: snapshot, accounts: context().accounts)
+            if isRetry {
+                instructions += "\nContinue the existing user request from the completed tool results in this history. Do not repeat completed actions. If a draft was already prepared, describe it so the user can open it; preparing another draft requires a new user request."
+            }
+            for round in 0..<Self.maximumRounds {
                 try ensureCurrent(snapshot, turn: turn)
                 try checkHistory(input)
+                let answerOnly = answerNext || round == Self.maximumRounds - 1
+                let presentationOnly = !answerOnly && (finalizeNext || round >= Self.maximumRounds - 2 || callCount >= Self.maximumToolCalls - 1)
+                let roundDefinitions = answerOnly ? [] : (presentationOnly ? definitions.filter { $0.name == "present_emails" } : definitions)
+                let allowance = answerOnly ? 0 : (presentationOnly ? min(1, Self.maximumToolCalls - callCount) : Self.maximumToolCalls - 1 - callCount)
+                let budgetInstructions: String
+                if answerOnly {
+                    budgetInstructions = "This is the final response. No tools remain. Answer from completed results and displayed conversations. State any incomplete coverage or skipped operations; never claim a skipped action succeeded."
+                } else if presentationOnly {
+                    budgetInstructions = "Reading and action time is over. Use one present_emails call to select up to five relevant retrieved conversations, then answer from completed results. If no emails are relevant, answer directly. Do not request more reads or actions."
+                } else {
+                    budgetInstructions = "You have \(Self.maximumRounds - 2 - round) reading rounds and \(allowance) tool calls left before presentation and the final answer. Read at most five promising conversations; use search metadata to choose them. Finish early when you have enough evidence, and mention any incomplete coverage."
+                }
                 var completed: AIResponse?
                 let prefix = messages.first(where: { $0.id == messageID })?.text ?? ""
-                for try await event in provider.respond(AIRequest(model: model, input: input, instructions: instructions, tools: tools.definitions)) {
+                var streamedText = ""
+                for try await event in provider.respond(AIRequest(model: model, input: input,
+                    instructions: instructions + "\n" + budgetInstructions, tools: roundDefinitions)) {
                     try ensureCurrent(snapshot, turn: turn)
                     switch event {
                     case .textDelta(let delta):
                         guard completed == nil else { throw AIProviderError.malformedResponse(.terminalEnvelope) }
-                        update(messageID) { $0.text += delta }
+                        streamedText += delta
+                        update(messageID) { $0.text = Self.joinReply(prefix, streamedText) }
                     case .completed(let response):
                         guard completed == nil else { throw AIProviderError.malformedResponse(.terminalEnvelope) }
                         completed = response
-                        update(messageID) { $0.text = prefix + response.text }
+                        update(messageID) { $0.text = Self.joinReply(prefix, response.text) }
                     }
                 }
                 try ensureCurrent(snapshot, turn: turn)
@@ -287,37 +401,62 @@ final class AssistantModel {
                 input += response.output
                 usage = response.usage
                 if response.toolCalls.isEmpty {
-                    guard !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    let visible = messages.first(where: { $0.id == messageID })
+                    let hasOutcome = !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (visible.map {
+                        !$0.emailResults.isEmpty || !$0.draftIDs.isEmpty
+                    } ?? false)
+                    if !hasOutcome {
+                        if !answerOnly, round < Self.maximumRounds - 1 {
+                            try checkHistory(input)
+                            history = input
+                            if presentationOnly { answerNext = true } else { finalizeNext = true }
+                            statusText = "Finishing answer…"
+                            continue
+                        }
                         throw AssistantError.emptyReply(outputItems: response.output.count,
                             reasoningItems: response.output.filter { $0["type"]?.stringValue == "reasoning" }.count)
                     }
                     try checkHistory(input)
                     history = input
                     update(messageID) { $0.state = .completed }
+                    retryContext = nil
                     finish(turn)
                     return
                 }
-                callCount += response.toolCalls.count
-                guard callCount <= Self.maximumToolCalls else { throw AssistantError.toolLimit }
                 guard response.toolCalls.allSatisfy({ call in
-                    call.namespace == "tern" && tools.definitions.contains(where: { $0.name == call.name })
+                    call.namespace == "tern" && roundDefinitions.contains(where: { $0.name == call.name })
                 }) else { throw AssistantError.invalidTool }
+                var attemptedThisRound = 0
                 for (index, call) in response.toolCalls.enumerated() {
                     try ensureCurrent(snapshot, turn: turn)
+                    guard attemptedThisRound < allowance else {
+                        let skipped = AIJSON.object([
+                            "status": .string("not_run"),
+                            "error": .string("This operation was not run because the request's tool budget is spent. No action was performed. Finish using the completed results and explain any remaining work."),
+                        ])
+                        input.append(try Self.toolOutput(call.id, data: skipped))
+                        try checkpoint(input, pending: Array(response.toolCalls.dropFirst(index + 1)))
+                        continue
+                    }
                     try checkpoint(input, pending: Array(response.toolCalls.dropFirst(index)), uncertainDraft: call.name == "prepare_draft" ? call.id : nil)
                     statusText = call.name == "prepare_draft" ? "Preparing draft…" : "Reading mail…"
                     let output: AIJSON
-                    var acceptedResult = false
+                    var acceptedResult: MailAssistantToolResult?
                     do {
+                        attemptedThisRound += 1
+                        callCount += 1
                         let result = try await tools.execute(call)
                         try ensureCurrent(snapshot, turn: turn)
-                        guard result.sources.allSatisfy(snapshot.allows) else { throw AssistantError.invalidSource }
+                        guard result.sources.allSatisfy(snapshot.allows),
+                              result.emailResults.allSatisfy({ snapshot.allows($0.source) }),
+                              result.emailResults.isEmpty || call.name == "present_emails" else { throw AssistantError.invalidSource }
                         output = result.data
                         update(messageID) { message in
                             for source in result.sources where !message.sources.contains(where: { $0.id == source.id }) { message.sources.append(source) }
                             if let id = result.createdDraftID, !message.draftIDs.contains(id) { message.draftIDs.append(id) }
+                            if call.name == "present_emails" { message.emailResults = result.emailResults }
                         }
-                        acceptedResult = true
+                        acceptedResult = result
                     } catch {
                         try ensureCurrent(snapshot, turn: turn)
                         output = .object(["error": .string(Self.toolMessage(for: error))])
@@ -326,15 +465,20 @@ final class AssistantModel {
                     try checkpoint(input, pending: Array(response.toolCalls.dropFirst(index + 1)))
                     // Delivery is accepted only once its outcome is retained.
                     // A cancelled caller leaves its reservation available for retry.
-                    if acceptedResult { tools.acknowledge(call.id) }
+                    if acceptedResult != nil { tools.acknowledge(call.id) }
                 }
+                if presentationOnly { answerNext = true }
                 statusText = "Thinking…"
             }
             throw AssistantError.toolLimit
         } catch {
             guard turnID == turn else { return }
             if error is CancellationError { update(messageID) { $0.state = .cancelled } }
-            else { errorMessage = Self.message(for: error); update(messageID) { $0.state = .failed } }
+            else {
+                let description = Self.message(for: error)
+                errorMessage = description
+                update(messageID) { $0.state = .failed; $0.errorMessage = description }
+            }
             finish(turn)
         }
     }
@@ -342,6 +486,17 @@ final class AssistantModel {
     private func update(_ id: UUID, _ change: (inout AssistantMessage) -> Void) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         change(&messages[index])
+    }
+
+    private static func joinReply(_ earlier: String, _ later: String) -> String {
+        guard !earlier.isEmpty, !later.isEmpty else { return earlier + later }
+        return earlier + "\n\n" + later
+    }
+
+    private struct RetryContext {
+        let messageID: UUID
+        let scope: AssistantScopeSnapshot
+        let epoch: Int
     }
     /// Every checkpoint has an output for each call, including work not reached
     /// before cancellation. Completed drafts must survive a later read failure.

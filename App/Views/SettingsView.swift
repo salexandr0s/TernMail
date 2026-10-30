@@ -4,17 +4,23 @@ import SwiftUI
 /// Tern > Settings. Tabs share the native settings window.
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
+    @State private var selection: SettingsTab = .general
+    private enum SettingsTab: Hashable { case general, accounts, assistant }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selection) {
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             AccountsSettings()
                 .tabItem { Label("Accounts", systemImage: "person.crop.circle") }
+                .tag(SettingsTab.accounts)
             AssistantSettingsView(model: app.assistant)
                 .tabItem { Label("Assistant", systemImage: "sparkles") }
+                .tag(SettingsTab.assistant)
         }
-        .frame(width: Tokens.Layout.settingsWidth, height: Tokens.Layout.settingsHeight)
+        .frame(width: Tokens.Layout.settingsWidth,
+               height: selection == .assistant ? Tokens.Assistant.settingsHeight : Tokens.Layout.settingsHeight)
         .background(Tokens.Surface.canvas)
     }
 }

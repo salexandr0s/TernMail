@@ -25,6 +25,110 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func presentationUsesRetrievedMetadataAndPreservesRankingWithoutDuplicateThreads() async throws {
+        let mailbox = try makeAssistantMailbox()
+        let hiking = LabelRecord(accountID: "first", id: "Label_1", name: "Hiking", isSystem: false,
+                                 textColor: "#ffffff", backgroundColor: "#009900")
+        try await mailbox.cache.write { try $0.replaceLabels([hiking], accountID: "first") }
+        let tools = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["first"]) { true }
+        let search = try await tools.execute(call("search_mail", [
+            "query": .string("plans"), "account_id": .string("first"), "page_token": .null
+        ]))
+        #expect(search.emailResults.isEmpty)
+        let trail = try #require(search.sources.first { $0.threadID == "t3" })
+        let weekend = try #require(search.sources.first { $0.threadID == "t2" })
+        let result = try await tools.execute(call("present_emails", ["emails": .array([
+            emailSelection(trail.id, reason: "Check the trail details first."),
+            emailSelection(weekend.id),
+            emailSelection(trail.id, reason: "This duplicate must not replace the first reason.")
+        ])]))
+        #expect(result.emailResults.map(\.source.threadID) == ["t3", "t2"])
+        let first = try #require(result.emailResults.first)
+        #expect(first.senderName == "River")
+        #expect(first.senderEmail == "river@example.invalid")
+        #expect(first.subject == "Trail plans")
+        #expect(first.accountEmail == "audit@example.invalid")
+        #expect(first.labels == [hiking])
+        #expect(first.reason == "Check the trail details first.")
+        #expect(first.isUnread)
+        #expect(first.avatarData == nil)
+        #expect(result.emailResults.last?.isStarred == true)
+        #expect(result.emailResults.last?.messageCount == 2)
+        await mailbox.stop()
+    }
+
+    @Test func uncachedReadsRegisterMessageSourcesForOneCanonicalCard() async throws {
+        let mailbox = try makeAssistantMailbox()
+        let tools = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["first"],
+                                       allowedThreadIDs: [ThreadKey(accountID: "first", threadID: "t2")]) { true }
+        let read = try await tools.execute(call("read_thread", ["account_id": .string("first"), "thread_id": .string("t2")]))
+        #expect(read.emailResults.isEmpty)
+        #expect(read.sources.count == 2)
+        let result = try await tools.execute(call("present_emails", [
+            "emails": .array(read.sources.map { emailSelection($0.id) })
+        ]))
+        #expect(result.emailResults.count == 1)
+        let email = try #require(result.emailResults.first)
+        #expect(email.subject == "Weekend plans")
+        #expect(email.isUnread)
+        #expect(email.isStarred)
+        #expect(email.messageCount == 2)
+        #expect(email.date != nil)
+        let cached = try await mailbox.cache.read { try $0.thread(id: "t2", accountID: "first") }
+        #expect(cached == nil)
+        await mailbox.stop()
+    }
+
+    @Test func presentationKeepsIdenticalThreadIDsInDifferentAccountsDistinct() async throws {
+        let mailbox = try makeAssistantMailbox()
+        await mailbox.addAccount(AccountRecord(id: "second", email: "second@example.invalid", displayName: nil,
+                                               grantedScopes: [], addedAt: .now), gmail: AuditGmail(.second))
+        let tools = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["first", "second"]) { true }
+        let first = try await tools.execute(call("read_thread", ["account_id": .string("first"), "thread_id": .string("t2")]))
+        let second = try await tools.execute(call("read_thread", ["account_id": .string("second"), "thread_id": .string("t2")]))
+        let firstSource = try #require(first.sources.first)
+        let secondSource = try #require(second.sources.first)
+        let result = try await tools.execute(call("present_emails", ["emails": .array([
+            emailSelection(secondSource.id), emailSelection(firstSource.id)
+        ])]))
+        #expect(result.emailResults.map(\.source.accountID) == ["second", "first"])
+        #expect(result.emailResults.map(\.subject) == ["Garden plans", "Weekend plans"])
+        #expect(Set(result.emailResults.map(\.id)).count == 2)
+        await mailbox.stop()
+    }
+
+    @Test func presentationRejectsInventedSourcesMetadataOverflowAndRevokedScope() async throws {
+        let mailbox = try makeAssistantMailbox()
+        var enabled = true
+        let tools = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["first"]) { enabled }
+        let read = try await tools.execute(call("read_thread", ["account_id": .string("first"), "thread_id": .string("t2")]))
+        let source = try #require(read.sources.first)
+        let otherSession = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["first"]) { true }
+        await #expect(throws: AssistantMailError.invalidTarget) {
+            try await otherSession.execute(call("present_emails", ["emails": .array([emailSelection(source.id)])]))
+        }
+        let foreign = AssistantSource(accountID: "second", threadID: "t2", messageID: "m2", partID: nil, title: "Invented")
+        await #expect(throws: AssistantMailError.invalidTarget) {
+            try await tools.execute(call("present_emails", ["emails": .array([emailSelection(foreign.id)])]))
+        }
+        await #expect(throws: MailAssistantTools.ToolError.self) {
+            try await tools.execute(call("present_emails", ["emails": .array([
+                .object(["source_id": .string(source.id), "reason": .null, "subject": .string("Invented subject")])
+            ])]))
+        }
+        await #expect(throws: MailAssistantTools.ToolError.self) {
+            try await tools.execute(call("present_emails", ["emails": .array(Array(repeating: emailSelection(source.id), count: 13))]))
+        }
+        await #expect(throws: MailAssistantTools.ToolError.self) {
+            try await tools.execute(call("present_emails", ["emails": .array([emailSelection(source.id, reason: String(repeating: "a", count: 281))])]))
+        }
+        enabled = false
+        await #expect(throws: AssistantMailError.accessChanged) {
+            try await tools.execute(call("present_emails", ["emails": .array([emailSelection(source.id)])]))
+        }
+        await mailbox.stop()
+    }
+
     @Test func draftAcknowledgementControlsRetryRecoveryAndRevocationStopsReuse() async throws {
         let mailbox = try makeAssistantMailbox()
         var enabled = true
@@ -127,4 +231,8 @@ private func makeAssistantMailbox() throws -> MailboxModel {
 
 private func call(_ name: String, _ arguments: [String: AIJSON], id: String = UUID().uuidString) throws -> AIToolCall {
     AIToolCall(id: id, namespace: "tern", name: name, arguments: try AIJSON.object(arguments).jsonString())
+}
+
+private func emailSelection(_ sourceID: String, reason: String? = nil) -> AIJSON {
+    .object(["source_id": .string(sourceID), "reason": reason.map(AIJSON.string) ?? .null])
 }

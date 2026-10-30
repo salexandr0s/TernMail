@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MailStore
 import MessageContent
@@ -23,11 +24,14 @@ struct MailAssistantToolResult: Sendable {
     let data: AIJSON
     let sources: [AssistantSource]
     let createdDraftID: String?
+    let emailResults: [AssistantEmailResult]
 
-    init(data: AIJSON, sources: [AssistantSource] = [], createdDraftID: String? = nil) {
+    init(data: AIJSON, sources: [AssistantSource] = [], createdDraftID: String? = nil,
+         emailResults: [AssistantEmailResult] = []) {
         self.data = data
         self.sources = sources
         self.createdDraftID = createdDraftID
+        self.emailResults = emailResults
     }
 }
 
@@ -41,6 +45,13 @@ final class MailAssistantTools {
     private let allowedThreadIDs: Set<ThreadKey>?
     private let isScopeValid: @MainActor () -> Bool
     private var draftCalls = DraftCalls()
+    private var emailSources: [String: String] = [:]
+    private var retrievedEmails: [String: RegisteredEmail] = [:]
+
+    private struct RegisteredEmail {
+        let email: AssistantEmailResult
+        weak var owner: AccountMailbox?
+    }
 
     /// Aliases share a reservation so recovering an interrupted call also resolves
     /// its earlier IDs. Published requests never absorb a later distinct request.
@@ -115,6 +126,7 @@ final class MailAssistantTools {
         case "search_mail": result = try await search(arguments)
         case "read_thread": result = try await readThread(arguments)
         case "read_attachment": result = try await readAttachment(arguments)
+        case "present_emails": result = try presentEmails(arguments)
         case "prepare_draft": result = try await prepareDraft(arguments, call: call)
         default: throw ToolError.invalidArguments
         }
@@ -144,15 +156,32 @@ final class MailAssistantTools {
             let found = page.threadIDs.filter { isAllowedThread(accountID: accountID, threadID: $0) }
             guard let mailbox = mailbox() else { throw AssistantMailError.accessChanged }
             let records = try await mailbox.cache.read { tx in
-                try found.compactMap { try tx.thread(id: $0, accountID: accountID) }
+                try found.compactMap { id -> (ThreadRecord, MessageRecord?)? in
+                    guard let thread = try tx.thread(id: id, accountID: accountID) else { return nil }
+                    let messages = try tx.messages(threadID: id, accountID: accountID)
+                    return (thread, messages.last(where: { $0.date == thread.lastDate }) ?? messages.last)
+                }
             }
             try checkOwner(owner)
-            let rows = records.map { record -> AIJSON in
+            var labelIterator = mailbox.cache.threadLabels(threadsByAccount: [accountID: found]).makeAsyncIterator()
+            let labels = try await labelIterator.next() ?? []
+            try checkOwner(owner)
+            let labelsByThread = Dictionary(uniqueKeysWithValues: labels.map { ($0.threadID, $0.labels) })
+            let rows = try records.map { record, message -> AIJSON in
                 let source = AssistantSource(accountID: accountID, threadID: record.id, messageID: nil, partID: nil, title: record.subject)
                 sources.append(source)
+                let email = emailResult(source: source, sender: message?.sender ?? record.participants,
+                                        subject: record.subject, snippet: record.snippet, date: record.lastDate,
+                                        isUnread: record.isUnread, isStarred: record.isStarred,
+                                        messageCount: record.messageCount, labels: labelsByThread[record.id] ?? [], owner: owner)
+                try register(email, sources: [source], owner: owner)
                 return .object([
                     "account_id": .string(accountID), "thread_id": .string(record.id),
                     "subject": .string(record.subject), "snippet": .string(record.snippet),
+                    "sender": .string(message?.sender ?? record.participants), "date": try json(record.lastDate),
+                    "is_unread": .bool(record.isUnread), "is_starred": .bool(record.isStarred),
+                    "message_count": .number(Double(record.messageCount)),
+                    "labels": .array(email.labels.map { .string($0.name) }),
                     "source_id": .string(source.id)
                 ])
             }
@@ -176,9 +205,82 @@ final class MailAssistantTools {
         let sources = thread.messages.map {
             AssistantSource(accountID: accountID, threadID: threadID, messageID: $0.messageID, partID: nil, title: $0.subject)
         }
+        guard let mailbox = mailbox() else { throw AssistantMailError.accessChanged }
+        var labelIterator = mailbox.cache.labels(accountID: accountID).makeAsyncIterator()
+        let labels = try await labelIterator.next() ?? []
+        try checkOwner(owner)
+        if let latest = thread.messages.last, let source = sources.last {
+            let email = emailResult(source: source, sender: latest.sender, subject: latest.subject,
+                                    snippet: thread.snippet, date: latest.date,
+                                    isUnread: thread.labelIDs.contains(SystemLabel.unread),
+                                    isStarred: thread.labelIDs.contains(SystemLabel.starred),
+                                    messageCount: thread.totalMessages,
+                                    labels: labels.filter { !$0.isSystem && thread.labelIDs.contains($0.id) }, owner: owner)
+            try register(email, sources: sources, owner: owner)
+        }
         var value = try json(thread).objectValue ?? [:]
         value["sources"] = .array(sources.map(sourceJSON))
         return .init(data: .object(value), sources: sources)
+    }
+
+    private func emailResult(source: AssistantSource, sender: String, subject: String, snippet: String,
+                             date: Date?, isUnread: Bool, isStarred: Bool, messageCount: Int,
+                             labels: [LabelRecord], owner: AccountMailbox) -> AssistantEmailResult {
+        let address = EmailAddress.parseList(sender).first
+        let senderEmail = address?.address ?? ""
+        let senderName = address?.name ?? (senderEmail.isEmpty ? sender : senderEmail)
+        // Only an already-loaded, authenticated account photo may represent its
+        // matching sender. Arbitrary senders retain the UI's initials fallback.
+        let photo = senderEmail.caseInsensitiveCompare(owner.account.email) == .orderedSame
+            ? AccountProfileImages.shared.image(for: owner.account.id)?.tiffRepresentation : nil
+        return AssistantEmailResult(
+            source: source, senderName: String(senderName.prefix(512)), senderEmail: String(senderEmail.prefix(512)),
+            subject: String(subject.prefix(1_000)), snippet: String(snippet.prefix(1_000)), date: date,
+            isUnread: isUnread, isStarred: isStarred, messageCount: messageCount,
+            accountEmail: owner.account.email, labels: labels,
+            avatarData: photo.flatMap { $0.count <= 256_000 ? $0 : nil }
+        )
+    }
+
+    private func register(_ email: AssistantEmailResult, sources: [AssistantSource], owner: AccountMailbox) throws {
+        try checkOwner(owner)
+        try checkThread(accountID: email.source.accountID, threadID: email.source.threadID)
+        let newIDs = Set(sources.map(\.id)).subtracting(emailSources.keys)
+        guard emailSources.count + newIDs.count <= 1_000 else { throw ToolError.narrowScope }
+        retrievedEmails[email.id] = RegisteredEmail(email: email, owner: owner)
+        for source in sources { emailSources[source.id] = email.id }
+    }
+
+    private func presentEmails(_ args: [String: AIJSON]) throws -> MailAssistantToolResult {
+        guard let requests = args["emails"]?.arrayValue, !requests.isEmpty, requests.count <= 12 else {
+            throw ToolError.invalidArguments
+        }
+        var seen = Set<String>()
+        var emails: [AssistantEmailResult] = []
+        for request in requests {
+            guard let fields = request.objectValue, Set(fields.keys) == ["source_id", "reason"] else {
+                throw ToolError.invalidArguments
+            }
+            let sourceID = try string(fields, "source_id", limit: 2_048)
+            let reason = try optionalString(fields, "reason", limit: 280)
+            guard let id = emailSources[sourceID], let registered = retrievedEmails[id] else {
+                throw AssistantMailError.invalidTarget
+            }
+            let source = registered.email.source
+            let owner = try owner(source.accountID)
+            guard registered.owner === owner else { throw AssistantMailError.accessChanged }
+            try checkThread(accountID: source.accountID, threadID: source.threadID)
+            guard seen.insert(id).inserted else { continue }
+            var email = registered.email
+            email.reason = reason
+            emails.append(email)
+        }
+        try checkScope()
+        return .init(data: .object([
+            "status": .string("The selected conversations are displayed as email cards in the requested order. Do not repeat their metadata as a text list."),
+            "presented_source_ids": .array(emails.map { .string($0.source.id) }),
+            "count": .number(Double(emails.count))
+        ]), sources: emails.map(\.source), emailResults: emails)
     }
 
     private func readAttachment(_ args: [String: AIJSON]) async throws -> MailAssistantToolResult {
@@ -349,6 +451,16 @@ final class MailAssistantTools {
             ])),
             .init(name: "read_attachment", description: "Read text or a PDF attachment by its source IDs. Reports unsupported or truncated content; never takes a file path.", parameters: schema([
                 "account_id": field("Account ID."), "message_id": field("Message ID from read_thread."), "part_id": field("Attachment part ID from read_thread.")
+            ])),
+            .init(name: "present_emails", description: "Show selected retrieved conversations as rich email cards. Use after search_mail or read_thread when the user asks to see, find, rank, or review emails. Choose only relevant results and order them by importance to the request; do not display every search hit automatically. Supply a short reason or null. Tern supplies the sender, subject, dates, labels, and avatar from trusted mail data. Do not repeat the cards as a plain-text list.", parameters: schema([
+                "emails": .object([
+                    "type": .string("array"), "minItems": .number(1), "maxItems": .number(12),
+                    "description": .string("Up to twelve retrieved conversations in the desired display order. Duplicate conversations appear once."),
+                    "items": schema([
+                        "source_id": field("An exact source ID returned by search_mail or read_thread in this chat."),
+                        "reason": field("Why this conversation matters to the request, at most 280 characters; null if unnecessary.", nullable: true)
+                    ])
+                ])
             ])),
             .init(name: "prepare_draft", description: "Prepare an editable draft only when the user asks. Never sends. For replies, use source IDs and an empty to list; Tern retains recipients, subject, and threading.", parameters: schema([
                 "account_id": field("Account ID."), "thread_id": field("Required for replies; null for new mail.", nullable: true),

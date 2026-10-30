@@ -9,6 +9,11 @@ struct MainView: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @State private var isCompactWindow = false
+    @State private var showsAssistant = false
+    @State private var preferredAssistantWidth = Tokens.Assistant.sidebarWidth
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var previousColumnVisibility: NavigationSplitViewVisibility?
+    @State private var paneSizing = AssistantMailPaneSizing()
     @FocusState private var outboxFocused: Bool
     let mailbox: MailboxModel
 
@@ -18,85 +23,48 @@ struct MainView: View {
 
     var body: some View {
         @Bindable var app = app
-        NavigationSplitView {
-            SidebarView(mailbox: mailbox)
-                .padding(.trailing, Tokens.Space.s3)
-                .overlay(alignment: .trailing) {
-                    SplitDividerHandle()
-                        .frame(width: Tokens.Space.s3)
-                }
-                .navigationSplitViewColumnWidth(
-                    min: Tokens.Layout.sidebarMinWidth + Tokens.Space.s3,
-                    ideal: Tokens.Layout.sidebarWidth + Tokens.Space.s3,
-                    max: Tokens.Layout.sidebarMaxWidth + Tokens.Space.s3
-                )
-        } content: {
-            Group {
-                if showsOutbox {
-                    OutboxView(mailbox: mailbox, listFocused: $outboxFocused)
-                } else {
-                    ThreadListView(mailbox: mailbox)
-                }
-            }
-            .onChange(of: mailbox.search.listFocusRequest) {
-                outboxFocused = showsOutbox
-            }
-            .padding(.trailing, Tokens.Space.s3)
-            .overlay(alignment: .trailing) {
-                SplitDividerHandle()
-                    .frame(width: Tokens.Space.s3)
-            }
-            .navigationSplitViewColumnWidth(
-                min: Tokens.Layout.listMinWidth + Tokens.Space.s3,
-                ideal: Tokens.Layout.listWidth + Tokens.Space.s3
-            )
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button(action: newMessage) {
-                        Label("New Message", systemImage: "square.and.pencil")
-                    }
-                    .help("New Message")
+        GeometryReader { geometry in
+            let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
+                preferredWidth: preferredAssistantWidth, isPresented: showsAssistant)
+            HStack(spacing: 0) {
+                mailContent
+                    .frame(width: layout.mailWidth)
+                    .clipped()
+                if showsAssistant {
+                    Rectangle()
+                        .fill(Tokens.Surface.border)
+                        .frame(width: Tokens.Border.hairline)
+                        .overlay {
+                            AssistantSidebarResizeHandle(width: layout.sidebarWidth, onResize: resizeAssistant)
+                                .frame(width: Tokens.Space.s3)
+                                .accessibilityElement()
+                                .accessibilityLabel("Assistant width")
+                                .accessibilityValue("\(Int(layout.sidebarWidth)) points")
+                                .accessibilityAdjustableAction { direction in
+                                    resizeAssistant(layout.sidebarWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                                }
+                        }
+                    AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
+                        onExpand: { openAssistantWindow(fullScreen: true) },
+                        onDetach: { openAssistantWindow(fullScreen: false) }, onClose: closeAssistant)
+                        .frame(width: layout.sidebarWidth)
+                        .clipped()
                 }
             }
-        } detail: {
-            DetailView(mailbox: mailbox)
-                .background(Tokens.Surface.canvas)
-                .toolbar { MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow) }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
-                if let notice = mailbox.sendNotice {
-                    NoticeView(notice: notice) {
-                        if let undo = notice.undo { self.undo(undo) }
-                    } onDismiss: {
-                        if mailbox.sendNotice?.id == notice.id { mailbox.sendNotice = nil }
-                    }
-                    .transition(.opacity)
-                    .id(notice.id)
-                }
-                if let notice = mailbox.notice {
-                    NoticeView(notice: notice) {
-                        if let undo = notice.undo { self.undo(undo) }
-                    } onDismiss: {
-                        if mailbox.notice?.id == notice.id { mailbox.notice = nil }
-                    }
-                    .transition(.opacity)
-                    .id(notice.id)
-                }
-                AssistantLauncher(model: app.assistant, onOpenSource: app.openAssistantSource)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .onChange(of: layout.hidesMailboxNavigation, initial: true) { _, narrow in
+                updateNavigationVisibility(isNarrow: narrow)
             }
-            .padding(Tokens.Space.s4)
-            .ternAnimation(value: mailbox.notice)
-            .ternAnimation(value: mailbox.sendNotice)
+            .onChange(of: layout.mailWidth, initial: true) { _, width in
+                isCompactWindow = width < Tokens.Layout.compactToolbarWidth
+                paneSizing.requestApply()
+            }
         }
         .background {
             ShortcutMonitor(isEnabled: usesSingleKeys, perform: perform)
         }
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
         .focusedSceneValue(\.mailboxModel, mailbox)
-        .onGeometryChange(for: Bool.self) { geometry in
-            geometry.size.width < Tokens.Layout.compactToolbarWidth
-        } action: { isCompactWindow = $0 }
         .onAppear { mailbox.undoManager = undoManager }
         .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
@@ -129,6 +97,116 @@ struct MainView: View {
             mailbox.draftToReopen = nil
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
+    }
+
+    private var mailContent: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            SidebarView(mailbox: mailbox)
+                .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .navigation, isPresented: showsAssistant) }
+                .padding(.trailing, Tokens.Space.s3)
+                .overlay(alignment: .trailing) {
+                    SplitDividerHandle()
+                        .frame(width: Tokens.Space.s3)
+                }
+                .navigationSplitViewColumnWidth(
+                    min: Tokens.Layout.sidebarMinWidth + Tokens.Space.s3,
+                    ideal: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Space.s3,
+                    max: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarMaxWidth + Tokens.Space.s3
+                )
+        } content: {
+            Group {
+                if showsOutbox {
+                    OutboxView(mailbox: mailbox, listFocused: $outboxFocused)
+                } else {
+                    ThreadListView(mailbox: mailbox)
+                }
+            }
+            .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .list, isPresented: showsAssistant) }
+            .onChange(of: mailbox.search.listFocusRequest) {
+                outboxFocused = showsOutbox
+            }
+            .padding(.trailing, Tokens.Space.s3)
+            .overlay(alignment: .trailing) {
+                SplitDividerHandle()
+                    .frame(width: Tokens.Space.s3)
+            }
+            .navigationSplitViewColumnWidth(
+                min: Tokens.Layout.listMinWidth + Tokens.Space.s3,
+                ideal: showsAssistant ? AssistantSidebarLayout.listMinimum : Tokens.Layout.listWidth + Tokens.Space.s3,
+                max: showsAssistant ? AssistantSidebarLayout.listMinimum : nil
+            )
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: newMessage) {
+                        Label("New Message", systemImage: "square.and.pencil")
+                    }
+                    .help("New Message")
+                }
+            }
+        } detail: {
+            DetailView(mailbox: mailbox)
+                .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
+                .background(Tokens.Surface.canvas)
+                .toolbar { MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow) }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .overlay(alignment: .bottomTrailing) {
+            VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
+                if let notice = mailbox.sendNotice {
+                    NoticeView(notice: notice) {
+                        if let undo = notice.undo { self.undo(undo) }
+                    } onDismiss: {
+                        if mailbox.sendNotice?.id == notice.id { mailbox.sendNotice = nil }
+                    }
+                    .transition(.opacity)
+                    .id(notice.id)
+                }
+                if let notice = mailbox.notice {
+                    NoticeView(notice: notice) {
+                        if let undo = notice.undo { self.undo(undo) }
+                    } onDismiss: {
+                        if mailbox.notice?.id == notice.id { mailbox.notice = nil }
+                    }
+                    .transition(.opacity)
+                    .id(notice.id)
+                }
+                AssistantLauncher(isPresented: showsAssistant, onToggle: toggleAssistant)
+            }
+            .padding(Tokens.Space.s4)
+            .ternAnimation(value: mailbox.notice)
+            .ternAnimation(value: mailbox.sendNotice)
+        }
+    }
+
+    private func toggleAssistant() {
+        if showsAssistant { closeAssistant(); return }
+        // Capture divider positions before narrowing or hiding a native column.
+        paneSizing.beginPresentation()
+        previousColumnVisibility = columnVisibility
+        showsAssistant = true
+    }
+
+    private func closeAssistant() {
+        guard showsAssistant else { return }
+        showsAssistant = false
+        if let previousColumnVisibility { columnVisibility = previousColumnVisibility }
+        previousColumnVisibility = nil
+        paneSizing.endPresentation()
+    }
+
+    private func updateNavigationVisibility(isNarrow: Bool) {
+        guard showsAssistant, let previousColumnVisibility else { return }
+        columnVisibility = isNarrow && previousColumnVisibility != .detailOnly ? .doubleColumn : previousColumnVisibility
+        paneSizing.requestApply()
+    }
+
+    private func resizeAssistant(_ width: CGFloat) {
+        preferredAssistantWidth = min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth)
+    }
+
+    private func openAssistantWindow(fullScreen: Bool) {
+        closeAssistant()
+        AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
     }
 
     private func newMessage() {

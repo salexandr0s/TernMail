@@ -1,16 +1,12 @@
 import SwiftUI
 
-/// Place below mailbox notices in their shared bottom-right overlay.
+/// Opens the assistant beside the reader without changing the window's size.
 struct AssistantLauncher: View {
-    @Bindable var model: AssistantModel
-    let onOpenSource: (AssistantSource) -> Void
-    @Environment(\.openWindow) private var openWindow
-    @State private var isPresented = false
+    let isPresented: Bool
+    let onToggle: () -> Void
 
     var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
+        Button(action: onToggle) {
             Label("Assistant", systemImage: "bubble.left.and.text.bubble.right")
                 .font(.callout.weight(.medium))
                 .padding(.horizontal, Tokens.Space.s3)
@@ -19,22 +15,8 @@ struct AssistantLauncher: View {
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
         .background(.regularMaterial, in: Capsule())
-        .help("Ask about your mail")
-        .accessibilityLabel("Open assistant")
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            AssistantView(
-                model: model,
-                onOpenSource: onOpenSource,
-                onExpand: { openAssistant(fullScreen: true) },
-                onDetach: { openAssistant(fullScreen: false) },
-                onClose: { isPresented = false }
-            )
-            .frame(width: Tokens.Sheet.smallWidth, height: Tokens.Layout.shortcutsHeight)
-        }
-    }
-
-    private func openAssistant(fullScreen: Bool) {
-        isPresented = false
-        AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
+        .help(isPresented ? "Close assistant sidebar" : "Ask about your mail")
+        .accessibilityLabel(isPresented ? "Close assistant sidebar" : "Open assistant sidebar")
+        .accessibilityValue(isPresented ? "Open" : "Closed")
     }
 }

@@ -37,6 +37,19 @@ enum Tokens {
         static let focus: CGFloat = 2
     }
 
+    enum Assistant {
+        static let sidebarMinWidth: CGFloat = 320
+        static let sidebarWidth: CGFloat = 380
+        static let sidebarMaxWidth: CGFloat = 480
+        static let readerMinWidth = Layout.emptyStateWidth
+        static let contentWidth: CGFloat = 720
+        static let settingsHeight: CGFloat = 680
+        static let bubbleInset = Space.s10
+        static let userBubble = Color.accentColor.opacity(0.14)
+        static let assistantBubble = Surface.primary
+        static let chatBackground = Surface.canvas
+    }
+
     /// Native controls use the contract's compact dimensions.
     enum Control {
         static let icon = Space.s4

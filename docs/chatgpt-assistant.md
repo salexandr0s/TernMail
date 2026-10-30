@@ -4,18 +4,24 @@ Tern uses Sign in with ChatGPT to connect its assistant to your ChatGPT plan. Mo
 
 ## Connect
 
-1. Open Tern, then **Settings → Assistant** or the floating **Assistant** button and its settings.
+1. Open Tern, then **Settings → Assistant** or **Assistant → Options → Assistant settings**.
 2. Choose **Continue with ChatGPT** and finish signing in in your browser. Grant ChatGPT plan usage when offered. An identity-only connection cannot run the assistant.
 3. Enable the mail accounts the assistant may use and choose an available model.
 4. Select a conversation, open the assistant, and ask a question. Change the scope to use the current account or all enabled accounts when needed.
 
-Try “Summarize this thread and list the unfinished tasks,” “What needs my attention this week?” or “Draft a reply confirming Friday.” Open a source to read the supporting conversation. **Open draft** opens the normal Tern composer for editing and sending.
+Choose a suggestion to ask immediately, or write a request such as “What needs my attention this week?” Suggestions respect the selected scope. Summary and draft suggestions require selected conversations; drafting requires one conversation. Open an email card or source to read the supporting conversation. **Review draft** opens the normal Tern composer for editing and sending.
 
 The assistant can search mail, read threads, extract supported attachments, and prepare drafts. Search results are paginated and subject to request limits; a single request does not read an entire mailbox. The initial attachment reader supports plain text, CSV, Markdown, JSON, XML, and PDFs with selectable text. Files are limited to 5 MB; extraction is limited to 60,000 characters and 40 PDF pages. Scans need OCR, which is not included.
 
+Broad requests review a bounded selection of conversations. Tern reserves the end of each request for displaying relevant emails and answering from the results already gathered; replies should identify incomplete coverage.
+
 ## Chat controls and data
 
-The floating panel, separate window, and full-screen view share one conversation. **Stop** cancels the current request. A draft already created remains in Drafts. **New chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits.
+The assistant opens as a right sidebar inside the existing window. Mailbox navigation and the conversation list shrink while it is open. At narrow widths, mailbox navigation temporarily closes. Closing the assistant restores the earlier layout. Drag its left edge to resize it, or use **Options** to open a separate window or full-screen view. All three views share the conversation and unfinished message.
+
+Replies support headings, lists, emphasis, quotes, code, and tables. Email cards show verified sender details, dates, labels, unread/starred status, and a reason for inclusion. Available local profile pictures appear beside senders; otherwise Tern shows initials. Cards link to the original conversation. Generated text and images do not create navigation links; use the validated cards and sources.
+
+**Stop response** cancels the current request. **Try again** retries a failed reply while retaining email cards and drafts already created. Retrying cannot create another draft after one has succeeded; ask in a new message to prepare another. **New chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits. Scroll up to read earlier messages without following new output; **Jump to latest** resumes following it.
 
 Mail access starts disabled. Relevant content from enabled accounts is sent to OpenAI when needed for your requests. Changing the effective scope or removing access clears retained conversation content and cancels active work. Reading mail through the assistant does not mark it read. Sending remains an action in the compose window.
 

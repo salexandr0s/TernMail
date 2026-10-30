@@ -55,7 +55,9 @@ extension SyncEngine {
         try checkAssistantAccess()
         return AssistantThread(
             accountID: accountID, threadID: threadID, messages: result, totalMessages: messages.count,
-            truncated: result.count < messages.count || result.contains(where: \.truncated)
+            truncated: result.count < messages.count || result.contains(where: \.truncated),
+            snippet: String((messages.last?.snippet ?? "").prefix(1_000)),
+            labelIDs: Array(Set(messages.flatMap { $0.labelIds ?? [] })).sorted()
         )
     }
 

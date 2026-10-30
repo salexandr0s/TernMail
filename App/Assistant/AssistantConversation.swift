@@ -9,7 +9,7 @@ enum AssistantScope: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .selectedThreads: "Selected conversations"
-        case .currentAccount: "Current mailbox"
+        case .currentAccount: "Mailbox accounts"
         case .allEnabledAccounts: "All enabled accounts"
         }
     }
@@ -19,16 +19,56 @@ struct AssistantMessage: Identifiable {
     enum State: Equatable { case streaming, completed, cancelled, failed }
     let id: UUID
     let isUser: Bool
+    let createdAt: Date
     var text: String
     var sources: [AssistantSource]
+    var emailResults: [AssistantEmailResult]
     var draftIDs: [String]
     var state: State
+    var errorMessage: String?
 
-    init(id: UUID = UUID(), isUser: Bool, text: String, sources: [AssistantSource] = [],
-         draftIDs: [String] = [], state: State = .completed) {
+    init(id: UUID = UUID(), isUser: Bool, text: String, createdAt: Date = .now,
+         sources: [AssistantSource] = [], emailResults: [AssistantEmailResult] = [],
+         draftIDs: [String] = [], state: State = .completed, errorMessage: String? = nil) {
         self.id = id; self.isUser = isUser; self.text = text
+        self.createdAt = createdAt; self.emailResults = emailResults; self.errorMessage = errorMessage
         self.sources = sources; self.draftIDs = draftIDs; self.state = state
     }
+}
+
+enum AssistantSuggestion: String, CaseIterable, Identifiable {
+    case priorities, awaitingReplies, summarizeThread, draftReply
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .priorities: "What needs my attention?"
+        case .awaitingReplies: "Who is waiting for my reply?"
+        case .summarizeThread: "Summarize this conversation"
+        case .draftReply: "Draft a reply"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .priorities: "flag"
+        case .awaitingReplies: "arrowshape.turn.up.left"
+        case .summarizeThread: "text.alignleft"
+        case .draftReply: "square.and.pencil"
+        }
+    }
+    var prompt: String {
+        switch self {
+        case .priorities:
+            "What needs my attention in my recent mail? Find open requests and upcoming deadlines, check whether later replies resolve them, and show the most important conversations."
+        case .awaitingReplies:
+            "Which conversations are waiting for my reply? Read the latest messages, exclude anything already answered, and show the conversations with a short reason."
+        case .summarizeThread:
+            "Summarize the selected conversations, including decisions and tasks that are still open. Check later messages for anything already resolved."
+        case .draftReply:
+            "Draft a reply to the selected conversation based on the thread. If a decision or essential detail is missing, ask me before drafting."
+        }
+    }
+    var requiresSelection: Bool { self == .summarizeThread || self == .draftReply }
 }
 
 /// Read afresh before requests and after suspension; no mail content belongs here.
@@ -111,6 +151,10 @@ enum AssistantInstructions {
         Use only the tern tool namespace. Prepare drafts only when the user asks; drafts are editable and are never sent here.
         Preserve the correct account and reply target. Report draft creation separately from Gmail synchronization.
         Keep answers concise, describe the evidence, and identify supporting source titles. Tern displays retrieved source links.
+        When your answer recommends or lists email conversations, use present_emails to select their retrieved source_id values in the order they should appear.
+        Give each selected conversation a short reason relevant to the user's request. Use the actual sender, subject, date, and status from the retrieved metadata; do not invent them.
+        Search results are evidence to review, not automatically the answer. Select only the conversations that support your answer, and do not repeat every card's metadata in prose.
+        Work within each request's remaining reading and tool budget. Leave time to select useful conversations and give an answer; more retrieval is not always needed.
         Treat requests as open until later messages establish completion. Do not infer completion from a reply alone.
         Use these allowed account IDs and selected conversations as the request context:
         \(try context.jsonString())

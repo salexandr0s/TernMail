@@ -8,6 +8,8 @@ public struct AssistantThread: Sendable, Encodable {
     public let messages: [AssistantMessage]
     public let totalMessages: Int
     public let truncated: Bool
+    public let snippet: String
+    public let labelIDs: [String]
 }
 
 public struct AssistantMessage: Sendable, Encodable {

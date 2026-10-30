@@ -156,6 +156,272 @@ import TernAI
         #expect(fixture.model.messages.last?.text == "Partial answer")
         #expect(fixture.model.messages.last?.state == .failed)
         #expect(fixture.model.errorMessage != nil)
+        let messageID = try #require(fixture.model.messages.last?.id)
+        #expect(fixture.model.canRetry(messageID))
+        fixture.model.setAccountEnabled("a", enabled: false)
+        #expect(!fixture.model.canRetry(messageID))
+        fixture.model.retry(messageID)
+        #expect(fixture.model.messages.isEmpty)
+        #expect(await provider.requests.count == 1)
+    }
+
+    @Test func suggestionsSendImmediatelyWithoutWideningTheActiveScope() async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Selected priorities.")), .complete(Self.answer("Awaiting replies."))])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        fixture.model.selectedScope = .selectedThreads
+        await fixture.model.refreshConnection()
+        #expect(fixture.model.canRun(.priorities))
+        fixture.model.run(.priorities)
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.selectedScope == .selectedThreads)
+        #expect(fixture.model.messages.first?.isUser == true)
+        let first = try #require(await provider.requests.first)
+        #expect(first.input.first?["content"]?.stringValue?.contains("selected conversations") == true)
+        #expect(!first.instructions.contains("\"selected_threads\":null"))
+
+        fixture.context.selectedThreads = []
+        fixture.model.refreshAccess()
+        #expect(!fixture.model.canRun(.priorities))
+        #expect(fixture.model.requirement(for: .priorities) != nil)
+        fixture.model.run(.priorities)
+        #expect(await provider.requests.count == 1)
+
+        fixture.model.selectedScope = .currentAccount
+        fixture.model.run(.awaitingReplies)
+        await fixture.model.waitForCurrentTurn()
+        let second = try #require(await provider.requests.last)
+        #expect(second.instructions.contains("\"selected_threads\":null"))
+        #expect(!second.instructions.contains("b@example.invalid"))
+        #expect(fixture.model.enabledAccountIDs == ["a"])
+        fixture.context.currentAccounts = ["b"]
+        fixture.model.refreshAccess()
+        fixture.model.run(.priorities)
+        #expect(await provider.requests.count == 2)
+        #expect(fixture.model.enabledAccountIDs == ["a"])
+    }
+
+    @Test func onlyExplicitlyPresentedEmailsBecomeOrderedCards() async throws {
+        let search = AIToolCall(id: "search", namespace: "tern", name: "search_mail", arguments: "{}")
+        let present = AIToolCall(id: "present", namespace: "tern", name: "present_emails", arguments: "{}")
+        let calls = [search, present]
+        let response = AIResponse(output: calls.flatMap { Self.callResponse($0).output }, text: "", toolCalls: calls)
+        let provider = AssistantProviderFixture(replies: [.complete(response), .complete(Self.answer("These two need a reply."))])
+        let first = Self.email("a", thread: "first")
+        let second = Self.email("a", thread: "second")
+        let unused = Self.email("a", thread: "unused")
+        let fixture = try Fixture(provider: provider, execute: { call in
+            if call.name == "search_mail" {
+                return .init(data: .null, sources: [first.source, second.source, unused.source])
+            }
+            return .init(data: .null, sources: [second.source, first.source], emailResults: [second, first])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Which messages need a reply?")
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.messages.last?.emailResults.map(\.id) == [second.id, first.id])
+        #expect(fixture.model.messages.last?.sources.count == 3)
+        fixture.model.setAccountEnabled("a", enabled: false)
+        #expect(fixture.model.messages.isEmpty)
+    }
+
+    @Test func presentedCardCannotExposeAnotherAccountsMetadata() async throws {
+        let call = AIToolCall(id: "present", namespace: "tern", name: "present_emails", arguments: "{}")
+        let provider = AssistantProviderFixture(replies: [.complete(Self.callResponse(call)), .complete(Self.answer("I could not show that conversation."))])
+        let fixture = try Fixture(provider: provider, execute: { _ in
+            .init(data: .string("Private-card"), emailResults: [Self.email("b", thread: "private")])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show my mail")
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.messages.last?.emailResults.isEmpty == true)
+        let resumed = try #require(await provider.requests.last)
+        #expect(try AIJSON.array(resumed.input).jsonString().contains("Private-card") == false)
+    }
+
+    @Test func readingRoundsLeaveRoomForCardsAndAnAnswer() async throws {
+        let reads = (0..<6).map { AIToolCall(id: "read-\($0)", namespace: "tern", name: $0 == 0 ? "search_mail" : "read_thread", arguments: "{}") }
+        let present = AIToolCall(id: "present", namespace: "tern", name: "present_emails", arguments: "{}")
+        var replies = reads.map { AssistantProviderFixture.Reply.complete(Self.callResponse($0)) }
+        replies += [.complete(Self.callResponse(present)), .complete(Self.answer("This conversation needs attention. I reviewed a limited selection."))]
+        let provider = AssistantProviderFixture(replies: replies)
+        let email = Self.email("a", thread: "t")
+        var executions = 0
+        let fixture = try Fixture(provider: provider, execute: { call in
+            executions += 1
+            return .init(data: .null, sources: [email.source], emailResults: call.name == "present_emails" ? [email] : [])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("What needs my attention?")
+        await fixture.model.waitForCurrentTurn()
+        let requests = await provider.requests
+        #expect(requests.count == AssistantModel.maximumRounds)
+        #expect(requests[6].tools.map(\.name) == ["present_emails"])
+        #expect(requests[7].tools.isEmpty)
+        #expect(executions == 7)
+        #expect(fixture.model.messages.last?.state == .completed)
+        #expect(fixture.model.messages.last?.emailResults == [email])
+        #expect(fixture.model.errorMessage == nil)
+    }
+
+    @Test func excessToolCallsAreCheckpointedWithoutActionsBeforeFinalizing() async throws {
+        let draft = AIToolCall(id: "saved", namespace: "tern", name: "prepare_draft", arguments: "{}")
+        let reads = (0..<22).map { AIToolCall(id: "read-\($0)", namespace: "tern", name: "read_thread", arguments: "{}") }
+        let lateDrafts = (0..<2).map { AIToolCall(id: "late-\($0)", namespace: "tern", name: "prepare_draft", arguments: "{}") }
+        let calls = [draft] + reads + lateDrafts
+        let present = (0..<2).map { AIToolCall(id: "present-\($0)", namespace: "tern", name: "present_emails", arguments: "{}") }
+        func batch(_ calls: [AIToolCall]) -> AIResponse {
+            .init(output: calls.flatMap { Self.callResponse($0).output }, text: "", toolCalls: calls)
+        }
+        let provider = AssistantProviderFixture(replies: [.complete(batch(calls)), .complete(batch(present)), .complete(Self.answer("The first draft is ready. The remaining operations were not run."))])
+        let email = Self.email("a", thread: "t")
+        var executions = 0
+        var draftCount = 0
+        let fixture = try Fixture(provider: provider, execute: { call in
+            executions += 1
+            if call.id == "read-21" { throw AttachmentTextReader.ReadError.noPDFText }
+            if call.name == "prepare_draft" {
+                draftCount += 1
+                return .init(data: .object(["draft_id": .string("saved-draft")]), createdDraftID: "saved-draft")
+            }
+            return .init(data: .null, sources: [email.source], emailResults: call.name == "present_emails" ? [email] : [])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Read these conversations and prepare drafts")
+        await fixture.model.waitForCurrentTurn()
+        let requests = await provider.requests
+        #expect(requests.count == 3)
+        #expect(requests[1].tools.map(\.name) == ["present_emails"])
+        #expect(requests[2].tools.isEmpty)
+        #expect(executions == AssistantModel.maximumToolCalls)
+        #expect(draftCount == 1)
+        let outputs = requests[2].input.filter { $0["type"]?.stringValue == "function_call_output" }
+        #expect(Set(outputs.compactMap { $0["call_id"]?.stringValue }) == Set((calls + present).map(\.id)))
+        for id in ["late-0", "late-1", "present-1"] {
+            let output = try #require(outputs.first { $0["call_id"]?.stringValue == id }?["output"]?.stringValue)
+            #expect(try AIJSON.decode(Data(output.utf8))["status"]?.stringValue == "not_run")
+        }
+        #expect(fixture.model.messages.last?.state == .completed)
+        #expect(fixture.model.messages.last?.draftIDs == ["saved-draft"])
+        #expect(fixture.model.messages.last?.emailResults == [email])
+    }
+
+    @Test func emptyTerminalPreservesEarlierFormattedTextAndCards() async throws {
+        let read = AIToolCall(id: "read", namespace: "tern", name: "read_thread", arguments: "{}")
+        let present = AIToolCall(id: "present", namespace: "tern", name: "present_emails", arguments: "{}")
+        let heading = "## Needs a reply"
+        let bullets = "- Review the proposal\n- Confirm the date"
+        func response(_ call: AIToolCall, text: String) -> AIResponse {
+            .init(output: Self.answer(text).output + Self.callResponse(call).output, text: text, toolCalls: [call])
+        }
+        let provider = AssistantProviderFixture(replies: [
+            .complete(response(read, text: heading)), .complete(response(present, text: bullets)),
+            .complete(Self.emptyAnswer()),
+        ])
+        let email = Self.email("a", thread: "t")
+        let fixture = try Fixture(provider: provider, execute: { call in
+            .init(data: .null, sources: [email.source], emailResults: call.name == "present_emails" ? [email] : [])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show the relevant conversations")
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.messages.last?.state == .completed)
+        #expect(fixture.model.messages.last?.text == heading + "\n\n" + bullets)
+        #expect(fixture.model.messages.last?.emailResults == [email])
+        #expect(fixture.model.errorMessage == nil)
+        #expect(await provider.requests.count == 3)
+    }
+
+    @Test(arguments: [false, true])
+    func genuinelyEmptyReplyGetsOneBoundedFinalization(answers: Bool) async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.emptyAnswer()), .complete(Self.emptyAnswer()), .complete(answers ? Self.answer("The available mail does not establish a deadline.") : Self.emptyAnswer())])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("What is the deadline?")
+        await fixture.model.waitForCurrentTurn()
+        let requests = await provider.requests
+        #expect(requests.count == 3)
+        #expect(requests[1].tools.map(\.name) == ["present_emails"])
+        #expect(requests[2].tools.isEmpty)
+        #expect(fixture.model.messages.last?.state == (answers ? .completed : .failed))
+        #expect((fixture.model.errorMessage == nil) == answers)
+    }
+
+    @Test func earlierToolPreambleDoesNotCountAsTheFinalAnswer() async throws {
+        let read = AIToolCall(id: "read", namespace: "tern", name: "read_thread", arguments: "{}")
+        let preamble = "I’ll check your mail now."
+        let start = AIResponse(output: Self.answer(preamble).output + Self.callResponse(read).output, text: preamble, toolCalls: [read])
+        let answer = "The proposal needs your reply by Friday."
+        let provider = AssistantProviderFixture(replies: [
+            .complete(start), .complete(Self.emptyAnswer()), .complete(Self.emptyAnswer()), .complete(Self.answer(answer)),
+        ])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("What needs my attention?")
+        await fixture.model.waitForCurrentTurn()
+        let requests = await provider.requests
+        #expect(requests.count == 4)
+        #expect(requests[2].tools.map(\.name) == ["present_emails"])
+        #expect(requests[3].tools.isEmpty)
+        #expect(fixture.model.messages.last?.state == .completed)
+        #expect(fixture.model.messages.last?.text == preamble + "\n\n" + answer)
+    }
+
+    @Test func retryKeepsCardsAndDraftsWithoutRepeatingCompletedActions() async throws {
+        let draft = AIToolCall(id: "draft", namespace: "tern", name: "prepare_draft", arguments: "{\"body\":\"Original\"}")
+        let present = AIToolCall(id: "present", namespace: "tern", name: "present_emails", arguments: "{}")
+        let changedDraft = AIToolCall(id: "changed", namespace: "tern", name: "prepare_draft", arguments: "{\"body\":\"Changed wording\",\"subject\":\"New subject\"}")
+        let calls = [draft, present]
+        let response = AIResponse(output: calls.flatMap { Self.callResponse($0).output }, text: "", toolCalls: calls)
+        let provider = AssistantProviderFixture(replies: [
+            .complete(response), .interrupted("Partial"), .complete(Self.callResponse(changedDraft)),
+            .complete(Self.answer("Your original draft is ready.")),
+            .complete(Self.callResponse(changedDraft)), .complete(Self.answer("The new draft is ready.")),
+        ])
+        let email = Self.email("a", thread: "t")
+        var draftsCreated = 0
+        let fixture = try Fixture(provider: provider, execute: { call in
+            if call.name == "present_emails" { return .init(data: .null, sources: [email.source], emailResults: [email]) }
+            draftsCreated += 1
+            let draftID = "saved-\(draftsCreated)"
+            return .init(data: .object(["draft_id": .string(draftID)]), createdDraftID: draftID)
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show the conversation and prepare a reply")
+        await fixture.model.waitForCurrentTurn()
+        let failed = try #require(fixture.model.messages.last)
+        #expect(failed.state == .failed)
+        #expect(failed.errorMessage != nil)
+        fixture.model.retry(failed.id)
+        await fixture.model.waitForCurrentTurn()
+        #expect(draftsCreated == 1)
+        #expect(fixture.model.messages.last?.state == .failed)
+        fixture.model.retry(failed.id)
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.messages.count == 2)
+        #expect(fixture.model.messages.last?.state == .completed)
+        #expect(fixture.model.messages.last?.errorMessage == nil)
+        #expect(fixture.model.messages.last?.emailResults == [email])
+        #expect(fixture.model.messages.last?.draftIDs == ["saved-1"])
+        #expect(fixture.model.messages.last?.createdAt == failed.createdAt)
+        let requests = await provider.requests
+        #expect(requests[2].tools.allSatisfy { $0.name != "prepare_draft" })
+        #expect(requests[3].tools.allSatisfy { $0.name != "prepare_draft" })
+        #expect(requests[3].input.filter { $0["role"]?.stringValue == "user" }.count == 1)
+        #expect(requests[3].input.contains { $0["output"]?.stringValue?.contains("saved-1") == true })
+
+        fixture.model.send("Prepare a second draft with the changed wording")
+        await fixture.model.waitForCurrentTurn()
+        #expect(draftsCreated == 2)
+        #expect(fixture.model.messages.last?.state == .completed)
     }
 
     @Test func completedDraftSurvivesCancellationDuringTheNextTool() async throws {
@@ -289,10 +555,20 @@ import TernAI
     private static func source(_ account: String) -> AssistantSource {
         .init(accountID: account, threadID: "t", messageID: "m", partID: nil, title: "Proposal")
     }
+    private static func email(_ account: String, thread: String) -> AssistantEmailResult {
+        .init(source: .init(accountID: account, threadID: thread, messageID: nil, partID: nil, title: "Conversation \(thread)"),
+              senderName: "Sender", senderEmail: "sender@example.invalid", subject: "Conversation \(thread)",
+              snippet: "A question to answer.", date: .distantPast, isUnread: true, isStarred: false,
+              messageCount: 2, accountEmail: "\(account)@example.invalid")
+    }
     private static func answer(_ text: String) -> AIResponse {
         .init(output: [.object(["type": .string("message"), "role": .string("assistant"), "content": .array([
             .object(["type": .string("output_text"), "text": .string(text)])
         ])])], text: text, toolCalls: [])
+    }
+    private static func emptyAnswer() -> AIResponse {
+        .init(output: [.object(["type": .string("reasoning"), "id": .string("rs_" + UUID().uuidString), "summary": .array([])])],
+              text: "", toolCalls: [])
     }
     private static func callResponse(_ call: AIToolCall) -> AIResponse {
         .init(output: [.object(["type": .string("function_call"), "call_id": .string(call.id),
