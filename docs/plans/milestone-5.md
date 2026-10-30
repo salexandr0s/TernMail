@@ -1,6 +1,6 @@
 # Milestone 5 plan: Mimestream parity
 
-Status: scope approved 2026-10-29. Preserved in the unified branch `codex/tern-unified` on 2026-10-30. Milestone 4 is complete through B5b; continue with B6a before planning the remaining milestone 5 phases. The original planning branch was `feat/milestone-5`, cut from `feat/milestone-4` at `5d4d385`.
+Status: scope approved 2026-10-29. On 2026-10-30 the owner explicitly authorized finishing milestone 4 and then this entire milestone in `codex/tern-unified`. The [execution checklist](milestone-5-execution.md) and [store contracts](milestone-5-store-contracts.md) track all 72 scope items and their dependencies. Milestone 4's integration checkpoint passed before implementation; all 72 implementation items are complete, integrated and reviewed. Core (471 tests), hosted app (242 tests), universal Release and strict signature gates pass. [Verification records](../milestone-5-verification.md) retain local results and provider/system acceptance gaps. The original planning branch was `feat/milestone-5`, cut from `feat/milestone-4` at `5d4d385`.
 
 Inputs: the owner's screenshots of Mimestream 1.10.8 (Inbox, Sent, Spam and every Settings pane), `docs/research/mimestream-behavior.md`, the milestone 1 to 3 plans, and milestone 4's plan (approved 2026-10-29 at `621772c` and amended at `36c6455`, on `feat/milestone-4`). The screenshots are a feature checklist only. Layout, wording, icons and sounds stay Tern's own (project rule).
 
