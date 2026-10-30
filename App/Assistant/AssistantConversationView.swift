@@ -13,13 +13,12 @@ struct AssistantConversationView<Welcome: View>: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        if model.messages.isEmpty { welcome() }
+                        if model.messages.isEmpty { welcome().id("assistant-welcome") }
                         ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
                             if beginsDay(at: index) {
                                 Text(dayTitle(message.createdAt))
                                     .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                                    .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s1)
-                                    .background(Tokens.Surface.muted, in: Capsule())
+                                    .padding(.vertical, Tokens.Space.s2)
                                     .frame(maxWidth: .infinity)
                             }
                             AssistantMessageView(message: message, startsGroup: startsGroup(at: index),
@@ -37,7 +36,7 @@ struct AssistantConversationView<Welcome: View>: View {
                         }
                         Color.clear.frame(height: Tokens.Space.s1).id("assistant-bottom")
                     }
-                    .padding(Tokens.Space.s3)
+                    .padding(Tokens.Space.s4)
                     .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
                     .frame(maxWidth: .infinity)
                     .background {
@@ -59,25 +58,30 @@ struct AssistantConversationView<Welcome: View>: View {
                 .onChange(of: model.statusText) { scrollToLatest(proxy) }
                 .onAppear { scrollToLatest(proxy) }
                 .overlay(alignment: .bottom) {
-                    if !scrollTracking.followsLatest {
+                    if !model.messages.isEmpty, !scrollTracking.followsLatest {
                         Button("Jump to latest", systemImage: "arrow.down") {
                             scrollTracking.followLatest()
                             proxy.scrollTo("assistant-bottom", anchor: .bottom)
                         }
-                        .buttonStyle(.bordered).controlSize(.small)
+                        .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
                         .background(Tokens.Surface.primary, in: Capsule())
                         .padding(Tokens.Space.s2)
                     }
                 }
             }
         }
-        .background(Tokens.Assistant.chatBackground)
+        .background(Tokens.Surface.primary)
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy) {
-        guard scrollTracking.followsLatest else { return }
+        guard model.messages.isEmpty || scrollTracking.followsLatest else { return }
         Task { @MainActor in
             await Task.yield()
+            if model.messages.isEmpty {
+                scrollTracking.followLatest()
+                proxy.scrollTo("assistant-welcome", anchor: .top)
+                return
+            }
             guard scrollTracking.followsLatest else { return }
             proxy.scrollTo("assistant-bottom", anchor: .bottom)
         }

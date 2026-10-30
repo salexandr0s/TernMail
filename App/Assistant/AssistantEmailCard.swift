@@ -6,10 +6,11 @@ struct AssistantEmailCard: View {
     let onOpen: (AssistantSource) -> Void
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button { onOpen(email.source) } label: {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 HStack(alignment: .top, spacing: Tokens.Space.s2) {
                     avatar
                     VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
@@ -23,6 +24,7 @@ struct AssistantEmailCard: View {
                         if let date = email.date {
                             Text(date, format: .dateTime.month(.abbreviated).day())
                                 .font(.caption2).foregroundStyle(.secondary)
+                                .fixedSize()
                         }
                         if email.isUnread {
                             Image(systemName: "circle.fill").font(.caption2).foregroundStyle(Color.accentColor)
@@ -31,14 +33,16 @@ struct AssistantEmailCard: View {
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-                    Text(subject).font(.callout.weight(email.isUnread ? .semibold : .medium)).lineLimit(2)
+                    Text(subject).font(.callout.weight(.semibold)).lineLimit(2)
                     if email.isStarred { Image(systemName: "star.fill").foregroundStyle(.yellow).accessibilityLabel("Starred") }
                 }
                 if let reason = email.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(reason).font(.callout).lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if !email.snippet.isEmpty {
-                    Text(email.snippet).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    Text(email.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if !email.labels.isEmpty {
                     FlowLayout(spacing: Tokens.Space.s1) {
@@ -52,6 +56,7 @@ struct AssistantEmailCard: View {
                         }
                     }
                 }
+                Divider()
                 HStack(spacing: Tokens.Space.s1) {
                     Text(email.accountEmail).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 0)
@@ -67,18 +72,19 @@ struct AssistantEmailCard: View {
             .multilineTextAlignment(.leading)
             .padding(Tokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHovered ? Tokens.Surface.muted : Tokens.Surface.primary,
-                        in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
             .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                    .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                                  lineWidth: Tokens.Border.hairline)
+                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                    .strokeBorder(contrast == .increased ? Color.primary : (isHovered || isFocused ? Color.accentColor : Tokens.Surface.border),
+                                  lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
-            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         }
         .buttonStyle(.plain)
+        .focused($isFocused)
         .onHover { isHovered = $0 }
+        .ternAnimation(value: isHovered)
         .help("Open \(subject)")
         .accessibilityElement(children: .combine)
         .accessibilityHint("Open this conversation in Tern")

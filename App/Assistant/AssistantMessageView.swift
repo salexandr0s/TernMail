@@ -17,18 +17,24 @@ struct AssistantMessageView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             if message.isUser { Spacer(minLength: Tokens.Assistant.bubbleInset) }
-            VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s1) {
+            VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s2) {
                 if startsGroup {
-                    Text(message.isUser ? "You" : "Assistant")
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        .padding(.horizontal, Tokens.Space.s2)
+                    HStack(spacing: Tokens.Space.s2) {
+                        if !message.isUser {
+                            ChatGPTBrand(size: Tokens.Space.s4).accessibilityHidden(true)
+                        }
+                        Text(message.isUser ? "You" : "Assistant")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(message.isUser ? .secondary : .primary)
+                    }
+                    .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
                 }
                 bubble
                 footer
             }
-            if !message.isUser { Spacer(minLength: Tokens.Space.s4) }
+            .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         }
-        .padding(.top, startsGroup ? Tokens.Space.s3 : 0)
+        .padding(.top, startsGroup ? Tokens.Space.s4 : 0)
     }
 
     private var bubble: some View {
@@ -45,6 +51,9 @@ struct AssistantMessageView: View {
                     ProgressView().controlSize(.mini)
                     Text(status ?? "Thinking…").font(.caption).foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
+                .background(Tokens.Surface.canvas, in: Capsule())
                 .accessibilityElement(children: .combine)
             }
             if !emails.isEmpty {
@@ -56,16 +65,32 @@ struct AssistantMessageView: View {
                         Button(showsAllEmails ? "Show fewer emails" : "Show \(emails.count - 3) more emails") {
                             showsAllEmails.toggle()
                         }
-                        .font(.caption).buttonStyle(.borderless)
+                        .font(.caption.weight(.medium)).buttonStyle(.borderless)
+                        .padding(.vertical, Tokens.Space.s1)
                     }
                 }
             }
             ForEach(message.draftIDs, id: \.self) { draftID in
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Button { onOpenDraft(draftID) } label: {
-                        Label("Review draft", systemImage: "square.and.pencil")
+                        HStack(spacing: Tokens.Space.s2) {
+                            Label("Review draft", systemImage: "square.and.pencil")
+                            Spacer(minLength: Tokens.Space.s2)
+                            Image(systemName: "arrow.up.right").font(.caption).accessibilityHidden(true)
+                        }
+                        .font(.callout.weight(.medium))
+                        .padding(Tokens.Space.s3)
+                        .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                        .overlay {
+                            if contrast == .increased {
+                                RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                                    .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
                     .help("Open the editable draft in Tern")
                     if let note = message.draftStyleNotes[draftID] {
                         Text(note)
@@ -76,6 +101,7 @@ struct AssistantMessageView: View {
                 }
             }
             if !sources.isEmpty {
+                Divider()
                 DisclosureGroup(isExpanded: $showsSources) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         ForEach(sources) { source in
@@ -83,6 +109,7 @@ struct AssistantMessageView: View {
                             Button { onOpenSource(source) } label: {
                                 Label(title, systemImage: source.systemImage)
                                     .lineLimit(2).multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.link).help(title)
                             .accessibilityLabel("Open source: \(title)")
@@ -90,23 +117,35 @@ struct AssistantMessageView: View {
                     }
                     .padding(.top, Tokens.Space.s2)
                 } label: {
-                    Text("\(sources.count) \(sources.count == 1 ? "source" : "sources")").font(.caption)
+                    Label("\(sources.count) \(sources.count == 1 ? "source" : "sources")", systemImage: "link")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 }
             }
             if let error = message.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                    .padding(Tokens.Space.s3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .overlay {
+                        if contrast == .increased {
+                            RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                                .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
         }
-        .padding(Tokens.Space.s3)
+        .padding(message.isUser ? Tokens.Space.s3 : 0)
         .foregroundStyle(.primary)
-        .background(bubbleColor, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .background(message.isUser ? bubbleColor : .clear, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                              lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
+            if message.isUser, contrast == .increased {
+                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                    .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
@@ -123,10 +162,12 @@ struct AssistantMessageView: View {
                     copied = true
                 } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
                 .buttonStyle(.borderless)
                 .help(copied ? "Copied" : (message.isUser ? "Copy message" : "Copy response"))
-                .accessibilityLabel(copied ? "Copied" : "Copy message")
+                .accessibilityLabel(copied ? "Copied" : (message.isUser ? "Copy message" : "Copy response"))
                 .onChange(of: message.text) { copied = false }
             }
             if canRetry {
@@ -135,7 +176,7 @@ struct AssistantMessageView: View {
             }
         }
         .font(.caption2).foregroundStyle(.secondary)
-        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
     }
 
     private var bubbleColor: Color {
