@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MessageContent
 import Testing
 import TernAI
@@ -72,6 +73,67 @@ import TernAI
         #expect(model.items.first?.canReview == false)
         item.relatedMessageIDs = ["different-account-message"]
         #expect(!model.restoreInterpretation([item], for: model.revision))
+    }
+
+    @Test func eventPresentationKeepsCivilDatesAndExclusiveAllDayEnds() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US")
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        var event = GoogleCalendarEvent(summary: "Workshop")
+        event.start = CalendarDateTime(date: "2031-07-15", timeZone: "Europe/Vienna")
+        event.end = CalendarDateTime(date: "2031-07-18", timeZone: "Europe/Vienna")
+        let item = EmailCalendarItem(id: "event", messageID: "message", title: "Workshop", evidence: "", kind: .detected, event: event)
+        let presentation = EmailCalendarPresentation(item: item, calendar: calendar)
+        #expect(calendar.component(.day, from: try #require(presentation.start)) == 15)
+        #expect(calendar.component(.day, from: try #require(presentation.inclusiveEnd)) == 17)
+        #expect(presentation.day == "15")
+        #expect(presentation.dateLine.contains("Jul 17, 2031"))
+        #expect(!presentation.dateLine.contains("Jul 18"))
+    }
+
+    @Test func eventPresentationUsesSelectedZoneForTileAndTimeAcrossMidnight() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_GB")
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))
+        var event = GoogleCalendarEvent(summary: "Late call")
+        event.start = CalendarDateTime(dateTime: "2031-07-15T23:30:00Z")
+        event.end = CalendarDateTime(dateTime: "2031-07-16T00:30:00Z")
+        var item = EmailCalendarItem(id: "event", messageID: "message", title: "Late call", evidence: "", kind: .proposed, event: event)
+        let presentation = EmailCalendarPresentation(item: item, calendar: calendar)
+        #expect(presentation.day == "16")
+        #expect(presentation.dateLine.contains("16 Jul 2031"))
+        #expect(presentation.dateLine.contains("01:30"))
+        #expect(presentation.dateLine.contains("02:30"))
+        item.event = nil
+        let undated = EmailCalendarPresentation(item: item, calendar: calendar)
+        #expect(undated.day == nil)
+        #expect(undated.inclusiveEnd == nil)
+        #expect(undated.dateLine == "Date to be confirmed")
+    }
+
+    @Test func eventPresentationFallsBackFromEmptyCalendarLocaleToUserLocale() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "")
+        var event = GoogleCalendarEvent(summary: "Workshop")
+        event.start = CalendarDateTime(date: "2031-07-15")
+        let item = EmailCalendarItem(id: "event", messageID: "message", title: "Workshop", evidence: "", kind: .detected, event: event)
+        let unspecified = EmailCalendarPresentation(item: item, calendar: calendar)
+        calendar.locale = .autoupdatingCurrent
+        let localized = EmailCalendarPresentation(item: item, calendar: calendar)
+        #expect(unspecified.month == localized.month)
+        #expect(unspecified.dateLine == localized.dateLine)
+    }
+
+    @Test func collapsedEventOrderPrioritizesCurrentChangesOverOldInvitations() {
+        let old = EmailCalendarItem(id: "old", messageID: "early", title: "Planning", evidence: "", kind: .invitation, isOutdated: true)
+        let ordinary = EmailCalendarItem(id: "ordinary", messageID: "latest", title: "Another event", evidence: "", kind: .proposed)
+        let cancelled = EmailCalendarItem(id: "cancelled", messageID: "later", title: "Planning", evidence: "", kind: .cancelled)
+        let updated = EmailCalendarItem(id: "updated", messageID: "latest", title: "Rescheduled", evidence: "", kind: .updated)
+        let messages = ["early", "later", "latest"].enumerated().map { index, id in
+            EmailCalendarMessage(id: id, subject: "Planning", date: Date(timeIntervalSince1970: Double(index)), text: "")
+        }
+        let ordered = EmailCalendarPresentation.ordered([old, ordinary, cancelled, updated], messages: messages)
+        #expect(ordered.map(\.id) == ["updated", "cancelled", "ordinary", "old"])
     }
 
     private func response(source: String = "message", quote: String = "Meet July 15, 2031 at 14:00.") throws -> String {

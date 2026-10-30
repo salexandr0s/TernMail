@@ -46,9 +46,9 @@ struct ThreadView: View {
         Group {
             if let detail, blockerReady {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                         ThreadHeading(detail: detail, key: key, mailbox: mailbox)
-                        EmailCalendarSuggestionsView(model: calendarSuggestions,
+                        EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar,
                             onReview: { item in
                                 if item.kind == .cancelled { cancellationReview = item }
                                 else { Task { await app.calendar.reviewEmailSuggestion(item, key: key) } }
@@ -69,28 +69,32 @@ struct ThreadView: View {
                         if let calendarNotice {
                             Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                         }
-                        ForEach(detail.messages) { message in
-                            MessageView(
-                                message: message,
-                                blocker: blocker,
-                                isExpanded: expanded.contains(message.id),
-                                isThreadStarred: detail.thread.isStarred,
-                                bodyLoadFailed: bodyLoadFailed,
-                                mailbox: mailbox,
-                                compose: compose,
-                                onRetry: { loadAttempt += 1 },
-                                onToggleStar: { mailbox.perform(detail.thread.isStarred ? .unstar : .star, on: [key]) }
-                            ) {
-                                if expanded.contains(message.id) {
-                                    expanded.remove(message.id)
-                                } else {
-                                    expanded.insert(message.id)
+                        // A conversation summary belongs here, below the event group
+                        // and above the messages, when summary content is available.
+                        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                            ForEach(detail.messages) { message in
+                                MessageView(
+                                    message: message,
+                                    blocker: blocker,
+                                    isExpanded: expanded.contains(message.id),
+                                    isThreadStarred: detail.thread.isStarred,
+                                    bodyLoadFailed: bodyLoadFailed,
+                                    mailbox: mailbox,
+                                    compose: compose,
+                                    onRetry: { loadAttempt += 1 },
+                                    onToggleStar: { mailbox.perform(detail.thread.isStarred ? .unstar : .star, on: [key]) }
+                                ) {
+                                    if expanded.contains(message.id) {
+                                        expanded.remove(message.id)
+                                    } else {
+                                        expanded.insert(message.id)
+                                    }
                                 }
                             }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Tokens.Space.s2)
+                    .padding(Tokens.Space.s4)
                 }
             } else if loadFailed {
                 VStack(spacing: Tokens.Space.s4) {
