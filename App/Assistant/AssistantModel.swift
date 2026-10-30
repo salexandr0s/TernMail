@@ -15,7 +15,10 @@ final class AssistantModel {
     var selectedModelID: String {
         didSet {
             defaults?.set(selectedModelID, forKey: Self.modelKey)
-            if selectedModelID != oldValue { calendarExtractionRevision += 1 }
+            if selectedModelID != oldValue {
+                calendarExtractionRevision += 1
+                readerSummaryCache.removeAll()
+            }
             refreshWritingStyleAccess()
         }
     }
@@ -34,6 +37,7 @@ final class AssistantModel {
     /// Thread readers observe this token to cancel extraction when permission
     /// or model readiness changes; the chat's internal epoch is not observed.
     private(set) var calendarExtractionRevision = 0
+    var summaryAccessRevision: Int { calendarExtractionRevision }
     var hasCalendarAccess: Bool { context().calendarScope.hasAccess }
     var hasAssistantDataAccess: Bool { !enabledAccountIDs.isEmpty || hasCalendarAccess }
 
@@ -46,6 +50,7 @@ final class AssistantModel {
     @ObservationIgnored private var history: [AIJSON] = []
     @ObservationIgnored private var observedScope: AssistantScopeSnapshot?
     @ObservationIgnored private var toolSession: AssistantToolSession?
+    @ObservationIgnored private var readerSummaryCache = ThreadSummaryCache()
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var conversationEpoch = 0
@@ -167,6 +172,9 @@ final class AssistantModel {
                 defaults?.set(retained.sorted(), forKey: Self.accountsKey)
             }
         }
+        readerSummaryCache.updateAccess(.init(
+            accountInstances: current.accountInstances.filter { enabledAccountIDs.contains($0.key) },
+            connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan, modelID: selectedModelID))
         let snapshot = scope(in: current)
         if observedScope?.connectionRevision != current.connectionRevision { modelErrorMessage = nil }
         if let previous = observedScope {
@@ -236,6 +244,8 @@ final class AssistantModel {
         } catch {
             guard context().connectionRevision == revision else { refreshAccess(); return }
             models = []
+            readerSummaryCache.removeAll()
+            calendarExtractionRevision += 1
             modelErrorMessage = Self.message(for: error)
         }
     }
@@ -372,17 +382,75 @@ final class AssistantModel {
     }
 
     func summarize(thread: ThreadKey) async throws -> AssistantSummary {
+        try await summaryService(for: thread).summarize(thread: thread)
+    }
+
+    func summaryAvailability(for thread: ThreadKey) -> ThreadSummaryAvailability {
+        let current = context()
+        guard current.canUsePlan else { return .unavailable(reason: "Connect ChatGPT for a summary.", action: "Connect") }
+        guard current.accountInstances[thread.accountID] != nil else {
+            return .unavailable(reason: "This mail account is unavailable.", action: "Settings")
+        }
+        guard enabledAccountIDs.contains(thread.accountID) else {
+            return .unavailable(reason: "Enable AI access for this account.", action: "AI Settings")
+        }
+        let snapshot = scope(in: current)
+        guard snapshot.accountIDs.contains(thread.accountID), snapshot.threadIDs?.contains(thread) ?? true else {
+            return .unavailable(reason: "This conversation is outside the assistant’s scope.", action: "Choose scope")
+        }
+        if catalogueRevision == current.connectionRevision, models.contains(where: { $0.id == selectedModelID }) {
+            return .ready
+        }
+        if isLoadingModels { return .loading }
+        return .unavailable(reason: "Choose an available ChatGPT model.", action: "AI Settings")
+    }
+
+    func readerSummary(thread: ThreadKey, revision: String, forceRefresh: Bool = false,
+                       expectedMessageIDs: Set<String>? = nil) async throws -> ThreadSummaryReport {
+        let service = try summaryService(for: thread)
+        let snapshot = scope(in: context())
+        guard let instance = snapshot.accountInstances[thread.accountID] else { throw AssistantError.accessChanged }
+        let key = ThreadSummaryCache.Key(thread: thread, accountInstance: instance,
+            connectionRevision: snapshot.connectionRevision, modelID: selectedModelID, sourceRevision: revision)
+        // Building the service validates current permissions before any cache hit.
+        if !forceRefresh, let cached = readerSummaryCache.report(for: key) {
+            try cached.validateMessages(expectedMessageIDs)
+            return cached
+        }
+        let report = try await service.report(thread: thread)
+        try Task.checkCancellation()
+        guard service.isScopeValid() else { throw AssistantError.accessChanged }
+        try report.validateMessages(expectedMessageIDs)
+        readerSummaryCache.insert(report, for: key)
+        return report
+    }
+
+    private func summaryService(for thread: ThreadKey) throws -> AssistantSummaryService {
         refreshAccess()
+        try Task.checkCancellation()
         let snapshot = scope(in: context())
         try validateStart(snapshot)
         guard snapshot.accountIDs.contains(thread.accountID),
               snapshot.threadIDs?.contains(thread) ?? true else { throw AssistantError.accessChanged }
-        let epoch = conversationEpoch
-        let service = AssistantSummaryService(provider: provider, model: selectedModelID, tools: try tools(for: snapshot)) { [weak self] in
+        let revision = summaryAccessRevision
+        let model = selectedModelID
+        let isValid: @MainActor @Sendable () -> Bool = { [weak self] in
             guard let self else { return false }
-            return conversationEpoch == epoch && scope(in: context()) == snapshot
+            return summaryAccessRevision == revision && scope(in: context()) == snapshot
+                && selectedModelID == model && catalogueRevision == snapshot.connectionRevision
+                && models.contains(where: { $0.id == model })
         }
-        return try await service.summarize(thread: thread)
+        // A reader owns only this read session. Chat keeps its independent source
+        // registry, writing-style decisions, and draft idempotency state.
+        let session: AssistantToolSession
+        if let toolFactory { session = toolFactory(snapshot) }
+        else {
+            guard let app else { throw AssistantError.accessChanged }
+            let tools = MailAssistantTools(app: app, allowedAccountIDs: [thread.accountID],
+                allowedThreadIDs: [thread], isScopeValid: isValid)
+            session = AssistantToolSession(definitions: [], execute: { try await tools.execute($0) })
+        }
+        return AssistantSummaryService(provider: provider, model: model, tools: session, isScopeValid: isValid)
     }
 
     private func context() -> AssistantContext {

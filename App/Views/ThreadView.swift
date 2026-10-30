@@ -23,6 +23,7 @@ struct ThreadView: View {
     @State private var cancellationReview: EmailCalendarItem?
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private struct LoadIdentity: Equatable {
         let key: ThreadKey
@@ -45,56 +46,74 @@ struct ThreadView: View {
     var body: some View {
         Group {
             if let detail, blockerReady {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                        ThreadHeading(detail: detail, key: key, mailbox: mailbox)
-                        EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar,
-                            onReview: { item in
-                                if item.kind == .cancelled { cancellationReview = item }
-                                else { Task { await app.calendar.reviewEmailSuggestion(item, key: key) } }
-                            },
-                            onOpenExisting: { item in
-                                guard let calendarID = item.existingCalendarID, let eventID = item.existingEventID else { return }
-                                Task { await app.calendar.openEvent(accountID: key.accountID, calendarID: calendarID, eventID: eventID) }
-                            }, onRespond: { item, answer in
-                                guard !calendarReplyBusy else { return }
-                                calendarReplyBusy = true
-                                Task {
-                                    defer { calendarReplyBusy = false }
-                                    do { responseReview = try await app.calendar.prepareEmailResponse(item, answer: answer, key: key) }
-                                    catch { calendarNotice = error.localizedDescription }
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                            ThreadHeading(detail: detail, key: key, mailbox: mailbox)
+                            EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar,
+                                onReview: { item in
+                                    if item.kind == .cancelled { cancellationReview = item }
+                                    else { Task { await app.calendar.reviewEmailSuggestion(item, key: key) } }
+                                },
+                                onOpenExisting: { item in
+                                    guard let calendarID = item.existingCalendarID, let eventID = item.existingEventID else { return }
+                                    Task { await app.calendar.openEvent(accountID: key.accountID, calendarID: calendarID, eventID: eventID) }
+                                }, onRespond: { item, answer in
+                                    guard !calendarReplyBusy else { return }
+                                    calendarReplyBusy = true
+                                    Task {
+                                        defer { calendarReplyBusy = false }
+                                        do { responseReview = try await app.calendar.prepareEmailResponse(item, answer: answer, key: key) }
+                                        catch { calendarNotice = error.localizedDescription }
+                                    }
+                                }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } })
+                                .disabled(calendarReplyBusy)
+                            if let calendarNotice {
+                                Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                            ThreadSummaryView(key: key, detail: detail, assistant: app.assistant,
+                                isActive: app.destination == .mail) { source in
+                                guard source.accountID == key.accountID, source.threadID == key.threadID,
+                                      let messageID = source.messageID,
+                                      detail.messages.contains(where: { $0.id == messageID }) else {
+                                    app.openAssistantSource(source)
+                                    return
                                 }
-                            }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } })
-                            .disabled(calendarReplyBusy)
-                        if let calendarNotice {
-                            Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                        }
-                        // A conversation summary belongs here, below the event group
-                        // and above the messages, when summary content is available.
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                            ForEach(detail.messages) { message in
-                                MessageView(
-                                    message: message,
-                                    blocker: blocker,
-                                    isExpanded: expanded.contains(message.id),
-                                    isThreadStarred: detail.thread.isStarred,
-                                    bodyLoadFailed: bodyLoadFailed,
-                                    mailbox: mailbox,
-                                    compose: compose,
-                                    onRetry: { loadAttempt += 1 },
-                                    onToggleStar: { mailbox.perform(detail.thread.isStarred ? .unstar : .star, on: [key]) }
-                                ) {
-                                    if expanded.contains(message.id) {
-                                        expanded.remove(message.id)
-                                    } else {
-                                        expanded.insert(message.id)
+                                expanded.insert(messageID)
+                                Task { @MainActor in
+                                    // Let the newly expanded message enter layout before scrolling.
+                                    await Task.yield()
+                                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) {
+                                        scroll.scrollTo(messageID, anchor: .top)
                                     }
                                 }
                             }
+                            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                                ForEach(detail.messages) { message in
+                                    MessageView(
+                                        message: message,
+                                        blocker: blocker,
+                                        isExpanded: expanded.contains(message.id),
+                                        isThreadStarred: detail.thread.isStarred,
+                                        bodyLoadFailed: bodyLoadFailed,
+                                        mailbox: mailbox,
+                                        compose: compose,
+                                        onRetry: { loadAttempt += 1 },
+                                        onToggleStar: { mailbox.perform(detail.thread.isStarred ? .unstar : .star, on: [key]) }
+                                    ) {
+                                        if expanded.contains(message.id) {
+                                            expanded.remove(message.id)
+                                        } else {
+                                            expanded.insert(message.id)
+                                        }
+                                    }
+                                    .id(message.id)
+                                }
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Tokens.Space.s4)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Tokens.Space.s4)
                 }
             } else if loadFailed {
                 VStack(spacing: Tokens.Space.s4) {

@@ -1,6 +1,6 @@
 # Events in mail threads
 
-The reader puts the conversation subject first, then a compact event group, then the messages. A future generated summary belongs between the event group and the messages. Until summary content exists, that position adds no placeholder or empty card.
+The reader puts the conversation subject first, then a compact event group, a compact AI summary, and the messages. The summary uses a quiet text section beneath the bordered event group. See [Conversation summaries](../chatgpt-assistant.md#conversation-summaries) for generation, access, sources, and cache behavior.
 
 ## Event group
 

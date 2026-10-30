@@ -212,7 +212,7 @@ struct AssistantSettingsView: View {
                     }
                 }
                 Divider()
-                Text("Choose the accounts the assistant can read. Changing access clears the current chat.")
+                Text("Choose the accounts the assistant can read, including automatic summaries and event suggestions when you open a permitted conversation. Changing access clears the current chat.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -257,7 +257,7 @@ struct AssistantSettingsView: View {
     private var privacySection: some View {
         AssistantSettingsSection("Privacy", systemImage: "lock") {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                Text("Relevant mail and attachment text from enabled accounts can be sent to OpenAI for your requests. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.")
+                Text("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
