@@ -220,11 +220,22 @@ public struct CacheTransaction {
         try LabelRecord.filter(Column("accountID") == accountID).fetchAll(db)
     }
 
-    /// Stores bodies and their text for search, the only path that writes either.
-    public func saveBodies(_ bodies: [MessageBodyRecord]) throws {
+    /// Stores bodies, search text and their parsed invitations together. Each
+    /// supplied body replaces its calendar record, clearing it when absent.
+    /// Calendar records without a matching account and message body are ignored.
+    public func saveBodies(_ bodies: [MessageBodyRecord], calendars: [MessageCalendarRecord] = []) throws {
+        var calendarsByAccount: [String: [String: MessageCalendarRecord]] = [:]
+        for calendar in calendars {
+            calendarsByAccount[calendar.accountID, default: [:]][calendar.messageID] = calendar
+        }
         for body in bodies {
             try body.upsert(db)
             try indexBody(body)
+            if let calendar = calendarsByAccount[body.accountID]?[body.messageID] {
+                try saveMessageCalendar(calendar)
+            } else {
+                try MessageCalendarRecord.deleteOne(db, key: ["accountID": body.accountID, "messageID": body.messageID])
+            }
         }
     }
 

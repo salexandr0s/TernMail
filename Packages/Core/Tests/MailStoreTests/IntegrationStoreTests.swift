@@ -140,6 +140,41 @@ private let uid = "event-1@example.com"
 
     // MARK: Invitations
 
+    @Test func bodyReplacementUpdatesOrClearsOnlyItsOwnInvitation() async throws {
+        let cache = try MailCache.inMemory()
+        try await seed(cache, ["m1", "m2"])
+        try await seed(cache, ["m1"], account: other)
+        let original = try invitation(sequence: 1, stamp: "20261101T090000Z")
+        let updated = try invitation(sequence: 2, stamp: "20261102T090000Z")
+        let bodies = [acct, other].map {
+            MessageBodyRecord(accountID: $0, messageID: "m1", html: nil, plainText: "Original", fetchedAt: now)
+        }
+        try await cache.write { tx in
+            try tx.saveBodies(bodies, calendars: [acct, other].map {
+                MessageCalendarRecord(accountID: $0, messageID: "m1", invitation: original)
+            })
+        }
+        let replacement = MessageBodyRecord(accountID: acct, messageID: "m1", html: nil, plainText: "Updated", fetchedAt: now + 1)
+        try await cache.write { tx in
+            try tx.saveBodies([replacement], calendars: [
+                MessageCalendarRecord(accountID: acct, messageID: "m1", invitation: updated),
+                // A calendar without a saved body must not leak into another message.
+                MessageCalendarRecord(accountID: acct, messageID: "m2", invitation: updated),
+            ])
+        }
+        #expect(try await cache.read { tx in try tx.messageCalendar(messageID: "m1", accountID: acct)?.invitation } == updated)
+        #expect(try await cache.read { tx in try tx.messageCalendar(messageID: "m2", accountID: acct) } == nil)
+        try await cache.write { tx in
+            // The other account's record cannot supply a calendar for this body.
+            try tx.saveBodies([replacement], calendars: [
+                MessageCalendarRecord(accountID: other, messageID: "m1", invitation: updated),
+            ])
+        }
+        #expect(try await cache.read { tx in try tx.messageCalendar(messageID: "m1", accountID: acct) } == nil)
+        #expect(try await cache.read { tx in try tx.messageCalendar(messageID: "m1", accountID: other)?.invitation } == original)
+        #expect(try await cache.read { tx in try tx.body(messageID: "m1", accountID: acct)?.plainText } == "Updated")
+    }
+
     @Test func theNewestVersionWinsAcrossThreadsAndAnswersAreNotVersions() async throws {
         let cache = try MailCache.inMemory()
         try await seed(cache, ["m1", "m2", "m3", "m4", "m5", "m6"])

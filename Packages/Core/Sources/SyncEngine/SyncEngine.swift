@@ -583,27 +583,39 @@ public actor SyncEngine {
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
+        var calendars: [MessageCalendarRecord] = []
         var attachments: [String: [AttachmentRecord]] = [:]
         guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
         for message in messages {
             guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
             let update = try Mapping.message(message, accountID: accountID)
             updates.append(update)
-            var textParts: [String: Data] = [:]
+            var bodyParts: [String: Data] = [:]
             for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
                 if isStopped || Task.isCancelled { throw CancellationError() }
-                textParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+                bodyParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: textParts))
+            var calendarDownloads = Set<String>()
+            while let id = CalendarParts.requiredAttachmentID(
+                of: message, attachments: bodyParts, attemptedAttachmentIDs: calendarDownloads
+            ) {
+                if isStopped || Task.isCancelled { throw CancellationError() }
+                calendarDownloads.insert(id)
+                bodyParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+            }
+            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: bodyParts))
+            if let invitation = CalendarParts.invitation(in: message, attachments: bodyParts) {
+                calendars.append(MessageCalendarRecord(accountID: accountID, messageID: message.id, invitation: invitation))
+            }
             attachments[message.id] = Mapping.attachments(message, accountID: accountID)
         }
-        try await write { [updates, bodies, attachments] tx in
+        try await write { [updates, bodies, calendars, attachments] tx in
             // Decide inside the same serialized write as ingestion, so a delete
             // committed while this request was awaiting cannot be overwritten.
             let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
             let liveIDs = Set(live.map(\.record.id))
             let threads = try tx.upsertMessages(live)
-            try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) })
+            try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) }, calendars: calendars)
             for (messageID, records) in attachments where liveIDs.contains(messageID) {
                 try tx.replaceAttachments(records, messageID: messageID, accountID: accountID)
             }
