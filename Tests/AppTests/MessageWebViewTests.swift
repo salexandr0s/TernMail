@@ -1,10 +1,49 @@
 import AppKit
+import MessageContent
 import SwiftUI
 import Testing
 import WebKit
 @testable import Tern
 
 @Suite @MainActor struct MessageWebViewTests {
+    @Test func bothImagePrivacyRuleSetsCompileInWebKit() async throws {
+        _ = try #require(await RemoteContentBlocker.ruleList())
+        _ = try #require(await RemoteContentBlocker.ruleList(allowsRemoteImages: true))
+    }
+
+    @Test(.timeLimit(.minutes(1))) func inlineImageLoadsOnlyThroughItsOwnImmutableMessageMap() async throws {
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        let resources = InlineResourceMap(resources: [.init(contentID: "logo", partID: "1", mimeType: "image/png", data: png)])
+        let own = try #require(resources.url(for: "logo"))
+        let foreign = InlineResourceMap(resources: [.init(contentID: "logo", partID: "1", mimeType: "image/png", data: png)])
+        let foreignURL = try #require(foreign.url(for: "logo"))
+        let height = HeightValue()
+        let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.setURLSchemeHandler(InlineResourceHandler(resources: resources), forURLScheme: InlineResourceMap.scheme)
+        configuration.userContentController.add(coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        configuration.userContentController.add(try #require(await RemoteContentBlocker.ruleList()))
+        let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 100), configuration: configuration)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+        defer { view.stopLoading(); window.close() }
+        view.navigationDelegate = coordinator
+        coordinator.load(MessageDocument.render(plainText: "Image privacy check").html, in: view)
+        try await waitFor { height.value > 0 }
+        let script = """
+            return await new Promise(resolve => {
+              const image = new Image(); image.onload = () => resolve(image.naturalWidth > 0);
+              image.onerror = () => resolve(false); image.src = source; document.body.append(image);
+            });
+            """
+        let ownLoaded = try await view.callAsyncJavaScript(script, arguments: ["source": own.absoluteString], in: nil, contentWorld: .defaultClient)
+        let foreignLoaded = try await view.callAsyncJavaScript(script, arguments: ["source": foreignURL.absoluteString], in: nil, contentWorld: .defaultClient)
+        #expect((ownLoaded as? Bool) == true)
+        #expect((foreignLoaded as? Bool) == false)
+    }
+
     @Test func zeroDeltaGestureWaitsForMovementAndKeepsItsAxisThroughMomentum() {
         var direction = ScrollDirection()
         let directions = [

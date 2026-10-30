@@ -11,9 +11,14 @@ struct MessageWebView: NSViewRepresentable {
     let html: String
     let blocker: WKContentRuleList?
     @Binding var height: CGFloat
+    var resources = InlineResourceMap()
+    var adaptsDarkMode = true
+    var forcesLightAppearance = false
+    var onHover: (String?) -> Void = { _ in }
+    var onSelectionChange: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(height: $height)
+        Coordinator(height: $height, onHover: onHover, onSelectionChange: onSelectionChange)
     }
 
     func makeNSView(context: Context) -> ContentSizedWebView {
@@ -21,13 +26,14 @@ struct MessageWebView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternHeight")
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: MessageDocument.darkModeScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient
-        ))
+        configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternReading")
+        configuration.setURLSchemeHandler(InlineResourceHandler(resources: resources), forURLScheme: InlineResourceMap.scheme)
+        configureScripts(configuration.userContentController, revision: 1)
         if let blocker {
             configuration.userContentController.add(blocker)
         }
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
+        if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
         view.navigationDelegate = context.coordinator
         view.allowsMagnification = false
         view.onWidthChange = { [weak coordinator = context.coordinator, weak view] in
@@ -40,23 +46,72 @@ struct MessageWebView: NSViewRepresentable {
 
     func updateNSView(_ view: ContentSizedWebView, context: Context) {
         context.coordinator.height = $height
+        context.coordinator.onHover = onHover
+        context.coordinator.onSelectionChange = onSelectionChange
+        if context.coordinator.needsLoad(html) {
+            view.configuration.userContentController.removeAllContentRuleLists()
+            if let blocker { view.configuration.userContentController.add(blocker) }
+            configureScripts(view.configuration.userContentController, revision: context.coordinator.nextRevision)
+        }
         context.coordinator.load(html, in: view)
     }
+
+    static func dismantleNSView(_ view: ContentSizedWebView, coordinator: Coordinator) {
+        view.stopLoading()
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "ternHeight", contentWorld: .defaultClient)
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "ternReading", contentWorld: .defaultClient)
+        view.navigationDelegate = nil
+    }
+
+    private func configureScripts(_ controller: WKUserContentController, revision: Int) {
+        controller.removeAllUserScripts()
+        if adaptsDarkMode {
+            controller.addUserScript(WKUserScript(source: MessageDocument.darkModeScript,
+                injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        }
+        controller.addUserScript(WKUserScript(source: Self.readingScript(revision: revision),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+    }
+
+    private static func readingScript(revision: Int) -> String { """
+        (() => {
+          const send = value => webkit.messageHandlers.ternReading.postMessage({...value, revision: \(revision)});
+          document.addEventListener('mouseover', event => {
+            const link = event.target.closest?.('a[href]'); send({hover: link?.href ?? ''});
+          });
+          document.addEventListener('mouseleave', () => send({hover: ''}));
+          document.addEventListener('selectionchange', () => {
+            send({selection: (getSelection()?.toString() ?? '').slice(0, 100000)});
+          });
+        })()
+        """ }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var height: Binding<CGFloat>
+        var onHover: (String?) -> Void
+        var onSelectionChange: (String) -> Void
         private var loadedHTML: String?
         private var revision = 0
 
-        init(height: Binding<CGFloat>) {
+        init(height: Binding<CGFloat>, onHover: @escaping (String?) -> Void = { _ in }, onSelectionChange: @escaping (String) -> Void = { _ in }) {
             self.height = height
+            self.onHover = onHover
+            self.onSelectionChange = onSelectionChange
         }
+
+        func needsLoad(_ html: String) -> Bool { html != loadedHTML }
+        var nextRevision: Int { revision + 1 }
 
         func load(_ html: String, in view: WKWebView) {
             guard html != loadedHTML else { return }
             loadedHTML = html
             revision += 1
+            let current = revision
+            Task { [weak self] in
+                guard let self, self.revision == current else { return }
+                self.onHover(nil); self.onSelectionChange("")
+            }
             view.loadHTMLString(html, baseURL: nil)
         }
 
@@ -117,6 +172,12 @@ struct MessageWebView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "ternReading", message.frameInfo.isMainFrame,
+               let value = message.body as? [String: Any], (value["revision"] as? NSNumber)?.intValue == revision {
+                if let hover = value["hover"] as? String { onHover(hover.isEmpty ? nil : String(hover.prefix(4_096))) }
+                if let selection = value["selection"] as? String { onSelectionChange(String(selection.prefix(100_000))) }
+                return
+            }
             guard let value = message.body as? [String: Any],
                   (value["revision"] as? NSNumber)?.intValue == revision,
                   let measured = (value["height"] as? NSNumber)?.doubleValue else { return }
@@ -173,25 +234,30 @@ struct ScrollDirection {
 /// Rule regexes don't support alternation, so each allowed scheme has its own rule.
 @MainActor
 enum RemoteContentBlocker {
-    private static var cached: WKContentRuleList?
-    private static let rules = """
-        [
-          {"trigger": {"url-filter": ".*"}, "action": {"type": "block"}},
-          {"trigger": {"url-filter": "^about:"}, "action": {"type": "ignore-previous-rules"}},
-          {"trigger": {"url-filter": "^data:"}, "action": {"type": "ignore-previous-rules"}},
-          {"trigger": {"url-filter": "^cid:"}, "action": {"type": "ignore-previous-rules"}}
-        ]
-        """
+    private static var cached: [Bool: WKContentRuleList] = [:]
 
-    static func ruleList() async -> WKContentRuleList? {
-        if let cached { return cached }
+    static func ruleList(allowsRemoteImages: Bool = false) async -> WKContentRuleList? {
+        if let cached = cached[allowsRemoteImages] { return cached }
         guard let store = WKContentRuleListStore.default() else { return nil }
+        var rules: [[String: Any]] = [
+            ["trigger": ["url-filter": ".*"], "action": ["type": "block"]],
+            ["trigger": ["url-filter": "^about:"], "action": ["type": "ignore-previous-rules"]],
+            ["trigger": ["url-filter": "^data:"], "action": ["type": "ignore-previous-rules"]],
+            ["trigger": ["url-filter": "^tern-message:"], "action": ["type": "ignore-previous-rules"]],
+        ]
+        if allowsRemoteImages {
+            rules.append(["trigger": ["url-filter": "^https:", "resource-type": ["image"]], "action": ["type": "ignore-previous-rules"]])
+            for pattern in TrackerMatcher.blockedURLPatterns {
+                rules.append(["trigger": ["url-filter": pattern], "action": ["type": "block"]])
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: rules), let encoded = String(data: data, encoding: .utf8) else { return nil }
         let box = await withCheckedContinuation { (continuation: CheckedContinuation<RuleListBox, Never>) in
-            store.compileContentRuleList(forIdentifier: "TernBlockRemoteContent", encodedContentRuleList: rules) { list, _ in
+            store.compileContentRuleList(forIdentifier: "TernReadingImages-\(allowsRemoteImages)-v1", encodedContentRuleList: encoded) { list, _ in
                 continuation.resume(returning: RuleListBox(list: list))
             }
         }
-        cached = box.list
+        cached[allowsRemoteImages] = box.list
         return box.list
     }
 }

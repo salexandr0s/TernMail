@@ -7,6 +7,8 @@ import WebKit
 struct ThreadView: View {
     let key: ThreadKey
     let mailbox: MailboxModel
+    var selectedMessageID: String? = nil
+    var isReaderActive = true
 
     @State private var detail: ThreadDetail?
     @State private var expanded: Set<String> = []
@@ -22,6 +24,12 @@ struct ThreadView: View {
     @State private var calendarNotice: String?
     @State private var calendarReplyBusy = false
     @State private var cancellationReview: EmailCalendarItem?
+    @State private var resourceRevision = 0
+    @State private var delayedRead = DelayedReadController()
+    @State private var selectedMailQuote: SelectedMailQuote?
+    @AppStorage(ReadingPreferences.orderKey) private var messageOrder = ReadingPreferences.Order.oldestFirst.rawValue
+    @AppStorage(ReadingPreferences.markReadKey) private var markReadPolicy = ReadingPreferences.MarkRead.immediately.rawValue
+    @AppStorage(ReadingPreferences.readDelayKey) private var readDelay = 3.0
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -29,6 +37,7 @@ struct ThreadView: View {
     private struct LoadIdentity: Equatable {
         let key: ThreadKey
         let attempt: Int
+        let messageID: String?
     }
 
     private struct CalendarInterpretationIdentity: Equatable {
@@ -44,13 +53,31 @@ struct ThreadView: View {
         let timeZone: String
     }
 
+    private struct ReadIdentity: Equatable {
+        let key: ThreadKey
+        let policy: String
+        let delay: Double
+        let isVisible: Bool
+        let hasDetail: Bool
+        let messageID: String?
+    }
+
+    private var readingDetail: ThreadDetail? {
+        guard var detail else { return nil }
+        if let selectedMessageID {
+            detail.messages.removeAll { $0.id != selectedMessageID }
+            guard !detail.messages.isEmpty else { return nil }
+        }
+        return detail
+    }
+
     var body: some View {
         Group {
-            if let detail, blockerReady {
+            if let detail = readingDetail, blockerReady {
                 ScrollViewReader { scroll in
                     ScrollView {
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                            ThreadHeading(detail: detail, key: key, mailbox: mailbox)
+                            ThreadHeading(detail: detail, key: key, mailbox: mailbox, messageID: selectedMessageID)
                             EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar,
                                 onReview: { item in
                                     if item.kind == .cancelled { cancellationReview = item }
@@ -72,8 +99,9 @@ struct ThreadView: View {
                             if let calendarNotice {
                                 Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                             }
+                            if selectedMessageID == nil {
                             ThreadSummaryView(key: key, detail: detail, assistant: app.assistant,
-                                isActive: app.destination == .mail) { source in
+                                isActive: isReaderActive) { source in
                                 guard source.accountID == key.accountID, source.threadID == key.threadID,
                                       let messageID = source.messageID,
                                       detail.messages.contains(where: { $0.id == messageID }) else {
@@ -89,18 +117,27 @@ struct ThreadView: View {
                                     }
                                 }
                             }
+                            }
                             VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                                ForEach(detail.messages) { message in
+                                ForEach(messageOrder == ReadingPreferences.Order.newestFirst.rawValue ? Array(detail.messages.reversed()) : detail.messages) { message in
                                     MessageView(
                                         message: message,
                                         blocker: blocker,
                                         isExpanded: expanded.contains(message.id),
-                                        isThreadStarred: detail.thread.isStarred,
+                                        resourceRevision: resourceRevision,
                                         bodyLoadFailed: bodyLoadFailed,
                                         mailbox: mailbox,
                                         compose: compose,
                                         onRetry: { loadAttempt += 1 },
-                                        onToggleStar: { mailbox.perform(detail.thread.isStarred ? .unstar : .star, on: [key]) }
+                                        reportSelection: { text in
+                                            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                                if selectedMailQuote?.belongsTo(accountID: message.record.accountID,
+                                                    threadID: message.record.threadID, messageID: message.id) == true { selectedMailQuote = nil }
+                                            } else {
+                                                selectedMailQuote = SelectedMailQuote(accountID: message.record.accountID,
+                                                    threadID: message.record.threadID, messageID: message.id, text: text)
+                                            }
+                                        }
                                     ) {
                                         if expanded.contains(message.id) {
                                             expanded.remove(message.id)
@@ -108,12 +145,24 @@ struct ThreadView: View {
                                             expanded.insert(message.id)
                                         }
                                     }
+                                    .id(message.record.accountID + ":" + message.id)
                                     .id(message.id)
                                 }
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
+                    }
+                    .onChange(of: app.mailURLs.focusRequest?.id, initial: true) { _, _ in
+                        guard let request = app.mailURLs.focusRequest, request.key == key,
+                              detail.messages.contains(where: { $0.id == request.messageID }) else { return }
+                        expanded.insert(request.messageID)
+                        Task { @MainActor in
+                            await Task.yield()
+                            withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) {
+                                scroll.scrollTo(request.messageID, anchor: .top)
+                            }
+                        }
                     }
                 }
             } else if loadFailed {
@@ -128,7 +177,7 @@ struct ThreadView: View {
                         .buttonStyle(.bordered)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if hasLoaded, detail == nil {
+            } else if hasLoaded, readingDetail == nil {
                 TernEmptyState(
                     title: "Conversation unavailable",
                     systemImage: "envelope.badge",
@@ -141,14 +190,18 @@ struct ThreadView: View {
             }
         }
         .background(Tokens.Surface.canvas)
+        .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
+        .onChange(of: key) { _, _ in selectedMailQuote = nil }
+        .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
         .task {
             blocker = await RemoteContentBlocker.ruleList()
             blockerReady = true
         }
-        .task(id: LoadIdentity(key: key, attempt: loadAttempt)) {
+        .task(id: LoadIdentity(key: key, attempt: loadAttempt, messageID: selectedMessageID)) {
             loadFailed = false
             bodyLoadFailed = false
             hasLoaded = false
+            if let selectedMessageID { expanded.insert(selectedMessageID) }
             var loading: Task<Void, Never>?
             defer { loading?.cancel() }
             do {
@@ -161,16 +214,19 @@ struct ThreadView: View {
                     }
                     self.detail = detail
                     hasLoaded = true
-                    // Capture initial unread expansion before opening marks read.
+                    // Detail is published only after unread expansion is captured.
                     if loading == nil, detail != nil {
                         loading = Task {
-                            let opened = await mailbox.open(key)
+                            // Hydration is independent of visibility. ReadIdentity owns
+                            // automatic read changes after unread expansion is captured.
+                            let opened = await mailbox.open(key, markRead: false)
                             guard !Task.isCancelled else { return }
                             bodyLoadFailed = !opened
                             if opened, let owner = mailbox.account(id: key.accountID) {
                                 do {
                                     try await owner.engine.refreshCalendarInvitations(threadID: key.threadID)
-                                    if let current = self.detail { await app.calendar.loadEmailSuggestions(calendarSuggestions, detail: current, key: key) }
+                                    resourceRevision += 1
+                                    if let current = readingDetail { await app.calendar.loadEmailSuggestions(calendarSuggestions, detail: current, key: key) }
                                 } catch is CancellationError { return }
                                 catch { calendarNotice = "Calendar invitations could not refresh. Showing cached suggestions." }
                             }
@@ -183,9 +239,20 @@ struct ThreadView: View {
                 loadFailed = true
             }
         }
-        .task(id: CalendarSuggestionLoadIdentity(detail: detail, storeReady: app.calendar.store != nil,
+        .task(id: ReadIdentity(key: key, policy: markReadPolicy, delay: readDelay, isVisible: isReaderActive,
+            hasDetail: readingDetail != nil, messageID: selectedMessageID)) {
+            delayedRead.cancel()
+            guard isReaderActive, readingDetail != nil else { return }
+            if markReadPolicy == ReadingPreferences.MarkRead.immediately.rawValue {
+                await mailbox.markConversationRead(key, messageID: selectedMessageID)
+            } else if markReadPolicy == ReadingPreferences.MarkRead.delayed.rawValue {
+                delayedRead.schedule(delay: ReadingPreferences.readDelay(readDelay)) { await mailbox.markConversationRead(key, messageID: selectedMessageID) }
+            }
+        }
+        .onDisappear { delayedRead.cancel() }
+        .task(id: CalendarSuggestionLoadIdentity(detail: readingDetail, storeReady: app.calendar.store != nil,
             access: app.calendar.accessRevision, timeZone: app.calendar.calendar.timeZone.identifier)) {
-            guard let detail else { return }
+            guard let detail = readingDetail else { return }
             await app.calendar.observeEmailSuggestions(calendarSuggestions, detail: detail, key: key)
         }
         .task(id: CalendarInterpretationIdentity(revision: calendarSuggestions.revision,
@@ -246,6 +313,7 @@ private struct ThreadHeading: View {
     let detail: ThreadDetail
     let key: ThreadKey
     let mailbox: MailboxModel
+    var messageID: String? = nil
 
     var body: some View {
         FlowLayout(spacing: Tokens.Space.s2) {
@@ -256,7 +324,8 @@ private struct ThreadHeading: View {
             ForEach(chips, id: \.id) { label in
                 if label.id == SystemLabel.inbox {
                     LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive") {
-                        mailbox.perform(.archive, on: [key])
+                        if let messageID { mailbox.performReadingAction(.archive, name: "Archive", messageID: messageID, accountID: key.accountID) }
+                        else { mailbox.perform(.archive, on: [key]) }
                     }
                 } else {
                     let icon = LabelAppearance.shared.icon(for: label)
@@ -264,12 +333,27 @@ private struct ThreadHeading: View {
                         name: label.name, symbol: icon == "tag" ? "tag.fill" : icon,
                         tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label"
                     ) {
-                        mailbox.removeLabel(label.id, from: key)
+                        if let messageID { mailbox.removeReadingLabel(label.id, messageID: messageID, accountID: key.accountID) }
+                        else { mailbox.removeLabel(label.id, from: key) }
                     }
                 }
             }
+            Menu {
+                Button("Print Conversation…") { printConversation() }
+                Button("Export Conversation as PDF…") { printConversation(pdf: true) }
+            } label: { Image(systemName: "ellipsis.circle") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .accessibilityLabel("Conversation actions")
+            .disabled(detail.messages.contains { $0.body == nil })
+            .help("Print after all message bodies have loaded")
         }
         .padding(.bottom, Tokens.Space.s0_5)
+    }
+
+    private func printConversation(pdf: Bool = false) {
+        ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, exportsPDF: pdf) { error in
+            if let error { mailbox.notice = .init(message: error, isError: true) }
+        }
     }
 
     /// The Inbox, then user labels by name.
@@ -372,18 +456,42 @@ private struct MessageView: View {
     let message: MessageDetail
     let blocker: WKContentRuleList?
     let isExpanded: Bool
-    /// Stars belong to the conversation, as the list and the toolbar treat them.
-    let isThreadStarred: Bool
+    let resourceRevision: Int
     let bodyLoadFailed: Bool
     let mailbox: MailboxModel
     let compose: (MailboxModel.ComposeStart) -> Void
     let onRetry: () -> Void
-    let onToggleStar: () -> Void
+    let reportSelection: (String) -> Void
     let onToggle: () -> Void
 
     @State private var rendered: RenderedMessage?
     @State private var hasNoText = false
     @State private var height: CGFloat = 0
+    @State private var inlineResources = InlineResourceMap()
+    @State private var allowsImagesOnce = false
+    @State private var allowsSenderImages = false
+    @State private var showsLightBackground = false
+    @State private var hoveredURL: String?
+    @State private var selectedText = ""
+    @State private var activeBlocker: WKContentRuleList?
+    @AppStorage(ReadingPreferences.blockImagesKey) private var blocksImages = true
+    @AppStorage(ReadingPreferences.adaptDarkKey) private var adaptsDark = true
+    @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
+    @AppStorage(ReadingPreferences.sizeKey) private var showsSize = false
+
+    private struct RenderIdentity: Equatable {
+        let accountID: String
+        let messageID: String
+        let body: MessageBodyRecord?
+        let resourceRevision: Int
+        let allowsImages: Bool
+        let showsLight: Bool
+        let adaptsDark: Bool
+        let textScale: Double
+        let isExpanded: Bool
+    }
+
+    private var allowsImages: Bool { allowsImagesOnce || allowsSenderImages || !blocksImages }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -407,8 +515,26 @@ private struct MessageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .ternSurface()
         .ternAnimation(value: isExpanded)
-        .task(id: message.body) {
+        .task(id: RenderIdentity(accountID: message.record.accountID, messageID: message.id, body: message.body,
+            resourceRevision: resourceRevision, allowsImages: allowsImages, showsLight: showsLightBackground, adaptsDark: adaptsDark,
+            textScale: textScale, isExpanded: isExpanded)) {
             await render()
+        }
+        .task(id: message.record.sender) {
+            let allowed = try? await mailbox.accountStore?.allowedImageSenders(accountID: message.record.accountID)
+            guard !Task.isCancelled else { return }
+            allowsSenderImages = allowed?.contains(senderAddress.lowercased()) == true
+        }
+        .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; hoveredURL = nil } }
+        .onChange(of: selectedText) { _, text in reportSelection(text) }
+        .onDisappear { reportSelection("") }
+        .onChange(of: allowsImages) { _, _ in rendered = nil; selectedText = ""; hoveredURL = nil }
+        .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
+            guard change.userInfo?["account"] as? String == message.record.accountID,
+                  change.userInfo?["sender"] as? String == senderAddress.lowercased(),
+                  let allowed = change.userInfo?["allowed"] as? Bool else { return }
+            allowsSenderImages = allowed
+            if !allowed { allowsImagesOnce = false }
         }
     }
 
@@ -430,40 +556,41 @@ private struct MessageView: View {
     }
 
     private var senderHeader: some View {
-        Button(action: onToggle) {
-            HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                TernAvatar(name: senderName)
-                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                    HStack(spacing: Tokens.Space.s1) {
-                        Text(senderName)
-                            .font(.body.weight(.semibold))
-                            .lineLimit(1)
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+            Button(action: onToggle) {
+                ContactAvatar(accountID: message.record.accountID, address: senderAddress, name: senderName,
+                    cache: mailbox.cache, accounts: mailbox.accountStore)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                HStack(spacing: Tokens.Space.s1) {
+                    MessageAddressMenu(address: .init(name: senderName, address: senderAddress), accountID: message.record.accountID, mailbox: mailbox)
+                        .font(.body.weight(.semibold))
+                    Button(action: onToggle) {
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .accessibilityHidden(true)
                     }
-                    if isExpanded {
-                        recipients("To:", message.record.recipients)
-                        if let cc = message.record.cc, !cc.isEmpty {
-                            recipients("Cc:", cc)
-                        }
-                    } else {
-                        Text(message.record.snippet)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
                 }
-                Spacer(minLength: Tokens.Space.s2)
+                if isExpanded {
+                    recipients("To:", message.record.recipients)
+                    if let cc = message.record.cc, !cc.isEmpty {
+                        recipients("Cc:", cc)
+                    }
+                } else {
+                    Text(message.record.snippet)
+                        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                        .onTapGesture(perform: onToggle)
+                }
             }
-            .contentShape(Rectangle())
+            Spacer(minLength: Tokens.Space.s2)
         }
-        .buttonStyle(.plain)
         .help(message.record.sender)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint(isExpanded ? "Collapses this message" : "Expands this message")
     }
 
     private var messageMetadata: some View {
@@ -474,7 +601,11 @@ private struct MessageView: View {
                 .lineLimit(1)
                 .help(Self.dateFormatter.string(from: message.record.date))
             if isExpanded {
-                actions
+                MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose)
+                if showsSize {
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(message.record.sizeEstimate), countStyle: .file))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             } else if message.isStarred {
                 Image(systemName: "star.fill")
                     .imageScale(.small)
@@ -486,86 +617,15 @@ private struct MessageView: View {
     }
 
     private func recipients(_ title: String, _ header: String) -> some View {
-        let names = EmailAddress.parseList(header).map { $0.name ?? $0.address }
-        let list = names.isEmpty ? header : names.formatted(.list(type: .and, width: .narrow))
-        return Text("\(title) \(Text(list).foregroundStyle(.secondary))")
-            .font(.caption)
-            .lineLimit(2)
-            .help(header)
-    }
-
-    /// Star, the likelier reply, and the other replies in a menu.
-    @ViewBuilder
-    private var actions: some View {
-        let accountID = message.record.accountID
         HStack(spacing: Tokens.Space.s1) {
-            if message.labels.contains(SystemLabel.draft) {
-                Button("Edit Draft", systemImage: "pencil") {
-                    compose(.editDraft(messageID: message.id, accountID: accountID))
-                }
-                .help("Edit Draft")
-            } else {
-                Button(action: onToggleStar) {
-                    Label(isThreadStarred ? "Remove Star" : "Star", systemImage: isThreadStarred ? "star.fill" : "star")
-                        .foregroundStyle(isThreadStarred ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                }
-                .help(isThreadStarred ? "Remove Star" : "Star")
-
-                let kind = primaryReply
-                Button(kind == .replyAll ? "Reply All" : "Reply", systemImage: Self.symbol(kind)) {
-                    compose(.reply(kind, messageID: message.id, accountID: accountID))
-                }
-                .frame(minWidth: Tokens.Space.s6, minHeight: Tokens.Space.s6)
-                .help(kind == .replyAll ? "Reply All" : "Reply")
-
-                Menu {
-                    Button("Reply", systemImage: Self.symbol(.reply)) {
-                        compose(.reply(.reply, messageID: message.id, accountID: accountID))
-                    }
-                    .labelStyle(.titleAndIcon)
-                    Button("Reply All", systemImage: Self.symbol(.replyAll)) {
-                        compose(.reply(.replyAll, messageID: message.id, accountID: accountID))
-                    }
-                    .labelStyle(.titleAndIcon)
-                    Button("Forward", systemImage: Self.symbol(.forward)) {
-                        compose(.reply(.forward, messageID: message.id, accountID: accountID))
-                    }
-                    .labelStyle(.titleAndIcon)
-                } label: {
-                    Label("More", systemImage: "ellipsis.circle")
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("More")
-                .accessibilityLabel("More message actions")
+            Text(title).foregroundStyle(.secondary)
+            ForEach(Array(EmailAddress.parseList(header).enumerated()), id: \.offset) { _, address in
+                MessageAddressMenu(address: address, accountID: message.record.accountID, mailbox: mailbox)
             }
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .imageScale(.medium)
-        .foregroundStyle(.secondary)
-    }
-
-    /// Reply All when the message went to someone besides its sender and
-    /// this account, otherwise Reply.
-    private var primaryReply: ReplyKind {
-        let own = mailbox.account(id: message.record.accountID)?.account.email.lowercased()
-        let sender = senderAddress.lowercased()
-        let others = EmailAddress.parseList([message.record.recipients, message.record.cc ?? ""].joined(separator: ","))
-            .map(\.normalized)
-            .filter { $0 != own && $0 != sender }
-        return others.isEmpty ? .reply : .replyAll
-    }
-
-    private static func symbol(_ kind: ReplyKind) -> String {
-        switch kind {
-        case .reply: "arrowshape.turn.up.left"
-        case .replyAll: "arrowshape.turn.up.left.2"
-        case .forward: "arrowshape.turn.up.right"
-        }
+            .font(.caption)
+            .lineLimit(1)
+            .help(header)
     }
 
     /// "Today at 10:35", "Yesterday at 18:02", or the date and time.
@@ -581,17 +641,45 @@ private struct MessageView: View {
     private var content: some View {
         if let rendered {
             if rendered.blockedRemoteContent > 0 {
-                Label("Remote content blocked for privacy", systemImage: "eye.slash")
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Label("Remote content blocked for privacy", systemImage: "eye.slash")
+                    if !allowsImages {
+                        HStack {
+                            Button("Load Images") { allowsImagesOnce = true }
+                            Button("Always Load for Sender") { allowSenderImages() }
+                        }.buttonStyle(.borderless)
+                    }
+                }
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(Tokens.Space.s2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
-            MessageWebView(html: rendered.html, blocker: blocker, height: $height)
+            if rendered.blockedTrackers > 0 {
+                Label("\(rendered.blockedTrackers) tracking \(rendered.blockedTrackers == 1 ? "image" : "images") blocked", systemImage: "hand.raised")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if allowsSenderImages {
+                Button("Block Images for Sender") { allowSenderImages(false) }
+                    .font(.caption).buttonStyle(.borderless)
+            }
+            if adaptsDark {
+                Button(showsLightBackground ? "Use Dark Mode" : "Show with Light Background") { showsLightBackground.toggle() }
+                    .font(.caption).buttonStyle(.borderless)
+            }
+            MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
+                adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
+                forcesLightAppearance: showsLightBackground,
+                onHover: { hoveredURL = $0 }, onSelectionChange: { selectedText = $0 })
+                .id(inlineResources.scope + ":\(showsLightBackground):\(adaptsDark)")
                 .frame(height: max(height, Tokens.Space.s5))
                 .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .accessibilityLabel("Message from \(senderName)")
+            if let hoveredURL {
+                Text(hoveredURL).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    .accessibilityLabel("Link destination: \(hoveredURL)")
+            }
         } else if hasNoText {
             Text("This message has no text.")
                 .foregroundStyle(.secondary)
@@ -620,9 +708,28 @@ private struct MessageView: View {
         EmailAddress.parseList(message.record.sender).first?.address ?? message.record.sender
     }
 
+    private func allowSenderImages(_ allowed: Bool = true) {
+        Task {
+            do {
+                guard let store = mailbox.accountStore else {
+                    mailbox.notice = .init(message: "This sender's image preference could not be saved.", isError: true)
+                    return
+                }
+                try await store.setImageSenderAllowed(allowed, address: senderAddress, accountID: message.record.accountID)
+                NotificationCenter.default.post(name: ReadingPreferences.imagePermissionChanged, object: nil,
+                    userInfo: ["account": message.record.accountID, "sender": senderAddress.lowercased(), "allowed": allowed])
+            } catch { mailbox.notice = .init(message: "This sender's image preference could not be saved.", isError: true) }
+        }
+    }
+
     /// Sanitizing can take a moment on large mail, so it runs off the main actor.
     /// Without the rule list that blocks remote loads, only text is shown.
     private func render() async {
+        guard isExpanded else {
+            rendered = nil; selectedText = ""; hoveredURL = nil; height = 0
+            inlineResources = InlineResourceMap()
+            return
+        }
         guard let body = message.body else {
             rendered = nil
             hasNoText = false
@@ -630,9 +737,19 @@ private struct MessageView: View {
             return
         }
         let extracted = ExtractedBody(html: body.html, plainText: body.plainText)
-        let textOnly = blocker == nil
+        let records = (try? await mailbox.cache.mimeResources(messageID: message.id, accountID: message.record.accountID)) ?? []
+        guard !Task.isCancelled else { return }
+        let resources = records.map { InlineMIMEResource(contentID: $0.contentID, partID: $0.partID, mimeType: $0.mimeType, data: $0.data) }
+        if inlineResources.resources.values.sorted(by: { $0.contentID < $1.contentID }) != resources.sorted(by: { $0.contentID < $1.contentID }) {
+            inlineResources = InlineResourceMap(resources: resources)
+        }
+        let rules = await RemoteContentBlocker.ruleList(allowsRemoteImages: allowsImages)
+        guard !Task.isCancelled else { return }
+        activeBlocker = rules
+        let textOnly = rules == nil
+        let policy = MessageRenderPolicy(allowsRemoteImages: allowsImages, inlineResources: inlineResources, textScale: textScale)
         let result = await Task.detached(priority: .userInitiated) {
-            textOnly ? MessageDocument.renderText(extracted) : MessageDocument.render(extracted)
+            textOnly ? MessageDocument.renderText(extracted) : MessageDocument.render(extracted, policy: policy)
         }.value
         guard !Task.isCancelled else { return }
         rendered = result
