@@ -64,26 +64,39 @@ public struct ChatGPTProvider: AIProvider {
         defer { response.cancel() }
         try await checkStatus(response)
         if let mime = response.contentType?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased(), mime != "text/event-stream" {
-            throw AIProviderError.invalidResponse
+            throw AIProviderError.malformedResponse(.contentType)
         }
         var decoder = SSEDecoder()
         var textBytes = 0
+        var streamedOutput = StreamedOutput()
+        var eventCounts: [String: Int] = [:]
         for try await chunk in response.body {
             try Task.checkCancellation()
-            for event in try decoder.append(chunk) {
+            let events: [SSEEvent]
+            do { events = try decoder.append(chunk) }
+            catch AIProviderError.invalidResponse { throw AIProviderError.malformedResponse(.eventEncoding) }
+            for event in events {
                 guard event.data != "[DONE]" else { throw AIProviderError.streamInterrupted }
-                let value = try AIJSON.decode(Data(event.data.utf8))
+                let value: AIJSON
+                do { value = try AIJSON.decode(Data(event.data.utf8)) }
+                catch { throw AIProviderError.malformedResponse(.eventJSON) }
                 guard let type = value["type"]?.stringValue,
-                      event.name == "message" || event.name == type else { throw AIProviderError.invalidResponse }
+                      event.name == "message" || event.name == type else { throw AIProviderError.malformedResponse(.eventEnvelope) }
+                let eventType = (type.hasPrefix("response.") || type == "error") && diagnosticIdentifier(type) != nil ? type : "other"
+                let diagnosticType = eventCounts[eventType] != nil || eventCounts.count < 16 ? eventType : "other"
+                eventCounts[diagnosticType, default: 0] += 1
                 switch type {
                 case "response.output_text.delta", "response.refusal.delta":
-                    guard let delta = value["delta"]?.stringValue else { throw AIProviderError.invalidResponse }
+                    guard let delta = value["delta"]?.stringValue else { throw AIProviderError.malformedResponse(.deltaPayload) }
                     textBytes += delta.utf8.count
                     guard textBytes <= 131_072 else { throw AIProviderError.responseLimit }
                     try emit(.textDelta(delta), to: continuation)
+                case "response.output_item.added", "response.output_item.done":
+                    try streamedOutput.record(value, done: type == "response.output_item.done")
                 case "response.completed":
-                    guard let completed = value["response"] else { throw AIProviderError.invalidResponse }
-                    let result = try completion(completed, tools: request.tools)
+                    guard let completed = value["response"] else { throw AIProviderError.malformedResponse(.terminalEnvelope) }
+                    let result = try completion(completed, tools: request.tools, streamedOutput: streamedOutput)
+                    guard !result.output.isEmpty else { throw AIProviderError.emptyOutput(eventCounts: eventCounts) }
                     try Task.checkCancellation()
                     try emit(.completed(result), to: continuation)
                     return
@@ -131,9 +144,10 @@ public struct ChatGPTProvider: AIProvider {
         return data
     }
 
-    private func completion(_ value: AIJSON, tools: [AIToolDefinition]) throws -> AIResponse {
-        guard value["status"]?.stringValue == "completed", let output = value["output"]?.arrayValue,
-              output.count <= 128 else { throw AIProviderError.invalidResponse }
+    private func completion(_ value: AIJSON, tools: [AIToolDefinition], streamedOutput: StreamedOutput) throws -> AIResponse {
+        guard value["status"]?.stringValue == "completed", let terminalOutput = value["output"]?.arrayValue,
+              terminalOutput.count <= 128 else { throw AIProviderError.malformedResponse(.terminalOutput) }
+        let output = terminalOutput.isEmpty ? try streamedOutput.completedItems() : terminalOutput
         var texts: [String] = []
         var calls: [AIToolCall] = []
         var callIDs: Set<String> = []
@@ -143,16 +157,16 @@ public struct ChatGPTProvider: AIProvider {
             case "reasoning": break // Preserve opaque encrypted content for the next stateless request.
             case "message":
                 guard item["role"]?.stringValue == "assistant", item["status"]?.stringValue == "completed",
-                      let content = item["content"]?.arrayValue, content.count <= 32 else { throw AIProviderError.invalidResponse }
+                      let content = item["content"]?.arrayValue, content.count <= 32 else { throw AIProviderError.malformedResponse(.assistantMessage) }
                 for part in content {
                     switch part["type"]?.stringValue {
                     case "output_text":
-                        guard let text = part["text"]?.stringValue else { throw AIProviderError.invalidResponse }
+                        guard let text = part["text"]?.stringValue else { throw AIProviderError.malformedResponse(.outputContent) }
                         texts.append(text)
                     case "refusal":
-                        guard let text = part["refusal"]?.stringValue else { throw AIProviderError.invalidResponse }
+                        guard let text = part["refusal"]?.stringValue else { throw AIProviderError.malformedResponse(.outputContent) }
                         texts.append(text)
-                    default: throw AIProviderError.invalidResponse
+                    default: throw AIProviderError.malformedResponse(.outputContent)
                     }
                 }
             case "function_call":
@@ -160,9 +174,9 @@ public struct ChatGPTProvider: AIProvider {
                       let id = item["call_id"]?.stringValue, identifier(id), callIDs.insert(id).inserted,
                       let arguments = item["arguments"]?.stringValue, arguments.utf8.count <= 65_536,
                       (try? AIJSON.decode(Data(arguments.utf8)).objectValue) != nil,
-                      item["status"] == nil || item["status"]?.stringValue == "completed" else { throw AIProviderError.invalidResponse }
+                      item["status"] == nil || item["status"]?.stringValue == "completed" else { throw AIProviderError.malformedResponse(.functionCall) }
                 calls.append(AIToolCall(id: id, namespace: "tern", name: name, arguments: arguments))
-            default: throw AIProviderError.invalidResponse
+            default: throw AIProviderError.malformedResponse(.terminalOutput)
             }
         }
         let text = texts.joined(separator: "\n")
@@ -174,11 +188,11 @@ public struct ChatGPTProvider: AIProvider {
         guard let value, value != .null else { return nil }
         func tokenCount(_ name: String) throws -> Int {
             guard let number = value[name]?.numberValue, number >= 0, number < Double(Int.max),
-                  number.rounded() == number else { throw AIProviderError.invalidResponse }
+                  number.rounded() == number else { throw AIProviderError.malformedResponse(.usage) }
             return Int(number)
         }
         let input = try tokenCount("input_tokens"), output = try tokenCount("output_tokens"), total = try tokenCount("total_tokens")
-        guard input <= Int.max - output, input + output == total else { throw AIProviderError.invalidResponse }
+        guard input <= Int.max - output, input + output == total else { throw AIProviderError.malformedResponse(.usage) }
         return AIUsage(inputTokens: input, outputTokens: output, totalTokens: total)
     }
 
@@ -196,16 +210,26 @@ public struct ChatGPTProvider: AIProvider {
     private func checkStatus(_ response: AIHTTPResponse) async throws {
         guard (200..<300).contains(response.status) else {
             let body = try? await collect(response.body, limit: 8192)
-            if let body, let value = try? AIJSON.decode(body), let code = value["error"]?["code"]?.stringValue,
-               code.hasPrefix("subscription_sharing_") { throw providerFailure(value["error"] ?? value) }
+            let error = body.flatMap { try? AIJSON.decode($0) }?["error"]
+            let code = diagnosticIdentifier(error?["code"]?.stringValue)
+            let parameter = diagnosticIdentifier(error?["param"]?.stringValue)
+            if let code, code.hasPrefix("subscription_sharing_"), response.status != 400 {
+                throw providerFailure(error ?? .null)
+            }
             switch response.status {
             case 401: throw AIProviderError.signInRequired
             case 403: throw AIProviderError.planUnavailable
             case 429: throw AIProviderError.rateLimited
             case 500...599: throw AIProviderError.unavailable
-            default: throw AIProviderError.invalidResponse
+            default: throw AIProviderError.httpRejected(status: response.status, code: code, parameter: parameter)
             }
         }
+    }
+
+    private func diagnosticIdentifier(_ value: String?) -> String? {
+        guard let value, !value.isEmpty, value.utf8.count <= 96,
+              value.range(of: #"\A[A-Za-z_][A-Za-z0-9_.\[\]-]*\z"#, options: .regularExpression) != nil else { return nil }
+        return value
     }
 
     private func providerFailure(_ value: AIJSON) -> AIProviderError {
@@ -248,7 +272,7 @@ public struct ChatGPTProvider: AIProvider {
         if let error = error as? AIProviderError { return error }
         if let error = error as? ChatGPTAuthError { return error }
         if let error = error as? URLError, error.code == .timedOut { return AIProviderError.timedOut }
-        if error is DecodingError { return AIProviderError.invalidResponse }
+        if error is DecodingError { return AIProviderError.malformedResponse(.jsonDecoding) }
         return AIProviderError.network
     }
 
@@ -260,5 +284,65 @@ public struct ChatGPTProvider: AIProvider {
             guard let result = try await group.next() else { throw CancellationError() }
             return result
         }
+    }
+}
+
+/// Item completion is provisional until the response itself completes. Retain
+/// only identities for added items and bounded, final item bodies for done items.
+private struct StreamedOutput {
+    private struct Entry {
+        let identity: [String: AIJSON]
+        var completed: AIJSON?
+    }
+    private var entries: [Int: Entry] = [:]
+    private var positions: [String: Int] = [:]
+    private var completedBytes = 0
+
+    mutating func record(_ event: AIJSON, done: Bool) throws {
+        guard let number = event["output_index"]?.numberValue,
+              number >= 0, number < Double(Int.max), number.rounded() == number,
+              let item = event["item"], item.objectValue != nil,
+              let type = item["type"]?.stringValue, ["message", "reasoning", "function_call"].contains(type)
+        else { throw AIProviderError.malformedResponse(.outputItem) }
+        let index = Int(number)
+        var identities: [String] = []
+        if let value = item["id"] {
+            guard let id = value.stringValue, validIdentifier(id) else { throw AIProviderError.malformedResponse(.outputItem) }
+            identities.append("item:" + id)
+        } else if type != "function_call" { throw AIProviderError.malformedResponse(.outputItem) }
+        if type == "function_call" {
+            guard let callID = item["call_id"]?.stringValue, validIdentifier(callID) else { throw AIProviderError.malformedResponse(.outputItem) }
+            identities.append("call:" + callID)
+        }
+        guard identities.allSatisfy({ positions[$0] == nil || positions[$0] == index }) else { throw AIProviderError.malformedResponse(.outputItem) }
+        if let previous = entries[index] {
+            guard done, previous.completed == nil,
+                  previous.identity.allSatisfy({ item[$0.key] == $0.value }) else { throw AIProviderError.malformedResponse(.outputItem) }
+        } else {
+            guard entries.count < 128 else { throw AIProviderError.responseLimit }
+        }
+        var identity: [String: AIJSON] = [:]
+        for key in ["id", "type", "call_id", "namespace", "name"] {
+            if let value = item[key] { identity[key] = value }
+        }
+        if done {
+            let bytes = try item.encoded().count
+            guard bytes <= 2_097_152 - completedBytes else { throw AIProviderError.responseLimit }
+            completedBytes += bytes
+        }
+        entries[index] = Entry(identity: identity, completed: done ? item : nil)
+        for identity in identities { positions[identity] = index }
+    }
+
+    func completedItems() throws -> [AIJSON] {
+        try entries.keys.sorted().map { index in
+            guard let item = entries[index]?.completed else { throw AIProviderError.malformedResponse(.outputItem) }
+            return item
+        }
+    }
+
+    private func validIdentifier(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 200
+            && value.unicodeScalars.allSatisfy { !$0.properties.isWhitespace && !CharacterSet.controlCharacters.contains($0) }
     }
 }

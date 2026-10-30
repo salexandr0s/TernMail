@@ -65,9 +65,30 @@ public protocol AIProvider: Sendable {
     func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error>
 }
 
+/// Static protocol locations; never contains text received from the provider.
+public enum AIResponseValidationStage: String, Equatable, Sendable {
+    case httpResponse = "http-response"
+    case jsonDecoding = "json-decoding"
+    case contentType = "content-type"
+    case eventEncoding = "event-encoding"
+    case eventJSON = "event-json"
+    case eventEnvelope = "event-envelope"
+    case deltaPayload = "delta-payload"
+    case terminalEnvelope = "terminal-envelope"
+    case terminalOutput = "terminal-output"
+    case assistantMessage = "assistant-message"
+    case outputContent = "output-content"
+    case outputItem = "output-item"
+    case functionCall = "function-call"
+    case usage = "usage"
+}
+
 public enum AIProviderError: Error, Equatable, LocalizedError, Sendable {
     case invalidRequest, invalidResponse, responseLimit, catalogueLimit, streamInterrupted, incomplete
     case signInRequired, planUnavailable, usageLimit, rateLimited, unavailable, timedOut, network
+    case httpRejected(status: Int, code: String?, parameter: String?)
+    case malformedResponse(AIResponseValidationStage)
+    case emptyOutput(eventCounts: [String: Int])
 
     public var errorDescription: String? {
         switch self {
@@ -84,6 +105,10 @@ public enum AIProviderError: Error, Equatable, LocalizedError, Sendable {
         case .unavailable: "ChatGPT is unavailable. Try again shortly."
         case .timedOut: "ChatGPT took too long to respond. Try again."
         case .network: "Tern could not reach ChatGPT. Check your connection and try again."
+        case .httpRejected(let status, let code, let parameter):
+            "ChatGPT rejected the request (HTTP \(status)\(code.map { "; code: \($0)" } ?? "")\(parameter.map { "; parameter: \($0)" } ?? ""))."
+        case .malformedResponse(let stage): "ChatGPT returned a response Tern could not read (stage: \(stage.rawValue))."
+        case .emptyOutput: "ChatGPT finished without an answer. Try again or start a new chat."
         }
     }
 }
@@ -115,7 +140,7 @@ public struct AIHTTPTransport: Sendable {
                 let (bytes, response) = try await session.bytes(for: request)
                 guard let response = response as? HTTPURLResponse else {
                     session.invalidateAndCancel()
-                    throw AIProviderError.invalidResponse
+                    throw AIProviderError.malformedResponse(.httpResponse)
                 }
                 // At most 2 MiB can wait for the parser, including a large completed-event frame.
                 let body = AsyncThrowingStream<Data, any Error>(bufferingPolicy: .bufferingOldest(2048)) { continuation in
