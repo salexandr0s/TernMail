@@ -46,7 +46,6 @@ struct ComposeView: View {
 
     @State private var model: ComposeModel
     @State private var showsQuote = false
-    @State private var showsFormatting = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
     /// The recipient field to move the cursor to. Token fields are AppKit
@@ -129,31 +128,32 @@ struct ComposeView: View {
             header
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
-            if showsFormatting {
+            if model.showsFormatting {
                 formattingBar
                     .transition(.opacity)
             }
             RichTextEditor(
                 document: $model.content.body,
                 format: $model.format,
-                isEditable: model.isEditable
-            ) { model.editor = $0 } onAttach: { model.attach($0) } onFocusChange: { model.isEditingMessage = $0 }
+                isEditable: model.isEditable,
+                font: model.content.composeFont,
+                inlineImages: model.inlineImageData
+            ) { model.editor = $0 } onAttach: { model.attach($0, inlineImages: true) } onFocusChange: { model.isEditingMessage = $0 }
             // Keep room to write when recipients, files and quoted text are visible.
             // The native window minimum grows with the other controls' intrinsic sizes.
             .frame(minHeight: Tokens.Space.s16 * 2)
-            if !model.attachments.isEmpty {
-                AttachmentStrip(attachments: model.attachments, isEditable: model.isEditable) {
+            if model.attachments.contains(where: { $0.contentID == nil }) {
+                AttachmentStrip(attachments: model.attachments.filter { $0.contentID == nil }, isEditable: model.isEditable) {
                     model.removeAttachment($0)
                 }
             }
-            if let signature = model.content.signatureHTML, !signature.isEmpty {
-                ComposeSignatureView(html: signature)
-            }
+            if model.content.signatureAboveQuote { signature }
             if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
                 quotedText(quote)
             }
+            if !model.content.signatureAboveQuote { signature }
         }
-        .ternAnimation(value: showsFormatting)
+        .ternAnimation(value: model.showsFormatting)
         // Files dropped outside the message, which handles its own drops.
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
@@ -163,6 +163,12 @@ struct ComposeView: View {
         }
         .fileImporter(isPresented: $model.isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
+        }
+    }
+
+    @ViewBuilder private var signature: some View {
+        if let html = model.content.signatureHTML, !html.isEmpty {
+            ComposeSignatureView(html: (model.content.signatureSeparator ? "<div>-- </div>" : "") + html)
         }
     }
 
@@ -348,7 +354,9 @@ struct ComposeView: View {
                     focusedRecipient = nil
                 }
             },
-            directorySuggestions: { [model] text in await model.directorySuggestions(for: text) }
+            directorySuggestions: { [model] text in await model.directorySuggestions(for: text) },
+            groupSuggestions: { [model] text in await model.groupSuggestions(for: text) },
+            expandGroup: { [model] group in await model.expandGroup(group) }
         ) { [model] text in
             await model.suggestions(for: text)
         }
@@ -414,14 +422,14 @@ struct ComposeView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Toggle(isOn: $showsFormatting) {
+            Toggle(isOn: $model.showsFormatting) {
                 Label("Formatting", systemImage: "textformat")
             }
             .toggleStyle(.button)
             .labelStyle(.iconOnly)
-            .help(showsFormatting ? "Hide Formatting" : "Show Formatting")
+            .help(model.showsFormatting ? "Hide Formatting" : "Show Formatting")
             .accessibilityLabel("Formatting")
-            .accessibilityValue(showsFormatting ? "Expanded" : "Collapsed")
+            .accessibilityValue(model.showsFormatting ? "Expanded" : "Collapsed")
             .disabled(!model.isEditable)
             // Cmd-K must also work while the formatting bar is hidden.
             .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
@@ -429,6 +437,16 @@ struct ComposeView: View {
                     model.editor?.setLink(url)
                 }
             }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                if model.templates.isEmpty { Text("No templates") }
+                ForEach(model.templates) { template in
+                    Button(template.name) { model.insertTemplate(template) }
+                }
+            } label: { Label("Insert Template", systemImage: "doc.text") }
+            .help("Insert Template")
+            .disabled(!model.isEditable || model.templates.isEmpty)
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -460,6 +478,14 @@ struct ComposeView: View {
             .help("Send (⇧⌘D)")
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
+        }
+        if model.canSendAndArchive {
+            ToolbarItem(placement: .primaryAction) {
+                Button { Task { await model.send(archive: true) } } label: {
+                    Label("Send and Archive", systemImage: "archivebox")
+                }
+                .help("Send and Archive")
+            }
         }
     }
 
@@ -519,7 +545,7 @@ private struct Banner: View {
 }
 
 /// Asks for a link's address.
-private struct LinkEditor: View {
+struct LinkEditor: View {
     let existingURL: URL?
     let width: CGFloat
     let apply: (URL?) -> Void

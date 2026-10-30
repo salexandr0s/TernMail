@@ -60,11 +60,18 @@ final class ComposeModel {
     static let discardHold: TimeInterval = 10
 
     let localDraftID: String
-    private let mailbox: MailboxModel
+    let mailbox: MailboxModel
+    private let automaticAccountIDs: [String]
 
     private(set) var phase = Phase.loading
     private(set) var activity: DraftActivity?
     private(set) var senderChoices: [ComposeSender] = []
+    var templates: [ComposeTemplate] = []
+    var inlineImageData: [String: Data] = [:]
+    var expandingGroups = 0
+    var showsFormatting = UserDefaults.standard.bool(forKey: ComposePreferences.formatBarKey) {
+        didSet { UserDefaults.standard.set(showsFormatting, forKey: ComposePreferences.formatBarKey) }
+    }
     /// What the window shows. It runs ahead of the stored draft while edits wait to be stored.
     var content = DraftContent() {
         didSet {
@@ -106,17 +113,26 @@ final class ComposeModel {
     @ObservationIgnored private var lastWrite: Task<Void, Never>?
     @ObservationIgnored private var observation: Task<Void, Never>?
     @ObservationIgnored private var integrationRefresh: Task<Void, Never>?
+    @ObservationIgnored private var featureObservation: Task<Void, Never>?
+    @ObservationIgnored private var choseRecipientAccount = false
+    @ObservationIgnored private var recipientAccountGeneration = 0
+    @ObservationIgnored private var recipientAccountTask: Task<Void, Never>?
+    @ObservationIgnored private var lastAutomaticRecipient: String?
 
     init(localDraftID: String, mailbox: MailboxModel) {
         self.localDraftID = localDraftID
         self.mailbox = mailbox
+        switch mailbox.selectedMailbox {
+        case .combined?, .scoped?: automaticAccountIDs = mailbox.selectedAccounts.map { $0.account.id }
+        default: automaticAccountIDs = []
+        }
     }
 
     var draft: LocalDraft? { activity?.draft }
 
     /// The draft's account, whose engine stores, saves and sends it. Nil
     /// until the draft loads, or once its account signs out.
-    private var owner: AccountMailbox? {
+    var owner: AccountMailbox? {
         draft.flatMap { mailbox.account(id: $0.accountID) }
     }
 
@@ -138,8 +154,10 @@ final class ComposeModel {
     var isEditable: Bool { phase == .open && draft?.state == .editing }
 
     var canFormat: Bool { isEditable && isEditingMessage }
+    var canSendAndArchive: Bool { draft?.threadID != nil && isEditable }
 
     var progressText: String? {
+        if expandingGroups > 0 { return "Loading contact group…" }
         if phase == .moving { return "Changing sender account…" }
         if attachmentsInProgress > 0 { return "Attaching files…" }
         return nil
@@ -200,28 +218,38 @@ final class ComposeModel {
         guard let account = owner?.account else { return [] }
         let current = try? await mailbox.accountStore?.accounts().first(where: { $0.id == account.id })
         let contacts = current.map { AccountFeature.named($0.enabledFeatures).contains(.contacts) } ?? false
+        var excluded = excludedSuggestions
+        excluded.formUnion((try? await mailbox.accountStore?.blockedSuggestionAddresses(accountID: account.id)) ?? [])
         let found = try? await mailbox.cache.recipientSuggestions(
-            accountID: account.id, matching: text, excluding: excludedSuggestions, includeContacts: contacts
+            accountID: account.id, matching: text, excluding: excluded, includeContacts: contacts
         )
         guard !Task.isCancelled, draft?.accountID == account.id else { return [] }
         if contacts {
             let latest = try? await mailbox.accountStore?.accounts().first(where: { $0.id == account.id })
             if latest.map({ AccountFeature.named($0.enabledFeatures).contains(.contacts) }) != true {
                 return (try? await mailbox.cache.addressSuggestions(
-                    accountID: account.id, matching: text, excluding: excludedSuggestions
+                    accountID: account.id, matching: text, excluding: excluded
                 )) ?? []
             }
         }
-        return (found ?? []).filter { !excludedSuggestions.contains($0.normalized) }
+        let latestBlocked = (try? await mailbox.accountStore?.blockedSuggestionAddresses(accountID: account.id)) ?? []
+        return (found ?? []).filter { !excludedSuggestions.contains($0.normalized) && !latestBlocked.contains($0.normalized) }
     }
 
     func directorySuggestions(for text: String) async -> [EmailAddress] {
         guard let owner else { return [] }
-        return await owner.directorySuggestions(for: text, accounts: mailbox.accountStore, excluding: excludedSuggestions)
+        var excluded = excludedSuggestions
+        excluded.formUnion((try? await mailbox.accountStore?.blockedSuggestionAddresses(accountID: owner.account.id)) ?? [])
+        let found = await owner.directorySuggestions(for: text, accounts: mailbox.accountStore, excluding: excluded)
+        let latestBlocked = (try? await mailbox.accountStore?.blockedSuggestionAddresses(accountID: owner.account.id)) ?? []
+        return found.filter { !excludedSuggestions.contains($0.normalized) && !latestBlocked.contains($0.normalized) }
     }
 
     func selectSender(_ sender: ComposeSender) {
         guard isEditable, senderChoices.contains(where: { $0.id == sender.id }), let draft else { return }
+        choseRecipientAccount = true
+        recipientAccountGeneration += 1
+        recipientAccountTask?.cancel()
         guard sender.account.id == draft.accountID else {
             move(to: sender.account.id, sender: sender)
             return
@@ -231,6 +259,14 @@ final class ComposeModel {
         changed.fromAddress = sender.address
         changed.signatureHTML = sender.signature(for: draft.kind)
         content = changed
+        serially { [self] in
+            guard let store = mailbox.accountStore,
+                  let signature = try? await store.composeSignature(accountID: sender.account.id, address: sender.address, kind: draft.kind),
+                  fromEmail.lowercased() == sender.identity.lowercasedAddress else { return }
+            content.signatureHTML = signature.html
+            content.signatureAboveQuote = signature.aboveQuote
+            content.signatureSeparator = signature.separator
+        }
     }
 
     // MARK: Actions
@@ -238,8 +274,9 @@ final class ComposeModel {
     /// Queues the message to send after the undo delay. Returns true when the
     /// window can close.
     @discardableResult
-    func send() async -> Bool {
+    func send(archive: Bool = false) async -> Bool {
         guard isEditable else { return false }
+        guard expandingGroups == 0 else { alert = "Wait for the contact group to finish loading."; return false }
         let recipients = content.to + content.cc + content.bcc
         if recipients.isEmpty {
             alert = "Add at least one recipient."
@@ -250,6 +287,7 @@ final class ComposeModel {
             return false
         }
         guard let engine = owner?.engine else { return false }
+        content.archiveAfterSend = archive && draft?.threadID != nil
         cancelTimers()
         let id = localDraftID
         let delay = UndoSendDelay.current
@@ -288,10 +326,15 @@ final class ComposeModel {
 
     /// Moves a new message to another account, after any edits and files
     /// still on their way. The window then shows the copy.
-    func move(to accountID: String, sender: ComposeSender? = nil) {
+    func move(to accountID: String, sender: ComposeSender? = nil, isAutomatic: Bool = false) {
         guard isEditable, canChangeAccount, accountID != draft?.accountID,
               let engine = owner?.engine, let destination = mailbox.account(id: accountID)
         else { return }
+        if !isAutomatic {
+            choseRecipientAccount = true
+            recipientAccountGeneration += 1
+            recipientAccountTask?.cancel()
+        }
         let id = localDraftID
         phase = .moving
         serially { [self] in
@@ -304,6 +347,12 @@ final class ComposeModel {
                 var movedContent = content
                 movedContent.fromAddress = target?.address ?? destination.account.email
                 movedContent.signatureHTML = target?.signature(for: .new)
+                if let target, let store = mailbox.accountStore,
+                   let signature = try? await store.composeSignature(accountID: accountID, address: target.address, kind: .new) {
+                    movedContent.signatureHTML = signature.html
+                    movedContent.signatureAboveQuote = signature.aboveQuote
+                    movedContent.signatureSeparator = signature.separator
+                }
                 guard phase == .moving, let moved = try await engine.moveDraft(id, content: movedContent, to: destination.engine) else { return }
                 cancelTimers()
                 observation?.cancel()
@@ -317,7 +366,7 @@ final class ComposeModel {
     }
 
     /// Copies the files into the draft, one at a time, in order.
-    func attach(_ items: [Attachable]) {
+    func attach(_ items: [Attachable], inlineImages: Bool = false) {
         guard isEditable, !items.isEmpty else { return }
         markChanged()
         guard let engine = owner?.engine else { return }
@@ -327,11 +376,19 @@ final class ComposeModel {
             serially { [self] in
                 defer { attachmentsInProgress -= 1 }
                 do {
+                    let attached: OutgoingAttachment?
                     switch item {
                     case .file(let url):
-                        _ = try await engine.attachFile(at: url, to: id)
+                        attached = try await engine.attachFile(at: url, to: id)
                     case .data(let data, let filename, let mimeType):
-                        _ = try await engine.attachData(data, filename: filename, mimeType: mimeType, to: id)
+                        attached = try await engine.attachData(data, filename: filename, mimeType: mimeType, to: id)
+                    }
+                    if inlineImages, let attached, let image = try await engine.markInlineImage(attached), let cid = image.contentID {
+                        let bytes = try await engine.outgoingAttachmentData(image)
+                        inlineImageData[cid] = bytes
+                        let reference = InlineImageReference(contentID: cid, altText: image.filename)
+                        if let editor { editor.insertImage(reference, data: bytes) }
+                        else { content.body.blocks.append(.init(runs: [.init("", image: reference)])) }
                     }
                 } catch let error as ComposeError {
                     alert = error.errorDescription
@@ -368,6 +425,8 @@ final class ComposeModel {
     func windowClosed() {
         observation?.cancel()
         integrationRefresh?.cancel()
+        featureObservation?.cancel()
+        recipientAccountTask?.cancel()
         guard isEditable else { return }
         phase = .closed
         keepOrDiscard()
@@ -440,20 +499,37 @@ final class ComposeModel {
         self.activity = activity
         let draft = activity.draft
         if phase == .loading {
+            // A restored or moved draft already has a chosen sender snapshot.
+            choseRecipientAccount = draft.fromAddress != nil
             replaceContent(with: draft.content)
             showsCc = !draft.cc.isEmpty
             showsBcc = !draft.bcc.isEmpty
             knownUpdate = draft.updatedAt
             await loadSenders()
+            await loadComposeFeatures()
             guard !Task.isCancelled, phase == .loading else { return }
             await initializeSender(for: draft)
             guard !Task.isCancelled, phase == .loading else { return }
             phase = .open
             refreshIntegrations()
+            featureObservation = Task { [weak self] in
+                let updates = NotificationCenter.default.notifications(named: .ternComposePreferencesChanged).map { _ in true }
+                for await _ in updates {
+                    guard let self, !Task.isCancelled else { return }
+                    await loadComposeFeatures()
+                }
+            }
         } else if draft.updatedAt > knownUpdate {
             knownUpdate = draft.updatedAt
             // Imported from Gmail after another app changed it.
             if !hasPendingEdits, draft.content != content { replaceContent(with: draft.content) }
+        }
+        if let engine = owner?.engine {
+            for attachment in activity.attachments where attachment.contentID != nil {
+                if let cid = attachment.contentID, inlineImageData[cid] == nil {
+                    inlineImageData[cid] = try? await engine.outgoingAttachmentData(attachment)
+                }
+            }
         }
     }
 
@@ -483,6 +559,13 @@ final class ComposeModel {
         var initialized = content
         initialized.fromAddress = sender.address
         initialized.signatureHTML = sender.signature(for: draft.kind)
+        initialized.composeFont = ComposePreferences.font
+        if let store = mailbox.accountStore,
+           let signature = try? await store.composeSignature(accountID: draft.accountID, address: sender.address, kind: draft.kind) {
+            initialized.signatureHTML = signature.html
+            initialized.signatureAboveQuote = signature.aboveQuote
+            initialized.signatureSeparator = signature.separator
+        }
         guard let engine = owner?.engine else { return }
         do {
             guard let stored = try await engine.updateDraft(localDraftID, content: initialized), !Task.isCancelled else { return }
@@ -532,6 +615,7 @@ final class ComposeModel {
             }
         }
         scheduleAutosave()
+        chooseRecipientAccountIfNeeded()
     }
 
     /// Saves to Gmail once edits pause, or at once when they haven't paused for a while.
@@ -582,7 +666,37 @@ final class ComposeModel {
         cancelTimers()
         observation?.cancel()
         integrationRefresh?.cancel()
+        featureObservation?.cancel()
+        recipientAccountTask?.cancel()
         phase = .closed
+    }
+
+    func insertTemplate(_ template: ComposeTemplate) {
+        guard isEditable else { return }
+        if let editor { editor.insertDocument(template.document) }
+        else { content.body.blocks += template.document.blocks }
+    }
+
+    private func loadComposeFeatures() async {
+        templates = (try? await mailbox.accountStore?.composeTemplates()) ?? []
+    }
+
+    private func chooseRecipientAccountIfNeeded() {
+        guard !choseRecipientAccount, canChangeAccount, ComposePreferences.defaultAccountID == nil,
+              automaticAccountIDs.count > 1, let recipient = content.to.first, recipient.isValid else { return }
+        guard recipient.normalized != lastAutomaticRecipient else { return }
+        lastAutomaticRecipient = recipient.normalized
+        recipientAccountGeneration += 1
+        let generation = recipientAccountGeneration
+        recipientAccountTask?.cancel()
+        let ids = automaticAccountIDs
+        recipientAccountTask = Task { [weak self] in
+            guard let self,
+                  let target = try? await mailbox.cache.lastCorrespondenceAccount(with: recipient.address, accountIDs: ids),
+                  !Task.isCancelled, generation == recipientAccountGeneration, !choseRecipientAccount,
+                  content.to.first?.normalized == recipient.normalized, isEditable, canChangeAccount else { return }
+            if target != draft?.accountID { move(to: target, isAutomatic: true) }
+        }
     }
 
     /// Runs stores, saves, sends and discards one at a time, in the order asked.

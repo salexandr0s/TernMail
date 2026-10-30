@@ -1,4 +1,5 @@
 import AppKit
+import MailStore
 import MessageContent
 import SwiftUI
 
@@ -6,13 +7,27 @@ import SwiftUI
 /// addresses in stored mail. An address that isn't valid shows as plain text.
 struct RecipientField: NSViewRepresentable {
     let label: String
+    @AppStorage(ComposePreferences.fullAddressesKey) private var showsFullAddresses = false
     @Binding var addresses: [EmailAddress]
     /// Set to move the cursor here. The field clears it once it has the cursor.
     @Binding var requestsFocus: Bool
     var isEditable: Bool
     var onFocusChange: @MainActor (Bool) -> Void = { _ in }
     var directorySuggestions: @MainActor (String) async -> [EmailAddress] = { _ in [] }
+    var groupSuggestions: @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] }
+    var expandGroup: @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil }
     let suggestions: @MainActor (String) async -> [EmailAddress]
+
+    init(label: String, addresses: Binding<[EmailAddress]>, requestsFocus: Binding<Bool>, isEditable: Bool,
+         onFocusChange: @escaping @MainActor (Bool) -> Void = { _ in },
+         directorySuggestions: @escaping @MainActor (String) async -> [EmailAddress] = { _ in [] },
+         groupSuggestions: @escaping @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] },
+         expandGroup: @escaping @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil },
+         suggestions: @escaping @MainActor (String) async -> [EmailAddress]) {
+        self.label = label; self._addresses = addresses; self._requestsFocus = requestsFocus; self.isEditable = isEditable
+        self.onFocusChange = onFocusChange; self.directorySuggestions = directorySuggestions
+        self.groupSuggestions = groupSuggestions; self.expandGroup = expandGroup; self.suggestions = suggestions
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -59,7 +74,7 @@ struct RecipientField: NSViewRepresentable {
     func updateNSView(_ field: NSTokenField, context: Context) {
         context.coordinator.parent = self
         field.isEditable = isEditable
-        if addresses != context.coordinator.shownAddresses {
+        if addresses != context.coordinator.shownAddresses || showsFullAddresses != context.coordinator.showsFullAddresses {
             context.coordinator.show(addresses)
         }
         if requestsFocus, isEditable {
@@ -70,6 +85,11 @@ struct RecipientField: NSViewRepresentable {
                 requestsFocus = false
             }
         }
+    }
+
+    static func dismantleNSView(_ field: NSTokenField, coordinator: Coordinator) {
+        coordinator.cancelRequests()
+        coordinator.field = nil
     }
 
     /// Measures a copy of the field. Measuring a field that is being edited
@@ -114,14 +134,24 @@ struct RecipientField: NSViewRepresentable {
         }
     }
 
+    final class GroupToken: NSObject {
+        let group: ContactGroupSuggestion
+        init(_ group: ContactGroupSuggestion) { self.group = group }
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTokenFieldDelegate {
         var parent: RecipientField
         weak var field: NSTokenField?
         /// What the field shows, so updates that come back from the binding leave it alone.
         private(set) var shownAddresses: [EmailAddress] = []
+        private(set) var showsFullAddresses = false
         private var loadedQuery: String?
         private var loaded: [EmailAddress] = []
+        private var loadedGroups: [ContactGroupSuggestion] = []
+        private var loadedDirectory: [EmailAddress] = []
+        private var groupCompletions: [String: ContactGroupSuggestion] = [:]
+        private var groupTasks: [String: Task<Void, Never>] = [:]
         /// Completion strings and the addresses they stand for. A name's commas
         /// are left out of its completion string, since a comma ends a token.
         private var completions: [String: EmailAddress] = [:]
@@ -130,6 +160,7 @@ struct RecipientField: NSViewRepresentable {
         /// Never on screen or edited, so SwiftUI can measure it at any time.
         private let sizingField = RecipientField.makeField()
         private var sizedAddresses: [EmailAddress]?
+        private var sizedFullAddresses = false
         private var reportedFocus = false
 
         init(_ parent: RecipientField) {
@@ -140,7 +171,14 @@ struct RecipientField: NSViewRepresentable {
 
         func show(_ addresses: [EmailAddress]) {
             shownAddresses = addresses
+            showsFullAddresses = parent.showsFullAddresses
             field?.objectValue = addresses.map(Token.init)
+        }
+
+        func cancelRequests() {
+            loadTask?.cancel()
+            for task in groupTasks.values { task.cancel() }
+            groupTasks = [:]
         }
 
         /// AppKit can change focus during a SwiftUI update. Read the current
@@ -160,8 +198,9 @@ struct RecipientField: NSViewRepresentable {
         /// The size of the shown addresses, wrapped at `width`. A width that
         /// isn't positive and finite gives a single line.
         func measure(width: CGFloat) -> CGSize {
-            if sizedAddresses != shownAddresses {
+            if sizedAddresses != shownAddresses || sizedFullAddresses != parent.showsFullAddresses {
                 sizedAddresses = shownAddresses
+                sizedFullAddresses = parent.showsFullAddresses
                 sizingField.objectValue = shownAddresses.map(Token.init)
             }
             let wrapWidth = width.isFinite && width > 0 ? width : .greatestFiniteMagnitude
@@ -197,32 +236,37 @@ struct RecipientField: NSViewRepresentable {
                 queryGeneration += 1
                 loadedQuery = nil
                 loaded = []
+                loadedGroups = []; loadedDirectory = []; groupCompletions = [:]
                 completions = [:]
                 return []
             }
             if query == loadedQuery {
                 // Return picks the first match for a name, but never replaces an address being typed.
-                selectedIndex?.pointee = query.contains("@") || loaded.isEmpty ? -1 : 0
-                return loaded.map(completionString)
+                selectedIndex?.pointee = query.contains("@") || (loaded.isEmpty && loadedGroups.isEmpty && loadedDirectory.isEmpty) ? -1 : 0
+                return loaded.map(completionString) + loadedGroups.map(groupCompletionString) + loadedDirectory.map(completionString)
             }
             loadTask?.cancel()
             // A return to the previous text must start a new request rather
             // than reuse its rows while a different query is still in flight.
             loadedQuery = nil
             loaded = []
+            loadedGroups = []; loadedDirectory = []; groupCompletions = [:]
             completions = [:]
             queryGeneration += 1
             let generation = queryGeneration
             let suggestions = parent.suggestions
             let directory = parent.directorySuggestions
+            let groups = parent.groupSuggestions
             loadTask = Task { [weak self, weak tokenField] in
                 let results = await suggestions(query)
+                let groupResults = await groups(query)
                 guard let self, !Task.isCancelled, queryGeneration == generation else { return }
                 loadedQuery = query
                 loaded = results
+                loadedGroups = groupResults
                 completions = [:]
                 // Asks again for completions, which now come from `loaded`.
-                if !results.isEmpty, let editor = tokenField?.currentEditor() as? NSTextView {
+                if (!results.isEmpty || !groupResults.isEmpty), let editor = tokenField?.currentEditor() as? NSTextView {
                     editor.complete(nil)
                 }
                 guard query.count >= 2 else { return }
@@ -232,7 +276,7 @@ struct RecipientField: NSViewRepresentable {
                 var seen = Set(loaded.map(\.normalized))
                 let additions = remote.filter { seen.insert($0.normalized).inserted }
                 guard !additions.isEmpty else { return }
-                loaded += additions
+                loadedDirectory = additions
                 if let editor = tokenField?.currentEditor() as? NSTextView { editor.complete(nil) }
             }
             return []
@@ -241,18 +285,42 @@ struct RecipientField: NSViewRepresentable {
         func tokenField(_ tokenField: NSTokenField, representedObjectForEditing editingString: String) -> Any? {
             let text = editingString.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
+            if let group = groupCompletions[text] { return GroupToken(group) }
             if let address = completions[text] { return Token(address) }
             return Token(EmailAddress.parseList(text).first ?? EmailAddress(address: text))
         }
 
         func tokenField(_ tokenField: NSTokenField, displayStringForRepresentedObject object: Any) -> String? {
+            if let group = object as? GroupToken { return group.group.name }
             guard let token = object as? Token else { return object as? String }
+            if parent.showsFullAddresses { return token.address.displayString }
             if let name = token.address.name, !name.isEmpty { return name }
             return token.address.address
         }
 
         func tokenField(_ tokenField: NSTokenField, editingStringForRepresentedObject object: Any) -> String? {
-            (object as? Token).map { RecipientField.editingString($0.address) } ?? object as? String
+            if let group = object as? GroupToken { return group.group.name }
+            return (object as? Token).map { RecipientField.editingString($0.address) } ?? object as? String
+        }
+
+        func tokenField(_ tokenField: NSTokenField, shouldAdd tokens: [Any], at index: Int) -> [Any] {
+            for token in tokens.compactMap({ $0 as? GroupToken }) {
+                let group = token.group
+                guard groupTasks[group.id] == nil else { continue }
+                let expansion = parent.expandGroup
+                groupTasks[group.id] = Task { [weak self] in
+                    let addresses = await expansion(group)
+                    guard let self else { return }
+                    defer { groupTasks[group.id] = nil }
+                    guard !Task.isCancelled, let addresses, field != nil, parent.isEditable else { return }
+                    var recipients = parent.addresses
+                    var seen = Set(recipients.map(\.normalized))
+                    recipients += addresses.filter { seen.insert($0.normalized).inserted }
+                    parent.addresses = recipients
+                    show(recipients)
+                }
+            }
+            return tokens.filter { !($0 is GroupToken) }
         }
 
         func tokenField(_ tokenField: NSTokenField, styleForRepresentedObject object: Any) -> NSTokenField.TokenStyle {
@@ -274,6 +342,17 @@ struct RecipientField: NSViewRepresentable {
             let string = name.map { "\($0) <\(address.address)>" } ?? address.address
             completions[string] = address
             return string
+        }
+
+        private func groupCompletionString(_ group: ContactGroupSuggestion) -> String {
+            let name = group.name.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: ";", with: "")
+            let coverage = group.isComplete ? "" : " · list incomplete"
+            let base = "\(name) (group · \(group.memberCount)\(coverage))"
+            var text = base
+            var number = 2
+            while let existing = groupCompletions[text], existing.id != group.id { text = "\(base) (\(number))"; number += 1 }
+            groupCompletions[text] = group
+            return text
         }
 
         /// Tokens, then any text still being typed.
