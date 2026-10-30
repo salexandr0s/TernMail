@@ -15,6 +15,7 @@ struct MailMessageFocus: Equatable {
 final class MailURLRouter {
     var error: String?
     var composeDraftID: String?
+    var conversationWindowLink: MailLink?
     private(set) var focusRequest: MailMessageFocus?
     @ObservationIgnored var openMainWindow: (() -> Void)?
     @ObservationIgnored private weak var app: AppModel?
@@ -67,29 +68,47 @@ final class MailURLRouter {
         receive(url)
     }
 
-    func stop() { generation += 1; task?.cancel(); task = nil }
+    func stop() { generation += 1; task?.cancel(); task = nil; conversationWindowLink = nil }
 
     private func open(_ link: MailLink, in app: AppModel, mailbox: MailboxModel, generation current: Int) async throws {
         guard let owner = mailbox.account(id: link.accountID) else { throw MailRoutingError.accountMissing }
-        let cached = try await mailbox.cache.read { try $0.thread(id: link.threadID, accountID: link.accountID) }
-        if cached == nil {
+        let needsSource = try await mailbox.cache.read { tx in
+            if try tx.thread(id: link.threadID, accountID: link.accountID) == nil { return true }
+            if let messageID = link.messageID { return try tx.message(id: messageID, accountID: link.accountID) == nil }
+            return false
+        }
+        if needsSource {
             guard !app.accountsNeedingSignIn.contains(link.accountID), owner.syncEnabled else { throw MailRoutingError.accountMissing }
             try await owner.engine.loadAttachmentSource(link.threadID)
         }
         try Task.checkCancellation()
         guard app.mailbox === mailbox, mailbox.account(id: link.accountID) === owner else { throw CancellationError() }
-        if let messageID = link.messageID {
-            let message = try await mailbox.cache.read { try $0.message(id: messageID, accountID: link.accountID) }
-            guard message?.threadID == link.threadID else { throw MailRoutingError.invalidLink }
+        let labelID = try await mailbox.cache.read { tx in
+            let members = try tx.currentLabels(threadID: link.threadID, accountID: link.accountID)
+            let labels: [Set<String>]
+            if let messageID = link.messageID {
+                guard try tx.message(id: messageID, accountID: link.accountID)?.threadID == link.threadID else {
+                    throw MailRoutingError.invalidLink
+                }
+                labels = [members[messageID] ?? []]
+            } else { labels = Array(members.values) }
+            if labels.contains(where: { !$0.contains(SystemLabel.trash) && !$0.contains(SystemLabel.spam) }) {
+                return SystemLabel.allMail
+            }
+            if labels.contains(where: { $0.contains(SystemLabel.trash) }) { return SystemLabel.trash }
+            return labels.contains(where: { $0.contains(SystemLabel.spam) }) ? SystemLabel.spam : SystemLabel.allMail
         }
         try Task.checkCancellation()
         guard generation == current, app.mailbox === mailbox, mailbox.account(id: link.accountID) === owner else { throw CancellationError() }
         let key = ThreadKey(accountID: link.accountID, threadID: link.threadID)
         app.destination = .mail
         if let profiles = app.accountPreferences, !profiles.visibleAccountIDs.contains(link.accountID) { profiles.selectProfile(nil) }
-        mailbox.selectedMailbox = .account(link.accountID, SystemLabel.allMail)
+        mailbox.selectedMailbox = .account(link.accountID, labelID)
         mailbox.selectedThreadIDs = [key]
         if let messageID = link.messageID { focusRequest = MailMessageFocus(key: key, messageID: messageID) }
+        // A linked conversation may fall outside the current list's loaded page,
+        // or the viewing pane may be hidden. Its window retains the validated scope.
+        conversationWindowLink = link
     }
 
     private enum MailRoutingError: Error { case invalidLink, accountMissing }
@@ -110,6 +129,11 @@ struct MailURLHandling: ViewModifier {
                 guard let id else { return }
                 openWindow(id: ComposeWindow.sceneID, value: id)
                 app.mailURLs.composeDraftID = nil
+            }
+            .onChange(of: app.mailURLs.conversationWindowLink, initial: true) { _, link in
+                guard let link else { return }
+                openWindow(id: ConversationWindow.sceneID, value: link)
+                app.mailURLs.conversationWindowLink = nil
             }
             .alert("Couldn't open mail link", isPresented: Binding(
                 get: { app.mailURLs.error != nil }, set: { if !$0 { app.mailURLs.error = nil } })) {

@@ -34,6 +34,38 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func mailLinksKeepTrashScopeAndOpenIndependentlyOfListSelection() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let readinessDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < readinessDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+        let accountID = mailbox.defaultAccount.account.id
+        let link = MailLink(accountID: accountID, threadID: "linked-trash", messageID: "linked-message")
+        try await mailbox.cache.write { tx in
+            _ = try tx.upsertMessages([.init(record: MessageRecord(accountID: accountID, id: "linked-message",
+                threadID: "linked-trash", historyID: 1, date: .distantPast, snippet: "", sender: "sender@example.invalid",
+                recipients: "audit@example.invalid", cc: nil, subject: "Linked mail", sizeEstimate: 10), labelIDs: [SystemLabel.trash])])
+            try tx.rebuildThreads(["linked-trash"], accountID: accountID)
+        }
+        app.mailURLs.receive(try #require(link.ternURL))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while app.mailURLs.conversationWindowLink == nil, app.mailURLs.error == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(app.mailURLs.error == nil)
+        #expect(mailbox.selectedMailbox == .account(accountID, SystemLabel.trash))
+        #expect(app.mailURLs.conversationWindowLink == link)
+        mailbox.selectedThreadIDs = []
+        #expect(app.mailURLs.conversationWindowLink == link)
+        await app.prepareToQuit()
+        await mailbox.stop()
+        app.accountPreferences?.stop()
+    }
+
     private func fixture() async throws -> (MailboxModel, MailCache) {
         let account = AccountRecord(id: "a", email: "me@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
         let cache = try MailCache.inMemory()
