@@ -114,6 +114,7 @@ extension SyncEngine {
         let saved = state
         let accountID = accountID
         let deleted = deletedMessageIDs
+        let overrides = try await attachmentCategoryOverrides(messageIDs: fetched.entries.map(\.message.id))
         try await write { tx in
             deleted.withLock { $0.formUnion(fetched.missing) }
             try tx.deleteLibraryAttachments(messageIDs: Array(fetched.missing), accountID: accountID)
@@ -121,6 +122,7 @@ extension SyncEngine {
                 try tx.replaceLibraryAttachments(entry.attachments, message: entry.message,
                     labelIDs: entry.labelIDs, generation: saved.generation)
             }
+            try tx.applyAttachmentCategoryOverrides(overrides)
             try tx.saveAttachmentIndexState(saved)
         }
         return state
@@ -214,6 +216,7 @@ extension SyncEngine {
         let saved = state
         let accountID = accountID
         let deleted = deletedMessageIDs
+        let overrides = try await attachmentCategoryOverrides(messageIDs: fetched.entries.map(\.message.id))
         try await write { tx in
             deleted.withLock { $0.formUnion(fetched.missing) }
             try tx.deleteLibraryAttachments(messageIDs: Array(fetched.missing), accountID: accountID)
@@ -221,6 +224,7 @@ extension SyncEngine {
                 try tx.replaceLibraryAttachments(entry.attachments, message: entry.message,
                     labelIDs: entry.labelIDs, generation: saved.generation)
             }
+            try tx.applyAttachmentCategoryOverrides(overrides)
             try tx.saveAttachmentIndexState(saved)
         }
         return state

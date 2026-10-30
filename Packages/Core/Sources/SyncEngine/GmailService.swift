@@ -68,7 +68,10 @@ enum Mapping {
             textColor: label.color?.textColor,
             backgroundColor: label.color?.backgroundColor,
             threadsTotal: label.threadsTotal,
-            threadsUnread: label.threadsUnread
+            threadsUnread: label.threadsUnread,
+            labelListVisibility: label.labelListVisibility,
+            messagesTotal: label.messagesTotal,
+            messagesUnread: label.messagesUnread
         )
     }
 

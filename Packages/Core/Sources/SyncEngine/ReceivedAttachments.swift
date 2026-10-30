@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 import GmailAPI
 import MailStore
 
@@ -11,10 +10,7 @@ extension SyncEngine {
         try validateAttachmentAccount(attachment)
         // Stop waits for this operation before account removal deletes files.
         return try await gated {
-            let key = [attachment.accountID, attachment.messageID, attachment.partID]
-                .map { "\($0.utf8.count):\($0)" }.joined()
-            let component = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-            let folder = directory.appending(path: component, directoryHint: .isDirectory)
+            let folder = Self.attachmentCacheFolder(for: attachment, in: directory)
             let url = folder.appending(path: Self.safeFilename(attachment.filename), directoryHint: .notDirectory)
             let timestamp = now()
             if AttachmentFileCache.isReusable(url, expectedSize: attachment.size, now: timestamp) {

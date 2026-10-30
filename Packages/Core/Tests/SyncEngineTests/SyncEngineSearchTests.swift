@@ -6,6 +6,20 @@ import Testing
 @testable import SyncEngine
 
 @Suite struct SyncEngineSearchTests {
+    @Test func messageModeSearchRetainsExactMatchesAndDoesNotReturnCachedSiblings() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("match", "thread", [SystemLabel.inbox]), ("sibling", "thread", [SystemLabel.inbox])])
+        let message = try decode(GmailMessage.self, encodedMessage("match", thread: "thread", labels: [SystemLabel.inbox], historyID: 150))
+        await gmail.add(message)
+        await gmail.setRecentPages([try decode(MessageListPage.self, #"{"messages":[{"id":"match","threadId":"thread"}]}"#)])
+        let page = try await engine.searchGmailMessages(SearchQuery("has:attachment"), timeZone: .gmt)
+        #expect(page.threadIDs == ["thread"])
+        #expect(page.messageIDs == ["match"])
+        #expect(await gmail.threadSearches.isEmpty)
+        #expect(try await cache.read { try $0.cachedMessageIDs(accountID: account) } == ["match", "sibling"])
+        await engine.stop()
+    }
+
     @Test func gmailSearchStoresAndHoldsWhatTheCacheLacks() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])

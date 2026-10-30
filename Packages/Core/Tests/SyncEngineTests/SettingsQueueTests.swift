@@ -168,6 +168,24 @@ import Testing
         #expect(await settings.calls.last == "signature me@example.com")
         await engine.stop()
     }
+
+    @Test func retryingACompensatedFilterEditRecreatesTheNewFilterBeforeDeletingTheOld() async throws {
+        let (engine, cache, settings, clock) = try await makeSettingsEngine(filters: [mine])
+        let edited = GmailFilter(criteria: mine.criteria, action: .init(addLabelIds: [SystemLabel.important]))
+        _ = try await engine.replaceFilter(mine, with: edited)
+        await settings.fail("delete mine", with: .http(status: 400, reason: "invalidArgument"))
+        clock.advance(3)
+        _ = await engine.sendDueSettings()
+        while await engine.sendDueSettings() > 0 {}
+        #expect(await settings.rules == [GmailFilter(criteria: mine.criteria, action: mine.action)])
+        let failed = try #require(try await cache.read { try $0.failedActions(accountID: account).first })
+        let id = try #require(failed.id)
+        #expect(try await engine.retryFailedAction(id: id))
+        _ = await engine.sendDueSettings()
+        #expect(await settings.rules == [edited])
+        #expect(try await cache.read { try $0.action(id: id)?.state } == .sent)
+        await engine.stop()
+    }
 }
 
 /// Gmail's settings for one account. IDs go "f1", "f2" and so on.

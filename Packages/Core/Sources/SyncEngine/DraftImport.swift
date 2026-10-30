@@ -20,6 +20,32 @@ extension SyncEngine {
         return draft
     }
 
+    /// A sent message becomes a new independent draft with copied files and a new Message-ID.
+    public func startAgain(messageID: String) async throws -> OpenedDraft {
+        let fetched = try await fullMessage(messageID)
+        let message = fetched.message
+        let original = fetched.original
+        let imported = original.body.html.map { HTMLImporter.importHTML($0, detachingQuote: false, preservingInlineImages: true) }
+        let body = imported?.document ?? ComposeDocument(plainText: original.body.plainText ?? "")
+        let draft = LocalDraft(
+            accountID: accountID, kind: .new,
+            content: DraftContent(to: original.to, cc: original.cc,
+                                  bcc: message.header("Bcc").map(EmailAddress.parseList) ?? [],
+                                  subject: original.subject, body: body, fromAddress: sender.address),
+            rfcMessageID: MIMEMessage.newMessageID(for: sender), now: now()
+        )
+        let referencedImages = Set(body.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })
+        let copies = try await downloadDraftParts(MIMEParts.attachments(of: message), of: message, references: referencedImages, for: draft.id)
+        let date = now()
+        do {
+            try await write { [copies] tx in
+                try tx.insertLocalDraft(draft)
+                for copy in copies { _ = try tx.addOutgoingAttachment(copy, now: date) }
+            }
+        } catch { removeFiles(copies); throw error }
+        return OpenedDraft(draft: draft, droppedFormatting: imported?.droppedFormatting ?? false)
+    }
+
     /// Starts a reply or forward. A reply builds on the cached message when
     /// its headers and body are there. Otherwise, and for every forward, the
     /// message comes from Gmail, and a forward copies the original's files.
@@ -38,10 +64,11 @@ extension SyncEngine {
             let fetched = try await fullMessage(messageID)
             original = fetched.original
             message = fetched.message
-            if kind == .forward { files = MIMEParts.attachments(of: fetched.message).filter { !$0.isInline } }
+            if kind == .forward { files = MIMEParts.attachments(of: fetched.message) }
         }
         guard let original else { throw GmailError.decoding("Original message") }
-        let reply = ReplyBuilder.draft(kind, replyingTo: original, ownAddresses: [sender.address])
+        let identities = try await accounts?.identities(accountID: accountID).filter(\.canSend) ?? []
+        let reply = ReplyBuilder.draft(kind, replyingTo: original, ownAddresses: Set([sender.address] + identities.map(\.address)))
         let draft = LocalDraft(
             accountID: accountID,
             kind: LocalDraft.Kind(kind),
@@ -55,10 +82,40 @@ extension SyncEngine {
             quotedPlainText: reply.quotedPlainText,
             now: now()
         )
-        let copies = if let message { try await download(files, of: message, for: draft.id) } else { [OutgoingAttachment]() }
+        let references = HTMLImporter.inlineImageContentIDs(in: reply.quotedHTML ?? "")
+        var copies: [OutgoingAttachment] = []
+        if message == nil, !references.isEmpty {
+            let cached = try await cache.mimeResources(messageID: messageID, accountID: accountID)
+            let available = Set(cached.map(\.contentID))
+            if references.isSubset(of: available) {
+                do {
+                    copies = try cached.filter { references.contains($0.contentID) }.map { resource in
+                        let filename = "Inline Image"
+                        let path = Self.outgoingPath(for: draft.id, filename: filename)
+                        let url = outgoingDirectory.appending(path: path)
+                        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try resource.data.write(to: url)
+                        return OutgoingAttachment(localDraftID: draft.id, filename: filename, mimeType: resource.mimeType,
+                                                  size: resource.data.count, path: path, contentID: resource.contentID)
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: outgoingDirectory.appending(path: draft.id, directoryHint: .isDirectory))
+                    throw error
+                }
+            } else { message = try await fullMessage(messageID).message }
+        }
+        if let message {
+            if kind != .forward {
+                files = MIMEParts.attachments(of: message).filter { part in
+                    guard let raw = message.payload.flatMap({ Self.part(part.partID, in: $0) })?.header("Content-ID") else { return false }
+                    return references.contains(raw.trimmingCharacters(in: CharacterSet(charactersIn: "<> \t\r\n")))
+                }
+            }
+            copies = try await downloadDraftParts(files, of: message, references: references, for: draft.id)
+        }
         let now = now()
         do {
-            try await write { tx in
+            try await write { [copies] tx in
                 try tx.insertLocalDraft(draft)
                 for copy in copies { _ = try tx.addOutgoingAttachment(copy, now: now) }
             }
@@ -203,7 +260,7 @@ extension SyncEngine {
         var quotedPlainText: String?
         var droppedFormatting = false
         if let html = body.html {
-            let imported = HTMLImporter.importHTML(html)
+            let imported = HTMLImporter.importHTML(html, preservingInlineImages: true)
             document = imported.document
             quotedHTML = imported.quotedTail
             quotedPlainText = imported.quotedTail.map { HTMLImporter.importHTML($0, detachingQuote: false).document.plainText() }
@@ -222,7 +279,7 @@ extension SyncEngine {
                 cc: headers.cc,
                 bcc: message.header("Bcc").map(EmailAddress.parseList) ?? [],
                 subject: headers.subject,
-                body: document
+                body: document, fromAddress: headers.from.first?.address
             ),
             rfcMessageID: headers.messageID ?? MIMEMessage.newMessageID(for: sender),
             gmailDraftID: gmailDraftID,
@@ -234,8 +291,10 @@ extension SyncEngine {
             quotedPlainText: quotedPlainText,
             now: now()
         )
-        let files = MIMEParts.attachments(of: message).filter { !$0.isInline }
-        let copies = try await download(files, of: message, for: localID)
+        let files = MIMEParts.attachments(of: message)
+        let references = Set(document.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })
+            .union(HTMLImporter.inlineImageContentIDs(in: quotedHTML ?? ""))
+        let copies = try await downloadDraftParts(files, of: message, references: references, for: localID)
         let record = DraftRecord(accountID: accountID, id: gmailDraftID, messageID: message.id, threadID: message.threadId)
         let metadata = try? Mapping.message(message, accountID: accountID)
         let now = now()
@@ -291,6 +350,18 @@ extension SyncEngine {
 
     // MARK: Files
 
+    private func downloadDraftParts(_ parts: [AttachmentPart], of message: GmailMessage,
+                                    references: Set<String>, for localDraftID: String) async throws -> [OutgoingAttachment] {
+        var copies = try await download(parts, of: message, for: localDraftID)
+        var assigned = Set<String>()
+        for index in copies.indices where parts[index].isInline {
+            guard let raw = message.payload.flatMap({ Self.part(parts[index].partID, in: $0) })?.header("Content-ID") else { continue }
+            let cid = raw.trimmingCharacters(in: CharacterSet(charactersIn: "<> \t\r\n"))
+            if InlineImageReference(contentID: cid).isValid, references.contains(cid), assigned.insert(cid).inserted { copies[index].contentID = cid }
+        }
+        return copies
+    }
+
     /// Copies a message's files under `outgoingDirectory` for a local draft.
     /// A file that can't be fetched fails the whole copy, so a draft never
     /// goes out missing one.
@@ -331,7 +402,7 @@ extension SyncEngine {
             } catch CocoaError.fileReadNoSuchFile {
                 throw ComposeError.missingAttachment(file.filename)
             }
-            return OutgoingAttachment(localDraftID: localDraftID, filename: file.filename, mimeType: file.mimeType, size: file.size, path: path)
+            return OutgoingAttachment(localDraftID: localDraftID, filename: file.filename, mimeType: file.mimeType, size: file.size, path: path, contentID: file.contentID)
         }
     }
 

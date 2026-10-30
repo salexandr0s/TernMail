@@ -203,7 +203,7 @@ extension SyncEngine {
             }
             try tx.deleteAction(id: id)
             return []
-        case .undone:
+        case .undone, .failed:
             return []
         case .queued, .sending, .sent:
             // It may have reached Gmail. The inverse waits behind it, so undoing
@@ -243,7 +243,11 @@ extension SyncEngine {
                 inverse.newColor = change.oldColor.map { .set($0) } ?? .remove
                 if case .set(let color) = newColor { inverse.oldColor = color }
             }
-            guard inverse.newName != nil || inverse.newColor != nil else { return }
+            if let visibility = change.newVisibility {
+                inverse.newVisibility = change.oldVisibility ?? .show
+                inverse.oldVisibility = visibility
+            }
+            guard inverse.newName != nil || inverse.newColor != nil || inverse.newVisibility != nil else { return }
             _ = try tx.enqueueLabelChange(
                 .updateLabel, labelID: labelID, change: inverse, accountID: accountID, now: now, notBefore: now
             )
@@ -311,7 +315,13 @@ extension SyncEngine {
                 let label = try await gmail.createLabel(name: name, color: Self.labelColor(change.newColor))
                 await recordCreated(row, realID: label.id)
             case .updateLabel:
-                _ = try await gmail.patchLabel(id: labelID, name: change.newName, color: Self.colorChange(change.newColor))
+                if let visibility = change.newVisibility {
+                    guard let triage else { throw GmailError.invalidRequest("Label visibility unavailable") }
+                    _ = try await triage.patchLabelVisibility(id: labelID, visibility: visibility)
+                }
+                if change.newName != nil || change.newColor != nil {
+                    _ = try await gmail.patchLabel(id: labelID, name: change.newName, color: Self.colorChange(change.newColor))
+                }
                 await finish(row, outcome: .sent)
             case .deleteLabel:
                 do {
@@ -425,11 +435,18 @@ extension SyncEngine {
         guard let id = row.id else { return }
         let accountID = accountID
         let dropped = try? await write { tx -> [Int64] in
-            try tx.deleteLabelChange(id: id, accountID: accountID)
+            try tx.retainFailedAction(row, message: Self.refusalMessage(for: row))
             switch row.kind {
             case .createLabel:
                 guard let labelID = row.labelID else { return [id] }
-                return try [id] + tx.dropLabel(labelID, accountID: accountID)
+                var dependents = [id]
+                for dependent in try tx.pendingActions(accountID: accountID) where dependent.state == .queued {
+                    guard dependent.labelID == labelID || dependent.labelChange?.parentLabelID == labelID
+                            || (dependent.addLabelIDs + dependent.removeLabelIDs).contains(labelID) else { continue }
+                    try tx.retainFailedAction(dependent, message: "This change needs a label that Gmail couldn't create. Retry the label first.")
+                    dependents += dependent.id.map { [$0] } ?? []
+                }
+                return dependents
             case .updateLabel where row.labelChange?.newName != nil:
                 return try [id] + Self.dropChildRenames(of: row, accountID: accountID, in: tx)
             default:
@@ -454,7 +471,7 @@ extension SyncEngine {
             guard let id = child.id, let labelID = child.labelID,
                   let parentLabelID = child.labelChange?.parentLabelID, renamed.contains(parentLabelID)
             else { continue }
-            try tx.deleteLabelChange(id: id, accountID: accountID)
+            try tx.retainFailedAction(child, message: "This rename needs a parent label change that Gmail couldn't save. Retry the parent first.")
             renamed.insert(labelID)
             dropped.append(id)
         }

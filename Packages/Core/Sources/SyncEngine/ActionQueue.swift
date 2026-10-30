@@ -21,10 +21,12 @@ public final class ActionReceipt: Sendable, Equatable {
     public var actions: [PendingAction] { rows.withLock { $0 } }
     /// For a snooze, what its undo puts back. Nil for other commands.
     let snooze: SnoozeChange?
+    let messageSnooze: MessageSnoozeChange?
 
-    init(actions: [PendingAction], snooze: SnoozeChange? = nil) {
+    init(actions: [PendingAction], snooze: SnoozeChange? = nil, messageSnooze: MessageSnoozeChange? = nil) {
         rows = OSAllocatedUnfairLock(initialState: actions)
         self.snooze = snooze
+        self.messageSnooze = messageSnooze
     }
 
     func update(_ action: PendingAction) {
@@ -102,7 +104,7 @@ extension SyncEngine {
             try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
         case .sent:
             try Self.enqueueInverse(of: stored, accountID: accountID, now: now, in: tx)
-        case .undone:
+        case .undone, .failed:
             break
         }
         return []
@@ -152,8 +154,8 @@ extension SyncEngine {
     }
 
     /// One receipt for the rows of one user command, so undo treats them as one.
-    func register(_ rows: [PendingAction], snooze: SnoozeChange? = nil) -> ActionReceipt {
-        let receipt = ActionReceipt(actions: rows, snooze: snooze)
+    func register(_ rows: [PendingAction], snooze: SnoozeChange? = nil, messageSnooze: MessageSnoozeChange? = nil) -> ActionReceipt {
+        let receipt = ActionReceipt(actions: rows, snooze: snooze, messageSnooze: messageSnooze)
         undoReceipts = undoReceipts.filter { $0.value.value != nil }
         for row in rows {
             if let id = row.id { undoReceipts[id] = WeakActionReceipt(receipt) }
@@ -164,6 +166,27 @@ extension SyncEngine {
     /// Queues the reverse of `action` with no hold.
     static func enqueueInverse(of action: PendingAction, accountID: String, now: Date, in tx: CacheTransaction) throws {
         switch action.kind {
+        case .deleteMessages:
+            return
+        case .trashMessages, .untrashMessages:
+            let restoringTrash = action.kind == .untrashMessages
+            let ids = action.messageIDs.filter { id in
+                let diff = action.diff[id]
+                return restoringTrash ? diff?.removed.contains(SystemLabel.trash) == true : diff?.added.contains(SystemLabel.trash) == true
+            }
+            if !ids.isEmpty {
+                _ = try tx.enqueue(restoringTrash ? .trashMessages : .untrashMessages,
+                    accountID: accountID, messageIDs: ids,
+                    add: restoringTrash ? [SystemLabel.trash] : [], remove: restoringTrash ? [] : [SystemLabel.trash],
+                    now: now, notBefore: now)
+            }
+            if !restoringTrash {
+                let inbox = action.messageIDs.filter { action.diff[$0]?.removed.contains(SystemLabel.inbox) == true }
+                if !inbox.isEmpty {
+                    _ = try tx.enqueue(.modifyMessages, accountID: accountID, messageIDs: inbox,
+                        add: [SystemLabel.inbox], now: now, notBefore: now)
+                }
+            }
         case .trashThreads:
             _ = try tx.enqueue(
                 .untrashThreads, accountID: accountID, threadIDs: action.threadIDs,
@@ -280,25 +303,40 @@ extension SyncEngine {
         let kind: String
         let add: [String]
         let remove: [String]
+        let labelID: String?
 
         init(_ row: PendingAction) {
             kind = row.kind.rawValue
             add = row.addLabelIDs.sorted()
             remove = row.removeLabelIDs.sorted()
+            labelID = row.kind == .deleteMessages ? row.labelID : nil
         }
     }
 
     enum Outcome {
         case sent
         case retry(String)
-        case failed
+        case failed(String)
     }
 
     /// Complete the original label snapshot before any whole-thread mutation.
     /// Existing diffs survive retries; only newly discovered messages are added.
     private func prepare(_ action: PendingAction) async throws -> PendingAction? {
-        guard action.kind != .modifyMessages, let id = action.id else { return action }
+        guard ![.modifyMessages, .deleteMessages].contains(action.kind), let id = action.id else { return action }
         var snapshots: [GmailMessage] = []
+        if action.kind == .trashMessages || action.kind == .untrashMessages {
+            let found = try await gmail.messages(ids: action.messageIDs, format: .minimal, metadataHeaders: [])
+            for messageID in action.messageIDs {
+                guard let result = found[messageID] else { throw GmailError.missingBatchPart }
+                switch result {
+                case .success(let message):
+                    guard message.id == messageID else { throw GmailError.decoding("Message snapshot") }
+                    snapshots.append(message)
+                case .failure(.notFound): continue
+                case .failure(let error): throw error
+                }
+            }
+        }
         for threadID in action.threadIDs {
             let thread: GmailThread
             do {
@@ -355,7 +393,7 @@ extension SyncEngine {
                 let outcome: Outcome
                 if errors.isEmpty { outcome = .sent }
                 else if errors.allSatisfy(Self.shouldRetry) { outcome = .retry(String(describing: errors[0])) }
-                else { outcome = .failed }
+                else { outcome = .failed(String(describing: errors[0])) }
                 await finish(action, outcome: outcome)
             }
         } catch {
@@ -365,7 +403,7 @@ extension SyncEngine {
 
     static func outcome(for error: any Error) -> Outcome {
         if let error = error as? GmailError {
-            return shouldRetry(error) ? .retry(String(describing: error)) : .failed
+            return shouldRetry(error) ? .retry(String(describing: error)) : .failed(String(describing: error))
         }
         return .retry(String(describing: type(of: error)))
     }
@@ -392,8 +430,9 @@ extension SyncEngine {
             row.state = .queued
             row.lastError = reason
             row.notBefore = now.addingTimeInterval(min(pow(2, Double(row.attempts)), 300))
-        case .failed:
-            break
+        case .failed(let message):
+            row.state = .failed
+            row.lastError = message
         }
         let failed = if case .failed = outcome { true } else { false }
         // Undone during the request: its inverse is queued behind it, so the row
@@ -401,7 +440,7 @@ extension SyncEngine {
         let reported = try? await write { [row] tx -> Bool in
             if try tx.deleteActionIfUndone(id: id) { return false }
             if failed {
-                try tx.deleteAction(id: id)
+                try tx.retainFailedAction(row, message: row.lastError ?? "Gmail refused this change.")
             } else {
                 try tx.updateAction(row)
             }
@@ -423,6 +462,15 @@ extension SyncEngine {
             return try await gmail.trashThreads(ids: action.threadIDs)
         case .untrashThreads:
             return try await gmail.untrashThreads(ids: action.threadIDs)
+        case .trashMessages:
+            guard let triage else { throw GmailError.invalidRequest("Message trash unavailable") }
+            return try await triage.trashMessages(ids: action.messageIDs)
+        case .untrashMessages:
+            guard let triage else { throw GmailError.invalidRequest("Message trash unavailable") }
+            return try await triage.untrashMessages(ids: action.messageIDs)
+        case .deleteMessages:
+            try await deliverPermanentDeletion(action)
+            return [:]
         case .modifyMessages:
             guard !action.messageIDs.isEmpty else { return [:] }
             try await gmail.batchModifyMessages(

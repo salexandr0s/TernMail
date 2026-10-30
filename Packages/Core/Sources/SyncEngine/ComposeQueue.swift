@@ -246,7 +246,7 @@ extension SyncEngine {
             case .saveDraft: try await upload(row, localDraftID: localDraftID)
             case .sendDraft: try await deliver(row, localDraftID: localDraftID)
             case .discardDraft: try await discard(row, localDraftID: localDraftID)
-            case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads: return
+            case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads, .trashMessages, .untrashMessages, .deleteMessages: return
             case .createLabel, .updateLabel, .deleteLabel: return
             case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature: return
             }
@@ -374,12 +374,17 @@ extension SyncEngine {
         guard let (draft, attachments) = stored else { return nil }
         let identity = try await outgoingIdentity(for: draft)
         let calendar = try Self.outgoingCalendar(for: draft)
+        let authoredInlineIDs = Set(draft.body.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })
+        let inlineIDs = authoredInlineIDs.union(HTMLImporter.inlineImageContentIDs(in: draft.quotedHTML ?? ""))
+        let storedIDs = Set(attachments.compactMap(\.contentID))
+        guard authoredInlineIDs.isSubset(of: storedIDs) else { throw ComposeError.missingAttachment("Inline Image") }
         var files: [MIMEMessage.Attachment] = []
         for attachment in attachments {
+            if let cid = attachment.contentID, !inlineIDs.contains(cid) { continue }
             guard let data = try? Data(contentsOf: outgoingDirectory.appending(path: attachment.path)) else {
                 throw ComposeError.missingAttachment(attachment.filename)
             }
-            files.append(MIMEMessage.Attachment(filename: attachment.filename, mimeType: attachment.mimeType, data: data))
+            files.append(MIMEMessage.Attachment(filename: attachment.filename, mimeType: attachment.mimeType, data: data, contentID: attachment.contentID))
         }
         let raw = Self.message(
             for: draft, attachments: files, sender: identity.from, date: now(),
@@ -481,13 +486,19 @@ extension SyncEngine {
         let sentMessage = if let sentMessageID { try? await fetchMetadata([sentMessageID]).updates.first } else { nil as CacheTransaction.MessageUpdate? }
         let accountID = accountID
         let deleted = deletedMessageIDs
+        let completedAt = now()
         try await write { tx in
             if !sent { try tx.deleteInvitationReply(localDraftID: localDraftID, accountID: accountID) }
+            if sent, let draft = try tx.localDraft(id: localDraftID), draft.archiveAfterSend, let threadID = draft.threadID {
+                _ = try tx.enqueue(.modifyThreads, accountID: accountID, threadIDs: [threadID],
+                                   remove: [SystemLabel.inbox], now: completedAt, notBefore: completedAt)
+            }
             let removed = try tx.removeFinishedDraft(localDraftID: localDraftID, sentMessage: sentMessage)
             deleted.withLock { $0.formUnion(removed.removedMessageIDs) }
         }
         nextLargeSave[localDraftID] = nil
         try? FileManager.default.removeItem(at: outgoingDirectory.appending(path: localDraftID, directoryHint: .isDirectory))
+        if sent { scheduleSending() }
         if sent { continuation.yield(.draftSent(localDraftID: localDraftID)) }
     }
 
@@ -517,7 +528,7 @@ extension SyncEngine {
         let forget = error as? ComposeError == .draftGone
         do {
             let reopened = try await write { tx -> Bool in
-                try tx.deleteAction(id: id)
+                try tx.retainFailedAction(row, message: message)
                 // A save refused while a send or discard waits behind it leaves
                 // the draft to that row, which keeps its undo and reports its own outcome.
                 if row.kind == .saveDraft, try tx.localDraft(id: localDraftID)?.state != .editing { return false }
@@ -569,10 +580,16 @@ extension SyncEngine {
         message.messageID = draft.rfcMessageID
         message.inReplyTo = draft.inReplyTo
         message.references = draft.references
-        let signature = draft.signatureHTML.map { "<div class=\"gmail_signature\">" + $0 + "</div>" } ?? ""
-        message.html = draft.body.html() + signature + (draft.quotedHTML ?? "")
-        let signatureText = draft.signatureHTML.map { HTMLImporter.importHTML($0, detachingQuote: false).document.plainText() }
-        message.plainText = [draft.body.plainText(), signatureText, draft.quotedPlainText]
+        let separator = draft.signatureSeparator ? "<div>-- </div>" : ""
+        let signature = draft.signatureHTML.map { "<div class=\"gmail_signature\">" + separator + $0 + "</div>" } ?? ""
+        let bodyHTML = draft.body.html()
+        let authored = draft.composeFont == .sansSerif ? bodyHTML : "<div style=\"font-family:\(draft.composeFont.cssFamily)\">" + bodyHTML + "</div>"
+        message.html = authored + (draft.signatureAboveQuote ? signature + (draft.quotedHTML ?? "") : (draft.quotedHTML ?? "") + signature)
+        let signatureText = draft.signatureHTML.map {
+            (draft.signatureSeparator ? "-- \n" : "") + HTMLImporter.importHTML($0, detachingQuote: false).document.plainText()
+        }
+        let trailing = draft.signatureAboveQuote ? [signatureText, draft.quotedPlainText] : [draft.quotedPlainText, signatureText]
+        message.plainText = ([draft.body.plainText()] + trailing)
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         message.calendarPart = calendarPart
         message.attachments = attachments

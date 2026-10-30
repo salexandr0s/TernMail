@@ -55,6 +55,7 @@ extension SyncEngine {
         let remote = try await gmail.thread(id: threadID, format: .full)
         guard remote.id == threadID, let messages = remote.messages else { throw GmailError.decoding("Calendar invitation thread") }
         var found: [String: Invitation] = [:]
+        var resources: [String: [MIMEInlineResourceRecord]] = [:]
         var checked = Set<String>()
         for message in messages where versions[message.id] != nil {
             guard message.threadId == threadID else { throw GmailError.decoding("Calendar invitation message") }
@@ -66,13 +67,19 @@ extension SyncEngine {
                 parts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
             found[message.id] = CalendarParts.invitation(in: message, attachments: parts)
+            do { resources[message.id] = try await inlineResources(in: message) }
+            catch is CancellationError { throw CancellationError() }
+            catch { /* Keep earlier pictures after a transient optional-resource failure. */ }
             checked.insert(message.id)
         }
         try Task.checkCancellation()
-        try await write { [found, checked] tx in
+        try await write { [found, checked, resources] tx in
             for id in checked {
                 guard let live = try tx.message(id: id, accountID: accountID), live.threadID == threadID,
                       versions[id] == live.historyID else { continue }
+                if let pictures = resources[id] {
+                    try tx.replaceMIMEResources(pictures, messageID: id, accountID: accountID)
+                }
                 if let invitation = found[id] {
                     let record = MessageCalendarRecord(accountID: accountID, messageID: id, invitation: invitation)
                     if try tx.messageCalendar(messageID: id, accountID: accountID) != record { try tx.saveMessageCalendar(record) }

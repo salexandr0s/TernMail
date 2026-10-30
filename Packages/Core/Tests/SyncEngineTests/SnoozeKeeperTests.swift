@@ -7,6 +7,22 @@ import Testing
 private let hour: TimeInterval = 60 * 60
 
 @Suite struct SnoozeKeeperTests {
+    @Test func undoMatchesFractionalWakeTimeUsingStoredPrecision() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        let (keeper, accounts) = try await makeKeeper(engine)
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        let wakeAt = baseDate + hour + 0.123456
+        let receipt = try #require(try await keeper.snooze(threadIDs: ["t1"], until: wakeAt))
+        let stored = try #require(try await holds(cache)["t1"])
+        #expect(stored != wakeAt)
+
+        try await keeper.undoSnooze(receipt)
+        #expect(try await listed(cache, SystemLabel.inbox) == ["t1"])
+        #expect(try await rows(cache).isEmpty)
+        #expect(try await holds(cache).isEmpty)
+        #expect(try await accounts.snoozes(accountID: account).isEmpty)
+    }
+
     @Test func snoozingArchivesAndHoldsTogetherAndUndoTakesItAllBack() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         let (keeper, accounts) = try await makeKeeper(engine)

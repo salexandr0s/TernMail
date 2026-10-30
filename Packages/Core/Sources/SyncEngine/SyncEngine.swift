@@ -47,6 +47,8 @@ public actor SyncEngine {
 
     public nonisolated let events: AsyncStream<SyncEvent>
     let continuation: AsyncStream<SyncEvent>.Continuation
+    public nonisolated let mailNotifications: AsyncStream<MailSyncNotification>
+    let mailNotificationContinuation: AsyncStream<MailSyncNotification>.Continuation
     let accountID: String
     /// The From address of every draft.
     let sender: EmailAddress
@@ -55,6 +57,7 @@ public actor SyncEngine {
     let gmail: any GmailService
     /// Filter, vacation and signature calls. Without them, settings rows wait.
     let settings: (any SettingsService)?
+    let triage: (any TriageService)?
     /// The send-as list. Without it, identities aren't refreshed.
     let identities: (any IdentityService)?
     /// Contact lists. Without them, contacts aren't synced.
@@ -129,6 +132,7 @@ public actor SyncEngine {
         outgoingDirectory: URL,
         gmail: any GmailService,
         settings: (any SettingsService)? = nil,
+        triage: (any TriageService)? = nil,
         identities: (any IdentityService)? = nil,
         people: (any PeopleService)? = nil,
         accounts: AccountStore? = nil,
@@ -144,6 +148,7 @@ public actor SyncEngine {
         self.outgoingDirectory = outgoingDirectory
         self.gmail = gmail
         self.settings = settings ?? gmail as? any SettingsService
+        self.triage = triage ?? gmail as? any TriageService
         self.identities = identities ?? gmail as? any IdentityService
         self.people = people
         self.accounts = accounts
@@ -154,6 +159,7 @@ public actor SyncEngine {
         self.sleep = sleep
         self.now = now
         (events, continuation) = AsyncStream.makeStream(of: SyncEvent.self, bufferingPolicy: .bufferingNewest(16))
+        (mailNotifications, mailNotificationContinuation) = AsyncStream.makeStream(of: MailSyncNotification.self, bufferingPolicy: .bufferingNewest(32))
     }
 
     // MARK: Scheduling
@@ -235,6 +241,7 @@ public actor SyncEngine {
             await withCheckedContinuation { writeWaiters.append($0) }
         }
         continuation.finish()
+        mailNotificationContinuation.finish()
     }
 
     /// Every engine write goes through here, so nothing lands after `stop()`.
@@ -407,7 +414,10 @@ public actor SyncEngine {
                 try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
                 return []
             }
-            guard !remaining.isEmpty else { return }
+            guard !remaining.isEmpty else {
+                await publishMailNotification(from: nil, to: historyID)
+                return
+            }
             wanted = remaining.sorted()
         }
     }
@@ -462,6 +472,7 @@ public actor SyncEngine {
             try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
             try tx.rebuildThreads(threads, accountID: accountID)
         }
+        await publishMailNotification(from: cursor, to: latest, added: MailSyncNotification.addedMessageHistory(records))
         return !records.isEmpty
     }
 
@@ -554,7 +565,7 @@ public actor SyncEngine {
 
     /// Fetches bodies the cache lacks for a thread the user opened, and marks
     /// the thread read.
-    public func openThread(_ threadID: String) async throws {
+    public func openThread(_ threadID: String, markRead: Bool = true) async throws {
         if isStopped || Task.isCancelled { throw CancellationError() }
         let accountID = accountID
         let deleted = deletedMessageIDs
@@ -562,7 +573,8 @@ public actor SyncEngine {
         let opened = try await write { tx in
             let missing = try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)
             let versions = Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) })
-            if try tx.thread(id: threadID, accountID: accountID)?.isUnread == true {
+            try tx.markThreadOpened(threadID: threadID, accountID: accountID, at: openedAt)
+            if markRead, try tx.thread(id: threadID, accountID: accountID)?.isUnread == true {
                 // Reading state and recording mark-read are one transaction, so
                 // a user command cannot land between them and be overwritten.
                 _ = try tx.enqueue(
@@ -594,6 +606,7 @@ public actor SyncEngine {
         var updates: [CacheTransaction.MessageUpdate] = []
         var bodies: [MessageBodyRecord] = []
         var calendars: [MessageCalendarRecord] = []
+        var resources: [String: [MIMEInlineResourceRecord]] = [:]
         var attachments: [String: [AttachmentRecord]] = [:]
         guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
         for message in messages {
@@ -614,18 +627,28 @@ public actor SyncEngine {
                 bodyParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
             bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: bodyParts))
+            do { resources[message.id] = try await inlineResources(in: message) }
+            catch is CancellationError { throw CancellationError() }
+            catch {
+                // A missing optional picture must not hide the readable body.
+                // Clear stale bytes; the next explicit calendar/body refresh retries.
+                resources[message.id] = []
+            }
             if let invitation = CalendarParts.invitation(in: message, attachments: bodyParts) {
                 calendars.append(MessageCalendarRecord(accountID: accountID, messageID: message.id, invitation: invitation))
             }
             attachments[message.id] = Mapping.attachments(message, accountID: accountID)
         }
-        try await write { [updates, bodies, calendars, attachments] tx in
+        try await write { [updates, bodies, calendars, attachments, resources] tx in
             // Decide inside the same serialized write as ingestion, so a delete
             // committed while this request was awaiting cannot be overwritten.
             let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
             let liveIDs = Set(live.map(\.record.id))
             let threads = try tx.upsertMessages(live)
             try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) }, calendars: calendars)
+            for (messageID, records) in resources where liveIDs.contains(messageID) {
+                try tx.replaceMIMEResources(records, messageID: messageID, accountID: accountID)
+            }
             for (messageID, records) in attachments where liveIDs.contains(messageID) {
                 try tx.replaceAttachments(records, messageID: messageID, accountID: accountID)
             }

@@ -53,11 +53,14 @@ extension SyncEngine {
                 firstError = firstError ?? error
             }
         }
+        do { try await syncContactGroups() }
+        catch is CancellationError { throw CancellationError() }
+        catch { firstError = firstError ?? error }
         if let firstError { throw firstError }
     }
 
     /// Off without a config store.
-    private func contactsAreOn() async throws -> Bool {
+    func contactsAreOn() async throws -> Bool {
         guard let accounts else { return false }
         let accountID = accountID
         guard let account = try await accounts.accounts().first(where: { $0.id == accountID }) else { return false }
@@ -116,7 +119,7 @@ extension SyncEngine {
     private func applyContacts(_ sync: ContactSync, source: ContactSource, isFullSync: Bool) async throws {
         let (accountID, now) = (accountID, now())
         try await write { tx in
-            try tx.applyContactSync(
+            try tx.applyEnrichedContactSync(
                 sync.people, source: source, syncToken: sync.syncToken, fields: PeopleClient.fields,
                 isFullSync: isFullSync, now: now, accountID: accountID
             )

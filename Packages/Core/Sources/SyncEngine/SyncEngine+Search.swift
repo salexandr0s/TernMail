@@ -8,6 +8,14 @@ public struct GmailResultPage: Sendable, Equatable {
     public let threadIDs: [String]
     /// Nil on the last page.
     public let nextPageToken: String?
+    /// Exact matches when the message-mode endpoint was used.
+    public let messageIDs: [String]
+
+    public init(threadIDs: [String], nextPageToken: String?, messageIDs: [String] = []) {
+        self.threadIDs = threadIDs
+        self.nextPageToken = nextPageToken
+        self.messageIDs = messageIDs
+    }
 }
 
 extension SyncEngine {
@@ -22,6 +30,43 @@ extension SyncEngine {
             query: query.gmailQuery(timeZone: timeZone), labelIDs: [],
             includeSpamTrash: query.includesSpamAndTrash, pageToken: pageToken
         )
+    }
+
+    /// Message mode must ask messages.list: threads.list does not identify
+    /// which sibling matched a Gmail-only operator.
+    public func searchGmailMessages(_ query: SearchQuery, timeZone: TimeZone, pageToken: String? = nil) async throws -> GmailResultPage {
+        guard !isStopped, !Task.isCancelled else { throw CancellationError() }
+        guard query.root != nil else { return GmailResultPage(threadIDs: [], nextPageToken: nil) }
+        let page = try await gmail.listMessages(query: query.gmailQuery(timeZone: timeZone), labelIDs: [],
+            includeSpamTrash: query.includesSpamAndTrash, pageToken: pageToken, maxResults: Self.resultPageSize)
+        var references: [String: String] = [:]
+        var ids: [String] = []
+        for reference in page.messages ?? [] {
+            if let previous = references[reference.id] {
+                guard previous == reference.threadId else { throw GmailError.decoding("Search result identity") }
+            } else {
+                references[reference.id] = reference.threadId
+                ids.append(reference.id)
+            }
+        }
+        let (updates, _) = try await fetchMetadata(ids)
+        for update in updates {
+            guard references[update.record.id] == update.record.threadID else { throw GmailError.decoding("Search result thread identity") }
+        }
+        let accountID = accountID
+        let deleted = deletedMessageIDs
+        let expires = now().addingTimeInterval(CacheHolds.searchLifetime)
+        let live = try await write { tx -> [CacheTransaction.MessageUpdate] in
+            let live = deleted.withLock { gone in updates.filter { !gone.contains($0.record.id) } }
+            let threads = try tx.upsertMessages(live)
+            try tx.holdSearchResults(Set(live.map(\.record.threadID)), until: expires, accountID: accountID)
+            try tx.rebuildThreads(threads, accountID: accountID)
+            return live
+        }
+        let found = Set(live.map(\.record.id))
+        var seenThreads = Set<String>()
+        return GmailResultPage(threadIDs: live.map(\.record.threadID).filter { seenThreads.insert($0).inserted },
+            nextPageToken: page.nextPageToken, messageIDs: ids.filter { found.contains($0) })
     }
 
     /// One page of a label's conversations for "Load older conversations",

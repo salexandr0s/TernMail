@@ -146,8 +146,13 @@ extension SyncEngine {
                 } else if let target = Self.unlistedMatch(for: filter, in: try await settings.filters(), outside: listedIDs, except: nil) {
                     try await settings.deleteFilter(id: target)
                 }
-            case .replaceFilter(let oldID, let old, let new, var listedIDs, var newID):
+            case .replaceFilter(var oldID, let old, let new, var listedIDs, var newID):
                 let listed = try await settings.filters()
+                // A failed edit may have been compensated before explicit
+                // Retry. Re-resolve its old filter and recreate a removed new one.
+                if let expected = oldID, !listed.contains(where: { $0.id == expected }),
+                   let restored = listed.first(where: { $0.hasSameRules(as: old) })?.id { oldID = restored }
+                if let expected = newID, !listed.contains(where: { $0.id == expected && $0.hasSameRules(as: new) }) { newID = nil }
                 if listedIDs == nil {
                     listedIDs = Self.ids(of: listed)
                     let change = PendingAction.SettingsChange.replaceFilter(
@@ -262,7 +267,7 @@ extension SyncEngine {
         let now = now()
         let reported = try? await write { [row] tx -> Bool in
             if try tx.deleteActionIfUndone(id: id) { return false }
-            try tx.deleteAction(id: id)
+            try tx.retainFailedAction(row, message: Self.refusalMessage(for: row.kind, error: error))
             if case .replaceFilter(_?, _, _, _, _?) = row.settingsChange {
                 try Self.enqueueSettingsInverse(of: row, accountID: accountID, now: now, in: tx)
             }
