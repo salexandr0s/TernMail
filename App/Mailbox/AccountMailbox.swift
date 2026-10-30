@@ -1,6 +1,7 @@
 import Accessibility
 import AppKit
 import Foundation
+import GmailAPI
 import MailStore
 import MessageContent
 import Observation
@@ -49,16 +50,19 @@ final class AccountMailbox {
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
 
     /// `outgoingDirectory` holds copies of the files attached to drafts.
-    /// `snoozeStore` keeps the durable copy of snoozes; without it the
-    /// account can't snooze.
+    /// `snoozeStore` keeps snoozes, identities and feature settings. Without
+    /// it, snoozes, identity refresh and contact sync are unavailable.
     init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL, snoozeStore: AccountStore?) {
         self.account = account
         self.cache = cache
+        let people = (gmail as? GmailClient).map { PeopleClient(session: $0.session) }
         let engine = SyncEngine(
             accountID: account.id,
             sender: EmailAddress(name: account.displayName, address: account.email),
             outgoingDirectory: outgoingDirectory,
             gmail: gmail,
+            people: people,
+            accounts: snoozeStore,
             cache: cache
         )
         self.engine = engine

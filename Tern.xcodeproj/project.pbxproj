@@ -48,6 +48,7 @@
 		92B0E8BF0444B82243348870 /* LabelAppearanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9EEDB8790E068A6F2E388A7 /* LabelAppearanceTests.swift */; };
 		9C833D67144E414955B2C340 /* AttachmentStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CAD881F5F6678BF14AC6CB /* AttachmentStrip.swift */; };
 		9EAA024E551B7BF6C214D189 /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57378F029EEBF791E78C1170 /* ComposeView.swift */; };
+		A11BB8859B1D4AA8D514F5A4 /* AccountMailboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C7A830FA6D99D8E2F24A35 /* AccountMailboxTests.swift */; };
 		A2DFB3214AD23A2BE8631B27 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5497ADD358BEE4C53246A55C /* SignInView.swift */; };
 		A8AFB9E113C6221DE2AD9B5A /* SplitDividerHandleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E6D21BDB509E55DA8AAE960 /* SplitDividerHandleTests.swift */; };
 		AB23A5C1FBDAB6AA9E34EBB0 /* LabelNodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBCB6C2893A66D630A93636 /* LabelNodeTests.swift */; };
@@ -135,6 +136,7 @@
 		CA71DE49E2223C4232B67FAF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientField.swift; sourceTree = "<group>"; };
+		D8C7A830FA6D99D8E2F24A35 /* AccountMailboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMailboxTests.swift; sourceTree = "<group>"; };
 		EBC065B40FE60E04F167878A /* AccountProfileImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileImages.swift; sourceTree = "<group>"; };
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
 		F07C7F388D831253FD5749C5 /* NoticeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeView.swift; sourceTree = "<group>"; };
@@ -234,6 +236,7 @@
 			isa = PBXGroup;
 			children = (
 				F26AC6637A997765EF353150 /* AccountAppearanceTests.swift */,
+				D8C7A830FA6D99D8E2F24A35 /* AccountMailboxTests.swift */,
 				3BE2ACE54F3ADDBC509D9753 /* AccountProfileImagesTests.swift */,
 				75208BBDBE50C9B3B595EAB3 /* AttributedDocumentTests.swift */,
 				C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */,
@@ -450,6 +453,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DED9A870584DC9B63B5634B4 /* AccountAppearanceTests.swift in Sources */,
+				A11BB8859B1D4AA8D514F5A4 /* AccountMailboxTests.swift in Sources */,
 				1E91F99C60039185B4A78181 /* AccountProfileImagesTests.swift in Sources */,
 				8255B9F75B67AADEF7854A07 /* AttributedDocumentTests.swift in Sources */,
 				38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */,

@@ -9,7 +9,7 @@ public struct GmailClient: Sendable {
     /// `messages.batchModify` accepts at most 1,000 IDs.
     static let batchModifyLimit = 1000
 
-    private let session: GoogleSession
+    public let session: GoogleSession
     private let retryDelays: [Duration]
 
     /// - Parameter retryDelays: Waits before resending `/batch` parts that failed
