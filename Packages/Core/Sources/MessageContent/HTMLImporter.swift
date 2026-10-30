@@ -16,15 +16,25 @@ public enum HTMLImporter {
     }
 
     /// - Parameter detachingQuote: False keeps the quote as ordinary text.
-    public static func importHTML(_ html: String, detachingQuote: Bool = true) -> Result {
+    public static func importHTML(_ html: String, detachingQuote: Bool = true, preservingInlineImages: Bool = false) -> Result {
         guard let document = try? SwiftSoup.parse(html), let body = document.body() else {
             return Result(document: ComposeDocument(plainText: html), quotedTail: nil, droppedFormatting: true)
         }
         let quotedTail = detachingQuote ? (try? detachQuote(from: body)) ?? nil : nil
-        var walker = Walker()
+        var walker = Walker(preservingInlineImages: preservingInlineImages)
         walker.walk(body)
         walker.endBlock()
         return Result(document: ComposeDocument(blocks: walker.blocks), quotedTail: quotedTail, droppedFormatting: walker.dropped)
+    }
+
+    public static func inlineImageContentIDs(in html: String) -> Set<String> {
+        guard let document = try? SwiftSoup.parse(html), let images = try? document.select("img[src]") else { return [] }
+        return Set(images.array().compactMap { image in
+            guard let source = try? image.attr("src"), source.lowercased().hasPrefix("cid:"),
+                  let cid = String(source.dropFirst(4)).removingPercentEncoding,
+                  InlineImageReference(contentID: cid).isValid else { return nil }
+            return cid
+        })
     }
 
     /// Removes the first `gmail_quote` element and its later siblings, and
@@ -56,12 +66,17 @@ public enum HTMLImporter {
     }
 
     private struct Walker {
+        var preservingInlineImages = false
         var blocks: [ComposeDocument.Block] = []
         var dropped = false
         private var runs: [ComposeDocument.Run] = []
         private var style = Style()
         private var lists: [ComposeDocument.BlockKind] = []
         private var listItem: ComposeDocument.BlockKind?
+
+        init(preservingInlineImages: Bool = false) {
+            self.preservingInlineImages = preservingInlineImages
+        }
 
         private static let ignored: Set<String> = [
             "script", "style", "head", "title", "template", "noscript", "iframe", "object", "embed", "svg", "math",
@@ -82,6 +97,10 @@ public enum HTMLImporter {
             }
             guard let element = node as? Element else { return }
             let tag = element.tagName().lowercased()
+            if preservingInlineImages, tag == "img", let source = try? element.attr("src"), source.lowercased().hasPrefix("cid:") {
+                let reference = InlineImageReference(contentID: String(source.dropFirst(4)).removingPercentEncoding ?? "", altText: (try? element.attr("alt")) ?? "")
+                if reference.isValid { runs.append(.init("", image: reference)); return }
+            }
             if Self.ignored.contains(tag) {
                 if tag == "svg" || tag == "math" { dropped = true }
                 return
@@ -176,7 +195,7 @@ public enum HTMLImporter {
                 }
             }
             guard !text.isEmpty else { return }
-            if var last = runs.last, last.bold == style.bold, last.italic == style.italic,
+            if var last = runs.last, last.image == nil, last.bold == style.bold, last.italic == style.italic,
                last.underline == style.underline, last.link == style.link {
                 last.text += text
                 runs[runs.count - 1] = last

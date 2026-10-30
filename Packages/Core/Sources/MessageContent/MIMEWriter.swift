@@ -6,11 +6,13 @@ public struct MIMEMessage: Sendable, Equatable {
         public var filename: String
         public var mimeType: String
         public var data: Data
+        public var contentID: String?
 
-        public init(filename: String, mimeType: String, data: Data) {
+        public init(filename: String, mimeType: String, data: Data, contentID: String? = nil) {
             self.filename = filename
             self.mimeType = mimeType
             self.data = data
+            self.contentID = contentID
         }
     }
 
@@ -108,11 +110,16 @@ enum MIMEWriter {
     static func body(of message: MIMEMessage) -> Entity {
         let plain = textEntity(message.plainText, subtype: "plain")
         var alternatives = [plain]
-        if let html = message.html { alternatives.append(textEntity(html, subtype: "html")) }
+        let inline = message.html == nil ? [] : message.attachments.filter { validContentID($0.contentID) != nil }
+        if let html = message.html {
+            let entity = textEntity(html, subtype: "html")
+            alternatives.append(inline.isEmpty ? entity : multipart("related", [entity] + inline.map(attachmentEntity)))
+        }
         if let calendar = message.calendarPart { alternatives.append(calendarEntity(calendar)) }
         let main = alternatives.count == 1 ? plain : multipart("alternative", alternatives)
-        guard !message.attachments.isEmpty else { return main }
-        return multipart("mixed", [main] + message.attachments.map(attachmentEntity))
+        let ordinary = message.attachments.filter { message.html == nil || validContentID($0.contentID) == nil }
+        guard !ordinary.isEmpty else { return main }
+        return multipart("mixed", [main] + ordinary.map(attachmentEntity))
     }
 
     private static func textEntity(_ text: String, subtype: String) -> Entity {
@@ -153,7 +160,8 @@ enum MIMEWriter {
         let isASCII = filename.allSatisfy(\.isASCII)
         // The Content-Type name is for older clients; RFC 2231 names are the standard.
         let name = isASCII ? quoted(filename) : "\"\(encodedWords(filename).joined(separator: " "))\""
-        var disposition = "Content-Disposition: attachment;"
+        let contentID = validContentID(attachment.contentID)
+        var disposition = "Content-Disposition: \(contentID == nil ? "attachment" : "inline");"
         if isASCII {
             disposition += "\r\n filename=\(quoted(filename))"
         } else {
@@ -169,9 +177,14 @@ enum MIMEWriter {
                 "Content-Type: \(mimeType(attachment.mimeType));\r\n name=\(name)",
                 disposition,
                 "Content-Transfer-Encoding: base64",
-            ],
+            ] + (contentID.map { ["Content-ID: <\($0)>"] } ?? []),
             content: attachment.data.base64EncodedString(options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed])
         )
+    }
+
+    private static func validContentID(_ value: String?) -> String? {
+        guard let value, InlineImageReference(contentID: value).isValid else { return nil }
+        return value
     }
 
     // MARK: Headers

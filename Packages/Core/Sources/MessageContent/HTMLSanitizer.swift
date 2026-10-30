@@ -24,7 +24,7 @@ enum HTMLSanitizer {
     private static let svgReferenceElements: Set<String> = ["image", "use", "feimage"]
 
     /// Cleans `document` in place and returns how many remote loads it removed.
-    static func clean(_ document: Document, keepingRemoteLoads: Bool = false) throws -> Int {
+    static func clean(_ document: Document, keepingRemoteLoads: Bool = false, policy: MessageRenderPolicy? = nil) throws -> Int {
         var blocked = 0
         for element in try document.select(removedElements) {
             if element.tagName() == "link", try !element.attr("href").isEmpty { blocked += 1 }
@@ -53,12 +53,12 @@ enum HTMLSanitizer {
             }
         }
         for element in try document.getAllElements() {
-            blocked += try cleanAttributes(of: element, keepingRemoteLoads: keepingRemoteLoads)
+            blocked += try cleanAttributes(of: element, keepingRemoteLoads: keepingRemoteLoads, policy: policy)
         }
         return blocked
     }
 
-    private static func cleanAttributes(of element: Element, keepingRemoteLoads: Bool) throws -> Int {
+    private static func cleanAttributes(of element: Element, keepingRemoteLoads: Bool, policy: MessageRenderPolicy?) throws -> Int {
         guard let attributes = element.getAttributes()?.asList(), !attributes.isEmpty else { return 0 }
         let tag = element.tagName().lowercased()
         var loadsRemote = false
@@ -82,6 +82,11 @@ enum HTMLSanitizer {
                 }
             } else if loadingAttributes.contains(name)
                 || (svgReferenceElements.contains(tag) && (name == "href" || name == "xlink:href")) {
+                if tag == "img", name == "src", let policy, let url = URL(string: value) {
+                    if policy.inlineResources.resource(for: url) != nil { continue }
+                    if policy.allowsRemoteImages, url.scheme?.lowercased() == "https", url.host != nil,
+                       !TrackerMatcher.isTrackingImage(url: url, width: try? element.attr("width"), height: try? element.attr("height"), style: try? element.attr("style")) { continue }
+                }
                 if name != "srcset", isInline(value) { continue }
                 if tag == "img", name == "src" {
                     try element.attr("data-blocked-src", value)

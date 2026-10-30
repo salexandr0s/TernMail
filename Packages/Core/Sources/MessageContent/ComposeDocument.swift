@@ -10,13 +10,16 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
         public var underline: Bool
         /// Only http, https and mailto links survive output.
         public var link: URL?
+        public var image: InlineImageReference?
 
-        public init(_ text: String, bold: Bool = false, italic: Bool = false, underline: Bool = false, link: URL? = nil) {
+        public init(_ text: String, bold: Bool = false, italic: Bool = false, underline: Bool = false, link: URL? = nil,
+                    image: InlineImageReference? = nil) {
             self.text = text
             self.bold = bold
             self.italic = italic
             self.underline = underline
             self.link = link
+            self.image = image
         }
     }
 
@@ -52,7 +55,7 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
     }
 
     public var isEmpty: Bool {
-        blocks.allSatisfy { $0.text.allSatisfy(\.isWhitespace) }
+        blocks.allSatisfy { $0.text.allSatisfy(\.isWhitespace) && $0.runs.allSatisfy { $0.image == nil } }
     }
 
     // MARK: Output
@@ -97,6 +100,7 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
         var counters: [Int] = []
         for block in blocks {
             let text = block.runs.map { run in
+                if let image = run.image { return image.altText.isEmpty ? "[Image]" : image.altText }
                 guard let link = Self.safeLink(run.link) else { return run.text }
                 let address = link.scheme?.lowercased() == "mailto" ? String(link.absoluteString.dropFirst("mailto:".count)) : link.absoluteString
                 return run.text == address || run.text == link.absoluteString ? run.text : "\(run.text) <\(address)>"
@@ -119,8 +123,11 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
     }
 
     private static func html(_ runs: [Run]) -> String {
-        guard runs.contains(where: { !$0.text.isEmpty }) else { return "<br>" }
+        guard runs.contains(where: { !$0.text.isEmpty || $0.image != nil }) else { return "<br>" }
         return runs.map { run in
+            if let image = run.image, image.isValid {
+                return "<img src=\"cid:\(MessageDocument.escaped(image.contentID))\" alt=\"\(MessageDocument.escaped(image.altText))\">"
+            }
             var text = MessageDocument.escaped(run.text).replacingOccurrences(of: "\n", with: "<br>")
             if run.underline { text = "<u>\(text)</u>" }
             if run.italic { text = "<i>\(text)</i>" }

@@ -7,17 +7,19 @@ public struct RenderedMessage: Sendable, Equatable {
     public let html: String
     /// Remote images, stylesheets and other loads that were removed.
     public let blockedRemoteContent: Int
+    public var blockedTrackers: Int = 0
+    public var hasAuthoredDarkStyles: Bool = false
 }
 
 public enum MessageDocument {
     /// Only inline images, inline styles and embedded fonts may load.
     public static let contentSecurityPolicy =
-        "default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'; font-src data:"
+        "default-src 'none'; img-src data: tern-message:; style-src 'unsafe-inline'; font-src data:"
 
     /// Prefers the HTML part and falls back to plain text.
-    public static func render(_ body: ExtractedBody) -> RenderedMessage? {
-        if let html = body.html { return render(html: html) }
-        if let plainText = body.plainText { return render(plainText: plainText) }
+    public static func render(_ body: ExtractedBody, policy: MessageRenderPolicy = .init()) -> RenderedMessage? {
+        if let html = body.html { return render(html: html, policy: policy) }
+        if let plainText = body.plainText { return render(plainText: plainText, policy: policy) }
         return nil
     }
 
@@ -30,22 +32,38 @@ public enum MessageDocument {
         return render(plainText: text ?? html)
     }
 
-    public static func render(html: String) -> RenderedMessage {
+    public static func render(html: String, policy: MessageRenderPolicy = .init()) -> RenderedMessage {
         do {
             let document = try SwiftSoup.parse(html)
-            let blocked = try HTMLSanitizer.clean(document)
+            let authoredDark = try document.select("style").contains { $0.data().lowercased().contains("prefers-color-scheme") }
+            var trackers = 0
+            for image in try document.select("img[src]") {
+                let source = try image.attr("src").trimmingCharacters(in: .whitespacesAndNewlines)
+                if source.lowercased().hasPrefix("cid:") {
+                    let cid = String(source.dropFirst(4)).removingPercentEncoding ?? String(source.dropFirst(4))
+                    if let url = policy.inlineResources.url(for: cid) { try image.attr("src", url.absoluteString) }
+                    else { try image.removeAttr("src") }
+                } else if let url = URL(string: source), TrackerMatcher.isTrackingImage(url: url,
+                    width: try? image.attr("width"), height: try? image.attr("height"), style: try? image.attr("style")) {
+                    try image.removeAttr("src")
+                    try image.removeAttr("srcset")
+                    trackers += 1
+                }
+            }
+            let blocked = try HTMLSanitizer.clean(document, policy: policy)
             guard let head = document.head() else { return render(plainText: html) }
-            try head.prepend(headMarkup(style: htmlStyle))
+            try head.prepend(headMarkup(style: htmlStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))
             document.outputSettings().prettyPrint(pretty: false)
-            return RenderedMessage(html: try document.outerHtml(), blockedRemoteContent: blocked)
+            return RenderedMessage(html: try document.outerHtml(), blockedRemoteContent: blocked,
+                blockedTrackers: trackers, hasAuthoredDarkStyles: authoredDark)
         } catch {
             // Showing the escaped source is safe; showing nothing would hide the mail.
             return render(plainText: html)
         }
     }
 
-    public static func render(plainText: String) -> RenderedMessage {
-        let page = "<!doctype html><html><head>\(headMarkup(style: plainTextStyle))</head>"
+    public static func render(plainText: String, policy: MessageRenderPolicy = .init()) -> RenderedMessage {
+        let page = "<!doctype html><html><head>\(headMarkup(style: plainTextStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))</head>"
             + "<body><div class=\"tern-plain\">\(linkified(plainText))</div></body></html>"
         return RenderedMessage(html: page, blockedRemoteContent: 0)
     }
@@ -68,9 +86,9 @@ public enum MessageDocument {
         .tern-plain{white-space:pre-wrap;overflow-wrap:anywhere}
         """
 
-    private static func headMarkup(style: String) -> String {
+    private static func headMarkup(style: String, policy: MessageRenderPolicy = .init()) -> String {
         "<meta charset=\"utf-8\">"
-            + "<meta http-equiv=\"Content-Security-Policy\" content=\"\(contentSecurityPolicy)\">"
+            + "<meta http-equiv=\"Content-Security-Policy\" content=\"\(policy.contentSecurityPolicy)\">"
             + "<style>\(style)</style>"
     }
 
