@@ -32,16 +32,22 @@ extension CacheTransaction {
 
     /// Conversations with a hold of any reason, expired or not.
     public func heldThreadIDs(accountID: String) throws -> Set<String> {
-        try String.fetchSet(db, sql: "SELECT DISTINCT threadID FROM cacheHold WHERE accountID = ?", arguments: [accountID])
+        try String.fetchSet(db, sql: """
+            SELECT threadID FROM cacheHold WHERE accountID = ?
+            UNION SELECT threadID FROM messageSnoozeHold WHERE accountID = ?
+            """, arguments: [accountID, accountID])
     }
 
-    /// Cached messages in held conversations, which full sync's prune keeps.
+    /// Cached messages in held conversations and newest invitation versions, which full sync's prune keeps.
     public func messageIDsInHeldThreads(accountID: String) throws -> Set<String> {
-        try String.fetchSet(db, sql: """
+        var protected = try String.fetchSet(db, sql: """
             SELECT message.id FROM message
             JOIN cacheHold ON cacheHold.accountID = message.accountID AND cacheHold.threadID = message.threadID
             WHERE message.accountID = ?
-            """, arguments: [accountID])
+            UNION SELECT messageID FROM messageSnoozeHold WHERE accountID = ?
+            """, arguments: [accountID, accountID])
+        protected.formUnion(try newestInvitationSources(accountID: accountID).map(\.messageID))
+        return protected
     }
 
     /// Ends search holds that expired by `now`, except for conversations in
@@ -88,6 +94,7 @@ extension CacheTransaction {
             """, arguments: [accountID] + StatementArguments(threadIDs) + [recent, SystemLabel.inbox, SystemLabel.draft])
 
         kept.formUnion(try heldThreadIDs(accountID: accountID))
+        kept.formUnion(try newestInvitationSources(accountID: accountID).map(\.thread.threadID))
         kept.formUnion(try String.fetchSet(db, sql: """
             SELECT threadID FROM localDraft WHERE accountID = ? AND threadID IS NOT NULL
             UNION

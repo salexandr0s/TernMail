@@ -58,7 +58,7 @@ public enum LabelRules {
     /// reached Gmail can't undo it.
     static func displayed(_ labels: [LabelRecord], applying rows: [PendingAction]) -> [LabelRecord] {
         var result = labels
-        for row in rows where row.kind.changesLabel {
+        for row in rows where row.kind.changesLabel && row.state != .failed {
             guard let id = row.labelID, let change = row.labelChange else { continue }
             let index = result.firstIndex { $0.id == id }
             switch row.kind {
@@ -70,6 +70,7 @@ public enum LabelRules {
             case .updateLabel:
                 guard let index else { continue }
                 if let name = change.newName { result[index].name = name }
+                if let visibility = change.newVisibility { result[index].labelListVisibility = visibility.rawValue }
                 apply(change.newColor, to: &result[index])
             case .deleteLabel:
                 result.removeAll { $0.id == id }
@@ -143,7 +144,7 @@ extension CacheTransaction {
         let swap = { (id: String) in id == temporaryID ? realID : id }
         var changed: [PendingAction] = []
         var threads = Set<String>()
-        for var row in try pendingActions(accountID: accountID) {
+        for var row in try allActions(accountID: accountID) {
             let before = row
             row.labelID = row.labelID.map(swap)
             if var change = row.labelChange {

@@ -13,11 +13,16 @@ public struct DraftContent: Sendable, Equatable {
     public var fromAddress: String?
     /// The From address's signature as inserted, kept if the identity changes later.
     public var signatureHTML: String?
+    public var composeFont: ComposeFont
+    public var signatureAboveQuote: Bool
+    public var signatureSeparator: Bool
+    public var archiveAfterSend: Bool
 
     public init(
         to: [EmailAddress] = [], cc: [EmailAddress] = [], bcc: [EmailAddress] = [],
         subject: String = "", body: ComposeDocument = ComposeDocument(),
-        fromAddress: String? = nil, signatureHTML: String? = nil
+        fromAddress: String? = nil, signatureHTML: String? = nil, composeFont: ComposeFont = .sansSerif,
+        signatureAboveQuote: Bool = true, signatureSeparator: Bool = false, archiveAfterSend: Bool = false
     ) {
         self.to = to
         self.cc = cc
@@ -26,6 +31,10 @@ public struct DraftContent: Sendable, Equatable {
         self.body = body
         self.fromAddress = fromAddress
         self.signatureHTML = signatureHTML
+        self.composeFont = composeFont
+        self.signatureAboveQuote = signatureAboveQuote
+        self.signatureSeparator = signatureSeparator
+        self.archiveAfterSend = archiveAfterSend
     }
 }
 
@@ -67,6 +76,10 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     public var body: ComposeDocument
     public var fromAddress: String?
     public var signatureHTML: String?
+    public var composeFont: ComposeFont
+    public var signatureAboveQuote: Bool
+    public var signatureSeparator: Bool
+    public var archiveAfterSend: Bool
     /// For an invitation reply, the `text/calendar` REPLY it sends.
     public var calendarPart: String?
     /// The quoted original, or an imported draft's quote, sent unchanged after the new text.
@@ -96,6 +109,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         case id, accountID, gmailDraftID, savedMessageID, threadID, kind, sourceMessageID
         case to = "toAddresses", cc = "ccAddresses", bcc = "bccAddresses"
         case subject, body, fromAddress, signatureHTML, calendarPart, quotedHTML, quotedPlainText, rfcMessageID, inReplyTo
+        case composeFont, signatureAboveQuote, signatureSeparator, archiveAfterSend
         case references = "referencesHeader"
         case revision, savedRevision, state, sendError, hasUnrecordedUpload, sendRequested, createdAt, updatedAt
     }
@@ -131,6 +145,10 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         body = content.body
         fromAddress = content.fromAddress
         signatureHTML = content.signatureHTML
+        composeFont = content.composeFont
+        signatureAboveQuote = content.signatureAboveQuote
+        signatureSeparator = content.signatureSeparator
+        archiveAfterSend = content.archiveAfterSend
         self.calendarPart = calendarPart
         self.quotedHTML = quotedHTML
         self.quotedPlainText = quotedPlainText
@@ -151,7 +169,8 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         get {
             DraftContent(
                 to: to, cc: cc, bcc: bcc, subject: subject, body: body,
-                fromAddress: fromAddress, signatureHTML: signatureHTML
+                fromAddress: fromAddress, signatureHTML: signatureHTML, composeFont: composeFont,
+                signatureAboveQuote: signatureAboveQuote, signatureSeparator: signatureSeparator, archiveAfterSend: archiveAfterSend
             )
         }
         set {
@@ -162,6 +181,10 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
             body = newValue.body
             fromAddress = newValue.fromAddress
             signatureHTML = newValue.signatureHTML
+            composeFont = newValue.composeFont
+            signatureAboveQuote = newValue.signatureAboveQuote
+            signatureSeparator = newValue.signatureSeparator
+            archiveAfterSend = newValue.archiveAfterSend
         }
     }
 
@@ -179,13 +202,16 @@ public struct OutgoingAttachment: Codable, Sendable, Equatable, Identifiable, Fe
     public var size: Int
     /// Relative to the `Outgoing` folder.
     public var path: String
+    /// Nil for ordinary attachments; stable across saves/retries for inline images.
+    public var contentID: String?
 
-    public init(localDraftID: String, filename: String, mimeType: String, size: Int, path: String) {
+    public init(localDraftID: String, filename: String, mimeType: String, size: Int, path: String, contentID: String? = nil) {
         self.localDraftID = localDraftID
         self.filename = filename
         self.mimeType = mimeType
         self.size = size
         self.path = path
+        self.contentID = contentID
     }
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -386,7 +412,8 @@ extension CacheTransaction {
 
     /// The queue rows for one local draft, oldest first.
     public func composeRows(localDraftID: String) throws -> [PendingAction] {
-        try PendingAction.filter(Column("localDraftID") == localDraftID).order(Column("id")).fetchAll(db)
+        try PendingAction.filter(Column("localDraftID") == localDraftID && Column("state") != PendingAction.State.failed.rawValue)
+            .order(Column("id")).fetchAll(db)
     }
 
     /// Queues a save, first storing `content` when given. Returns nil when a
@@ -442,6 +469,9 @@ extension CacheTransaction {
         else { return false }
         _ = try row.delete(db)
         try returnToEditing(localDraftID: localDraftID)
+        if kind == .sendDraft {
+            try db.execute(sql: "UPDATE localDraft SET archiveAfterSend = 0 WHERE id = ?", arguments: [localDraftID])
+        }
         return true
     }
 

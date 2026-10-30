@@ -54,7 +54,7 @@ public struct CacheTransaction {
     private static let accountTables = [
         "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
-        "contactEmail", "contact", "contactSync", "invitationReply",
+        "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold",
         "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
     ]
 
@@ -287,7 +287,8 @@ public struct CacheTransaction {
         var alreadyTrashed: [String] = []
         for threadID in affectedThreads {
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: existing)
-            let targets = kind == .modifyMessages ? messageIDs.filter { labels[$0] != nil } : Array(labels.keys)
+            let messageScoped = [.modifyMessages, .trashMessages, .untrashMessages, .deleteMessages].contains(kind)
+            let targets = messageScoped ? messageIDs.filter { labels[$0] != nil } : Array(labels.keys)
             for messageID in targets {
                 let current = labels[messageID] ?? []
                 if kind == .trashThreads, current.contains(SystemLabel.trash) { alreadyTrashed.append(messageID) }
@@ -330,6 +331,11 @@ public struct CacheTransaction {
     }
 
     public func pendingActions(accountID: String) throws -> [PendingAction] {
+        try PendingAction.filter(Column("accountID") == accountID && Column("state") != PendingAction.State.failed.rawValue)
+            .order(Column("id")).fetchAll(db)
+    }
+
+    public func allActions(accountID: String) throws -> [PendingAction] {
         try PendingAction.filter(Column("accountID") == accountID).order(Column("id")).fetchAll(db)
     }
 
@@ -389,8 +395,9 @@ public struct CacheTransaction {
             return (own, parent)
         }
         let threads = try threadIDs(of: action).map { "thread:" + $0 }
+        let messages = Set(action.messageIDs).union(action.diff.keys).map { "message:" + $0 }
         let labels = (action.addLabelIDs + action.removeLabelIDs).map { "label:" + $0 }
-        return (Set(threads), Set(labels))
+        return (Set(threads + messages), Set(labels))
     }
 
     /// Recovers rows a quit or crash left mid-send. `sending` rows go back in
@@ -525,13 +532,15 @@ public struct CacheTransaction {
 enum ThreadRules {
     static func overlay(_ actions: [PendingAction], onto labels: inout [String: Set<String>], threadID: String) {
         var deleted = Set<String>()
-        for action in actions {
+        for action in actions where action.state != .failed && action.state != .undone {
             let targets: [String]
             switch action.kind {
             case .modifyThreads, .trashThreads, .untrashThreads:
                 targets = action.threadIDs.contains(threadID) ? Array(labels.keys) : []
-            case .modifyMessages:
+            case .modifyMessages, .trashMessages, .untrashMessages:
                 targets = action.messageIDs.filter { labels[$0] != nil }
+            case .deleteMessages:
+                targets = []
             case .deleteLabel:
                 deleted.formUnion(action.labelID.map { [$0] } ?? [])
                 targets = []

@@ -29,11 +29,15 @@ public struct LabelRecord: Codable, Sendable, Equatable, FetchableRecord, Persis
     public var backgroundColor: String?
     public var threadsTotal: Int?
     public var threadsUnread: Int?
+    public var labelListVisibility: String?
+    public var messagesTotal: Int?
+    public var messagesUnread: Int?
 
     public init(
         accountID: String, id: String, name: String, isSystem: Bool,
         textColor: String? = nil, backgroundColor: String? = nil,
-        threadsTotal: Int? = nil, threadsUnread: Int? = nil
+        threadsTotal: Int? = nil, threadsUnread: Int? = nil,
+        labelListVisibility: String? = nil, messagesTotal: Int? = nil, messagesUnread: Int? = nil
     ) {
         self.accountID = accountID
         self.id = id
@@ -43,6 +47,9 @@ public struct LabelRecord: Codable, Sendable, Equatable, FetchableRecord, Persis
         self.backgroundColor = backgroundColor
         self.threadsTotal = threadsTotal
         self.threadsUnread = threadsUnread
+        self.labelListVisibility = labelListVisibility
+        self.messagesTotal = messagesTotal
+        self.messagesUnread = messagesUnread
     }
 }
 
@@ -151,6 +158,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         case modifyThreads
         /// `messages.batchModify` on `messageIDs`.
         case modifyMessages
+        case trashMessages, untrashMessages
+        /// Confirmed exact IDs, confined to Spam or Trash by `labelID`.
+        case deleteMessages
         case trashThreads
         case untrashThreads
         /// Uploads a local draft's newest revision with `drafts.create` or `drafts.update`.
@@ -182,7 +192,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         /// or star.
         public var lane: Lane {
             switch self {
-            case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads: .labels
+            case .modifyThreads, .modifyMessages, .trashThreads, .untrashThreads,
+                 .trashMessages, .untrashMessages, .deleteMessages: .labels
             case .createLabel, .updateLabel, .deleteLabel: .labels
             case .saveDraft, .sendDraft, .discardDraft: .compose
             case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature: .settings
@@ -229,6 +240,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
         /// For a create Gmail refused because the label was there already:
         /// Tern took that label, so undo must leave it in Gmail.
         public var adoptedExisting: Bool?
+        public var newVisibility: LabelListVisibility?
+        public var oldVisibility: LabelListVisibility?
 
         public init(
             newName: String? = nil,
@@ -237,7 +250,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
             oldColor: Color? = nil,
             parentLabelID: String? = nil,
             deletedLabel: LabelRecord? = nil,
-            adoptedExisting: Bool? = nil
+            adoptedExisting: Bool? = nil,
+            newVisibility: LabelListVisibility? = nil,
+            oldVisibility: LabelListVisibility? = nil
         ) {
             self.newName = newName
             self.oldName = oldName
@@ -246,6 +261,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
             self.parentLabelID = parentLabelID
             self.deletedLabel = deletedLabel
             self.adoptedExisting = adoptedExisting
+            self.newVisibility = newVisibility
+            self.oldVisibility = oldVisibility
         }
     }
 
@@ -297,6 +314,8 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
 
     public enum State: String, Codable, Sendable {
         case queued, sending, sent
+        /// Retained for explicit Retry or Discard; never projected or claimed.
+        case failed
         /// Undone while its send was in flight. The sender deletes it once the
         /// request finishes, and the inverse goes out after it.
         case undone

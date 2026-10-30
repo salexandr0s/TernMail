@@ -1,0 +1,64 @@
+import Foundation
+import MessageContent
+import Testing
+@testable import MailStore
+
+@Suite struct MessageListEntryTests {
+    @Test func messageModeSearchKeepsLocalPrefixesAndExactServerMatchesWithoutSiblings() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            for id in ["match", "sibling"] {
+                let message = MessageRecord(accountID: "a", id: id, threadID: "thread", historyID: 1,
+                    date: Date(timeIntervalSince1970: 1), snippet: "", sender: "sender@example.com", recipients: "me@example.com",
+                    cc: nil, subject: id == "match" ? "Planning" : "Other", sizeEstimate: 1)
+                try tx.upsertMessages([.init(record: message, labelIDs: [SystemLabel.inbox])])
+            }
+            try tx.rebuildThreads(["thread"], accountID: "a")
+        }
+        var local = cache.messageListEntries(threadsByAccount: ["a": ["thread"]], matching: SearchQuery("plan")).makeAsyncIterator()
+        #expect(try await local.next()?.map(\.message.id) == ["match"])
+        var remote = cache.messageListEntries(threadsByAccount: ["a": ["thread"]], matching: SearchQuery("has:attachment"),
+            includingMessageIDs: ["a": ["sibling"], "b": ["match"]]).makeAsyncIterator()
+        #expect(try await remote.next()?.map(\.message.id) == ["sibling"])
+    }
+
+    @Test func messageRowsKeepAccountBoundariesAttachmentsAndExactPendingLabels() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            for account in ["a", "b"] {
+                for id in ["m1", "m2"] {
+                    let record = MessageRecord(accountID: account, id: id, threadID: "thread", historyID: 1,
+                        date: Date(timeIntervalSince1970: id == "m1" ? 1 : 2), snippet: "", sender: "sender@example.com",
+                        recipients: "me@example.com", cc: nil, subject: "Planning", sizeEstimate: 1)
+                    try tx.upsertMessages([.init(record: record, labelIDs: [SystemLabel.inbox, SystemLabel.unread])])
+                }
+                try tx.rebuildThreads(["thread"], accountID: account)
+            }
+            try tx.replaceAttachments([.init(accountID: "a", messageID: "m1", partID: "file", attachmentID: "remote",
+                filename: "notes.pdf", mimeType: "application/pdf", size: 20, isInline: false)], messageID: "m1", accountID: "a")
+            _ = try tx.enqueue(.modifyMessages, accountID: "a", messageIDs: ["m1"], remove: [SystemLabel.unread], now: .now, notBefore: .now)
+        }
+        var iterator = cache.messageListEntries(threadsByAccount: ["a": ["thread"]]).makeAsyncIterator()
+        let entries = try #require(try await iterator.next())
+        #expect(entries.count == 2)
+        #expect(entries.allSatisfy { $0.message.accountID == "a" })
+        #expect(entries.first(where: { $0.message.id == "m1" })?.rowThread.isUnread == false)
+        #expect(entries.first(where: { $0.message.id == "m2" })?.rowThread.isUnread == true)
+        #expect(entries.first(where: { $0.message.id == "m1" })?.attachments.first?.filename == "notes.pdf")
+        #expect(entries.first(where: { $0.message.id == "m2" })?.attachments.isEmpty == true)
+    }
+
+    @Test func navigationObservationSeesRenamingWithoutChangingRowCount() async throws {
+        let store = try AccountStore.inMemory()
+        var iterator = store.mailNavigationChanges().makeAsyncIterator()
+        _ = try #require(try await iterator.next())
+        let search = SavedMailSearch(id: "search", name: "First", query: "is:unread")
+        try await store.saveSavedMailSearch(search)
+        _ = try #require(try await iterator.next())
+        var renamed = search
+        renamed.name = "Renamed"
+        try await store.saveSavedMailSearch(renamed)
+        _ = try #require(try await iterator.next())
+        #expect(try await store.savedMailSearches().map(\.name) == ["Renamed"])
+    }
+}

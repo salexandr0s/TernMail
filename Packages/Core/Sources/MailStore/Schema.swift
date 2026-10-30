@@ -368,6 +368,8 @@ enum Schema {
             }
         }
         AttachmentLibrarySchema.register(in: &migrator)
+        Milestone5CacheSchema.register(in: &migrator)
+        MessageSnoozeSchema.registerCache(in: &migrator)
         return migrator
     }
 
@@ -422,6 +424,8 @@ enum Schema {
                 t.primaryKey(["accountID", "calendarID"])
             }
         }
+        Milestone5ConfigSchema.register(in: &migrator)
+        MessageSnoozeSchema.registerConfig(in: &migrator)
         return migrator
     }
 }

@@ -38,10 +38,13 @@ extension CacheTransaction {
     }
 
     /// Snoozed conversations and their wake times.
-    public func snoozeHolds(accountID: String) throws -> [String: Date] {
-        let rows = try Row.fetchAll(db, sql: """
-            SELECT threadID, wakeAt FROM cacheHold WHERE accountID = ? AND reason = ? AND wakeAt IS NOT NULL
-            """, arguments: [accountID, CacheHoldReason.snooze.rawValue])
+    public func snoozeHolds(accountID: String, wakingAt wakeAt: Date? = nil) throws -> [String: Date] {
+        var sql = "SELECT threadID, wakeAt FROM cacheHold WHERE accountID = ? AND reason = ? AND wakeAt IS NOT NULL"
+        var arguments: StatementArguments = [accountID, CacheHoldReason.snooze.rawValue]
+        // Bind the original date just as releaseSnooze does: GRDB stores
+        // milliseconds, while an Undo receipt can retain finer precision.
+        if let wakeAt { sql += " AND wakeAt = ?"; arguments += [wakeAt] }
+        let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
         return Dictionary(rows.map { ($0["threadID"], $0["wakeAt"]) }, uniquingKeysWith: { first, _ in first })
     }
 
@@ -84,12 +87,17 @@ extension MailCache {
     public func snoozedThreads(accountID: String) -> AsyncThrowingStream<[SnoozedThread], any Error> {
         observe { db in
             try Row.fetchAll(db, sql: """
-                SELECT thread.*, cacheHold.wakeAt AS wakeAt
-                FROM cacheHold
-                JOIN thread ON thread.accountID = cacheHold.accountID AND thread.id = cacheHold.threadID
-                WHERE cacheHold.accountID = ? AND cacheHold.reason = ? AND cacheHold.wakeAt IS NOT NULL
-                ORDER BY cacheHold.wakeAt, thread.id
-                """, arguments: [accountID, CacheHoldReason.snooze.rawValue])
+                WITH holds AS (
+                    SELECT accountID, threadID, wakeAt FROM cacheHold
+                    WHERE accountID = ? AND reason = ? AND wakeAt IS NOT NULL
+                    UNION ALL SELECT accountID, threadID, wakeAt FROM messageSnoozeHold WHERE accountID = ?
+                ), grouped AS (
+                    SELECT accountID,threadID,MIN(wakeAt) AS wakeAt FROM holds GROUP BY accountID,threadID
+                )
+                SELECT thread.*, grouped.wakeAt AS wakeAt FROM grouped
+                JOIN thread ON thread.accountID=grouped.accountID AND thread.id=grouped.threadID
+                ORDER BY grouped.wakeAt, thread.id
+                """, arguments: [accountID, CacheHoldReason.snooze.rawValue, accountID])
             .map { row in SnoozedThread(thread: try ThreadRecord(row: row), wakeAt: row["wakeAt"]) }
         }
     }
