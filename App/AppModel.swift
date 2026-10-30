@@ -23,6 +23,16 @@ final class AppModel {
     /// The open mailbox. It stays open while the session has expired, so
     /// compose windows keep working and queued changes wait for sign-in.
     private(set) var mailbox: MailboxModel?
+    @ObservationIgnored private var assistantModel: AssistantModel?
+    @ObservationIgnored var assistantNavigationTask: Task<Void, Never>?
+
+    /// All assistant presentations share one conversation and ChatGPT connection.
+    var assistant: AssistantModel {
+        if let assistantModel { return assistantModel }
+        let value = AssistantModel(app: self)
+        assistantModel = value
+        return value
+    }
     /// Accounts whose Google session ended while the others carry on. With
     /// one account the window shows sign-in instead.
     private(set) var accountsNeedingSignIn: Set<String> = []
@@ -361,6 +371,9 @@ final class AppModel {
     private func signOutOfEveryAccount() async {
         guard let accounts else { return }
         signInError = nil
+        for owner in mailbox?.accounts ?? [] {
+            assistantModel?.setAccountEnabled(owner.account.id, enabled: false)
+        }
         AccountProfileImages.shared.removeAll()
         await closeMailbox()
         let signedOut = sessions
@@ -395,6 +408,7 @@ final class AppModel {
         }
         let account = owner.account
         signInError = nil
+        assistantModel?.setAccountEnabled(accountID, enabled: false)
         AccountProfileImages.shared.remove(accountID: accountID)
         await mailbox.removeAccount(id: accountID)
         let session = sessions.removeValue(forKey: accountID)
@@ -459,12 +473,15 @@ final class AppModel {
         } else if case .signedIn(let account) = phase {
             phase = .signInRequired(account)
         }
+        assistantModel?.refreshAccess()
     }
 
     // MARK: Quitting
 
     /// Stores what open compose windows show, so quitting loses no typing.
     func prepareToQuit() async {
+        assistantModel?.stop()
+        assistantModel?.connection.cancelSignIn()
         await mailbox?.prepareToQuit()
     }
 
@@ -534,6 +551,8 @@ final class AppModel {
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        assistantNavigationTask?.cancel()
+        assistantModel?.newChat()
         if let mailbox {
             self.mailbox = nil
             let previous = closing

@@ -1,14 +1,18 @@
 import MailStore
 import SwiftUI
 
-/// Tern > Settings. Both tabs keep the same window size.
+/// Tern > Settings. Tabs share the native settings window.
 struct SettingsView: View {
+    @Environment(AppModel.self) private var app
+
     var body: some View {
         TabView {
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
             AccountsSettings()
                 .tabItem { Label("Accounts", systemImage: "person.crop.circle") }
+            AssistantSettingsView(model: app.assistant)
+                .tabItem { Label("Assistant", systemImage: "sparkles") }
         }
         .frame(width: Tokens.Layout.settingsWidth, height: Tokens.Layout.settingsHeight)
         .background(Tokens.Surface.canvas)

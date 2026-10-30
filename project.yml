@@ -42,6 +42,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # Temporary OAuth callback, bound to 127.0.0.1 by LoopbackAuthListener.
+        com.apple.security.network.server: true
         # Attaching chosen files, and saving received ones where the user picks.
         com.apple.security.files.user-selected.read-write: true
     settings:
@@ -60,6 +62,8 @@ targets:
         product: MessageContent
       - package: Core
         product: SyncEngine
+      - package: Core
+        product: TernAI
       - package: AppAuth
         product: AppAuth
   TernTests:

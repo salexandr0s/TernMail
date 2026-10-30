@@ -33,6 +33,12 @@ struct TernApp: App {
                 .environment(model)
         }
 
+        Window("Assistant", id: AssistantWindow.sceneID) {
+            AssistantWindow(model: model.assistant, onOpenSource: model.openAssistantSource)
+        }
+        .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
+        .windowResizability(.contentMinSize)
+
         Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
             KeyboardShortcutsView()
         }

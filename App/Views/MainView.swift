@@ -83,6 +83,7 @@ struct MainView: View {
                     .transition(.opacity)
                     .id(notice.id)
                 }
+                AssistantLauncher(model: app.assistant, onOpenSource: app.openAssistantSource)
             }
             .padding(Tokens.Space.s4)
             .ternAnimation(value: mailbox.notice)
@@ -97,6 +98,11 @@ struct MainView: View {
             geometry.size.width < Tokens.Layout.compactToolbarWidth
         } action: { isCompactWindow = $0 }
         .onAppear { mailbox.undoManager = undoManager }
+        .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
+        .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
+        .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }
+        .onChange(of: mailbox.selectedMailbox) { _, _ in app.assistant.refreshAccess() }
+        .onChange(of: mailbox.selectedThreadIDs) { _, _ in app.assistant.refreshAccess() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()
         }

@@ -4,7 +4,7 @@ Updated: 2026-10-30.
 
 This document collects the features requested in the October 30 discussion and the additions the owner accepted. The first build priority is the shared AI integration. Later features should use that same integration for reading, reasoning, drafting, and taking actions.
 
-The feature list and AI-first priority reflect the owner's request. The delivery stages, first-release boundaries, and engineering approach below are recommendations. No AI feature is implemented by this document, and no provider or model has been selected.
+The feature list and AI-first priority reflect the owner's request. The delivery stages, first-release boundaries, and engineering approach below are recommendations. The first implementation now uses Sign in with ChatGPT and the connected account's model catalogue. See the [implementation plan](chatgpt-integration.md) and [assistant setup guide](../chatgpt-assistant.md) for current behavior and limits.
 
 ## Feature inventory
 
@@ -92,7 +92,7 @@ Use synthetic mail for repeatable checks and an explicitly enabled account for l
 - Prepare new messages and replies on request, and use additional registered actions as they become available.
 - Show the context in use, clickable sources, progress, and any gaps in what was read. Let the user start a new conversation or clear saved assistant history.
 
-The initial integration includes a compact working chat. Fullscreen, detached windows, and broader mailbox analysis can follow without changing its service layer.
+The initial integration includes compact chat, fullscreen, and a detached window. Broader mailbox analysis can follow through the same service layer.
 
 ### F02. Attachment library
 
@@ -205,8 +205,8 @@ Only the AI-first priority is fixed by the owner. The rest is a proposed order b
 
 | Stage | Scope | Why this order |
 |---|---|---|
-| 1 | F00 and the compact F01 assistant | Establish provider access, retrieval, source links, structured output, and draft creation. |
-| 2 | F03 and the remaining F01 presentation modes | Reuse the integration in the reader and establish shared commitments with user corrections. |
+| 1 | F00 and the F01 assistant | Establish provider access, retrieval, source links, structured output, draft creation, and shared chat presentations. |
+| 2 | F03 | Reuse the integration in the reader and establish shared commitments with user corrections. |
 | 3 | F02 and F07, with broader attachment extraction and resumable indexing | Make historical files discoverable and searchable; extend mailbox analysis coverage. |
 | 4 | F05, F06, and F09 | Use reliable commitments and reading history for daily priorities and follow-ups. |
 | 5 | F04 and F14 | Add subscription management and newsletter delivery preferences. |
@@ -222,17 +222,15 @@ Tern is a native SwiftUI macOS Gmail client. Core logic lives in `Packages/Core`
 - [Milestone 1](milestone-1.md): mail storage, sync, reading, and queued actions.
 - [Milestone 2](milestone-2.md): compose, drafts, sending, and received attachments.
 - [Milestone 3](milestone-3.md): search, labels, snooze, and multiple accounts.
-- [Milestone 4](milestone-4.md): Google service authorization, contacts, identities, filters, and calendar invitations. The recorded implementation is complete through B5b, with B6a next within that milestone.
+- [Milestone 4](milestone-4.md): Google service authorization, contacts, identities, filters, and calendar invitations. Follow that plan for its current phase and verification record.
 - [Milestone 5](milestone-5.md): remaining reading and triage controls, attachment menus, templates, saved searches, profiles, notifications, window behavior, and maintenance.
 
-The owner's AI-first request takes priority over the earlier instruction to continue directly with milestone 4 B6a. Remaining milestone work stays on the backlog; take only the specific prerequisites needed for the AI integration first.
+AI integration is the first feature priority in this roadmap. The owner separately authorized milestone 4 B6a work in the consolidation chat; its calendar implementation proceeds alongside this integration.
 
-## Decisions for the first implementation plan
+## First implementation decisions
 
-- Select the first AI provider, model, and credential flow. Keep additional providers and local-model support as possible extensions, not first-release promises.
-- Confirm the initial attachment formats and document the limits of extraction and OCR.
-- Choose assistant-history retention, derived-data storage, and what account removal or AI disabling deletes versus makes inaccessible.
-- Set foreground request and background indexing budgets, including the behavior of a full-mailbox scan.
-- Define the concrete service interfaces, storage migrations, and bounded implementation steps after checking the current code.
-
-These decisions do not prevent preserving the full feature list now. They belong in the AI implementation plan before provider-specific code is written.
+- Use the official Sign in with ChatGPT flow, Tern's own registration and Keychain credentials, and the public Responses API. Discover models from the connected account. Other providers remain possible extensions.
+- Read text-based files and PDFs with selectable text, with explicit size and extraction limits. OCR and office-file readers remain later work.
+- Keep assistant history in memory. Scope and access changes clear retained conversation data; credentials and account opt-ins persist separately.
+- Bound each foreground request by context size, tool calls, and rounds. Resumable full-mailbox scans and background indexing remain later work.
+- Share provider, retrieval, source, structured-summary, and draft interfaces across features. The initial integration does not need a new database schema.
