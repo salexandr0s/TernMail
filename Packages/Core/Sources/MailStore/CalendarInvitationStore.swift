@@ -2,7 +2,31 @@ import Foundation
 import GRDB
 import MessageContent
 
+/// Invitation versions and the user's email answers from one cache snapshot.
+public struct CalendarInvitationState: Sendable, Equatable {
+    public var invitations: [MessageCalendarRecord]
+    public var replies: [InvitationReplyRecord]
+
+    public init(invitations: [MessageCalendarRecord] = [], replies: [InvitationReplyRecord] = []) {
+        self.invitations = invitations
+        self.replies = replies
+    }
+}
+
+extension MailCache {
+    /// Watches the account, so an update in another conversation and Undo Send
+    /// can refresh an open invitation without changing its message body.
+    public func calendarInvitationState(accountID: String) -> AsyncThrowingStream<CalendarInvitationState, any Error> {
+        observe { db in try CacheTransaction(db: db).calendarInvitationState(accountID: accountID) }
+    }
+}
+
 extension CacheTransaction {
+    public func calendarInvitationState(accountID: String) throws -> CalendarInvitationState {
+        CalendarInvitationState(invitations: try calendarInvitations(accountID: accountID),
+            replies: try InvitationReplyRecord.filter(Column("accountID") == accountID).fetchAll(db))
+    }
+
     /// Includes every VEVENT in a message, including exceptions retained in the wrapper.
     public func calendarInvitations(accountID: String, threadID: String? = nil) throws -> [MessageCalendarRecord] {
         let records: [MessageCalendarRecord]

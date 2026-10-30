@@ -156,6 +156,12 @@ private struct EmailCalendarSuggestionRow: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let warning = item.authenticityWarning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -251,6 +257,26 @@ private struct EmailCalendarSuggestionRow: View {
                 Label(location, systemImage: "mappin.and.ellipse")
                     .textSelection(.enabled)
             }
+            if let organizer = presentation.organizer {
+                Label("Organizer: \(organizer)", systemImage: "person")
+                    .textSelection(.enabled)
+            }
+            if let original = presentation.originalTimeZoneLine {
+                Label(original, systemImage: "globe")
+            }
+            if let recurrence = presentation.recurrenceNote {
+                Label(recurrence, systemImage: "repeat")
+            }
+            if let answer = presentation.answerLine {
+                Label(answer, systemImage: "person.crop.circle.badge.checkmark")
+            }
+            ForEach(Array(presentation.responseLines.enumerated()), id: \.offset) { _, answer in
+                Text(answer).textSelection(.enabled)
+            }
+            if let organizer = item.invitation?.organizer?.email, canRespond {
+                Text("Invitation responses go to \(organizer).")
+                    .textSelection(.enabled)
+            }
             if item.invitation == nil, !item.evidence.isEmpty {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text("In the email").font(.caption.weight(.medium))
@@ -258,7 +284,7 @@ private struct EmailCalendarSuggestionRow: View {
                 }
             }
             if item.isOutdated {
-                Text("A newer invitation appears in this conversation.")
+                Text("A newer invitation or cancellation is saved in this account.")
             }
             ForEach(Array(item.uncertainties.enumerated()), id: \.offset) { _, uncertainty in
                 Label(uncertainty, systemImage: "info.circle")

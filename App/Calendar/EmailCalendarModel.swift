@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GmailAPI
+import MailStore
 import MessageContent
 import Observation
 
@@ -10,10 +11,11 @@ struct EmailCalendarMessage: Sendable, Equatable {
     let date: Date
     let text: String
     var invitations: [Invitation] = []
+    var sender = ""
 }
 
 struct EmailCalendarItem: Identifiable, Sendable, Equatable, Codable {
-    enum Kind: String, Codable, Sendable { case detected, proposed, updated, cancelled, invitation }
+    enum Kind: String, Codable, Sendable { case detected, proposed, updated, cancelled, invitation, response }
     let id: String
     let messageID: String
     var title: String
@@ -27,8 +29,11 @@ struct EmailCalendarItem: Identifiable, Sendable, Equatable, Codable {
     var existingEventID: String?
     var relatedMessageIDs: [String] = []
     var hasAmbiguousMatch = false
+    var previousAnswer: Invitation.ParticipationStatus?
+    var calendarAnswer: Invitation.ParticipationStatus?
+    var authenticityWarning: String?
 
-    var canReview: Bool { !isOutdated && !hasAmbiguousMatch && (kind != .cancelled || existingEventID != nil) }
+    var canReview: Bool { kind != .response && !isOutdated && !hasAmbiguousMatch && (kind != .cancelled || existingEventID != nil) }
 }
 
 @MainActor @Observable
@@ -44,17 +49,24 @@ final class EmailCalendarModel {
     private var timeZone: TimeZone = .autoupdatingCurrent
     private var generation = 0
     private var interpretedItems: [EmailCalendarItem]?
+    private var invitationState = CalendarInvitationState()
 
     var cachedInterpretation: [EmailCalendarItem]? { interpretedRevision == revision ? interpretedItems : nil }
 
     var visibleItems: [EmailCalendarItem] { items.filter { !dismissedIDs.contains($0.id) } }
 
     func update(messages: [EmailCalendarMessage], addresses: [String],
-                timeZone: TimeZone = .autoupdatingCurrent, dismissedIDs: Set<String> = []) {
+                timeZone: TimeZone = .autoupdatingCurrent, dismissedIDs: Set<String> = [],
+                invitationState: CalendarInvitationState = .init()) {
+        let addressesChanged = self.addresses != addresses
         self.addresses = addresses
+        self.invitationState = invitationState
         self.dismissedIDs.formUnion(dismissedIDs)
         let fingerprint = Self.fingerprint(messages, timeZone: timeZone)
-        guard fingerprint != revision else { return }
+        guard fingerprint != revision || addressesChanged else {
+            refreshInvitationState()
+            return
+        }
         generation += 1
         self.messages = messages
         self.timeZone = timeZone
@@ -65,17 +77,30 @@ final class EmailCalendarModel {
         var next: [EmailCalendarItem] = []
         for message in messages {
             let invitations = message.invitations.flatMap { [$0] + ($0.additionalEvents ?? []) }
-            for invitation in invitations where !invitation.isAttendeeMessage {
+            for invitation in invitations {
+                let isResponse = invitation.method == .reply
+                if invitation.isAttendeeMessage {
+                    guard isResponse, addresses.contains(where: { invitation.organizer?.matches($0) == true }) else { continue }
+                }
                 let key = invitation.uid + ":" + invitation.recurrenceKey
                 var errors: [String] = []
-                if case .floating = invitation.start { errors.append("Check the time zone.") }
+                let displayInvitation = isResponse ? invitationState.invitations.map(\.invitation).filter {
+                    $0.uid == invitation.uid && $0.recurrenceKey == invitation.recurrenceKey && !$0.isAttendeeMessage
+                }.max { ($0.sequence, $0.stamp ?? .distantPast) < ($1.sequence, $1.stamp ?? .distantPast) } : invitation
+                if case .floating = displayInvitation?.start { errors.append("Check the time zone.") }
                 let converted: GoogleCalendarEvent?
-                do { converted = try CalendarInterchange.googleEvent(from: invitation, fallbackTimeZone: timeZone) }
+                do {
+                    converted = try displayInvitation.map {
+                        $0.recurrenceKey.isEmpty
+                            ? try CalendarInterchange.googleEvent(from: $0, fallbackTimeZone: timeZone)
+                            : try CalendarInterchange.googleException(from: $0, parentEventID: "email-preview", fallbackTimeZone: timeZone)
+                    }
+                }
                 catch { converted = nil; errors.append(error.localizedDescription) }
                 next.append(EmailCalendarItem(
                     id: "invitation:" + message.id + ":" + key,
-                    messageID: message.id, title: invitation.summary ?? "Calendar invitation",
-                    evidence: invitation.location ?? "", kind: invitation.isCancelled ? .cancelled : .invitation,
+                    messageID: message.id, title: invitation.summary ?? displayInvitation?.summary ?? "Calendar invitation",
+                    evidence: invitation.location ?? "", kind: isResponse ? .response : invitation.isCancelled ? .cancelled : .invitation,
                     event: converted, invitation: invitation, uncertainties: errors
                 ))
             }
@@ -106,15 +131,30 @@ final class EmailCalendarModel {
                 ))
             }
         }
-        for index in next.indices {
-            guard let invitation = next[index].invitation else { continue }
-            next[index].isOutdated = next.contains { candidate in
-                guard let other = candidate.invitation, other.uid == invitation.uid,
-                      other.recurrenceKey == invitation.recurrenceKey || (other.recurrenceKey.isEmpty && other.isCancelled) else { return false }
-                return (other.sequence, other.stamp ?? .distantPast) > (invitation.sequence, invitation.stamp ?? .distantPast)
-            }
-        }
         items = next
+        refreshInvitationState()
+    }
+
+    private func refreshInvitationState() {
+        let versions = invitationState.invitations.map(\.invitation) + messages.flatMap {
+            $0.invitations.flatMap { [$0] + ($0.additionalEvents ?? []) }
+        }
+        for index in items.indices {
+            guard let invitation = items[index].invitation else { continue }
+            items[index].isOutdated = !invitation.isAttendeeMessage && versions.contains { other in
+                other.uid == invitation.uid && !other.isAttendeeMessage &&
+                (other.recurrenceKey == invitation.recurrenceKey || (other.recurrenceKey.isEmpty && other.isCancelled)) &&
+                (other.sequence, other.stamp ?? .distantPast) > (invitation.sequence, invitation.stamp ?? .distantPast)
+            }
+            items[index].previousAnswer = invitationState.replies.first {
+                $0.uid == invitation.uid && $0.recurrenceKey == invitation.recurrenceKey
+            }?.participationStatus
+            if invitation.method == .reply { continue }
+            let sender = messages.first { $0.id == items[index].messageID }.flatMap { EmailAddress.parseList($0.sender).first?.address }
+            if let organizer = invitation.organizer?.email, let sender, sender.caseInsensitiveCompare(organizer) != .orderedSame {
+                items[index].authenticityWarning = "The email sender differs from the event organizer. Replies go to \(organizer)."
+            } else { items[index].authenticityWarning = nil }
+        }
     }
 
     func interpret(using service: EmailCalendarExtractionService) async {
@@ -161,11 +201,13 @@ final class EmailCalendarModel {
         if !items[index].uncertainties.contains(message) { items[index].uncertainties.append(message) }
     }
 
-    func markExisting(itemID: String, calendarID: String, eventID: String, hasNewerInvitation: Bool = false) {
+    func markExisting(itemID: String, calendarID: String, eventID: String, hasNewerInvitation: Bool = false,
+                      calendarAnswer: Invitation.ParticipationStatus? = nil) {
         guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
         items[index].existingCalendarID = calendarID
         items[index].existingEventID = eventID
-        if hasNewerInvitation, items[index].kind != .cancelled { items[index].kind = .updated }
+        items[index].calendarAnswer = calendarAnswer
+        if hasNewerInvitation, items[index].kind != .cancelled, items[index].kind != .response { items[index].kind = .updated }
     }
 
     func restoreCorrection(itemID: String, event: GoogleCalendarEvent) {
@@ -180,7 +222,7 @@ final class EmailCalendarModel {
         let sourceMessages = messages
         revision = ""
         interpretedRevision = nil
-        update(messages: sourceMessages, addresses: addresses, timeZone: timeZone)
+        update(messages: sourceMessages, addresses: addresses, timeZone: timeZone, invitationState: invitationState)
     }
 
     func attendee(for item: EmailCalendarItem) -> Invitation.Participant? {
@@ -189,13 +231,15 @@ final class EmailCalendarModel {
 
     private static func fingerprint(_ messages: [EmailCalendarMessage], timeZone: TimeZone) -> String {
         var hash = SHA256()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
         hash.update(data: Data(timeZone.identifier.utf8))
         for message in messages {
-            for part in [message.id, message.subject, String(message.date.timeIntervalSince1970), message.text] {
+            for part in [message.id, message.subject, String(message.date.timeIntervalSince1970), message.text, message.sender] {
                 hash.update(data: Data("\(part.utf8.count):".utf8))
                 hash.update(data: Data(part.utf8))
             }
-            if let data = try? JSONEncoder().encode(message.invitations) { hash.update(data: data) }
+            if let data = try? encoder.encode(message.invitations) { hash.update(data: data) }
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }

@@ -1,3 +1,4 @@
+import Accessibility
 import MailStore
 import MessageContent
 import SwiftUI
@@ -185,7 +186,7 @@ struct ThreadView: View {
         .task(id: CalendarSuggestionLoadIdentity(detail: detail, storeReady: app.calendar.store != nil,
             access: app.calendar.accessRevision, timeZone: app.calendar.calendar.timeZone.identifier)) {
             guard let detail else { return }
-            await app.calendar.loadEmailSuggestions(calendarSuggestions, detail: detail, key: key)
+            await app.calendar.observeEmailSuggestions(calendarSuggestions, detail: detail, key: key)
         }
         .task(id: CalendarInterpretationIdentity(revision: calendarSuggestions.revision,
             access: app.assistant.calendarExtractionRevision, storeReady: app.calendar.store != nil)) {
@@ -205,6 +206,7 @@ struct ThreadView: View {
                     do {
                         try await app.calendar.sendEmailResponse(review, key: key)
                         calendarNotice = "Your invitation response is queued."
+                        AccessibilityNotification.Announcement("Your invitation response is queued.").post()
                     } catch { calendarNotice = error.localizedDescription }
                 }
             }

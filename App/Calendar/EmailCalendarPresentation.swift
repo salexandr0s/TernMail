@@ -1,5 +1,6 @@
 import Foundation
 import GmailAPI
+import MessageContent
 
 /// The tile and its date line share one calendar and time zone. Date-only values
 /// are civil dates; they must never shift when viewed in another time zone.
@@ -36,7 +37,7 @@ struct EmailCalendarPresentation {
     var day: String? { start.map { format($0, .dateTime.day()) } }
 
     var dateLine: String {
-        guard let start else { return "Date to be confirmed" }
+        guard let start else { return originalTimeZoneLine ?? "Date to be confirmed" }
         let dateStyle = Date.FormatStyle.dateTime.month(.abbreviated).day().year()
         let firstDate = format(start, dateStyle)
         if item.event?.isAllDay == true {
@@ -60,16 +61,82 @@ struct EmailCalendarPresentation {
     var status: Status? {
         if item.isOutdated { return Status(text: "Replaced by a newer invitation", symbol: "clock.arrow.circlepath") }
         if item.kind == .cancelled { return Status(text: "Cancelled", symbol: "calendar.badge.minus") }
+        if item.kind == .response {
+            let responses = responseLines
+            return Status(text: responses.count == 1 ? responses[0] : "\(responses.count) attendee responses", symbol: "person.crop.circle.badge.checkmark")
+        }
         if item.hasAmbiguousMatch { return Status(text: "Several calendar matches · Check details", symbol: "exclamationmark.circle") }
         if item.kind == .updated { return Status(text: "Updated in this conversation", symbol: "arrow.triangle.2.circlepath") }
+        if let answerLine { return Status(text: answerLine, symbol: "person.crop.circle.badge.checkmark") }
         if !item.uncertainties.isEmpty { return Status(text: "Details need review", symbol: "info.circle") }
         if item.existingEventID != nil { return Status(text: "On your calendar", symbol: "checkmark.circle") }
+        return nil
+    }
+
+    var answerLine: String? {
+        if let answer = item.previousAnswer { return "Last email response: \(Self.answerText(answer))" }
+        if let answer = item.calendarAnswer { return "Your response: \(Self.answerText(answer))" }
         return nil
     }
 
     var location: String? {
         let value = (item.event?.location ?? item.invitation?.location ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    var organizer: String? {
+        guard let person = item.invitation?.organizer else { return nil }
+        return person.email.map { EmailAddress(name: person.name, address: $0).displayString } ?? person.name
+    }
+
+    var responseLines: [String] {
+        guard item.kind == .response else { return [] }
+        return item.invitation?.attendees.map {
+            let name = $0.name ?? $0.email ?? $0.calendarAddress
+            return "\(name): \(Self.answerText($0.status))"
+        } ?? []
+    }
+
+    var recurrenceNote: String? {
+        guard let invitation = item.invitation else { return nil }
+        if !invitation.recurrenceKey.isEmpty { return "This occurrence of a repeating event" }
+        return invitation.repeats ? "Repeats" : nil
+    }
+
+    var originalTimeZoneLine: String? {
+        guard let time = item.invitation?.start else { return nil }
+        let date: Date
+        let zone: TimeZone
+        let name: String
+        switch time {
+        case .zoned(let value, let identifier, let offset):
+            guard identifier != calendar.timeZone.identifier, let fixed = TimeZone(secondsFromGMT: offset) else { return nil }
+            date = value; zone = fixed; name = identifier
+        case .utc(let value):
+            guard calendar.timeZone.secondsFromGMT(for: value) != 0, let utc = TimeZone(secondsFromGMT: 0) else { return nil }
+            date = value; zone = utc; name = "UTC"
+        case .unresolved(let local, let identifier):
+            guard let utc = TimeZone(secondsFromGMT: 0) else { return nil }
+            var civil = Calendar(identifier: .gregorian)
+            civil.timeZone = utc
+            guard let value = civil.date(from: DateComponents(year: local.day.year, month: local.day.month,
+                day: local.day.day, hour: local.hour, minute: local.minute, second: local.second)) else { return nil }
+            date = value; zone = utc; name = "\(identifier) · Time zone unrecognized"
+        case .allDay, .floating: return nil
+        }
+        var style = Date.FormatStyle.dateTime.month(.abbreviated).day().year().hour().minute()
+        style.calendar = calendar; style.timeZone = zone; style.locale = locale
+        return "\(date.formatted(style)) \(name)"
+    }
+
+    private static func answerText(_ answer: Invitation.ParticipationStatus) -> String {
+        switch answer {
+        case .accepted: "Accepted"
+        case .declined: "Declined"
+        case .tentative: "Maybe"
+        case .needsAction: "Not answered"
+        case .delegated: "Delegated"
+        }
     }
 
     static func ordered(_ items: [EmailCalendarItem], messages: [EmailCalendarMessage]) -> [EmailCalendarItem] {

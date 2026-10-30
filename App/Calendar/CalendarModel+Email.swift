@@ -44,22 +44,37 @@ extension CalendarModel {
         } catch { errorMessage = "Calendar interpretation could not be retained locally." }
     }
 
-    func loadEmailSuggestions(_ model: EmailCalendarModel, detail: ThreadDetail, key: ThreadKey) async {
-        let revision = lifecycleRevision
-        guard let owner = app?.mailbox?.account(id: key.accountID) else { return }
+    func observeEmailSuggestions(_ model: EmailCalendarModel, detail: ThreadDetail, key: ThreadKey) async {
+        guard let cache = app?.cache else { return }
         do {
-            let records = try await owner.engine.calendarInvitations(threadID: key.threadID)
+            for try await state in cache.calendarInvitationState(accountID: key.accountID) {
+                try Task.checkCancellation()
+                await loadEmailSuggestions(model, detail: detail, key: key, invitationState: state)
+            }
+        } catch is CancellationError {
+        } catch { errorMessage = "Calendar invitations could not be refreshed." }
+    }
+
+    func loadEmailSuggestions(_ model: EmailCalendarModel, detail: ThreadDetail, key: ThreadKey,
+                              invitationState: CalendarInvitationState? = nil) async {
+        let revision = lifecycleRevision
+        guard let owner = app?.mailbox?.account(id: key.accountID), let cache = app?.cache else { return }
+        do {
+            let state: CalendarInvitationState
+            if let invitationState { state = invitationState }
+            else { state = try await cache.read { try $0.calendarInvitationState(accountID: key.accountID) } }
+            let records = state.invitations
             let addresses = try await owner.engine.calendarReplyAddresses()
             let saved = try await store?.suggestions(accountID: key.accountID, threadID: key.threadID) ?? []
             try validateEmailLifetime(revision, accountID: key.accountID)
             let messages = detail.messages.map { message in
                 EmailCalendarMessage(id: message.id, subject: message.record.subject, date: message.record.date,
                     text: CalendarDetection.readableText(html: message.body?.html, plainText: message.body?.plainText),
-                    invitations: records.filter { $0.messageID == message.id }.map(\.invitation))
+                    invitations: records.filter { $0.messageID == message.id }.map(\.invitation), sender: message.record.sender)
             }
             let prefix = key.accountID + ":"
             model.update(messages: messages, addresses: addresses, timeZone: calendar.timeZone,
-                dismissedIDs: Set(saved.filter(\.isDismissed).map { String($0.id.dropFirst(prefix.count)) }))
+                dismissedIDs: Set(saved.filter(\.isDismissed).map { String($0.id.dropFirst(prefix.count)) }), invitationState: state)
             for record in saved where record.isUserEdited {
                 model.restoreCorrection(itemID: String(record.id.dropFirst(prefix.count)), event: record.event)
             }
@@ -105,7 +120,10 @@ extension CalendarModel {
                     try validateEmailLifetime(revision, accountID: key.accountID)
                     guard sourceRevision == model.revision else { return }
                     model.markExisting(itemID: item.id, calendarID: match.calendarID, eventID: match.event.id,
-                        hasNewerInvitation: Self.isNewer(invitation, than: match.event))
+                        hasNewerInvitation: Self.isNewer(invitation, than: match.event),
+                        calendarAnswer: match.event.attendees?.first(where: { $0.isSelf == true })?.responseStatus.flatMap {
+                            Invitation.ParticipationStatus(rawValue: $0 == "needsAction" ? "NEEDS-ACTION" : $0.uppercased())
+                        })
                 } else if item.invitation == nil, !item.relatedMessageIDs.isEmpty {
                     do {
                         if let match = try await relatedEmailEvent(item, key: key) {

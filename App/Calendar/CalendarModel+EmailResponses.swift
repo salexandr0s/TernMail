@@ -76,7 +76,7 @@ extension CalendarModel {
             await reloadOperations()
         case (.email, .email):
             _ = try await owner.engine.replyToCalendarInvitation(messageID: review.item.messageID, uid: invitation.uid,
-                recurrenceKey: invitation.recurrenceKey, answer: review.answer, delay: 10)
+                recurrenceKey: invitation.recurrenceKey, answer: review.answer, delay: UndoSendDelay.current)
         default: throw CalendarModelError.unsupported("The invitation changed. Review the response destination again.")
         }
     }
