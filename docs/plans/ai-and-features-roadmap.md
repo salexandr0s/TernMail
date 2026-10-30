@@ -4,7 +4,7 @@ Updated: 2026-10-30.
 
 This document collects the features requested in the October 30 discussion and the additions the owner accepted. The first build priority is the shared AI integration. Later features should use that same integration for reading, reasoning, drafting, and taking actions.
 
-The feature list and AI-first priority reflect the owner's request. The delivery stages, first-release boundaries, and engineering approach below are recommendations. The first implementation now uses Sign in with ChatGPT and the connected account's model catalogue. See the [implementation plan](chatgpt-integration.md) and [assistant setup guide](../chatgpt-assistant.md) for current behavior and limits.
+The feature list and AI-first priority reflect the owner's request. The owner subsequently placed F15 Calendar immediately after the F00/F01 foundation. The remaining delivery stages, first-release boundaries, and engineering approach below are recommendations. The first implementation now uses Sign in with ChatGPT and the connected account's model catalogue. See the [implementation plan](chatgpt-integration.md) and [assistant setup guide](../chatgpt-assistant.md) for current behavior and limits.
 
 ## Feature inventory
 
@@ -12,6 +12,7 @@ The feature list and AI-first priority reflect the owner's request. The delivery
 |---|---|---|
 | F00 | Shared AI integration | One service that every AI feature can call, with mail access, attachment reading, source links, and controlled actions. Build first. |
 | F01 | Personal assistant | A floating chatbot that can answer questions and prepare work across the mailbox. |
+| F15 | Calendar | Apple Calendar-style views and interactions backed by Google Calendar, events detected in email, and calendar-aware assistant proposals. Build immediately after F00/F01. |
 | F02 | Attachment library | All received attachments in list and card views, with search and filters. |
 | F03 | Thread summaries and open tasks | An assistant summary bubble above the conversation, including decisions and unfinished work. |
 | F04 | Bulk unsubscribe | Review subscriptions and unsubscribe from several at once, with an outcome for each. |
@@ -26,7 +27,7 @@ The feature list and AI-first priority reflect the owner's request. The delivery
 | F13 | Plain-language automations | Describe a rule, inspect its proposed behavior, and track what it does. |
 | F14 | Newsletter digests and preferences | Keep, mute, unsubscribe, or collect newsletters into a digest. |
 
-F01 through F04 are the owner's original feature requests. F05 through F14 are the accepted additions. Existing mail-client work remains covered by the milestone plans linked at the end.
+F01 through F04 are the owner's original feature requests. F05 through F14 are the accepted additions. F15 is the subsequently approved calendar integration; its placement does not renumber existing features. Existing mail-client work remains covered by the milestone plans linked at the end.
 
 ## First build: shared AI integration
 
@@ -93,6 +94,18 @@ Use synthetic mail for repeatable checks and an explicitly enabled account for l
 - Show the context in use, clickable sources, progress, and any gaps in what was read. Let the user start a new conversation or clear saved assistant history.
 
 The initial integration includes compact chat, fullscreen, and a detached window. Broader mailbox analysis can follow through the same service layer.
+
+### F15. Calendar
+
+- Add a Calendar destination alongside Mail, retaining destination state and the same assistant. Match Apple Calendar's native Day, Week, Month and Year layout and interactions, including keyboard controls, drag/move/resize, a sidebar, mini-calendar, search and a shared event editor.
+- Connect directly to Google Calendar through Tern's existing Google accounts. Support events, recurrence and exceptions, invitations, Google Meet links where supported, linked files, calendar management and sharing, reviewed `.ics` import/export, printing and local alerts.
+- Keep the Google mirror separate from durable proposals, queued operations, corrections and email links. Support offline work, incremental sync, version conflicts, resumable series splits and explicit stale/incomplete states.
+- Recognize structured invitations and ordinary dates locally without AI. Offer reviewed Add event and View event actions, reconcile updates and cancellations, and prevent duplicate events or RSVPs. Optional AI interpretation runs when an opted-in conversation opens.
+- Give the assistant independent per-calendar Off, Availability only and Event details access, starting Off. The assistant can read allowed calendars and prepare editable proposals; the user saves calendar changes and sends email replies.
+- For scheduling, calculate options from fresh availability across selected calendars, ask which times to suggest, recheck the choices and prepare an editable reply. Failed calendar reads remain unknown; selecting times neither reserves an event nor sends a reply.
+- Exclude Apple Reminders, travel time and independent feed subscriptions. Existing Google subscriptions remain visible. Calendar-only accounts and hosted synchronization are later additions.
+
+The approved scope, implementation contracts, Google setup and verification gates are in [Calendar integration](calendar-integration.md). Source implementation and automated tests are complete; live Google verification and the remaining Apple Calendar interaction comparison are explicit release gates.
 
 ### F02. Attachment library
 
@@ -201,17 +214,18 @@ Newsletter delivery preferences and digests are in F14. A successful request sub
 
 ## Recommended delivery order
 
-Only the AI-first priority is fixed by the owner. The rest is a proposed order based on shared dependencies, with no delivery dates assigned.
+The owner fixed the F00/F01 foundation first and F15 immediately after it. The rest is a proposed order based on shared dependencies, with no delivery dates assigned.
 
 | Stage | Scope | Why this order |
 |---|---|---|
 | 1 | F00 and the F01 assistant | Establish provider access, retrieval, source links, structured output, draft creation, and shared chat presentations. |
-| 2 | F03 | Reuse the integration in the reader and establish shared commitments with user corrections. |
-| 3 | F02 and F07, with broader attachment extraction and resumable indexing | Make historical files discoverable and searchable; extend mailbox analysis coverage. |
-| 4 | F05, F06, and F09 | Use reliable commitments and reading history for daily priorities and follow-ups. |
-| 5 | F04 and F14 | Add subscription management and newsletter delivery preferences. |
-| 6 | F08, F10, F11, and F12 | Add project and contact context, reply checks, and document comparisons. |
-| 7 | F13 | Build repeatable background rules on the established retrieval and action services. |
+| 2 | F15 | Deliver calendar connection/data, interaction, email recognition, assistant scheduling, then completion and parity verification. |
+| 3 | F03 | Reuse the integration in the reader and establish shared commitments with user corrections. |
+| 4 | F02 and F07, with broader attachment extraction and resumable indexing | Make historical files discoverable and searchable; extend mailbox analysis coverage. |
+| 5 | F05, F06, and F09 | Use reliable commitments and reading history for daily priorities and follow-ups. |
+| 6 | F04 and F14 | Add subscription management and newsletter delivery preferences. |
+| 7 | F08, F10, F11, and F12 | Add project and contact context, reply checks, and document comparisons. |
+| 8 | F13 | Build repeatable background rules on the established retrieval and action services. |
 
 Features within later stages can move earlier once their dependencies are ready. The attachment library's metadata browser and subscription detection can be developed independently of AI reasoning.
 
@@ -222,10 +236,11 @@ Tern is a native SwiftUI macOS Gmail client. Core logic lives in `Packages/Core`
 - [Milestone 1](milestone-1.md): mail storage, sync, reading, and queued actions.
 - [Milestone 2](milestone-2.md): compose, drafts, sending, and received attachments.
 - [Milestone 3](milestone-3.md): search, labels, snooze, and multiple accounts.
-- [Milestone 4](milestone-4.md): Google service authorization, contacts, identities, filters, and calendar invitations. Follow that plan for its current phase and verification record.
-- [Milestone 5](milestone-5.md): remaining reading and triage controls, attachment menus, templates, saved searches, profiles, notifications, window behavior, and maintenance.
+- [Calendar integration](calendar-integration.md): approved F15 scope and implementation; Google Calendar replaces the older invitation-only API alternative and EventKit agenda proposal.
+- [Milestone 4](milestone-4.md): Google service authorization, contacts, identities, filters, and existing invitation ingestion/iTIP delivery. F15 extends that foundation and uses Calendar RSVP for matched invitations.
+- [Milestone 5](milestone-5.md): remaining reading and triage controls, attachment menus, templates, saved searches, profiles, notifications, window behavior, and maintenance. Its former EventKit invitation agenda is superseded by F15.
 
-AI integration is the first feature priority in this roadmap. The owner separately authorized milestone 4 B6a work in the consolidation chat; its calendar implementation proceeds alongside this integration.
+AI integration is the first feature priority in this roadmap, followed immediately by F15. Milestone 4's existing invitation ingestion and iTIP reply queue remain the reusable foundation for F15's email integration.
 
 ## First implementation decisions
 

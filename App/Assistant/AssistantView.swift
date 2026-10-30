@@ -114,7 +114,7 @@ struct AssistantView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .bottom, spacing: Tokens.Space.s2) {
-                TextField("Ask about your mail…", text: $model.composerText, axis: .vertical)
+                TextField("Ask about your mail or calendar…", text: $model.composerText, axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(1...6)
                     .focused($isComposerFocused)
                     .accessibilityLabel("Message to assistant")
@@ -155,7 +155,7 @@ struct AssistantView: View {
 
     private var prerequisite: String? {
         if !model.connection.canUsePlan { return "Connect ChatGPT to start" }
-        if model.enabledAccountIDs.isEmpty { return "Choose a mail account to start" }
+        if !model.hasAssistantDataAccess { return "Enable mail or calendar access to start" }
         if model.selectedModelID.isEmpty { return "Choose a ChatGPT model" }
         return nil
     }

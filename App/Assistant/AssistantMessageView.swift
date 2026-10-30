@@ -73,7 +73,7 @@ struct AssistantMessageView: View {
                         ForEach(sources) { source in
                             let title = sourceTitle(source)
                             Button { onOpenSource(source) } label: {
-                                Label(title, systemImage: source.partID == nil ? "envelope" : "paperclip")
+                                Label(title, systemImage: source.systemImage)
                                     .lineLimit(2).multilineTextAlignment(.leading)
                             }
                             .buttonStyle(.link).help(title)
@@ -143,6 +143,7 @@ struct AssistantMessageView: View {
     private var sources: [AssistantSource] {
         var seen = Set<String>()
         return message.sources.filter { source in
+            if source.isCalendar { return seen.insert(source.id).inserted }
             let key = AssistantSource(accountID: source.accountID, threadID: source.threadID,
                                       messageID: source.partID == nil ? nil : source.messageID,
                                       partID: source.partID, title: source.title).id

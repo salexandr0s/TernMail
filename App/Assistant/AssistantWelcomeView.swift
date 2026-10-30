@@ -14,7 +14,7 @@ struct AssistantWelcomeView: View {
                 if !model.connection.canUsePlan {
                     Text("Connect ChatGPT, then choose the mail accounts it can read.").foregroundStyle(.secondary)
                     Button("Set up assistant", action: onSettings).buttonStyle(.borderedProminent)
-                } else if model.enabledAccountIDs.isEmpty {
+                } else if !model.hasAssistantDataAccess {
                     Text("Mail is shared only from accounts you enable.").foregroundStyle(.secondary)
                     Button("Choose accounts", action: onSettings).buttonStyle(.borderedProminent)
                 }

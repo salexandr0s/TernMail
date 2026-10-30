@@ -16,6 +16,7 @@ struct MainView: View {
     @State private var paneSizing = AssistantMailPaneSizing()
     @FocusState private var outboxFocused: Bool
     let mailbox: MailboxModel
+    var isActive = true
 
     private var showsOutbox: Bool {
         mailbox.selectedLabelID == MailboxModel.outboxID && !mailbox.search.isActive
@@ -61,10 +62,10 @@ struct MainView: View {
             }
         }
         .background {
-            ShortcutMonitor(isEnabled: usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
+            ShortcutMonitor(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
         }
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
-        .focusedSceneValue(\.mailboxModel, mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID ? mailbox : nil)
+        .focusedSceneValue(\.mailboxModel, isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID ? mailbox : nil)
         .onAppear { mailbox.undoManager = undoManager }
         .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
@@ -103,6 +104,7 @@ struct MainView: View {
     private var mailContent: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(mailbox: mailbox)
+                .toolbar(removing: .sidebarToggle)
                 .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .navigation, isPresented: showsAssistant) }
                 .padding(.trailing, Tokens.Space.s3)
                 .overlay(alignment: .trailing) {
@@ -137,7 +139,13 @@ struct MainView: View {
                 max: showsAssistant ? AssistantSidebarLayout.listMinimum : nil
             )
             .toolbar {
-                if mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
+                if isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
+                    ToolbarItem(placement: .navigation) {
+                        Button(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
+                            columnVisibility = columnVisibility == .all ? .doubleColumn : .all
+                        }
+                        .help(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar")
+                    }
                     ToolbarItem(placement: .navigation) {
                         Button(action: newMessage) {
                             Label("New Message", systemImage: "square.and.pencil")
@@ -151,12 +159,17 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
                 .background(Tokens.Surface.canvas)
                 .toolbar {
-                    if mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
+                    if isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID {
                         MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow)
                     }
                 }
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .sidebarToggle)
+        .navigationTitle(!isActive ? "Calendar"
+            : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
+        .navigationSubtitle(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
+            ? mailbox.selectedMailboxSubtitle : "")
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
                 if let notice = mailbox.sendNotice {

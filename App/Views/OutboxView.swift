@@ -43,7 +43,6 @@ struct OutboxView: View {
             if let selection, !ids.contains(selection) { self.selection = nil }
         }
         .background(Tokens.Surface.primary)
-        .navigationTitle("Outbox")
     }
 
     /// A send still waiting out its delay, which hasn't tried Gmail yet.

@@ -54,6 +54,10 @@ struct TernApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        CalendarNotificationRouter.shared.install()
+    }
+
     #if DEBUG
     /// Appearance checks affect only the synthetic audit app, never system preferences.
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -126,7 +130,7 @@ struct RootView: View {
             SignInView()
         case .signedIn:
             if let mailbox = model.mailbox {
-                MainView(mailbox: mailbox)
+                WorkspaceView(mailbox: mailbox)
             } else {
                 openingState
             }

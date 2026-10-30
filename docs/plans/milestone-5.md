@@ -112,7 +112,7 @@ Milestone 4's plan leaves these to milestone 5. This list first also held filter
 
 1. Contact photos: People API photos for saved and other contacts, cached with the contact rows, used by A9.
 2. Contact groups: a group name typed in a recipient field expands to its members' addresses.
-3. Invitation agenda: the invitation banner shows the day's other events from the Mac's calendars through EventKit, read-only. This needs Calendars full access, since write-only access can't read events.
+3. Invitation agenda: superseded on 2026-10-30 by the approved [F15 calendar integration](calendar-integration.md). Read the day's events and availability directly from connected Google calendars, honoring independent calendar/assistant permissions. The former EventKit proposal and macOS Calendars full-access requirement no longer apply; F15 owns the calendar views, email suggestions and scheduling workflow.
 
 ## Not included
 
@@ -195,7 +195,7 @@ No UI snapshot tests.
 ## What you need to do
 
 - Permanent deletion needs no change to the OAuth consent screen, since milestone 4 already adds `https://mail.google.com/` for Inbox Updates.
-- Allow Tern's Calendars access when the invitation agenda first asks for it.
+- Complete [F15's Google Calendar setup](calendar-integration.md#google-authorization-and-setup) for calendar and invitation-agenda use. No EventKit Calendars permission is required by that design.
 - Live testing: the part-tree `fields` mask, `cid:` mail, Gmail web links, and allowing alerts in System Settings.
 
 ## Risks

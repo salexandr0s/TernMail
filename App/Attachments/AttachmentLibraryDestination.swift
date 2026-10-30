@@ -5,6 +5,7 @@ import SwiftUI
 struct AttachmentLibraryDestination: View {
     @Environment(AppModel.self) private var app
     @State private var model: AttachmentLibraryModel
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
     let mailbox: MailboxModel
 
     init(mailbox: MailboxModel) {
@@ -13,12 +14,24 @@ struct AttachmentLibraryDestination: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(mailbox: mailbox)
+                .toolbar(removing: .sidebarToggle)
                 .navigationSplitViewColumnWidth(min: Tokens.Layout.sidebarMinWidth,
                     ideal: Tokens.Layout.sidebarWidth, max: Tokens.Layout.sidebarMaxWidth)
         } detail: {
             AttachmentLibraryView(model: model, onOpenSource: {})
+        }
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            if app.destination == .mail {
+                ToolbarItem(placement: .navigation) {
+                    Button(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
+                        columnVisibility = columnVisibility == .all ? .detailOnly : .all
+                    }
+                    .help(columnVisibility == .all ? "Hide Sidebar" : "Show Sidebar")
+                }
+            }
         }
         .onChange(of: app.accountsNeedingSignIn, initial: true) { _, ids in model.unavailableAccountIDs = ids }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, ids in

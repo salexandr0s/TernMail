@@ -27,6 +27,16 @@ Mail access starts disabled. Relevant content from enabled accounts is sent to O
 
 Tern stores its own ChatGPT connection in macOS Keychain, separate from Gmail and other apps. **Disconnect** clears local authorization and requests remote revocation. If revocation fails, Tern reports it; local use remains disabled. **Manage usage** opens ChatGPT's usage controls.
 
+## Calendar access
+
+Connect Google Calendar through an existing Tern Google account, then open Calendar → Manage calendars. Each calendar has independent assistant access: **Off**, **Availability only**, or **Event details**. Access starts Off. Showing a calendar in the sidebar does not grant assistant access. Select scheduling calendars separately and review working hours and time zone.
+
+The assistant can check availability, read permitted events and prepare editable event proposals. It cannot save a calendar change through a tool call. Open a proposal, review its fields and invitation recipients, then choose Save. Changing calendar access cancels active requests and discards retained calendar context and proposals.
+
+For a scheduling reply, select the times you want to suggest. Tern checks them again and asks the assistant to prepare an editable email draft. Choosing times reserves no event and sends no email. Calendar failures remain unknown; Tern does not treat an inaccessible calendar as free. Replies contain the chosen times without the titles or reasons for other appointments.
+
+Ordinary dated emails can offer Add event with AI disabled. Optional AI interpretation runs when an allowed conversation opens and can prepare revised meeting suggestions. All suggestions use the same reviewed event editor. See [Calendar integration](plans/calendar-integration.md) for Google setup, implementation limits and verification.
+
 ## Troubleshooting
 
 - **Plan usage not enabled:** reconnect and grant plan usage. Availability depends on the ChatGPT account and the current Sign in with ChatGPT preview.

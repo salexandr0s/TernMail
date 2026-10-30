@@ -26,6 +26,9 @@ struct AssistantConversationView<Welcome: View>: View {
                                                  status: model.statusText, canRetry: model.canRetry(message.id),
                                                  onRetry: { scrollTracking.followLatest(); model.retry(message.id) },
                                                  onOpenSource: onOpenSource, onOpenDraft: onOpenDraft)
+                            if !message.calendarProposals.isEmpty || !message.availabilityChoices.isEmpty {
+                                AssistantCalendarActionsView(message: message, model: model)
+                            }
                         }
                         if let error = model.errorMessage, error != model.messages.last?.errorMessage {
                             Label(error, systemImage: "exclamationmark.triangle")

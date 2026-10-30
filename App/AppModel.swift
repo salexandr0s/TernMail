@@ -24,6 +24,8 @@ final class AppModel {
     /// compose windows keep working and queued changes wait for sign-in.
     private(set) var mailbox: MailboxModel?
     @ObservationIgnored private var assistantModel: AssistantModel?
+    @ObservationIgnored private var calendarModel: CalendarModel?
+    var destination: WorkspaceDestination = .mail
     @ObservationIgnored var assistantNavigationTask: Task<Void, Never>?
 
     /// All assistant presentations share one conversation and ChatGPT connection.
@@ -32,6 +34,38 @@ final class AppModel {
         let value = AssistantModel(app: self)
         assistantModel = value
         return value
+    }
+
+    var calendar: CalendarModel {
+        if let calendarModel { return calendarModel }
+        let value = CalendarModel(app: self)
+        calendarModel = value
+        return value
+    }
+
+    func showCalendar() { destination = .calendar }
+
+    func calendarAccounts() async throws -> [AccountRecord] {
+        try await accounts?.accounts() ?? []
+    }
+
+    func calendarPreferences(accountID: String) async throws -> [CalendarPreferences] {
+        try await accounts?.calendarPreferences(accountID: accountID) ?? []
+    }
+
+    func saveCalendarPreferences(_ preferences: CalendarPreferences) async throws {
+        guard let accounts else { throw CalendarModelError.unavailable }
+        try await accounts.saveCalendarPreferences(preferences)
+    }
+
+    func calendarService(for accountID: String) -> GoogleCalendarClient? {
+        guard let session = sessions[accountID], session.isSignedIn,
+              !accountsNeedingSignIn.contains(accountID) else { return nil }
+        return GoogleCalendarClient(tokens: session)
+    }
+
+    func calendarStoreURL() throws -> URL {
+        try Self.dataDirectory().appending(path: "calendar.sqlite")
     }
     /// Accounts whose Google session ended while the others carry on. With
     /// one account the window shows sign-in instead.
@@ -59,7 +93,7 @@ final class AppModel {
         guard phase == .loading else { return }
         do {
 #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+            if ProcessInfo.processInfo.arguments.contains("--ui-audit") || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
                 let cache = try MailCache.inMemory()
                 let accounts = try AccountStore.inMemory()
                 let account = AccountRecord(id: "ui-audit", email: "audit@example.invalid", displayName: "UI Audit", grantedScopes: [], addedAt: .now)
@@ -75,6 +109,7 @@ final class AppModel {
                     account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing, snoozeStore: accounts
                 )
                 self.mailbox = mailbox
+                if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") { destination = .calendar }
                 phase = .signedIn(account)
                 AccountProfileImages.shared.setAuditImage(SenderAccountLabel.auditImage, for: account.id)
                 if ProcessInfo.processInfo.arguments.contains("--ui-audit-reauth") {
@@ -306,6 +341,7 @@ final class AppModel {
                 account.hostedDomain = hostedDomain
                 account.enabledFeatures = AccountFeature.names(of: wanted.filter { GoogleScopes.isCovered($0, by: granted) })
             }
+            await calendarModel?.refresh()
             return user.grant
         })
     }
@@ -321,6 +357,11 @@ final class AppModel {
             }
             if feature == .contacts {
                 try await cache.write { tx in try tx.deleteContacts(accountID: accountID) }
+            }
+            if feature == .calendar {
+                await calendarModel?.removeAccount(accountID)
+            } else if feature == .calendarManagement || feature == .calendarSharing {
+                await calendarModel?.refresh()
             }
         })
     }
@@ -474,6 +515,7 @@ final class AppModel {
             phase = .signInRequired(account)
         }
         assistantModel?.refreshAccess()
+        calendarModel?.accessExpired(accountID)
     }
 
     // MARK: Quitting
@@ -482,6 +524,7 @@ final class AppModel {
     func prepareToQuit() async {
         assistantModel?.stop()
         assistantModel?.connection.cancelSignIn()
+        await calendarModel?.stop()
         await mailbox?.prepareToQuit()
     }
 
@@ -571,6 +614,7 @@ final class AppModel {
         _ account: AccountRecord, session: AccountSession?, from accounts: AccountStore
     ) async throws {
         try await accounts.deleteAccount(id: account.id)
+        await calendarModel?.removeAccount(account.id)
         session?.signOut()
         // A session that failed to restore at launch can leave its item behind.
         try? KeychainStore.delete(account: account.id)
@@ -626,6 +670,9 @@ extension AccountFeature {
         case .gmailSettings: "Gmail Settings"
         case .contacts: "Contacts"
         case .inboxUpdates: "Inbox Updates"
+        case .calendar: "Google Calendar"
+        case .calendarManagement: "Calendar Management"
+        case .calendarSharing: "Calendar Sharing"
         }
     }
 }

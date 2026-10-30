@@ -16,11 +16,30 @@ struct ThreadView: View {
     @State private var loadFailed = false
     @State private var bodyLoadFailed = false
     @State private var loadAttempt = 0
+    @State private var calendarSuggestions = EmailCalendarModel()
+    @State private var responseReview: EmailCalendarResponseReview?
+    @State private var calendarNotice: String?
+    @State private var calendarReplyBusy = false
+    @State private var cancellationReview: EmailCalendarItem?
+    @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
 
     private struct LoadIdentity: Equatable {
         let key: ThreadKey
         let attempt: Int
+    }
+
+    private struct CalendarInterpretationIdentity: Equatable {
+        let revision: String
+        let access: Int
+        let storeReady: Bool
+    }
+
+    private struct CalendarSuggestionLoadIdentity: Equatable {
+        let detail: ThreadDetail?
+        let storeReady: Bool
+        let access: Int
+        let timeZone: String
     }
 
     var body: some View {
@@ -29,6 +48,27 @@ struct ThreadView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                         ThreadHeading(detail: detail, key: key, mailbox: mailbox)
+                        EmailCalendarSuggestionsView(model: calendarSuggestions,
+                            onReview: { item in
+                                if item.kind == .cancelled { cancellationReview = item }
+                                else { Task { await app.calendar.reviewEmailSuggestion(item, key: key) } }
+                            },
+                            onOpenExisting: { item in
+                                guard let calendarID = item.existingCalendarID, let eventID = item.existingEventID else { return }
+                                Task { await app.calendar.openEvent(accountID: key.accountID, calendarID: calendarID, eventID: eventID) }
+                            }, onRespond: { item, answer in
+                                guard !calendarReplyBusy else { return }
+                                calendarReplyBusy = true
+                                Task {
+                                    defer { calendarReplyBusy = false }
+                                    do { responseReview = try await app.calendar.prepareEmailResponse(item, answer: answer, key: key) }
+                                    catch { calendarNotice = error.localizedDescription }
+                                }
+                            }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } })
+                            .disabled(calendarReplyBusy)
+                        if let calendarNotice {
+                            Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
                         ForEach(detail.messages) { message in
                             MessageView(
                                 message: message,
@@ -103,6 +143,13 @@ struct ThreadView: View {
                             let opened = await mailbox.open(key)
                             guard !Task.isCancelled else { return }
                             bodyLoadFailed = !opened
+                            if opened, let owner = mailbox.account(id: key.accountID) {
+                                do {
+                                    try await owner.engine.refreshCalendarInvitations(threadID: key.threadID)
+                                    if let current = self.detail { await app.calendar.loadEmailSuggestions(calendarSuggestions, detail: current, key: key) }
+                                } catch is CancellationError { return }
+                                catch { calendarNotice = "Calendar invitations could not refresh. Showing cached suggestions." }
+                            }
                         }
                     }
                 }
@@ -111,6 +158,51 @@ struct ThreadView: View {
                 self.detail = nil
                 loadFailed = true
             }
+        }
+        .task(id: CalendarSuggestionLoadIdentity(detail: detail, storeReady: app.calendar.store != nil,
+            access: app.calendar.accessRevision, timeZone: app.calendar.calendar.timeZone.identifier)) {
+            guard let detail else { return }
+            await app.calendar.loadEmailSuggestions(calendarSuggestions, detail: detail, key: key)
+        }
+        .task(id: CalendarInterpretationIdentity(revision: calendarSuggestions.revision,
+            access: app.assistant.calendarExtractionRevision, storeReady: app.calendar.store != nil)) {
+            guard !calendarSuggestions.messages.isEmpty, app.calendar.store != nil else { return }
+            guard let service = try? app.assistant.calendarExtractionService(for: key) else {
+                calendarSuggestions.clearAIResults()
+                return
+            }
+            await app.calendar.interpretEmailSuggestions(calendarSuggestions, key: key, service: service)
+        }
+        .confirmationDialog("Send invitation response?", isPresented: Binding(
+            get: { responseReview != nil }, set: { if !$0 { responseReview = nil } }), presenting: responseReview) { review in
+            Button("Send Response") {
+                calendarReplyBusy = true
+                Task {
+                    defer { calendarReplyBusy = false }
+                    do {
+                        try await app.calendar.sendEmailResponse(review, key: key)
+                        calendarNotice = "Your invitation response is queued."
+                    } catch { calendarNotice = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { review in Text(review.explanation) }
+        .alert("Remove cancelled event?", isPresented: Binding(
+            get: { cancellationReview != nil }, set: { if !$0 { cancellationReview = nil } }), presenting: cancellationReview) { item in
+            Button("Remove Event", role: .destructive) {
+                calendarReplyBusy = true
+                Task {
+                    defer { calendarReplyBusy = false }
+                    do {
+                        let display = try await app.calendar.emailCancellationEvent(item, key: key)
+                        try await app.calendar.delete(display, scope: display.event.recurringEventId == nil ? .series : .occurrence)
+                        calendarNotice = "The cancelled event was queued for removal."
+                    } catch { calendarNotice = error.localizedDescription }
+                }
+            }
+            Button("Keep Event", role: .cancel) {}
+        } message: { item in
+            Text("This email cancels “\(item.title)”. Remove the matching event from Google Calendar? Google may notify its attendees.")
         }
     }
 

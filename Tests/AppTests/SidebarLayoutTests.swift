@@ -5,7 +5,7 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct SidebarLayoutTests {
-    @Test func mailboxExpansionKeepsSidebarViewportAndTopRowInPlace() async throws {
+    @Test func mailboxExpansionKeepsSidebarViewportAndInboxInPlace() async throws {
         let app = AppModel()
         await app.start()
         let mailbox = try #require(app.mailbox)
@@ -36,25 +36,24 @@ import Testing
             $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX
         })
         let scroll = try #require(table.enclosingScrollView)
+        let inboxRow = try await selectRow(in: table, matching: .combined(SystemLabel.inbox), mailbox: mailbox)
         scrollToTop(scroll)
         try await settle()
         let viewport = scroll.convert(scroll.bounds, to: nil)
-        let topRow = table.convert(table.rect(ofRow: 1), to: nil).maxY
+        let inboxTop = table.convert(table.rect(ofRow: inboxRow), to: nil).maxY
         let scrollInsets = scroll.contentInsets
         let clipInsets = scroll.contentView.contentInsets
 
         // Native selection uses MailboxID tags, even though the binding is optional.
-        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
-        try await settle()
+        _ = try await selectRow(in: table, matching: .combined(SystemLabel.starred), mailbox: mailbox)
         #expect(mailbox.selectedMailbox == .combined(SystemLabel.starred))
-        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
-        try await settle()
+        _ = try await selectRow(in: table, matching: .combined(SystemLabel.inbox), mailbox: mailbox)
         #expect(mailbox.selectedMailbox == .combined(SystemLabel.inbox))
         settings.set(SystemLabel.inbox, forKey: SidebarView.expandedKey)
         try await settle()
-        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
-        try await settle()
-        #expect(mailbox.selectedMailbox == .account(mailbox.accounts[0].account.id, SystemLabel.inbox))
+        let account = try #require(mailbox.accounts.first?.account)
+        _ = try await selectRow(in: table, matching: .account(account.id, SystemLabel.inbox), mailbox: mailbox)
+        #expect(mailbox.selectedMailbox == .account(account.id, SystemLabel.inbox))
         settings.set("", forKey: SidebarView.expandedKey)
         try await settle()
 
@@ -79,7 +78,7 @@ import Testing
             // Native selection anchoring may scroll as rows appear; compare at the top.
             scrollToTop(scroll)
             try await settle()
-            #expect(abs(table.convert(table.rect(ofRow: 1), to: nil).maxY - topRow) < 1, "Mailbox: \(id)")
+            #expect(abs(table.convert(table.rect(ofRow: inboxRow), to: nil).maxY - inboxTop) < 1, "Mailbox: \(id)")
         }
         await app.signOut()
     }
@@ -88,6 +87,23 @@ import Testing
         if let table = view as? NSTableView { return [table] }
         return view.subviews.flatMap { tables(in: $0) }
     }
+
+    private func selectRow(in table: NSTableView, matching mailboxID: MailboxID, mailbox: MailboxModel) async throws -> Int {
+        // Probe native selection tags so sections inserted before Mailboxes do
+        // not change which rows this test selects. Clearing each selection
+        // proves the next native selection updates the optional MailboxID.
+        for index in 0..<table.numberOfRows {
+            table.deselectAll(nil)
+            try await settle()
+            try #require(mailbox.selectedMailbox == nil)
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            try await settle()
+            if mailbox.selectedMailbox == mailboxID { return index }
+        }
+        throw SidebarSelectionError.mailboxNotFound(mailboxID)
+    }
+
+    private enum SidebarSelectionError: Error { case mailboxNotFound(MailboxID) }
 
     private func scrollToTop(_ scroll: NSScrollView) {
         let clip = scroll.contentView

@@ -6,34 +6,68 @@ import SyncEngine
 import TernAI
 
 struct AssistantSource: Identifiable, Hashable, Sendable {
+    enum Target: Hashable, Sendable {
+        case mail(threadID: String, messageID: String?, partID: String?)
+        case calendar(calendarID: String, eventID: String)
+    }
     let accountID: String
-    let threadID: String
-    let messageID: String?
-    let partID: String?
+    let target: Target
     let title: String
+
+    init(accountID: String, threadID: String, messageID: String?, partID: String?, title: String) {
+        self.accountID = accountID; self.title = title
+        target = .mail(threadID: threadID, messageID: messageID, partID: partID)
+    }
+
+    init(accountID: String, calendarID: String, eventID: String, title: String) {
+        self.accountID = accountID; self.title = title
+        target = .calendar(calendarID: calendarID, eventID: eventID)
+    }
+
+    var threadID: String { if case .mail(let id, _, _) = target { id } else { "" } }
+    var messageID: String? { if case .mail(_, let id, _) = target { id } else { nil } }
+    var partID: String? { if case .mail(_, _, let id) = target { id } else { nil } }
+    var isCalendar: Bool { if case .calendar = target { true } else { false } }
+    var systemImage: String { isCalendar ? "calendar" : (partID == nil ? "envelope" : "paperclip") }
 
     var id: String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
-        return "tern:" + [accountID, threadID, messageID ?? "", partID ?? ""].map {
+        let parts: [String]
+        let prefix: String
+        switch target {
+        case .mail(let thread, let message, let part):
+            parts = [accountID, thread, message ?? "", part ?? ""]; prefix = "tern:"
+        case .calendar(let calendar, let event):
+            parts = [accountID, calendar, event]; prefix = "tern-calendar:"
+        }
+        return prefix + parts.map {
             $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
         }.joined(separator: "/")
     }
 }
 
-struct MailAssistantToolResult: Sendable {
+struct AssistantToolResult: Sendable {
     let data: AIJSON
     let sources: [AssistantSource]
     let createdDraftID: String?
     let emailResults: [AssistantEmailResult]
+    let calendarProposals: [AssistantCalendarProposal]
+    let availabilityChoices: [AssistantAvailabilityChoice]
 
     init(data: AIJSON, sources: [AssistantSource] = [], createdDraftID: String? = nil,
-         emailResults: [AssistantEmailResult] = []) {
+         emailResults: [AssistantEmailResult] = [], calendarProposals: [AssistantCalendarProposal] = [],
+         availabilityChoices: [AssistantAvailabilityChoice] = []) {
         self.data = data
         self.sources = sources
         self.createdDraftID = createdDraftID
         self.emailResults = emailResults
+        self.calendarProposals = calendarProposals
+        self.availabilityChoices = availabilityChoices
     }
 }
+
+/// Existing mail adapters retain their source-compatible spelling.
+typealias MailAssistantToolResult = AssistantToolResult
 
 /// Each instance belongs to one immutable conversation scope. Tool arguments are
 /// untrusted; account and message ownership come from Tern and Gmail.

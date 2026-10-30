@@ -30,8 +30,6 @@ struct ThreadListView: View {
                         .help("Snoozes stay on this Mac and don't show in Gmail or on other devices.")
                 }
             }
-            .navigationTitle(mailbox.selectedLabelTitle)
-            .navigationSubtitle(mailbox.selectedMailboxSubtitle)
             .onChange(of: mailbox.search.listFocusRequest) {
                 listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
             }

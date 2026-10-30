@@ -4,6 +4,7 @@ import QuickLook
 import SwiftUI
 
 struct AttachmentLibraryView: View {
+    @Environment(AppModel.self) private var app
     @Bindable var model: AttachmentLibraryModel
     var onOpenSource: () -> Void
     @AppStorage("attachments.viewMode") private var viewMode = "list"
@@ -30,19 +31,21 @@ struct AttachmentLibraryView: View {
             footer
         }
         .background(Tokens.Surface.canvas)
-        .navigationTitle("Attachments")
+        .navigationTitle(app.destination == .mail ? "Attachments" : "Calendar")
         .quickLookPreview($model.previewURL)
         .task(id: model.coverageKey) { await model.start() }
         .task(id: model.observationKey) { await model.reload() }
         .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    searchFocused = true
-                } label: {
-                    Label("Find attachment", systemImage: "magnifyingglass")
+            if app.destination == .mail {
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        searchFocused = true
+                    } label: {
+                        Label("Find attachment", systemImage: "magnifyingglass")
+                    }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .help("Find attachment (⌘F)")
                 }
-                .keyboardShortcut("f", modifiers: .command)
-                .help("Find attachment (⌘F)")
             }
         }
     }

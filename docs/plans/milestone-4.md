@@ -2,6 +2,8 @@
 
 Current progress, 2026-10-30: stage A and B1 through B6b are complete in `/Users/developer/GitHub/REA_Mime` on `codex/tern-unified`. B6a added calendar ingestion; B6b added outgoing identities, saved signatures, calendar replies and their Undo cleanup. B7 is next within this milestone. Earlier branch references below record the original plan history.
 
+Calendar amendment, 2026-10-30: the approved [F15 calendar integration](calendar-integration.md) now owns the full Google Calendar experience, invitation controls and calendar-aware assistant. Its direct Google Calendar design supersedes this plan's invitation-only API alternative and milestone 5's EventKit agenda. Existing MIME ingestion, invitation ordering, iTIP reply serialization and compose/Undo behavior remain reusable foundations; their historical verification records below still apply. F15 now supplies the invitation UI, cached-body calendar backfill, multiple-event/recurrence parsing, atomic reply receipts and custom-zone spring-gap correction that were still pending in the earlier B6a/B6b records.
+
 Status: approved 2026-10-29 after a plan review. Amended the same day to take forwarding filters and a formatted vacation message from milestone 5 (answered question 3). You approved the amendment the same day. Gate C, the same day: `feat/milestone-3` merged at `c98d356`, with milestone 2 at `929eeb8` inside it, and you approved the file-list changes it found in B1, B2 and B10c. Research input: the "Google services and authorization" and "Real-time updates" sections and the milestone list in `docs/research/mimestream-behavior.md` (behavior only). Branch `feat/milestone-4`, cut from `feat/milestone-3` at `5d4d385`, which includes milestone 2 at `7c6fbad`.
 
 The milestone runs in two stages. Stage A adds library code in new files and changes no existing file except `Packages/Core/Package.swift`. Stage B wires that code into sign-in, the store, the sync engine, compose, the thread view and Settings. It starts only after you say milestones 2 and 3 are done.
@@ -14,14 +16,14 @@ In scope:
 - Gmail settings: list, add, change and delete filters, including filters that forward to the account's verified forwarding addresses; read and change the vacation responder, with a formatted message; read send-as identities and edit the signature of the account's primary address.
 - Send-as in compose: a From menu with the account's verified addresses, and the matching signature in new messages.
 - Contact suggestions from the People API: saved contacts and "other contacts" synced locally, plus a live directory search for Google Workspace accounts, merged with milestone 2's suggestions from cached mail.
-- A calendar invitation banner at the top of the thread view, with Accept, Maybe and Decline for invitations sent to one of the account's addresses. Replies go out as emailed iTIP replies.
+- A calendar invitation banner at the top of the thread view, with Accept, Maybe and Decline for invitations sent to one of the account's addresses. F15 routes a matching Google invitation through Calendar RSVP and uses emailed iTIP only for the explicit unmatched-invitation fallback, with one delivery path per response.
 
 Out of scope:
 
 - `users.watch` push through Cloud Pub/Sub, which needs a server.
 - Adding, verifying or deleting send-as addresses and forwarding addresses, SMTP relay settings, delegates, account-wide auto-forwarding, and POP and IMAP settings.
 - Writing contacts. Contact photos and contact groups are milestone 5's.
-- Adding events to a calendar, free/busy, counter-proposals, a note with an answer, and expanding recurrence rules. The banner says an event repeats and shows the first occurrence. Showing the day's other events from the Mac's calendars is milestone 5's.
+- Full calendar views, adding events, free/busy, recurrence and invitation agenda context are delivered by F15 using Google Calendar. They are outside this original milestone's implementation record. Formal iTIP counter-proposals and a note with an RSVP remain outside the approved calendar scope; ordinary scheduling replies use editable email drafts.
 - System notifications for new mail, which are milestone 5's.
 
 ## Google API facts this plan relies on
@@ -57,7 +59,7 @@ IMAP:
 
 Calendar and iCalendar:
 
-- The narrowest Calendar scope that can both find an event by `iCalUID` and patch it is `calendar.events.owned`. `events.patch` takes `sendUpdates` (`all`, `externalOnly`, `none`), and array fields, attendees included, replace the stored array.
+- The original invitation-only alternative considered `calendar.events.owned`. F15 uses `calendar.events` to include writable shared calendars, plus calendar-list and free/busy scopes. `events.patch` takes `sendUpdates` (`all`, `externalOnly`, `none`), and array fields, attendees included, replace the stored array; F15 must preserve current attendee fields and validate ETags.
 - RFC 5546: a REPLY carries METHOD:REPLY, exactly one ATTENDEE (the person replying), DTSTAMP, ORGANIZER and UID; RECURRENCE-ID only when it answers for one occurrence; SEQUENCE equal to the request's when that isn't zero; no VALARM. A CANCEL carries DTSTAMP, ORGANIZER, SEQUENCE and UID, and STATUS:CANCELLED when the whole event is canceled. The higher SEQUENCE wins, and on a tie the later DTSTAMP.
 - RFC 5545: every VCALENDAR carries VERSION:2.0 and PRODID. A DATE-TIME with a TZID needs a VTIMEZONE for that TZID in the same object. Lines fold at 75 octets with CRLF and one space or tab; parameter values containing `:`, `;` or `,` are quoted; DATE-TIME is floating, UTC (`Z`) or local with TZID; TEXT escapes are `\\`, `\;`, `\,`, and `\n` or `\N`. An all-day event's DTEND is exclusive. A VTIMEZONE rule's DTSTART is local time at the rule's TZOFFSETFROM.
 - RFC 6047: the MIME type is `text/calendar` with a `method` parameter equal to METHOD, `charset=UTF-8` when the text isn't ASCII, and a readable alternative is recommended. Replies go to the ORGANIZER address, addresses come from the iCalendar properties rather than the mail headers, and receivers should check that a message is authentic.
@@ -143,8 +145,8 @@ Faster, adaptive `history.list` polling was the alternative. It wasn't chosen (a
 
 | Area | Choice | Why |
 |---|---|---|
-| Reply path | An emailed iTIP REPLY through milestone 2's compose lane, as a local draft of kind `invitationReply` with the usual undo send notice | Works with any organizer's calendar system and needs no new scope |
-| Calendar API | Not used. The alternative, recorded as open question 1, is `calendar.events.owned`: `events.list` by `iCalUID`, then `events.patch` of the attendee list with `sendUpdates=all` | It would update the user's own Google Calendar copy, at the cost of another scope and a patch that replaces the whole attendee list |
+| Reply path | F15 first matches a Google event by invitation and occurrence identity and uses Calendar RSVP when the user is an attendee. Unmatched invitations offer a separate iTIP Reply action through the existing `invitationReply` compose/Undo lane | Updates the existing Google invitation when present, keeps the interoperable fallback and avoids duplicate response delivery |
+| Calendar API | F15 requests `calendar.events`, `calendar.calendarlist` and `calendar.events.freebusy`, with management/sharing scopes only when enabled. Personal copies use import semantics and send no RSVP | Replaces the former `calendar.events.owned` alternative with the approved shared-calendar feature; attendee edits preserve current fields and use version checks |
 | Buttons | Accept, Maybe and Decline appear for METHOD:REQUEST when an ATTENDEE matches one of the account's addresses. A CANCEL shows the event as canceled. A REPLY, where the user is the organizer, shows who answered what | Under RFC 5546 only invited attendees reply |
 | Which version | Per account, UID and RECURRENCE-ID, the newest version is the one with the highest SEQUENCE, then the latest DTSTAMP, across every cached message in the account. REPLY, COUNTER and REFRESH copies don't count, since attendees send them. A banner on an older copy says a newer version exists and shows no buttons | Updates and cancellations often arrive in a new thread with a new subject. RFC 5546's ordering rule. The user's own sent answer has a later DTSTAMP than the invitation and would otherwise hide its buttons |
 | Authenticity | When the From address doesn't match ORGANIZER, the banner says so. The buttons show where the reply goes | RFC 6047 asks receivers to check. A reply to a forged organizer tells the sender the address is read |
@@ -178,7 +180,7 @@ Faster, adaptive `history.list` polling was the alternative. It wasn't chosen (a
 | Filters, forwarding addresses and vacation | `gmail.modify` (held) | `gmail.settings.basic` | Restricted |
 | Identities, From menu, signatures | `gmail.modify` | `gmail.settings.basic`, for signature edits only | Restricted |
 | Contact suggestions | `contacts.readonly`, `contacts.other.readonly`; `directory.readonly` for Workspace accounts | Nothing | Sensitive expected; the consent screen settles it |
-| Invitations | `gmail.modify` (message bodies) | `gmail.modify` (`drafts.send`) | No new scope |
+| Invitation ingestion and unmatched iTIP fallback | `gmail.modify` (message bodies) | `gmail.modify` (`drafts.send`) | No new scope for the existing fallback; F15's matched Google RSVP and calendar features use [its separate calendar scopes](calendar-integration.md#google-authorization-and-setup) |
 | Inbox updates | `https://mail.google.com/` | Nothing | Restricted, the broadest Gmail scope |
 
 ## Data model
@@ -248,7 +250,7 @@ A refresh calls `sendAs.list` and replaces the account's identity rows in one co
 
 1. When a full thread is fetched, the calendar part is found: a `text/calendar` part outside attachments first, then an attached calendar file with a METHOD. Attached messages and multipart attachments are excluded. `requiredAttachmentIDs(includingCalendars: true)` includes the next eligible calendar ID; the default stays body-only for compose and assistant callers. The engine requests calendar candidates sequentially through `CalendarParts`, skipping malformed or oversized content, and stores the selected invitation in `messageCalendar` in the same transaction as the body. A successful replacement without an invitation clears the old row. Failure or cancellation leaves the previous body and invitation intact.
 2. The thread view reads the thread's `messageCalendar` rows, looks up the newest version of each UID and RECURRENCE-ID across the account, and shows the banner.
-3. Accept, Maybe or Decline creates a local draft of kind `invitationReply` addressed to the ORGANIZER, from the identity that matched the ATTENDEE, with the subject "Accepted: <summary>" (or "Tentatively accepted" or "Declined"), and queues it for sending with the undo send delay. The `invitationReply` row is written in the same transaction. No compose window opens.
+3. F15 checks Google invitation identity before an RSVP. A matching invitation uses the calendar queue and must not also send an iTIP email. For the explicit unmatched-invitation Reply action, Accept, Maybe or Decline creates a local draft of kind `invitationReply` addressed to the ORGANIZER, from the identity that matched the ATTENDEE, with the subject "Accepted: <summary>" (or "Tentatively accepted" or "Declined"), and queues it for sending with the undo send delay. The `invitationReply` row is written in the same transaction. Add personal copy is a separate reviewed import and does not reply.
 4. Undo send atomically cancels an unstarted invitation send, removes its matching `invitationReply` row and queues discard cleanup. That cleanup waits behind any in-flight autosave before deleting Gmail's copy and the local draft. A newer answer from another draft stays. Successful sends retain the answer record; discarding an unsent reply removes its matching record. Changing the answer later sends a new reply with a new DTSTAMP.
 
 ## UI
@@ -369,7 +371,7 @@ No UI snapshot tests.
 ## What you need to do
 
 - In the Google Cloud project that holds the OAuth client from milestone 1:
-  - Enable the People API. The Calendar API is needed only if open question 1 goes that way.
+  - Enable the People API. F15 also requires Google Calendar API in this same project; add its calendar scopes as described in [Calendar setup](calendar-integration.md#google-authorization-and-setup).
   - On the OAuth consent screen, add `gmail.settings.basic`, `contacts.readonly`, `contacts.other.readonly`, `directory.readonly` and `https://mail.google.com/`. Note the class the console shows for each.
   - Keep every account you'll test with on the test user list.
 - While the consent screen stays in Testing, refresh tokens expire after 7 days, so expect to sign in again each week. This already applies today.
@@ -386,7 +388,7 @@ No UI snapshot tests.
 - A filter replace leaves two filters for a moment, so mail arriving then gets both sets of actions. For a forwarding filter, that mail can be forwarded twice.
 - Forwarding filters send mail out of the account. Gmail forwards only to addresses whose owners verified them, and Tern can't add one. A Workspace admin can block automatic forwarding, and the error `filters.create` returns then is unconfirmed.
 - If Gmail rewrites the criteria it stores, the content match after an unclear create can miss, and a duplicate filter is left. Normalizing before comparing covers the expected cases; live testing checks what Gmail stores.
-- Emailed RSVPs: the organizer's calendar should take the reply, and live testing checks a Google Calendar and an Outlook organizer. The user's own Google Calendar copy may keep the old answer. Open question 1 covers the alternative.
+- Unmatched-invitation iTIP RSVPs: live testing must check Google Calendar and Outlook organizers. A personal copy does not prove acceptance. F15 uses Calendar RSVP when a matching Google invitation exists, and testing must prove one delivery path per response across retries.
 - A newer version of an invitation counts only once its message body is in the cache. Until then, an older copy can still show buttons, and an answer goes out for the version shown.
 - Custom VTIMEZONE resolution still has a pre-existing spring-gap limitation: a nonexistent local time uses the post-transition offset. Resolve and test that case before B9 displays invitation times; B6a corrects elapsed durations across transitions but does not change this local-time interpretation.
 - Signatures with rich formatting can't be edited in Tern.
@@ -401,11 +403,12 @@ Answered on 2026-10-29:
 
 1. Inbox updates use IMAP IDLE behind `https://mail.google.com/`, asked for only when the user turns on Inbox Updates for an account. Stage A builds A4a and A4b. Adaptive polling isn't built.
 2. The stage A phases run back to back, each tested and committed.
-3. Of the five features milestone 5's plan lists next to this scope (its workstream J), forwarding filters and a formatted vacation message move into milestone 4. Contact photos, contact groups and the invitation agenda stay in milestone 5.
+3. Of the five features milestone 5's plan lists next to this scope (its workstream J), forwarding filters and a formatted vacation message move into milestone 4. Contact photos and contact groups stay in milestone 5. The invitation agenda originally stayed there; the 2026-10-30 F15 amendment now provides it from Google Calendar and supersedes the EventKit proposal.
+
+Answered on 2026-10-30: invitation replies use the F15 matched Google Calendar RSVP path or the explicit unmatched iTIP fallback, never both for the same response. The earlier `calendar.events.owned` alternative is resolved by F15's approved scopes and queue.
 
 ## Open questions
 
 These follow the plan unless you say otherwise:
 
-1. Invitation replies. Planned: emailed iTIP replies, with no new scope. The alternative is the Calendar API with `calendar.events.owned`, which also updates your own Google Calendar copy.
-2. Signatures on replies and forwards. Planned: off by default, with a per-account switch.
+1. Signatures on replies and forwards. Planned: off by default, with a per-account switch.

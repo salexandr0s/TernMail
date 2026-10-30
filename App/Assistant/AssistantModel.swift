@@ -12,7 +12,10 @@ final class AssistantModel {
     private(set) var isLoadingModels = false
     private(set) var modelErrorMessage: String?
     var selectedModelID: String {
-        didSet { defaults?.set(selectedModelID, forKey: Self.modelKey) }
+        didSet {
+            defaults?.set(selectedModelID, forKey: Self.modelKey)
+            if selectedModelID != oldValue { calendarExtractionRevision += 1 }
+        }
     }
     private(set) var messages: [AssistantMessage] = []
     var composerText = ""
@@ -24,6 +27,13 @@ final class AssistantModel {
         didSet { if selectedScope != oldValue { refreshAccess() } }
     }
     private(set) var enabledAccountIDs: Set<String>
+    private(set) var isCheckingCalendarAvailability = false
+    private(set) var calendarChoiceError: String?
+    /// Thread readers observe this token to cancel extraction when permission
+    /// or model readiness changes; the chat's internal epoch is not observed.
+    private(set) var calendarExtractionRevision = 0
+    var hasCalendarAccess: Bool { context().calendarScope.hasAccess }
+    var hasAssistantDataAccess: Bool { !enabledAccountIDs.isEmpty || hasCalendarAccess }
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private let provider: any AIProvider
@@ -145,7 +155,9 @@ final class AssistantModel {
         }
         let snapshot = scope(in: current)
         if observedScope?.connectionRevision != current.connectionRevision { modelErrorMessage = nil }
-        if let previous = observedScope, previous != snapshot { clearConversation() }
+        if let previous = observedScope {
+            if previous != snapshot { clearConversation() }
+        } else { calendarExtractionRevision += 1 }
         observedScope = snapshot
         if catalogueRevision != current.connectionRevision {
             models = []
@@ -189,6 +201,7 @@ final class AssistantModel {
             models = choices
             catalogueRevision = revision
             if !choices.contains(where: { $0.id == selectedModelID }) { selectedModelID = choices.first?.id ?? "" }
+            calendarExtractionRevision += 1
             modelErrorMessage = choices.isEmpty ? "No models are available for this ChatGPT connection." : nil
         } catch {
             guard context().connectionRevision == revision else { refreshAccess(); return }
@@ -262,6 +275,72 @@ final class AssistantModel {
     /// Allows callers to await a submitted turn without polling its UI state.
     func waitForCurrentTurn() async { await task?.value }
 
+    func reviewCalendarProposal(_ proposal: AssistantCalendarProposal) {
+        refreshAccess()
+        let scope = context().calendarScope
+        guard scope.revision == proposal.accessRevision, scope.allows(proposal.calendar),
+              messages.contains(where: { $0.calendarProposals.contains(proposal) }) else { return }
+        app?.calendar.openProposal(proposal.id)
+    }
+
+    func useAvailabilityChoices(_ choices: [AssistantAvailabilityChoice]) async {
+        guard !isRunning, !isCheckingCalendarAvailability, !choices.isEmpty, choices.count <= 6,
+              let app else { return }
+        refreshAccess()
+        let snapshot = scope(in: context())
+        let epoch = conversationEpoch
+        let known = Set(messages.flatMap(\.availabilityChoices).map(\.id))
+        guard choices.allSatisfy({ known.contains($0.id) && $0.accessRevision == snapshot.calendarScope.revision
+            && $0.calendarKeys.allSatisfy { snapshot.calendarScope.allows($0) } }) else { return }
+        isCheckingCalendarAvailability = true
+        calendarChoiceError = nil
+        defer { isCheckingCalendarAvailability = false }
+        let bindings = app.calendar.assistantBindings
+        do {
+            for choice in choices {
+                var hours = bindings.workingHours()
+                hours.timeZoneIdentifier = choice.timeZoneIdentifier
+                hours.durationMinutes = Int(choice.end.timeIntervalSince(choice.start) / 60)
+                guard choice.start > .now else { throw CalendarAssistantTools.ToolError.changedSlot }
+                let result = try await CalendarAssistantTools.check(keys: choice.calendarKeys, start: choice.start,
+                    end: choice.end, hours: hours, bindings: bindings) { [weak self] in
+                        guard let self, self.conversationEpoch == epoch,
+                              self.scope(in: self.context()) == snapshot else { throw AssistantError.accessChanged }
+                    }
+                guard result.isComplete else { throw CalendarAssistantTools.ToolError.incompleteAvailability }
+                guard result.slots.contains(where: { $0.start == choice.start && $0.end == choice.end }) else {
+                    throw CalendarAssistantTools.ToolError.changedSlot
+                }
+            }
+            guard conversationEpoch == epoch, scope(in: context()) == snapshot else { throw AssistantError.accessChanged }
+            guard !isRunning else {
+                calendarChoiceError = "Wait for the current assistant reply, then choose these times again."
+                return
+            }
+            let times = choices.map { "\($0.displayTitle) (\($0.timeZoneIdentifier))" }.joined(separator: "\n")
+            send("Prepare an editable reply proposing only these times I selected, which Tern just checked again:\n\(times)\nDo not reserve an event or send the reply. Do not include details about my other appointments. If the reply target is unclear, ask me which conversation to reply to.")
+        } catch {
+            guard conversationEpoch == epoch else { return }
+            calendarChoiceError = error.localizedDescription
+        }
+    }
+
+    func calendarExtractionService(for thread: ThreadKey) throws -> EmailCalendarExtractionService {
+        refreshAccess()
+        let snapshot = scope(in: context())
+        try validateStart(snapshot)
+        guard snapshot.accountIDs.contains(thread.accountID),
+              snapshot.threadIDs?.contains(thread) ?? true else { throw AssistantError.accessChanged }
+        let epoch = conversationEpoch
+        let model = selectedModelID
+        return EmailCalendarExtractionService(provider: provider, model: model) { [weak self] in
+            guard let self else { return false }
+            return conversationEpoch == epoch && scope(in: context()) == snapshot
+                && selectedModelID == model && catalogueRevision == snapshot.connectionRevision
+                && models.contains(where: { $0.id == model })
+        }
+    }
+
     func summarize(thread: ThreadKey) async throws -> AssistantSummary {
         refreshAccess()
         let snapshot = scope(in: context())
@@ -288,7 +367,8 @@ final class AssistantModel {
             currentAccountIDs: Set(mailbox?.selectedAccounts.map(\.account.id) ?? []),
             selectedThreads: mailbox?.selectedThreadIDs ?? [],
             accountInstances: Dictionary(uniqueKeysWithValues: eligible.map { ($0.account.id, String(describing: ObjectIdentifier($0))) }),
-            connectionRevision: connection.connectionRevision, canUsePlan: connection.canUsePlan)
+            connectionRevision: connection.connectionRevision, canUsePlan: connection.canUsePlan,
+            calendarScope: app?.calendar.assistantScope ?? AssistantCalendarScope())
     }
 
     private func scope(in current: AssistantContext, selection: AssistantScope? = nil) -> AssistantScopeSnapshot {
@@ -306,13 +386,15 @@ final class AssistantModel {
         }
         return AssistantScopeSnapshot(accountIDs: accounts, threadIDs: threads,
             accountInstances: current.accountInstances.filter { accounts.contains($0.key) },
-            connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan)
+            connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan,
+            calendarScope: current.calendarScope)
     }
 
     private func validateStart(_ snapshot: AssistantScopeSnapshot, selection: AssistantScope? = nil) throws {
         guard snapshot.canUsePlan else { throw AIProviderError.signInRequired }
-        if (selection ?? selectedScope) == .selectedThreads, snapshot.threadIDs?.isEmpty != false { throw AssistantError.noSelection }
-        guard !snapshot.accountIDs.isEmpty else { throw AssistantError.noAccounts }
+        if !snapshot.calendarScope.hasAccess, (selection ?? selectedScope) == .selectedThreads,
+           snapshot.threadIDs?.isEmpty != false { throw AssistantError.noSelection }
+        guard !snapshot.accountIDs.isEmpty || snapshot.calendarScope.hasAccess else { throw AssistantError.noAccounts }
         guard !selectedModelID.isEmpty, models.contains(where: { $0.id == selectedModelID }),
               catalogueRevision == snapshot.connectionRevision else { throw AssistantError.noModel }
     }
@@ -324,13 +406,24 @@ final class AssistantModel {
         else {
             guard let app else { throw AssistantError.accessChanged }
             let epoch = conversationEpoch
-            let tools = MailAssistantTools(app: app, allowedAccountIDs: snapshot.accountIDs, allowedThreadIDs: snapshot.threadIDs) { [weak self] in
+            let isValid: @MainActor @Sendable () -> Bool = { [weak self] in
                 guard let self else { return false }
                 return conversationEpoch == epoch && scope(in: context()) == snapshot
             }
-            session = AssistantToolSession(definitions: MailAssistantTools.definitions,
+            let tools = MailAssistantTools(app: app, allowedAccountIDs: snapshot.accountIDs,
+                allowedThreadIDs: snapshot.threadIDs, isScopeValid: isValid)
+            let calendarTools = CalendarAssistantTools(scope: snapshot.calendarScope,
+                bindings: app.calendar.assistantBindings, isScopeValid: isValid)
+            let mailDefinitions = snapshot.accountIDs.isEmpty ? [] : MailAssistantTools.definitions
+            let calendarDefinitions = snapshot.calendarScope.hasAccess ? CalendarAssistantTools.definitions : []
+            session = AssistantToolSession(definitions: mailDefinitions + calendarDefinitions,
                 acknowledge: { tools.acknowledge(callID: $0) },
-                execute: { try await tools.execute($0) })
+                execute: { call in
+                    if calendarDefinitions.contains(where: { $0.name == call.name }) {
+                        return try await calendarTools.execute(call)
+                    }
+                    return try await tools.execute(call)
+                })
         }
         toolSession = session
         return session
@@ -338,9 +431,12 @@ final class AssistantModel {
 
     private func clearConversation() {
         stop(); conversationEpoch += 1
+        calendarExtractionRevision += 1
         history = []; messages = []; toolSession = nil; composerText = ""
         retryContext = nil
         errorMessage = nil; usage = nil
+        calendarChoiceError = nil
+        app?.calendar.clearAssistantProposals()
     }
 
     private func ensureCurrent(_ snapshot: AssistantScopeSnapshot, turn: UUID) throws {
@@ -404,6 +500,7 @@ final class AssistantModel {
                     let visible = messages.first(where: { $0.id == messageID })
                     let hasOutcome = !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (visible.map {
                         !$0.emailResults.isEmpty || !$0.draftIDs.isEmpty
+                            || !$0.calendarProposals.isEmpty || !$0.availabilityChoices.isEmpty
                     } ?? false)
                     if !hasOutcome {
                         if !answerOnly, round < Self.maximumRounds - 1 {
@@ -439,7 +536,8 @@ final class AssistantModel {
                         continue
                     }
                     try checkpoint(input, pending: Array(response.toolCalls.dropFirst(index)), uncertainDraft: call.name == "prepare_draft" ? call.id : nil)
-                    statusText = call.name == "prepare_draft" ? "Preparing draft…" : "Reading mail…"
+                    statusText = call.name == "prepare_draft" ? "Preparing draft…"
+                        : (CalendarAssistantTools.definitions.contains(where: { $0.name == call.name }) ? "Checking calendar…" : "Reading mail…")
                     let output: AIJSON
                     var acceptedResult: MailAssistantToolResult?
                     do {
@@ -448,13 +546,22 @@ final class AssistantModel {
                         let result = try await tools.execute(call)
                         try ensureCurrent(snapshot, turn: turn)
                         guard result.sources.allSatisfy(snapshot.allows),
-                              result.emailResults.allSatisfy({ snapshot.allows($0.source) }),
-                              result.emailResults.isEmpty || call.name == "present_emails" else { throw AssistantError.invalidSource }
+                              result.emailResults.allSatisfy({ !$0.source.isCalendar && snapshot.allows($0.source) }),
+                              result.emailResults.isEmpty || call.name == "present_emails",
+                              result.calendarProposals.allSatisfy({ $0.accessRevision == snapshot.calendarScope.revision && snapshot.calendarScope.allows($0.calendar) }),
+                              result.availabilityChoices.allSatisfy({ $0.accessRevision == snapshot.calendarScope.revision && $0.calendarKeys.allSatisfy { snapshot.calendarScope.allows($0) } })
+                        else { throw AssistantError.invalidSource }
                         output = result.data
                         update(messageID) { message in
                             for source in result.sources where !message.sources.contains(where: { $0.id == source.id }) { message.sources.append(source) }
                             if let id = result.createdDraftID, !message.draftIDs.contains(id) { message.draftIDs.append(id) }
                             if call.name == "present_emails" { message.emailResults = result.emailResults }
+                            for proposal in result.calendarProposals where !message.calendarProposals.contains(where: { $0.id == proposal.id }) {
+                                message.calendarProposals.append(proposal)
+                            }
+                            for choice in result.availabilityChoices where !message.availabilityChoices.contains(where: { $0.id == choice.id }) {
+                                message.availabilityChoices.append(choice)
+                            }
                         }
                         acceptedResult = result
                     } catch {
@@ -517,7 +624,7 @@ final class AssistantModel {
         .object(["type": .string("function_call_output"), "call_id": .string(callID), "output": .string(try data.jsonString())])
     }
     private static func toolMessage(for error: any Error) -> String {
-        if error is AttachmentTextReader.ReadError || error is AssistantMailError || error is MailAssistantTools.ToolError {
+        if error is AttachmentTextReader.ReadError || error is AssistantMailError || error is MailAssistantTools.ToolError || error is CalendarAssistantTools.ToolError {
             return error.localizedDescription
         }
         return "This operation did not complete. Narrow the request or explain the limitation to the user."
