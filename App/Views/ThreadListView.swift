@@ -5,6 +5,7 @@ struct ThreadListView: View {
     @Bindable var mailbox: MailboxModel
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @FocusState private var listFocused: Bool
+    @State private var labelsByThread: [ThreadKey: [LabelRecord]] = [:]
 
     var body: some View {
         list
@@ -31,7 +32,12 @@ struct ThreadListView: View {
             }
             .navigationTitle(mailbox.selectedLabelTitle)
             .navigationSubtitle(mailbox.selectedMailboxSubtitle)
-            .onChange(of: mailbox.search.listFocusRequest) { listFocused = true }
+            .onChange(of: mailbox.search.listFocusRequest) {
+                listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
+            }
+            .task(id: displayedThreads.map(\.key)) {
+                await observeLabels(for: displayedThreads.map(\.key))
+            }
             .sheet(isPresented: isChoosingSnoozeDate) {
                 if let ids = mailbox.snoozeDateTargets {
                     SnoozeDateSheet(
@@ -50,6 +56,25 @@ struct ThreadListView: View {
 
     private var displayedThreads: [ThreadRecord] {
         mailbox.search.isActive ? mailbox.search.results : mailbox.threads
+    }
+
+    private func observeLabels(for keys: [ThreadKey]) async {
+        guard !Task.isCancelled else { return }
+        let visible = Set(keys)
+        labelsByThread = labelsByThread.filter { visible.contains($0.key) }
+        guard !keys.isEmpty else { return }
+        let threadsByAccount = Dictionary(grouping: keys, by: \.accountID).mapValues { $0.map(\.threadID) }
+        do {
+            for try await updates in mailbox.cache.threadLabels(threadsByAccount: threadsByAccount) {
+                guard !Task.isCancelled else { return }
+                labelsByThread = Dictionary(uniqueKeysWithValues: updates.map {
+                    (ThreadKey(accountID: $0.accountID, threadID: $0.threadID), $0.labels)
+                })
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            labelsByThread = [:]
+        }
     }
 
     @ViewBuilder
@@ -129,6 +154,7 @@ struct ThreadListView: View {
                     wakeAt: wakeTimes[thread.key],
                     isWoken: mailbox.isWoken(thread),
                     isSelected: mailbox.selectedThreadIDs.contains(thread.key),
+                    labels: labelsByThread[thread.key] ?? [],
                     accountName: namesAccounts ? mailbox.account(id: thread.accountID)?.account.email : nil,
                     accountMark: accountMarks[thread.accountID],
                     accountColor: AccountAppearance.color(at: accountColors[thread.accountID])
@@ -254,6 +280,7 @@ struct ThreadRow: View {
     /// A snooze brought the conversation back to the Inbox.
     var isWoken = false
     var isSelected = false
+    var labels: [LabelRecord] = []
     /// Set where the list mixes accounts.
     var accountName: String?
     var accountMark: String?
@@ -329,6 +356,10 @@ struct ThreadRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                if !labels.isEmpty {
+                    ThreadLabelChips(labels: labels)
+                        .padding(.top, Tokens.Space.s0_5)
+                }
             }
         }
         .padding(.vertical, Tokens.Space.s1_5)
@@ -351,7 +382,46 @@ struct ThreadRow: View {
             parts.append(ThreadDate.short(thread.lastDate))
         }
         if let accountName { parts.append("in \(accountName)") }
+        if !labels.isEmpty { parts.append("Labels: \(labels.map(\.name).joined(separator: ", "))") }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// One line of labels, with the complete names available on hover and to VoiceOver.
+private struct ThreadLabelChips: View {
+    let labels: [LabelRecord]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach(Array((1...min(labels.count, 3)).reversed()), id: \.self) { count in
+                chips(count: count)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            // A long first label can shrink, while the overflow count stays visible.
+            chips(count: 1)
+        }
+        .help(labels.map(\.name).joined(separator: ", "))
+    }
+
+    private func chips(count: Int) -> some View {
+        HStack(spacing: Tokens.Space.s1) {
+            ForEach(Array(labels.prefix(count)), id: \.id) { label in
+                let icon = LabelAppearance.shared.icon(for: label)
+                TernBadge(
+                    text: label.name,
+                    systemImage: icon == "tag" ? "tag.fill" : icon,
+                    tint: Color(gmailHex: label.backgroundColor) ?? .secondary
+                )
+                .truncationMode(.middle)
+            }
+            if labels.count > count {
+                Text("+\(labels.count - count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .help(labels.dropFirst(count).map(\.name).joined(separator: ", "))
+            }
+        }
     }
 }
 

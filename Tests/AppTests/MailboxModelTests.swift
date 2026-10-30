@@ -4,6 +4,31 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct MailboxModelTests {
+    @Test func failedMessageLoadCanRetryAndCancellationStaysQuiet() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let gmail = AuditGmail()
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: gmail, outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 }
+        let key = ThreadKey(accountID: account.id, threadID: "t1")
+
+        await gmail.failNextThreadLoad()
+        #expect(await mailbox.open(key) == false)
+        #expect(mailbox.notice?.isError == true)
+        #expect(try await cache.read { tx in try tx.body(messageID: "m1", accountID: account.id) } == nil)
+
+        #expect(await mailbox.open(key))
+        #expect(try await cache.read { tx in try tx.body(messageID: "m1", accountID: account.id) }?.html != nil)
+
+        mailbox.notice = nil
+        let cancelled = Task { await mailbox.open(key) }
+        cancelled.cancel()
+        #expect(await cancelled.value == false)
+        #expect(mailbox.notice == nil)
+        await mailbox.stop()
+    }
+
     @Test func commandsUseTheOpenMailboxWithoutAFirstResponder() async throws {
         // The test host's scheme uses --ui-audit, so no real account is opened.
         let app = AppModel()

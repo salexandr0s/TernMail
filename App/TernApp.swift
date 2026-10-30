@@ -11,6 +11,7 @@ struct TernApp: App {
         Window("Tern", id: "main") {
             RootView()
                 .environment(model)
+                .focusedSceneValue(\.isMainWindow, true)
                 .task { await model.start() }
         }
         .defaultSize(width: Tokens.Layout.windowWidth, height: Tokens.Layout.windowHeight)

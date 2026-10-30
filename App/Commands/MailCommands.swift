@@ -2,18 +2,26 @@ import MailStore
 import MessageContent
 import SwiftUI
 
+extension FocusedValues {
+    /// The mailbox scene remains focused across its list, toolbar and WebKit.
+    @Entry var mailboxModel: MailboxModel?
+    /// Account confirmations belong to the main window, including reauthentication.
+    @Entry var isMainWindow: Bool?
+}
+
 /// Menu bar commands. Shortcuts follow Apple Mail.
 struct MailCommands: Commands {
     let app: AppModel
-    // Tern has one mailbox window. Its commands remain available when focus
-    // moves between a list, WebKit and the menu bar. While the session has
-    // expired the window shows sign-in, so they are off.
+    // App-level commands can use the open mailbox from any window. Selection
+    // and navigation commands use the focused mailbox scene below.
     var mailbox: MailboxModel? {
         guard case .signedIn = app.phase else { return nil }
         return app.mailbox
     }
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.composeModel) private var compose
+    @FocusedValue(\.mailboxModel) private var focusedMailbox
+    @FocusedValue(\.isMainWindow) private var isMainWindow
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -28,7 +36,7 @@ struct MailCommands: Commands {
             Divider()
             Button("Add Account…", systemImage: "person.crop.circle.badge.plus") { Task { await app.addAccount() } }
                 .labelStyle(.titleAndIcon)
-                .disabled(mailbox == nil || app.isSigningIn)
+                .disabled(mailbox == nil || app.isSigningIn || !app.auth.isConfigured)
         }
         CommandGroup(after: .undoRedo) {
             // Compose windows can still send while the session has expired,
@@ -38,10 +46,10 @@ struct MailCommands: Commands {
                 .disabled(app.mailbox?.undoableSendID == nil)
         }
         CommandGroup(after: .textEditing) {
-            Button("Search Mail", systemImage: "magnifyingglass") { mailbox?.search.focusField() }
+            Button("Search Mail", systemImage: "magnifyingglass") { focusedMailbox?.search.focusField() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("f", modifiers: [.option, .command])
-                .disabled(mailbox == nil || compose != nil)
+                .disabled(focusedMailbox == nil)
         }
         CommandMenu("Message") {
             Button("Send", systemImage: "paperplane") { Task { await compose?.send() } }
@@ -62,38 +70,38 @@ struct MailCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.shift, .command])
                 .disabled(!canReply)
             Divider()
-            Button("Archive", systemImage: "archivebox") { mailbox?.perform(.archive) }
+            Button("Archive", systemImage: "archivebox") { focusedMailbox?.perform(.archive) }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("a", modifiers: [.control, .command])
-                .disabled(compose != nil || !(mailbox?.canArchive ?? false))
+                .disabled(!(focusedMailbox?.canArchive ?? false))
             // In a compose window ⌘⌫ deletes to the start of the line instead.
-            Button("Move to Trash", systemImage: "trash") { mailbox?.perform(.trash) }
+            Button("Move to Trash", systemImage: "trash") { focusedMailbox?.perform(.trash) }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled(compose != nil || !(mailbox?.canTrash ?? false))
+                .disabled(!(focusedMailbox?.canTrash ?? false))
             Divider()
-            Button(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open") { mailbox?.toggleRead() }
+            Button(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open") { focusedMailbox?.toggleRead() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("u", modifiers: [.shift, .command])
                 .disabled(!hasSelection)
-            Button(isStarred ? "Remove Star" : "Star", systemImage: isStarred ? "star.fill" : "star") { mailbox?.toggleStar() }
+            Button(isStarred ? "Remove Star" : "Star", systemImage: isStarred ? "star.fill" : "star") { focusedMailbox?.toggleStar() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("l", modifiers: [.shift, .command])
                 .disabled(!hasSelection)
             Divider()
-            Button("Edit Labels…", systemImage: "tag") { mailbox?.showEditLabels() }
+            Button("Edit Labels…", systemImage: "tag") { focusedMailbox?.showEditLabels() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("l", modifiers: [.option, .command])
                 .disabled(!hasSelection)
-            Button("Move to…", systemImage: "folder") { mailbox?.showMoveTo() }
+            Button("Move to…", systemImage: "folder") { focusedMailbox?.showMoveTo() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("m", modifiers: [.control, .command])
                 .disabled(!hasSelection)
             Divider()
             Menu {
                 SnoozeMenuItems(
-                    onSnooze: { mailbox?.snooze(until: $0) },
-                    onChooseDate: { mailbox?.showSnoozeDate() }
+                    onSnooze: { focusedMailbox?.snooze(until: $0) },
+                    onChooseDate: { focusedMailbox?.showSnoozeDate() }
                 )
             } label: {
                 Label("Snooze", systemImage: "clock")
@@ -101,12 +109,12 @@ struct MailCommands: Commands {
             }
             .disabled(!canSnooze)
             // A shortcut can't open the submenu, so it opens Choose Date & Time.
-            Button("Snooze…", systemImage: "clock") { mailbox?.showSnoozeDate() }
+            Button("Snooze…", systemImage: "clock") { focusedMailbox?.showSnoozeDate() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("b", modifiers: [.control, .command])
                 .disabled(!canSnooze)
-            if mailbox?.showsSnoozed ?? false {
-                Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox?.unsnooze() }
+            if focusedMailbox?.showsSnoozed ?? false {
+                Button("Unsnooze", systemImage: "clock.arrow.circlepath") { focusedMailbox?.unsnooze() }
                     .labelStyle(.titleAndIcon)
                     .disabled(!hasSelection)
             }
@@ -116,10 +124,10 @@ struct MailCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("n", modifiers: [.shift, .command])
                 .disabled(mailbox == nil)
-            Button("New Label…", systemImage: "tag") { mailbox?.showNewLabel() }
+            Button("New Label…", systemImage: "tag") { focusedMailbox?.showNewLabel() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut("n", modifiers: [.option, .command])
-                .disabled(mailbox == nil || compose != nil)
+                .disabled(focusedMailbox == nil)
             Divider()
             if let mailbox, mailbox.hasSeveralAccounts {
                 Menu {
@@ -131,23 +139,24 @@ struct MailCommands: Commands {
                     Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         .labelStyle(.titleAndIcon)
                 }
+                .disabled(!canSignOut)
             } else {
                 Button("Sign Out…", systemImage: "rectangle.portrait.and.arrow.right") { app.isConfirmingSignOut = true }
                     .labelStyle(.titleAndIcon)
-                    .disabled(!app.canSignOut)
+                    .disabled(!canSignOut)
             }
         }
         CommandMenu("Go") {
             // In the sidebar's order, so each number matches a row.
             ForEach(Array(SystemMailbox.numbered.enumerated()), id: \.element.id) { index, box in
-                Button(box.title, systemImage: box.systemImage) { mailbox?.go(to: box.id) }
+                Button(box.title, systemImage: box.systemImage) { focusedMailbox?.go(to: box.id) }
                     .labelStyle(.titleAndIcon)
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
-                    .disabled(mailbox == nil || compose != nil)
+                    .disabled(focusedMailbox == nil)
             }
-            Button("All Mail", systemImage: "archivebox") { mailbox?.go(to: SystemLabel.allMail) }
+            Button("All Mail", systemImage: "archivebox") { focusedMailbox?.go(to: SystemLabel.allMail) }
                 .labelStyle(.titleAndIcon)
-                .disabled(mailbox == nil || compose != nil)
+                .disabled(focusedMailbox == nil)
         }
         CommandGroup(replacing: .help) {
             Button("Keyboard Shortcuts", systemImage: "keyboard") { openWindow(id: KeyboardShortcutsView.sceneID) }
@@ -185,11 +194,11 @@ struct MailCommands: Commands {
 
     /// Reply needs one conversation selected in the mailbox window, which is in front.
     private var canReply: Bool {
-        compose == nil && (mailbox?.canReply ?? false)
+        focusedMailbox?.canReply ?? false
     }
 
     private func reply(_ kind: ReplyKind) {
-        guard let mailbox else { return }
+        guard let mailbox = focusedMailbox else { return }
         Task {
             guard let start = await mailbox.replyStart(kind) else { return }
             open(start)
@@ -215,20 +224,24 @@ struct MailCommands: Commands {
 
     /// Conversations are selected in the mailbox window, which is in front.
     private var hasSelection: Bool {
-        compose == nil && !(mailbox?.selectedThreadIDs.isEmpty ?? true)
+        !(focusedMailbox?.selectedThreadIDs.isEmpty ?? true)
     }
 
     private var canSnooze: Bool {
-        compose == nil && (mailbox?.canSnooze ?? false)
+        focusedMailbox?.canSnooze ?? false
+    }
+
+    private var canSignOut: Bool {
+        app.canSignOut && isMainWindow == true
     }
 
     private var isRead: Bool {
-        guard let mailbox else { return false }
+        guard let mailbox = focusedMailbox else { return false }
         return mailbox.allRead(mailbox.selectedThreadIDs)
     }
 
     private var isStarred: Bool {
-        guard let mailbox else { return false }
+        guard let mailbox = focusedMailbox else { return false }
         return mailbox.allStarred(mailbox.selectedThreadIDs)
     }
 }

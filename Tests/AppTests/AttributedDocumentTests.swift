@@ -1,9 +1,69 @@
 import AppKit
 import MessageContent
+import SwiftUI
 import Testing
 @testable import Tern
 
 @Suite @MainActor struct AttributedDocumentTests {
+    @Test func editingALinkAtTheCursorPreservesTextAndCanBeUndone() throws {
+        let original = try #require(URL(string: "https://example.com/guide"))
+        let updated = try #require(URL(string: "https://example.com/revised"))
+        var format = TextFormat()
+        let editor = RichTextEditor(
+            document: .constant(ComposeDocument()),
+            format: Binding(get: { format }, set: { format = $0 }),
+            isEditable: true, onReady: { _ in }, onAttach: { _ in }, onFocusChange: { _ in }
+        )
+        let coordinator = editor.makeCoordinator()
+        let textView = LinkTestTextView(usingTextLayoutManager: false)
+        textView.allowsUndo = true
+        textView.delegate = coordinator
+        textView.textStorage?.delegate = coordinator
+        coordinator.textView = textView
+        coordinator.load(ComposeDocument(blocks: [.init(runs: [
+            .init("Read "), .init("guide", link: original), .init(".")
+        ])]))
+        let storage = try #require(textView.textStorage)
+        let undo = textView.testUndoManager
+        undo.groupsByEvent = false
+        textView.setSelectedRange(NSRange(location: 7, length: 0))
+        #expect(format.linkURL == original)
+
+        undo.beginUndoGrouping()
+        coordinator.setLink(updated)
+        undo.endUndoGrouping()
+        #expect(textView.string == "Read guide.")
+        #expect(storage.attribute(.link, at: 5, effectiveRange: nil) as? URL == updated)
+        #expect(storage.attribute(.link, at: 9, effectiveRange: nil) as? URL == updated)
+        #expect(textView.selectedRange() == NSRange(location: 7, length: 0))
+        #expect(undo.canUndo)
+        undo.undo()
+        #expect(storage.attribute(.link, at: 7, effectiveRange: nil) as? URL == original)
+
+        undo.beginUndoGrouping()
+        coordinator.setLink(nil)
+        undo.endUndoGrouping()
+        #expect(textView.string == "Read guide.")
+        #expect(storage.attribute(.link, at: 5, effectiveRange: nil) == nil)
+        #expect(storage.attribute(.link, at: 9, effectiveRange: nil) == nil)
+
+        // An explicit selection changes only that selection.
+        textView.setSelectedRange(NSRange(location: 5, length: 2))
+        undo.beginUndoGrouping()
+        coordinator.setLink(updated)
+        undo.endUndoGrouping()
+        #expect(storage.attribute(.link, at: 5, effectiveRange: nil) as? URL == updated)
+        #expect(storage.attribute(.link, at: 7, effectiveRange: nil) == nil)
+
+        // A cursor in plain text still inserts a new linked address.
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        undo.beginUndoGrouping()
+        coordinator.setLink(original)
+        undo.endUndoGrouping()
+        #expect(textView.string == original.absoluteString + "Read guide.")
+        #expect(storage.attribute(.link, at: 0, effectiveRange: nil) as? URL == original)
+    }
+
     /// What the editor shows must come back as the same document, or a sent
     /// message loses formatting or carries list markers as text.
     @Test func formattingAndListsSurviveTheEditor() throws {
@@ -52,4 +112,10 @@ import Testing
         #expect(attributes[.backgroundColor] == nil)
         #expect(AttributedDocument.document(from: storage).blocks == [.init(runs: [.init("Pasted text", bold: true)])])
     }
+}
+
+@MainActor
+private final class LinkTestTextView: NSTextView {
+    let testUndoManager = UndoManager()
+    override var undoManager: UndoManager? { testUndoManager }
 }

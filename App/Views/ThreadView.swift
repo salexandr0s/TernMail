@@ -14,6 +14,7 @@ struct ThreadView: View {
     @State private var blockerReady = false
     @State private var hasLoaded = false
     @State private var loadFailed = false
+    @State private var bodyLoadFailed = false
     @State private var loadAttempt = 0
     @Environment(\.openWindow) private var openWindow
 
@@ -34,8 +35,10 @@ struct ThreadView: View {
                                 blocker: blocker,
                                 isExpanded: expanded.contains(message.id),
                                 isThreadStarred: detail.thread.isStarred,
+                                bodyLoadFailed: bodyLoadFailed,
                                 mailbox: mailbox,
                                 compose: compose,
+                                onRetry: { loadAttempt += 1 },
                                 onToggleStar: { mailbox.perform(detail.thread.isStarred ? .unstar : .star, on: [key]) }
                             ) {
                                 if expanded.contains(message.id) {
@@ -46,9 +49,8 @@ struct ThreadView: View {
                             }
                         }
                     }
-                    .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
-                    .padding(Tokens.Space.s2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Tokens.Space.s2)
                 }
             } else if loadFailed {
                 VStack(spacing: Tokens.Space.s4) {
@@ -81,6 +83,7 @@ struct ThreadView: View {
         }
         .task(id: LoadIdentity(key: key, attempt: loadAttempt)) {
             loadFailed = false
+            bodyLoadFailed = false
             hasLoaded = false
             var loading: Task<Void, Never>?
             defer { loading?.cancel() }
@@ -96,7 +99,11 @@ struct ThreadView: View {
                     hasLoaded = true
                     // Capture initial unread expansion before opening marks read.
                     if loading == nil, detail != nil {
-                        loading = Task { await mailbox.open(key) }
+                        loading = Task {
+                            let opened = await mailbox.open(key)
+                            guard !Task.isCancelled else { return }
+                            bodyLoadFailed = !opened
+                        }
                     }
                 }
             } catch {
@@ -250,8 +257,10 @@ private struct MessageView: View {
     let isExpanded: Bool
     /// Stars belong to the conversation, as the list and the toolbar treat them.
     let isThreadStarred: Bool
+    let bodyLoadFailed: Bool
     let mailbox: MailboxModel
     let compose: (MailboxModel.ComposeStart) -> Void
+    let onRetry: () -> Void
     let onToggleStar: () -> Void
     let onToggle: () -> Void
 
@@ -278,9 +287,10 @@ private struct MessageView: View {
                 .padding(.vertical, Tokens.Space.s3)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .ternSurface()
         .ternAnimation(value: isExpanded)
-        .task(id: message.body?.fetchedAt) {
+        .task(id: message.body) {
             await render()
         }
     }
@@ -468,8 +478,15 @@ private struct MessageView: View {
         } else if hasNoText {
             Text("This message has no text.")
                 .foregroundStyle(.secondary)
+        } else if message.body == nil, bodyLoadFailed {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Label("Couldn't load this message", systemImage: "exclamationmark.bubble")
+                    .foregroundStyle(.secondary)
+                Button("Try Again", action: onRetry)
+                    .buttonStyle(.bordered)
+            }
         } else {
-            ProgressView()
+            ProgressView("Loading message…")
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -489,12 +506,18 @@ private struct MessageView: View {
     /// Sanitizing can take a moment on large mail, so it runs off the main actor.
     /// Without the rule list that blocks remote loads, only text is shown.
     private func render() async {
-        guard let body = message.body else { return }
+        guard let body = message.body else {
+            rendered = nil
+            hasNoText = false
+            height = 0
+            return
+        }
         let extracted = ExtractedBody(html: body.html, plainText: body.plainText)
         let textOnly = blocker == nil
         let result = await Task.detached(priority: .userInitiated) {
             textOnly ? MessageDocument.renderText(extracted) : MessageDocument.render(extracted)
         }.value
+        guard !Task.isCancelled else { return }
         rendered = result
         hasNoText = result == nil
     }

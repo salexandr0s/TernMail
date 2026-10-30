@@ -4,37 +4,43 @@ import SwiftUI
 /// Drafts and sends that haven't reached Gmail. Opening one reopens its compose window.
 struct OutboxView: View {
     let mailbox: MailboxModel
+    @FocusState.Binding var listFocused: Bool
 
     @State private var selection: String?
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Group {
+        List(selection: $selection) {
+            ForEach(mailbox.selectedOutbox) { activity in
+                OutboxRow(activity: activity)
+                    .tag(activity.id)
+            }
+        }
+        .listStyle(.inset)
+        .focused($listFocused)
+        .overlay {
             if mailbox.selectedOutbox.isEmpty {
                 TernEmptyState(
                     title: "Outbox Is Empty",
                     systemImage: "tray.and.arrow.up",
                     message: "Messages waiting to send appear here."
                 )
-            } else {
-                List(selection: $selection) {
-                    ForEach(mailbox.selectedOutbox) { activity in
-                        OutboxRow(activity: activity)
-                    }
-                }
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if ids.count == 1, let id = ids.first {
-                        Button("Open", systemImage: "arrow.up.forward.square") { open(id) }
-                            .labelStyle(.titleAndIcon)
-                        if let activity = mailbox.selectedOutbox.first(where: { $0.id == id }), Self.canUndoSend(activity) {
-                            Button("Undo Send", systemImage: "arrow.uturn.backward") { undoSend(id) }
-                                .labelStyle(.titleAndIcon)
-                        }
-                    }
-                } primaryAction: { ids in
-                    ids.forEach(open)
+            }
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if ids.count == 1, let id = ids.first {
+                Button("Open", systemImage: "arrow.up.forward.square") { open(id) }
+                    .labelStyle(.titleAndIcon)
+                if let activity = mailbox.selectedOutbox.first(where: { $0.id == id }), Self.canUndoSend(activity) {
+                    Button("Undo Send", systemImage: "arrow.uturn.backward") { undoSend(id) }
+                        .labelStyle(.titleAndIcon)
                 }
             }
+        } primaryAction: { ids in
+            ids.forEach(open)
+        }
+        .onChange(of: mailbox.selectedOutbox.map(\.id)) { _, ids in
+            if let selection, !ids.contains(selection) { self.selection = nil }
         }
         .background(Tokens.Surface.primary)
         .navigationTitle("Outbox")

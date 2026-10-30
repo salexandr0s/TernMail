@@ -199,7 +199,7 @@ private struct AccountsSettings: View {
                     Button("Sign In Again") {
                         Task { await app.signInAgain(to: account.id) }
                     }
-                    .disabled(app.isSigningIn)
+                    .disabled(app.isSigningIn || !app.auth.isConfigured)
                     .help("Sign in again to sync mail.")
                     .accessibilityLabel("Sign in again to \(account.email)")
                 }

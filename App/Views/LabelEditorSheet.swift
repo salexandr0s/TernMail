@@ -125,7 +125,10 @@ struct LabelEditorSheet: View {
                         }
                     }
                     .labelsHidden()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .help(draft.parent ?? "None")
                 }
             }
             if let problem {

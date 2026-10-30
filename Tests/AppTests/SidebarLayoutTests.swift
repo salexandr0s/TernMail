@@ -58,11 +58,12 @@ import Testing
         settings.set("", forKey: SidebarView.expandedKey)
         try await settle()
 
-        // Alternate populated and empty mailboxes while inserting/removing rows.
+        // Alternate populated and empty mailboxes, including the Outbox's own List.
         var expanded = Set<String>()
         for id in [MailboxModel.snoozedID, SystemLabel.spam, SystemLabel.trash,
                    MailboxModel.snoozedID, SystemLabel.trash, MailboxModel.snoozedID,
-                   SystemLabel.draft, SystemLabel.inbox] {
+                   SystemLabel.draft, MailboxModel.outboxID, SystemLabel.inbox,
+                   MailboxModel.outboxID, SystemLabel.inbox] {
             mailbox.selectedMailbox = .combined(id)
             if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
             settings.set(expanded.sorted().joined(separator: ","), forKey: SidebarView.expandedKey)
@@ -73,12 +74,12 @@ import Testing
             #expect(scroll.contentView.contentInsets.top == clipInsets.top)
             #expect(scroll.contentView.contentInsets.bottom == clipInsets.bottom)
             let current = scroll.convert(scroll.bounds, to: nil)
-            #expect(abs(current.minY - viewport.minY) < 1)
-            #expect(abs(current.height - viewport.height) < 1)
+            #expect(abs(current.minY - viewport.minY) < 1, "Mailbox: \(id)")
+            #expect(abs(current.height - viewport.height) < 1, "Mailbox: \(id)")
             // Native selection anchoring may scroll as rows appear; compare at the top.
             scrollToTop(scroll)
             try await settle()
-            #expect(abs(table.convert(table.rect(ofRow: 1), to: nil).maxY - topRow) < 1)
+            #expect(abs(table.convert(table.rect(ofRow: 1), to: nil).maxY - topRow) < 1, "Mailbox: \(id)")
         }
         await app.signOut()
     }

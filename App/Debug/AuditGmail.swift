@@ -32,6 +32,7 @@ actor AuditGmail: GmailService {
     private static let systemLabels = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"]
     private var userLabels = [UserLabel(id: "Label_1", name: "Hiking")]
     private var nextLabel = 2
+    private var shouldFailNextThreadLoad = false
 
     private var version = 200
     private let referenceDate = Date.now
@@ -118,7 +119,15 @@ actor AuditGmail: GmailService {
         })
     }
 
+    func failNextThreadLoad() {
+        shouldFailNextThreadLoad = true
+    }
+
     func thread(id: String, format: MessageFormat) throws -> GmailThread {
+        if shouldFailNextThreadLoad {
+            shouldFailNextThreadLoad = false
+            throw URLError(.notConnectedToInternet)
+        }
         let messages = mail.filter { $0.thread == id }
         guard !messages.isEmpty else { throw GmailError.notFound }
         return try decode(["id": id, "messages": messages.map(messageJSON)])

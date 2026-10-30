@@ -295,7 +295,7 @@ private struct AccountHeader: View {
                     Task { await app.signInAgain(to: owner.account.id) }
                 }
                 .buttonStyle(.link)
-                .disabled(app.isSigningIn)
+                .disabled(app.isSigningIn || !app.auth.isConfigured)
                 .help("Google ended this session. Sign in again to sync mail.")
                 .accessibilityLabel("Sign in again to \(email)")
             }

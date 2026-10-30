@@ -34,7 +34,6 @@ struct ReceivedAttachmentsView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
-                        .disabled(loading.contains(attachment.id))
                         .help("Save \(attachment.filename)")
                         .accessibilityLabel("Save \(attachment.filename)")
                     }
@@ -44,6 +43,7 @@ struct ReceivedAttachmentsView: View {
                         Button("Save…", systemImage: "arrow.down.circle") { save(attachment) }
                             .labelStyle(.titleAndIcon)
                     }
+                    .disabled(loading.contains(attachment.id))
                 }
             }
         }

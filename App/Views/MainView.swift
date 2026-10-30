@@ -9,7 +9,12 @@ struct MainView: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @State private var isCompactWindow = false
+    @FocusState private var outboxFocused: Bool
     let mailbox: MailboxModel
+
+    private var showsOutbox: Bool {
+        mailbox.selectedLabelID == MailboxModel.outboxID && !mailbox.search.isActive
+    }
 
     var body: some View {
         @Bindable var app = app
@@ -27,11 +32,14 @@ struct MainView: View {
                 )
         } content: {
             Group {
-                if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
-                    OutboxView(mailbox: mailbox)
+                if showsOutbox {
+                    OutboxView(mailbox: mailbox, listFocused: $outboxFocused)
                 } else {
                     ThreadListView(mailbox: mailbox)
                 }
+            }
+            .onChange(of: mailbox.search.listFocusRequest) {
+                outboxFocused = showsOutbox
             }
             .padding(.trailing, Tokens.Space.s3)
             .overlay(alignment: .trailing) {
@@ -84,6 +92,7 @@ struct MainView: View {
             ShortcutMonitor(isEnabled: usesSingleKeys, perform: perform)
         }
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
+        .focusedSceneValue(\.mailboxModel, mailbox)
         .onGeometryChange(for: Bool.self) { geometry in
             geometry.size.width < Tokens.Layout.compactToolbarWidth
         } action: { isCompactWindow = $0 }
@@ -155,14 +164,15 @@ struct MainView: View {
     private func canPerform(_ action: SingleKeyShortcuts.Action) -> Bool {
         let hasSelection = !mailbox.selectedThreadIDs.isEmpty
         switch action {
-        case .openConversation: return !hasSelection
+        case .openConversation: return !showsOutbox && !hasSelection
+        case .nextConversation, .previousConversation: return !showsOutbox
         case .archive: return mailbox.canArchive
         case .trash: return mailbox.canTrash
         case .toggleStar, .markRead, .markUnread, .editLabels, .moveTo: return hasSelection
         case .snooze: return mailbox.canSnooze
         case .undo: return undoManager?.canUndo == true
-        case .nextConversation, .previousConversation, .search, .newMessage, .reply, .replyAll, .forward,
-             .showShortcuts, .go:
+        case .reply, .replyAll, .forward: return mailbox.canReply
+        case .search, .newMessage, .showShortcuts, .go:
             return true
         }
     }

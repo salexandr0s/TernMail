@@ -382,14 +382,16 @@ final class MailboxModel {
     }
 
     /// Loads missing bodies and marks the thread read.
-    func open(_ key: ThreadKey) async {
-        guard let owner = account(id: key.accountID) else { return }
+    func open(_ key: ThreadKey) async -> Bool {
+        guard let owner = account(id: key.accountID) else { return false }
         do {
             try await owner.engine.openThread(key.threadID)
+            return true
         } catch {
             // Switching conversations cancels the load, which isn't a failure.
-            guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return }
+            guard !Task.isCancelled, !(error is CancellationError), !isStopped else { return false }
             notice = Notice(message: "Couldn't load this conversation. Try again.", isError: true)
+            return false
         }
     }
 

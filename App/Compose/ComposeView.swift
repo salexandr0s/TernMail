@@ -66,8 +66,18 @@ struct ComposeView: View {
     var body: some View {
         Group {
             if model.phase == .loading {
-                ProgressView("Opening message…")
+                if let error = model.storeError {
+                    VStack(spacing: Tokens.Space.s4) {
+                        TernEmptyState(title: "Couldn't open this draft", systemImage: "exclamationmark.triangle",
+                                       message: error, fillsSpace: false)
+                        Button("Close") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView("Opening message…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 form
             }
@@ -104,6 +114,17 @@ struct ComposeView: View {
             }
             if let status = model.status, status.isError {
                 Banner(systemImage: "exclamationmark.circle", text: status.text, isError: true)
+            }
+            if let progress = model.progressText {
+                HStack(spacing: Tokens.Space.s2) {
+                    ProgressView().controlSize(.small)
+                    Text(progress).font(.callout)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s2)
+                .background(Tokens.Surface.muted)
+                .accessibilityElement(children: .combine)
             }
             header
                 .fixedSize(horizontal: false, vertical: true)
@@ -150,16 +171,22 @@ struct ComposeView: View {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                     recipientField("To", addresses: $model.content.to, field: .to)
                     if !model.showsCc {
-                        Button("Cc") { reveal(.cc) }
-                            .font(.caption.weight(.medium))
-                            .frame(minHeight: Tokens.Space.s6)
-                            .help("Add Cc recipients")
+                        Button { reveal(.cc) } label: {
+                            Text("Cc")
+                                .font(.caption.weight(.medium))
+                                .frame(minWidth: Tokens.Space.s6, minHeight: Tokens.Space.s6)
+                                .contentShape(Rectangle())
+                        }
+                        .help("Add Cc recipients")
                     }
                     if !model.showsBcc {
-                        Button("Bcc") { reveal(.bcc) }
-                            .font(.caption.weight(.medium))
-                            .frame(minHeight: Tokens.Space.s6)
-                            .help("Add Bcc recipients")
+                        Button { reveal(.bcc) } label: {
+                            Text("Bcc")
+                                .font(.caption.weight(.medium))
+                                .frame(minWidth: Tokens.Space.s6, minHeight: Tokens.Space.s6)
+                                .contentShape(Rectangle())
+                        }
+                        .help("Add Bcc recipients")
                     }
                 }
                 .buttonStyle(.borderless)
@@ -406,7 +433,7 @@ struct ComposeView: View {
             .disabled(!model.isEditable)
             // Cmd-K must also work while the formatting bar is hidden.
             .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
-                LinkEditor(hasLink: model.format.link, width: Tokens.Layout.linkEditorWidth) { url in
+                LinkEditor(existingURL: model.format.linkURL, width: Tokens.Layout.linkEditorWidth) { url in
                     model.editor?.setLink(url)
                 }
             }
@@ -540,12 +567,14 @@ private struct Banner: View {
 
 /// Asks for a link's address.
 private struct LinkEditor: View {
-    let hasLink: Bool
+    let existingURL: URL?
     let width: CGFloat
     let apply: (URL?) -> Void
     @State private var text = ""
     @FocusState private var isFocused: Bool
     @Environment(\.dismiss) private var dismiss
+
+    private var hasLink: Bool { existingURL != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -573,7 +602,10 @@ private struct LinkEditor: View {
             }
         }
         .frame(width: width)
-        .onAppear { isFocused = true }
+        .onAppear {
+            text = existingURL?.absoluteString ?? ""
+            isFocused = true
+        }
     }
 
     private func add() {

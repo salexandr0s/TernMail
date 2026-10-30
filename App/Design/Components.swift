@@ -95,7 +95,6 @@ struct TernEmptyState: View {
                 Text(message)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .multilineTextAlignment(.center)

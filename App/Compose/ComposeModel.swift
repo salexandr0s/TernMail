@@ -89,7 +89,7 @@ final class ComposeModel {
     /// Changed since the last save to Gmail was asked for.
     @ObservationIgnored private var changedSinceSave = false
     /// Files still being copied into the draft, which `attachments` doesn't list yet.
-    @ObservationIgnored private var attachmentsInProgress = 0
+    private var attachmentsInProgress = 0
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
     @ObservationIgnored private var isApplyingStoredContent = false
@@ -131,6 +131,12 @@ final class ComposeModel {
 
     var canFormat: Bool { isEditable && isEditingMessage }
 
+    var progressText: String? {
+        if phase == .moving { return "Changing sender account…" }
+        if attachmentsInProgress > 0 { return "Attaching files…" }
+        return nil
+    }
+
     var title: String {
         let subject = content.subject.trimmingCharacters(in: .whitespaces)
         return subject.isEmpty ? "New Message" : subject
@@ -138,6 +144,7 @@ final class ComposeModel {
 
     var status: Status? {
         if let storeError { return Status(text: storeError, isError: true) }
+        if let progressText { return Status(text: progressText) }
         guard let activity else { return nil }
         let draft = activity.draft
         switch draft.state {

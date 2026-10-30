@@ -7,7 +7,8 @@ struct TextFormat: Equatable {
     var bold = false
     var italic = false
     var underline = false
-    var link = false
+    var linkURL: URL?
+    var link: Bool { linkURL != nil }
     var list: ListStyle?
 }
 
@@ -22,8 +23,8 @@ protocol RichTextEditing: AnyObject {
     func toggleItalic()
     func toggleUnderline()
     func toggleList(_ style: ListStyle)
-    /// Links the selection, or inserts the address as linked text when nothing
-    /// is selected. Nil removes links from the selection.
+    /// Links the selection or the link at the cursor. At an unlinked cursor,
+    /// inserts the address. Nil removes links while keeping the text.
     func setLink(_ url: URL?)
     /// Puts the cursor in the message, at its start.
     func focus()
@@ -179,7 +180,18 @@ struct RichTextEditor: NSViewRepresentable {
 
         func setLink(_ url: URL?) {
             guard let textView, let storage = textView.textStorage else { return }
-            let range = textView.selectedRange()
+            var range = textView.selectedRange()
+            if range.length == 0, storage.length > 0 {
+                let location = min(range.location, storage.length - 1)
+                var linkedRange = NSRange()
+                let link = storage.attribute(
+                    .link, at: location, longestEffectiveRange: &linkedRange,
+                    in: NSRange(location: 0, length: storage.length)
+                )
+                if link != nil, range.location < storage.length || textView.typingAttributes[.link] != nil {
+                    range = linkedRange
+                }
+            }
             if range.length == 0 {
                 guard let url else { return }
                 var attributes = textView.typingAttributes
@@ -190,13 +202,18 @@ struct RichTextEditor: NSViewRepresentable {
                 textView.didChangeText()
                 textView.setSelectedRange(NSRange(location: range.location + text.length, length: 0))
             } else {
-                change { storage, range in
-                    if let url {
-                        storage.addAttribute(.link, value: url, range: range)
-                    } else {
-                        storage.removeAttribute(.link, range: range)
-                    }
-                } typing: { _ in }
+                guard textView.shouldChangeText(in: range, replacementString: nil) else { return }
+                storage.beginEditing()
+                if let url {
+                    storage.addAttribute(.link, value: url, range: range)
+                } else {
+                    storage.removeAttribute(.link, range: range)
+                }
+                storage.endEditing()
+                textView.didChangeText()
+                var attributes = textView.typingAttributes
+                attributes[.link] = url
+                textView.typingAttributes = attributes
             }
             updateFormat()
         }
@@ -294,11 +311,14 @@ struct RichTextEditor: NSViewRepresentable {
             let paragraph = range.location < storage.length
                 ? storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
                 : attributes[.paragraphStyle] as? NSParagraphStyle
+            let link = range.location < storage.length
+                ? storage.attribute(.link, at: range.location, effectiveRange: nil)
+                : attributes[.link]
             let format = TextFormat(
                 bold: traits.contains(.boldFontMask),
                 italic: traits.contains(.italicFontMask),
                 underline: (attributes[.underlineStyle] as? Int ?? 0) != 0,
-                link: attributes[.link] != nil,
+                linkURL: (link as? URL) ?? (link as? String).flatMap { URL(string: $0) },
                 list: paragraph?.textLists.last.map { AttributedDocument.isNumbered($0) ? .numbered : .bulleted }
             )
             if parent.format != format { parent.format = format }
