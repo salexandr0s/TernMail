@@ -133,7 +133,7 @@ public struct Invitation: Codable, Sendable, Equatable {
             // date-time event ends when it starts and a date event lasts a day.
             let duration = event.property("DURATION").flatMap { ICalendarDuration($0.value) }
                 ?? (startTime.zone == .date ? ICalendarDuration(days: 1) : ICalendarDuration())
-            end = resolver.resolve(startTime.adding(duration))
+            end = resolver.resolve(startTime, adding: duration)
         } else {
             end = nil
         }
@@ -197,6 +197,9 @@ public struct CalendarPart: Sendable, Equatable {
 }
 
 public enum CalendarParts {
+    /// Bounds calendar downloads to four parts reported at most 1 MiB each.
+    public static let maximumAttachmentDownloads = 4
+
     /// Candidates in the order they're tried: `text/calendar` parts outside
     /// attachments, then attached `text/calendar`, `application/ics` and
     /// `.ics` files. Attached messages aren't searched.
@@ -208,33 +211,60 @@ public enum CalendarParts {
         return inline + attached
     }
 
-    /// The attachment to download with the body: the first candidate's, when
-    /// Gmail sent it by ID and reports it within `ICalendar.maxSize`.
-    public static func requiredAttachmentID(of message: GmailMessage) -> String? {
-        guard let first = candidates(in: message).first, first.inlineData == nil, first.size <= ICalendar.maxSize else { return nil }
-        return first.attachmentID
+    /// The next eligible candidate in priority order, stopping when a known
+    /// candidate parses. Record each attempt before fetching, then call again
+    /// with its bytes. Failed attempts count toward the per-message limit.
+    public static func requiredAttachmentID(
+        of message: GmailMessage,
+        attachments: [String: Data] = [:],
+        attemptedAttachmentIDs: Set<String> = []
+    ) -> String? {
+        guard attemptedAttachmentIDs.count < maximumAttachmentDownloads else { return nil }
+        for candidate in candidates(in: message) where isWithinSizeLimit(candidate) {
+            if let data = data(for: candidate, attachments: attachments) {
+                if invitation(from: candidate, data: data) != nil { return nil }
+                continue
+            }
+            if let id = candidate.attachmentID, !attemptedAttachmentIDs.contains(id) { return id }
+        }
+        return nil
     }
 
     /// The invitation from the first candidate that parses. `attachments`
     /// maps attachment IDs to downloaded bytes.
     public static func invitation(in message: GmailMessage, attachments: [String: Data] = [:]) -> Invitation? {
         for candidate in candidates(in: message) {
-            guard let data = candidate.inlineData ?? candidate.attachmentID.flatMap({ attachments[$0] }),
-                  let invitation = try? Invitation(data: data, charset: candidate.charset),
-                  !candidate.isAttachment || invitation.method != nil else { continue }
+            guard let data = data(for: candidate, attachments: attachments),
+                  let invitation = invitation(from: candidate, data: data) else { continue }
             return invitation
         }
         return nil
     }
 
+    private static func isWithinSizeLimit(_ candidate: CalendarPart) -> Bool {
+        (0...ICalendar.maxSize).contains(candidate.size)
+    }
+
+    private static func data(for candidate: CalendarPart, attachments: [String: Data]) -> Data? {
+        candidate.inlineData ?? candidate.attachmentID.flatMap { attachments[$0] }
+    }
+
+    private static func invitation(from candidate: CalendarPart, data: Data) -> Invitation? {
+        guard isWithinSizeLimit(candidate), data.count <= ICalendar.maxSize,
+              let invitation = try? Invitation(data: data, charset: candidate.charset),
+              !candidate.isAttachment || invitation.method != nil else { return nil }
+        return invitation
+    }
+
     private static func collect(_ part: MessagePart, inline: inout [CalendarPart], attached: inout [CalendarPart]) {
         let mimeType = (part.mimeType ?? "").lowercased()
         if mimeType == "message/rfc822" { return }
+        let isFile = MIMEParts.isAttachment(part)
         if mimeType.hasPrefix("multipart/") {
+            guard !isFile else { return }
             for child in part.parts ?? [] { collect(child, inline: &inline, attached: &attached) }
             return
         }
-        let isFile = Self.isAttachment(part)
         let isCalendar = mimeType == "text/calendar"
             || (isFile && (mimeType == "application/ics" || (part.filename ?? "").lowercased().hasSuffix(".ics")))
         guard isCalendar else { return }
@@ -247,16 +277,6 @@ public enum CalendarParts {
             charset: part.header("Content-Type").flatMap { MIMEReader.parameters(of: $0)["charset"] }
         )
         if isFile { attached.append(found) } else { inline.append(found) }
-    }
-
-    /// The same test as `MIMEParts`, whose copy is private until stage B
-    /// shares it.
-    private static func isAttachment(_ part: MessagePart) -> Bool {
-        if let filename = part.filename, !filename.isEmpty { return true }
-        return part.header("Content-Disposition")?
-            .trimmingCharacters(in: .whitespaces)
-            .lowercased()
-            .hasPrefix("attachment") ?? false
     }
 }
 

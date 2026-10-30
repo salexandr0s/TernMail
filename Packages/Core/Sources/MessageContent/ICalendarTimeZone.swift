@@ -285,6 +285,29 @@ struct TimeZoneResolver {
         }
     }
 
+    /// Weeks and days advance the calendar first. Hours, minutes and seconds
+    /// then advance the resolved instant, including through offset changes.
+    func resolve(_ time: ICalendarTime, adding duration: ICalendarDuration) -> EventTime {
+        guard time.zone != .date else { return resolve(time.adding(duration)) }
+        let nominal = time.adding(ICalendarDuration(days: duration.days))
+        let start = resolve(nominal)
+        guard duration.seconds != 0 else { return start }
+        switch start {
+        case .utc(let date):
+            return .utc(date.addingTimeInterval(TimeInterval(duration.seconds)))
+        case .zoned(let date, let tzid, let initialOffset):
+            let end = date.addingTimeInterval(TimeInterval(duration.seconds))
+            let offset = Self.ianaZone(tzid)?.secondsFromGMT(for: end)
+                ?? definition(for: tzid).flatMap(VTimeZone.init)?.offset(at: end)
+                ?? initialOffset
+            return .zoned(end, zone: tzid, utcOffset: offset)
+        case .floating, .unresolved:
+            return resolve(time.adding(duration))
+        case .allDay:
+            return start
+        }
+    }
+
     /// A TZID may start with "/" to mark a globally unique name.
     static func ianaZone(_ tzid: String) -> TimeZone? {
         TimeZone(identifier: tzid.hasPrefix("/") ? String(tzid.dropFirst()) : tzid)
@@ -374,6 +397,21 @@ struct VTimeZone {
         }
         if let best { return best.offset }
         return observances.min { $0.start < $1.start }?.offsetFrom ?? 0
+    }
+
+    /// Compares onsets on the UTC timeline, so a repeated local hour still
+    /// uses the offset in force at this particular instant.
+    func offset(at date: Date) -> Int {
+        let seconds = LocalDateTime(utc: date).epochSeconds
+        var best: (onset: Int, offset: Int)?
+        for observance in observances {
+            let local = LocalDateTime(epochSeconds: seconds + observance.offsetFrom)
+            guard let onset = observance.latestOnset(atOrBefore: local) else { continue }
+            let instant = onset.epochSeconds - observance.offsetFrom
+            if best.map({ instant >= $0.onset }) ?? true { best = (instant, observance.offsetTo) }
+        }
+        if let best { return best.offset }
+        return observances.min { $0.start.epochSeconds - $0.offsetFrom < $1.start.epochSeconds - $1.offsetFrom }?.offsetFrom ?? 0
     }
 
     /// `+HHMM` or `-HHMMSS`, in seconds.

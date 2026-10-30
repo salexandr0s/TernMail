@@ -18,6 +18,18 @@ import Testing
         try #require(ISO8601DateFormatter().date(from: text))
     }
 
+    private func encoded(_ data: Data) -> String {
+        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func message(parts: String) throws -> GmailMessage {
+        let json = """
+        {"id":"m1","threadId":"t1","payload":{"mimeType":"multipart/mixed","parts":[\(parts)]}}
+        """
+        return try JSONDecoder().decode(GmailMessage.self, from: Data(json.utf8))
+    }
+
     private let pacific = [
         "BEGIN:VTIMEZONE", "TZID:Pacific Standard Time",
         "BEGIN:STANDARD", "DTSTART:16010101T020000", "TZOFFSETFROM:-0700", "TZOFFSETTO:-0800",
@@ -89,6 +101,36 @@ import Testing
 
         let unknownZone = try read(["DTSTART;TZID=Nowhere Standard Time:20261105T090000"])
         #expect(unknownZone.start == .unresolved(LocalDateTime(day: CalendarDay(year: 2026, month: 11, day: 5), hour: 9), zone: "Nowhere Standard Time"))
+    }
+
+    @Test(arguments: [
+        ("20260307T100000", "P1D", "2026-03-08T17:00:00Z", -25_200),
+        ("20260307T100000", "PT24H", "2026-03-08T18:00:00Z", -25_200),
+        ("20260308T013000", "PT2H", "2026-03-08T11:30:00Z", -25_200),
+        ("20260307T013000", "P1DT2H", "2026-03-08T11:30:00Z", -25_200),
+        ("20260301T100000", "P1W", "2026-03-08T17:00:00Z", -25_200),
+        ("20261031T100000", "P1D", "2026-11-01T18:00:00Z", -28_800),
+        ("20261031T100000", "PT24H", "2026-11-01T17:00:00Z", -28_800),
+        // Ends in the second 01:30, after the offset has changed.
+        ("20261101T003000", "PT2H", "2026-11-01T09:30:00Z", -28_800),
+    ])
+    func durationsApplyDaysBeforeElapsedTimeAcrossDST(local: String, duration: String, expected: String, offset: Int) throws {
+        for tzid in ["America/Los_Angeles", "Pacific Standard Time"] {
+            let invitation = try Invitation(data: event([
+                "UID:u1", "DTSTART;TZID=\(tzid):\(local)", "DURATION:\(duration)",
+            ], timeZones: pacific))
+            #expect(invitation.end == .zoned(try utc(expected), zone: tzid, utcOffset: offset))
+        }
+    }
+
+    @Test func durationsKeepFloatingUnknownAndAllDayTimesAsWritten() throws {
+        let expected = LocalDateTime(day: CalendarDay(year: 2026, month: 3, day: 8), hour: 3, minute: 30)
+        let floating = try Invitation(data: event(["UID:u1", "DTSTART:20260307T013000", "DURATION:P1DT2H"]))
+        #expect(floating.end == .floating(expected))
+        let unknown = try Invitation(data: event(["UID:u1", "DTSTART;TZID=Unknown:20260307T013000", "DURATION:P1DT2H"]))
+        #expect(unknown.end == .unresolved(expected, zone: "Unknown"))
+        let allDay = try Invitation(data: event(["UID:u1", "DTSTART;VALUE=DATE:20260307", "DURATION:P1W"]))
+        #expect(allDay.end == .allDay(CalendarDay(year: 2026, month: 3, day: 14)))
     }
 
     @Test(arguments: [
@@ -190,10 +232,6 @@ import Testing
     // MARK: Finding the part
 
     @Test func theCalendarAlternativeWinsOverAnAttachedFile() throws {
-        func encoded(_ data: Data) -> String {
-            data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
-        }
         let inline = encoded(event(["UID:inline"]))
         let json = """
         {"id":"m1","threadId":"t1","payload":{"mimeType":"multipart/mixed","parts":[
@@ -222,6 +260,78 @@ import Testing
         #expect(CalendarParts.requiredAttachmentID(of: second) == "A2")
         #expect(CalendarParts.invitation(in: second, attachments: ["A2": event(method: nil, ["UID:export"])]) == nil)
         #expect(CalendarParts.invitation(in: second, attachments: ["A2": event(["UID:invite"])])?.uid == "invite")
+    }
+
+    @Test func calendarDownloadsAreOptInAndStopAtTheFirstUsableCandidate() throws {
+        let message = try message(parts: """
+        {"partId":"0","mimeType":"application/ics","filename":"later.ics","body":{"attachmentId":"later","size":400}},
+        {"partId":"1","mimeType":"text/calendar","body":{"attachmentId":"first","size":400}},
+        {"partId":"2","mimeType":"text/calendar","body":{"attachmentId":"second","size":400}},
+        {"partId":"3","mimeType":"text/plain","body":{"attachmentId":"text","size":5}}
+        """)
+        #expect(CalendarParts.candidates(in: message).map(\.attachmentID) == ["first", "second", "later"])
+        #expect(MIMEParts.requiredAttachmentIDs(of: message) == ["text"])
+        #expect(MIMEParts.requiredAttachmentIDs(of: message, includingCalendars: true) == ["text", "first"])
+        var data = ["first": Data("not a calendar".utf8)]
+        #expect(CalendarParts.requiredAttachmentID(of: message, attachments: data, attemptedAttachmentIDs: ["first"]) == "second")
+        data["second"] = event(["UID:second"])
+        #expect(CalendarParts.requiredAttachmentID(of: message, attachments: data, attemptedAttachmentIDs: ["first", "second"]) == nil)
+        #expect(CalendarParts.invitation(in: message, attachments: data)?.uid == "second")
+    }
+
+    @Test func calendarCapsAndMalformedInlinePartsAllowLaterCandidates() throws {
+        var valid = event(["UID:valid"])
+        valid.append(Data(repeating: 0x20, count: ICalendar.maxSize - valid.count))
+        var oversized = valid
+        oversized.append(0x20)
+        let message = try message(parts: """
+        {"mimeType":"text/calendar","body":{"size":4,"data":"\(encoded(Data("bad".utf8)))"}},
+        {"mimeType":"text/calendar","body":{"size":100,"data":"\(encoded(oversized))"}},
+        {"mimeType":"text/calendar","body":{"attachmentId":"reportedLarge","size":\(ICalendar.maxSize + 1)}},
+        {"mimeType":"text/calendar","body":{"attachmentId":"actualLarge","size":100}},
+        {"mimeType":"application/ics","filename":"export.ics","body":{"attachmentId":"export","size":100}},
+        {"mimeType":"application/octet-stream","filename":"invite.ICS","body":{"attachmentId":"valid","size":\(ICalendar.maxSize)}}
+        """)
+        #expect(CalendarParts.requiredAttachmentID(of: message) == "actualLarge")
+        var data = ["reportedLarge": valid, "actualLarge": oversized]
+        #expect(CalendarParts.invitation(in: message, attachments: data) == nil)
+        #expect(CalendarParts.requiredAttachmentID(of: message, attachments: data, attemptedAttachmentIDs: ["actualLarge"]) == "export")
+        data["export"] = event(method: nil, ["UID:export"])
+        #expect(CalendarParts.requiredAttachmentID(of: message, attachments: data, attemptedAttachmentIDs: ["actualLarge", "export"]) == "valid")
+        data["valid"] = valid
+        #expect(CalendarParts.invitation(in: message, attachments: data)?.uid == "valid")
+        #expect(CalendarParts.requiredAttachmentID(of: message, attachments: data) == nil)
+    }
+
+    @Test func calendarDownloadAttemptsAreBoundedAndDeduplicated() throws {
+        let parts = ["a", "a", "b", "c", "d", "e"].map { id in
+            """
+            {"mimeType":"text/calendar","body":{"attachmentId":"\(id)","size":\(ICalendar.maxSize)}}
+            """
+        }.joined(separator: ",")
+        let message = try message(parts: parts)
+        var attempted: Set<String> = []
+        var requested: [String] = []
+        while let id = CalendarParts.requiredAttachmentID(of: message, attemptedAttachmentIDs: attempted) {
+            attempted.insert(id)
+            requested.append(id)
+        }
+        #expect(requested == ["a", "b", "c", "d"])
+    }
+
+    @Test func calendarsInsideAttachedMultipartOrMessagesAreIgnored() throws {
+        let message = try message(parts: """
+        {"mimeType":"multipart/alternative","headers":[{"name":"Content-Disposition","value":"attachment"}],"parts":[
+          {"mimeType":"text/calendar","body":{"attachmentId":"hiddenMultipart","size":100}}]},
+        {"mimeType":"message/rfc822","parts":[
+          {"mimeType":"text/calendar","body":{"attachmentId":"hiddenMessage","size":100}}]},
+        {"partId":"visible","mimeType":"application/ics","filename":"visible.ics","body":{"attachmentId":"visible","size":100}}
+        """)
+        #expect(CalendarParts.candidates(in: message).map(\.partID) == ["visible"])
+        #expect(MIMEParts.requiredAttachmentIDs(of: message, includingCalendars: true) == ["visible"])
+        #expect(CalendarParts.invitation(in: message, attachments: [
+            "hiddenMultipart": event(["UID:hiddenMultipart"]), "hiddenMessage": event(["UID:hiddenMessage"]),
+        ]) == nil)
     }
 
     // MARK: Replying

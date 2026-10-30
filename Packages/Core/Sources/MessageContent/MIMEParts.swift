@@ -41,8 +41,9 @@ public enum MIMEParts {
         )
     }
 
-    /// Only readable body parts are requested. Attached documents stay excluded.
-    public static func requiredAttachmentIDs(of message: GmailMessage) -> Set<String> {
+    /// Readable body parts, optionally including the next calendar candidate.
+    /// Further calendar candidates are requested through `CalendarParts`.
+    public static func requiredAttachmentIDs(of message: GmailMessage, includingCalendars: Bool = false) -> Set<String> {
         func collect(_ part: MessagePart) -> Set<String> {
             guard !isAttachment(part) else { return [] }
             if (part.mimeType ?? "").lowercased().hasPrefix("multipart/") {
@@ -52,7 +53,11 @@ public enum MIMEParts {
                   part.body?.decodedData == nil, let id = part.body?.attachmentId else { return [] }
             return [id]
         }
-        return message.payload.map(collect) ?? []
+        var ids = message.payload.map(collect) ?? []
+        if includingCalendars, let calendarID = CalendarParts.requiredAttachmentID(of: message) {
+            ids.insert(calendarID)
+        }
+        return ids
     }
 
     /// Parts with a file name or an attachment disposition, in payload order.
@@ -121,7 +126,7 @@ public enum MIMEParts {
         }
     }
 
-    private static func isAttachment(_ part: MessagePart) -> Bool {
+    static func isAttachment(_ part: MessagePart) -> Bool {
         if let filename = part.filename, !filename.isEmpty { return true }
         return part.header("Content-Disposition")?
             .trimmingCharacters(in: .whitespaces)
