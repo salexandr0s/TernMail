@@ -156,12 +156,14 @@ Validation uses a frozen calendar-only source copy at `/tmp/tern-calendar-manage
 | Hosted app suite | 148 tests in 27 suites passed; `/tmp/tern-calendar-verified-app.log`. Includes calendar permissions, model lifecycle, management, email detection, assistant proposals, overlapping undo requests and keyboard callback routing. |
 | Project generation and Debug compilation | Passed in the isolated snapshot. |
 | Universal Release | Final arm64 and x86_64 Release build passed; `/tmp/tern-calendar-verified-release.log`. |
-| Native presentation | Day, Week, Month and Year inspected with synthetic calendars; light/dark presentation, event editor and accessibility labels inspected. Create/edit/delete, menu undo, Mail sidebar recovery and Attachments/Calendar title transitions passed. Final interactive Command-Z verification is blocked by the locked Mac; a hosted routing regression covers the command boundary. |
+| Native presentation | Day, Week, Month and Year inspected with synthetic calendars; light/dark presentation, event editor and accessibility labels inspected. Create/edit/delete, menu undo, Mail sidebar recovery and Attachments/Calendar title transitions passed. After unlock, native Command-Z reversed event creation and text-field undo changed only the search text. The hosted routing regression also covers the command boundary. |
 | Google create/move/edit/delete and Google-to-Tern changes | Pending live account verification and Cloud API/consent setup. |
 | Dated emails with AI disabled; repeated/updated/cancelled invitations | Automated detection, parser, source receipt, revision and reply-path tests pass; real inbox round trips remain pending. |
 | Scheduling example | Automated scope, availability-only, partial-failure, multi-account and proposal tests pass. End-to-end model/provider selection and reply drafting remain a live acceptance check. Selecting slots does not enqueue an event or send mail. |
 | Alerts while running/closed and rescheduling after edits | Implemented; actual macOS notification delivery remains pending. |
-| Keyboard, VoiceOver, narrow windows and Apple Calendar comparison | Native accessibility tree inspected; spoken VoiceOver, narrow-window review and a complete parity checklist remain pending. The Mac locked during the final keyboard check. |
+| Keyboard, VoiceOver, narrow windows and Apple Calendar comparison | Native accessibility tree inspected; spoken VoiceOver, narrow-window review and a complete parity checklist remain pending. The final undo check passed after unlock using the active keyboard layout. |
+
+The native keyboard trace showed that the automation tool's `super+z` produced `y`, while `super+y` produced `z` under the active layout. Sending the actual Command-Z event passed the calendar and text-editing checks. This was an automation key-mapping mismatch; no production shortcut change was needed. The trace recorded only key/focus metadata, and its temporary logging was removed. Evidence: `/tmp/tern-calendar-key-routing.log`.
 
 The preview uses `--ui-audit --ui-audit-calendar` and an in-memory `CalendarAuditService`. It is separate from the real Google session. Debug fixtures exercise the same editor and action queue, but cannot certify Google's invitations, ACLs, Meet behavior or eventual consistency.
 
