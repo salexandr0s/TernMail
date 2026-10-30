@@ -22,7 +22,12 @@ struct AttachmentLibraryCollection: View {
     var body: some View {
         Group {
             if viewMode == "grid" { cards }
-            else { list }
+            else {
+                VStack(spacing: 0) {
+                    if availableWidth >= Tokens.Layout.readableWidth { columnHeadings }
+                    list
+                }
+            }
         }
         .onKeyPress(keys: [.space, .return]) { press in
             guard let item = model.items.first(where: { model.selection.contains($0.id) }), !model.isWorking else { return .ignored }
@@ -51,6 +56,18 @@ struct AttachmentLibraryCollection: View {
         }
     }
 
+    private var columnHeadings: some View {
+        HStack(spacing: Tokens.Space.s3) {
+            Text("File").frame(maxWidth: .infinity, alignment: .leading)
+            Text("From").frame(width: Tokens.Layout.sidebarMinWidth, alignment: .leading)
+            Text("Received").frame(width: Tokens.Space.s16 * 2, alignment: .trailing)
+        }
+        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.top, Tokens.Space.s1).padding(.bottom, Tokens.Space.s2)
+        .accessibilityHidden(true)
+    }
+
     private var list: some View {
         List(selection: $model.selection) {
             ForEach(model.items) { item in
@@ -74,6 +91,7 @@ struct AttachmentLibraryCollection: View {
         .focused($listFocused)
         .scrollContentBackground(.hidden)
         .accessibilityLabel("Attachments list")
+        .accessibilityHint("Select a file and press Space to preview or Return to open. Command-click or Shift-click selects several files.")
     }
 
     private var cards: some View {
@@ -98,7 +116,8 @@ struct AttachmentLibraryCollection: View {
                         .id(item.id)
                 }
             }
-            .padding(Tokens.Space.s5)
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.top, Tokens.Space.s1).padding(.bottom, Tokens.Space.s5)
         }
     }
 

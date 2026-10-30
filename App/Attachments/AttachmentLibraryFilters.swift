@@ -6,14 +6,15 @@ struct AttachmentLibraryFilters: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack {
-                Text("Filter attachments").font(.headline)
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Label("Filter attachments", systemImage: "line.3.horizontal.decrease").font(.headline)
+                Text("Results update as you choose.").font(.caption).foregroundStyle(.secondary)
             }
+            .padding(Tokens.Space.s4)
+            Divider()
             Form {
-                    Section {
+                    Section("Email") {
                         Picker("Account", selection: $model.accountID) {
                             Text("All accounts").tag("")
                             ForEach(model.availableAccounts) { account in
@@ -37,7 +38,7 @@ struct AttachmentLibraryFilters: View {
                                 Text(category.title).tag(category as AttachmentCategory?)
                             }
                         }
-                        Text("Format is the file type. Categories describe what a document is for and can be changed from its menu.")
+                        Text("Assign categories from an attachment's menu. File format uses the extension, such as pdf or docx.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Section("Email date") {
@@ -59,11 +60,17 @@ struct AttachmentLibraryFilters: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            Button("Clear all filters") { model.clearFilters() }
-                .disabled(AttachmentFilterChip.values(for: model).isEmpty)
+            Divider()
+            HStack {
+                Button("Clear all filters") { model.clearFilters() }
+                    .disabled(AttachmentFilterChip.values(for: model).isEmpty)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+            }
+            .padding(Tokens.Space.s4)
         }
-        .padding(Tokens.Space.s4)
-        .frame(width: Tokens.Sheet.smallWidth, height: Tokens.Layout.shortcutsHeight)
+        .frame(width: Tokens.Sheet.smallWidth, height: Tokens.Layout.shortcutsHeight - Tokens.Space.s16)
     }
 
     private func dateFilter(_ title: String, date: Binding<Date?>) -> some View {
@@ -154,27 +161,82 @@ struct AttachmentActiveFilters: View {
     let model: AttachmentLibraryModel
 
     var body: some View {
-        let chips = AttachmentFilterChip.values(for: model)
+        // Search and category already have visible, editable controls above.
+        let chips = AttachmentFilterChip.values(for: model).filter { $0.id != "search" && $0.id != "category" }
         if !chips.isEmpty {
-            FlowLayout(spacing: Tokens.Space.s2) {
-                ForEach(chips) { chip in
-                    Button(action: chip.remove) {
-                        HStack(spacing: Tokens.Space.s1) {
-                            Text(chip.title).lineLimit(1)
-                            Image(systemName: "xmark").imageScale(.small)
+            HStack(spacing: Tokens.Space.s3) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: Tokens.Space.s2) {
+                        ForEach(chips) { chip in
+                            Button(action: chip.remove) {
+                                HStack(spacing: Tokens.Space.s1) {
+                                    Text(chip.title).lineLimit(1).truncationMode(.middle)
+                                    Image(systemName: "xmark").imageScale(.small)
+                                }
+                                .font(.caption)
+                                .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s1_5)
+                                .background(Color.accentColor.opacity(0.08), in: Capsule())
+                                .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+                                .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove \(chip.title)")
+                            .accessibilityLabel("Remove filter: \(chip.title)")
                         }
-                        .font(.caption)
-                        .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
-                        .background(Tokens.Surface.muted, in: Capsule())
-                        .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
                     }
-                    .buttonStyle(.plain)
-                    .help("Remove \(chip.title)")
-                    .accessibilityLabel("Remove filter: \(chip.title)")
+                    .padding(.vertical, Tokens.Space.s1)
                 }
+                .frame(height: Tokens.Space.s12)
+                .accessibilityLabel("Active filters")
                 Button("Clear all") { model.clearFilters() }
-                    .buttonStyle(.link).font(.caption)
+                    .buttonStyle(.link).font(.caption).fixedSize()
             }
         }
+    }
+}
+
+/// These shortcuts filter user-assigned categories, using the same state as the popover.
+struct AttachmentCategoryShortcuts: View {
+    @Bindable var model: AttachmentLibraryModel
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s1) {
+                categoryButton(nil)
+                ForEach(AttachmentCategory.allCases, id: \.self) { category in categoryButton(category) }
+            }
+            .fixedSize()
+            Picker("Category", selection: $model.category) {
+                Text("All categories").tag(nil as AttachmentCategory?)
+                ForEach(AttachmentCategory.allCases, id: \.self) { category in
+                    Text(category.title).tag(category as AttachmentCategory?)
+                }
+            }
+            .frame(maxWidth: Tokens.Popover.width, alignment: .leading)
+        }
+        .help("Filter categories you assign from an attachment's menu")
+    }
+
+    private func categoryButton(_ category: AttachmentCategory?) -> some View {
+        let selected = model.category == category
+        return Button { model.category = category } label: {
+            Text(category?.title ?? "All categories")
+                .font(.callout.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.accentColor : .secondary)
+                .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
+                .background(selected ? Color.accentColor.opacity(0.12) : .clear,
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                        .strokeBorder(selected ? (contrast == .increased ? Color.primary : Color.accentColor.opacity(0.3)) : .clear,
+                                      lineWidth: Tokens.Border.hairline)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(category?.title ?? "All categories")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }

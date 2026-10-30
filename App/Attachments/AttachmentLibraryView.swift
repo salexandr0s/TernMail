@@ -5,6 +5,7 @@ import SwiftUI
 
 struct AttachmentLibraryView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.colorSchemeContrast) private var contrast
     @Bindable var model: AttachmentLibraryModel
     var onOpenSource: () -> Void
     @AppStorage("attachments.viewMode") private var viewMode = "list"
@@ -12,17 +13,18 @@ struct AttachmentLibraryView: View {
     @State private var showsCoverage = false
     @FocusState private var searchFocused: Bool
 
+    private var filterCount: Int { AttachmentFilterChip.values(for: model).filter { $0.id != "search" }.count }
+    private var hasFilters: Bool { !AttachmentFilterChip.values(for: model).isEmpty }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let error = model.errorMessage {
-                errorBanner(error)
-            }
+            resultsToolbar
+            if let error = model.errorMessage { errorBanner(error) }
             GeometryReader { geometry in
-                if model.items.isEmpty {
-                    emptyState
-                } else {
+                if model.items.isEmpty { emptyState }
+                else {
                     AttachmentLibraryCollection(model: model, viewMode: viewMode,
                         availableWidth: geometry.size.width, onOpenSource: onOpenSource)
                 }
@@ -38,9 +40,7 @@ struct AttachmentLibraryView: View {
         .toolbar {
             if app.destination == .mail {
                 ToolbarItem(placement: .automatic) {
-                    Button {
-                        searchFocused = true
-                    } label: {
+                    Button { searchFocused = true } label: {
                         Label("Find attachment", systemImage: "magnifyingglass")
                     }
                     .keyboardShortcut("f", modifiers: .command)
@@ -51,27 +51,39 @@ struct AttachmentLibraryView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack(alignment: .center, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "paperclip")
+                    .font(.title2.weight(.medium)).foregroundStyle(Color.accentColor)
+                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Attachments").font(.title2.weight(.semibold))
+                    Text("Attachments").font(.title.weight(.semibold))
                     Text("Files from your connected mail accounts")
                         .font(.callout).foregroundStyle(.secondary)
                 }
-                Spacer(minLength: Tokens.Space.s2)
-                Picker("View", selection: $viewMode) {
-                    Image(systemName: "list.bullet").tag("list").accessibilityLabel("List view")
-                    Image(systemName: "square.grid.2x2").tag("grid").accessibilityLabel("Card view")
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: Tokens.Space.s3) {
+                searchField
+                Button { showsFilters.toggle() } label: {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Image(systemName: "line.3.horizontal.decrease")
+                        Text("Filters")
+                        if filterCount > 0 {
+                            Text(filterCount.formatted()).font(.caption.weight(.semibold))
+                                .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
+                                .background(Color.accentColor.opacity(0.14), in: Capsule())
+                        }
+                    }
+                    .frame(minHeight: Tokens.Space.s6)
                 }
-                .pickerStyle(.segmented).frame(width: Tokens.Space.s16 * 2)
-                .help("Choose list or card view")
+                .fixedSize().controlSize(.large)
+                .accessibilityLabel(filterCount == 0 ? "Filters" : "Filters, \(filterCount) active")
+                .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s2) { searchField; filterAndSort }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) { searchField; filterAndSort }
-            }
-            Text("Search filenames, senders and email subjects. Document contents aren't searched.")
-                .font(.caption).foregroundStyle(.secondary)
+            AttachmentCategoryShortcuts(model: model)
             AttachmentActiveFilters(model: model)
         }
         .padding(Tokens.Space.s5)
@@ -80,115 +92,155 @@ struct AttachmentLibraryView: View {
 
     private var searchField: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-            TextField("Search attachments", text: $model.search)
+            Image(systemName: "magnifyingglass").foregroundStyle(searchFocused ? Color.accentColor : .secondary)
+                .accessibilityHidden(true)
+            TextField("Search filenames, senders or subjects", text: $model.search)
                 .textFieldStyle(.plain).focused($searchFocused)
                 .accessibilityLabel("Search filenames, senders and email subjects")
+                .help("Search filenames, senders and email subjects. Document contents aren't searched.")
+                .accessibilityHint("Searches file and email details. Document contents aren't searched.")
             if !model.search.isEmpty {
-                Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                Button { model.search = ""; searchFocused = true } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .help("Clear search").accessibilityLabel("Clear search")
             }
         }
-        .padding(Tokens.Space.s2)
-        .frame(minWidth: Tokens.Layout.searchMinWidth)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+        .padding(.horizontal, Tokens.Space.s3)
+        .frame(minWidth: Tokens.Layout.searchMinWidth, minHeight: Tokens.Space.s10)
+        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                .strokeBorder(searchFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
+                              lineWidth: searchFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                .allowsHitTesting(false)
+        }
     }
 
-    private var filterAndSort: some View {
+    private var resultsToolbar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s3) { resultsTitle; Spacer(minLength: Tokens.Space.s2); displayControls }
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                resultsTitle
+                HStack { Spacer(minLength: 0); displayControls }
+            }
+        }
+        .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
+    }
+
+    private var resultsTitle: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Button { showsFilters.toggle() } label: {
-                Label("Filters", systemImage: AttachmentFilterChip.values(for: model).isEmpty
-                      ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+            if model.isLoading {
+                ProgressView().controlSize(.mini)
+                Text("Finding attachments…").foregroundStyle(.secondary)
+            } else {
+                Text(model.totalCount == 1 ? "1 attachment" : "\(model.totalCount.formatted()) attachments")
+                    .fontWeight(.semibold).monospacedDigit()
+                if hasFilters { Text("found").foregroundStyle(.secondary) }
             }
-            .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
-            Picker("Sort", selection: $model.sort) {
-                ForEach(AttachmentLibrarySort.allCases, id: \.self) { sort in
-                    Text(sort.title).tag(sort)
-                }
+        }
+        .font(.callout).fixedSize()
+    }
+
+    private var displayControls: some View {
+        HStack(spacing: Tokens.Space.s3) {
+            Picker("Sort attachments", selection: $model.sort) {
+                ForEach(AttachmentLibrarySort.allCases, id: \.self) { sort in Text(sort.title).tag(sort) }
             }
-            .labelsHidden().frame(width: Tokens.Layout.searchMinWidth)
+            .labelsHidden().frame(width: Tokens.Layout.sidebarMinWidth)
             .help("Sort attachments")
+            Picker("View", selection: $viewMode) {
+                Image(systemName: "list.bullet").tag("list").accessibilityLabel("List view")
+                Image(systemName: "square.grid.2x2").tag("grid").accessibilityLabel("Card view")
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: Tokens.Space.s10 * 2)
+            .help("Choose list or card view")
         }
         .fixedSize()
     }
 
     @ViewBuilder private var emptyState: some View {
         if model.isLoading {
-            VStack(spacing: Tokens.Space.s3) {
-                ProgressView().controlSize(.small)
-                Text("Loading attachments…").foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if !AttachmentFilterChip.values(for: model).isEmpty {
-            VStack(spacing: Tokens.Space.s3) {
+            TernEmptyState(title: "Finding your files", systemImage: "doc.text.magnifyingglass",
+                message: "Loading attachments from your mail library.")
+        } else if hasFilters {
+            VStack(spacing: 0) {
                 TernEmptyState(title: "No matching attachments", systemImage: "doc.text.magnifyingglass",
-                    message: "Try another sender, filename or filter. Results may grow while older mail is being indexed.", fillsSpace: false)
-                Button("Clear all filters") { model.clearFilters() }
+                    message: model.category == nil
+                        ? "Try a different filename, sender or filter."
+                        : "Try another category or clear your filters. To assign a category, use an attachment's menu.",
+                    fillsSpace: false)
+                Button("Clear all filters") { model.clearFilters(); searchFocused = true }
+                    .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            TernEmptyState(title: "Your attachments will appear here", systemImage: "paperclip",
-                message: "Tern looks for files across your mail history. Inline images and email logos are left out.")
+            TernEmptyState(title: "Your files, together", systemImage: "paperclip",
+                message: "Attachments from your email will appear here, including archived mail. Inline images and email logos are left out.")
         }
     }
 
     private func errorBanner(_ error: String) -> some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            Label(error, systemImage: "exclamationmark.triangle")
-                .font(.callout).frame(maxWidth: .infinity, alignment: .leading)
-            Button("Try Again") { Task { await model.retryLastAction() } }
-                .disabled(model.isWorking)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+            Text(error).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
+            Button("Try Again") { Task { await model.retryLastAction() } }.disabled(model.isWorking)
             Button { model.errorMessage = nil } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain).help("Dismiss error").accessibilityLabel("Dismiss error")
         }
         .padding(Tokens.Space.s3)
-        .background(Color.orange.opacity(0.1))
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .padding(.horizontal, Tokens.Space.s5).padding(.bottom, Tokens.Space.s3)
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        VStack(spacing: Tokens.Space.s3) {
             if !model.selection.isEmpty {
                 AttachmentSelectionActions(model: model, onOpenSource: onOpenSource)
                 Divider()
             }
-            HStack(spacing: Tokens.Space.s2) {
-                if model.isLoading || model.isWorking { ProgressView().controlSize(.mini) }
-                Text(model.rangeSummary).monospacedDigit()
-                if model.hasPreviousPage || model.hasMore {
-                    Button { model.previousPage() } label: { Image(systemName: "chevron.left") }
-                        .disabled(!model.hasPreviousPage || model.isLoading)
-                        .help("Previous page").accessibilityLabel("Previous page")
-                    Button { Task { await model.loadMore() } } label: { Image(systemName: "chevron.right") }
-                        .disabled(!model.hasMore || model.isLoading)
-                        .help("Next page").accessibilityLabel("Next page")
-                }
-                Spacer(minLength: Tokens.Space.s2)
-                Button { showsCoverage.toggle() } label: {
-                    Label(model.coverageSummary, systemImage: model.indexingNeedsRetry ? "exclamationmark.circle" : "info.circle")
-                        .lineLimit(1)
-                }
-                .buttonStyle(.link)
-                .popover(isPresented: $showsCoverage) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        Text("Indexing coverage").font(.headline)
-                        Text(model.coverageDetail).font(.callout)
-                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        if model.indexingNeedsRetry {
-                            Button("Retry indexing") { Task { await model.retryIndexing() } }
-                        }
-                    }
-                    .padding(Tokens.Space.s4).frame(width: Tokens.Popover.width)
-                }
-                if model.indexingNeedsRetry {
-                    Button("Retry") { Task { await model.retryIndexing() } }.buttonStyle(.link)
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s3) { pageControls; Spacer(minLength: Tokens.Space.s3); coverageButton }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) { pageControls; coverageButton }
             }
             .font(.caption).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, Tokens.Space.s4).padding(.vertical, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
+    }
+
+    private var pageControls: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            if model.isWorking { ProgressView().controlSize(.mini); Text("Preparing files…") }
+            else { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
+            if model.hasPreviousPage || model.hasMore {
+                Button { model.previousPage() } label: { Image(systemName: "chevron.left") }
+                    .disabled(!model.hasPreviousPage || model.isLoading)
+                    .help("Previous page").accessibilityLabel("Previous page")
+                Button { Task { await model.loadMore() } } label: { Image(systemName: "chevron.right") }
+                    .disabled(!model.hasMore || model.isLoading)
+                    .help("Next page").accessibilityLabel("Next page")
+            }
+        }
+        .fixedSize()
+    }
+
+    private var coverageButton: some View {
+        Button { showsCoverage.toggle() } label: {
+            Label(model.coverageSummary, systemImage: model.indexingNeedsRetry ? "exclamationmark.circle" : "info.circle")
+                .lineLimit(1)
+        }
+        .buttonStyle(.plain).help("View attachment indexing status")
+        .popover(isPresented: $showsCoverage) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                Label("Mail history", systemImage: "clock.arrow.circlepath").font(.headline)
+                Text(model.coverageDetail).font(.callout)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if model.indexingNeedsRetry {
+                    Button("Retry indexing") { Task { await model.retryIndexing() } }
+                }
+            }
+            .padding(Tokens.Space.s4).frame(width: Tokens.Popover.width)
+        }
     }
 }
 
@@ -201,19 +253,37 @@ struct AttachmentSelectionActions: View {
     }
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            Text("\(model.selection.count) selected").font(.caption).monospacedDigit()
-            Spacer(minLength: Tokens.Space.s2)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s3) { selectionLabel; Spacer(minLength: Tokens.Space.s3); actions }
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) { selectionLabel; actions }
+        }
+    }
+
+    private var selectionLabel: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor).accessibilityHidden(true)
+            Text("\(model.selection.count) selected").font(.callout.weight(.medium)).monospacedDigit()
+            Button { model.selection.removeAll() } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Clear selection (Esc)").accessibilityLabel("Clear selection")
+        }
+        .fixedSize()
+    }
+
+    private var actions: some View {
+        HStack(spacing: Tokens.Space.s2) {
             if let item = selected {
-                Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }
-                    .help("Preview (Space)")
+                Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }.help("Preview (Space)")
                 Button("Show Email", systemImage: "envelope") {
                     Task { if await model.openSource(item) { onOpenSource() } }
                 }
             }
-            Button("Save…", systemImage: "arrow.down.to.line") { Task { await model.saveSelection() } }
+            Button(model.selection.count == 1 ? "Save…" : "Save Files…", systemImage: "arrow.down.to.line") {
+                Task { await model.saveSelection() }
+            }
+            .buttonStyle(.borderedProminent)
         }
-        .disabled(model.isWorking)
+        .fixedSize().disabled(model.isWorking)
     }
 }
 
