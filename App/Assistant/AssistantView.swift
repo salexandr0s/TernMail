@@ -11,14 +11,18 @@ struct AssistantView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorSchemeContrast) private var contrast
     @FocusState private var isComposerFocused: Bool
+    @FocusState private var focusedToolbarButton: String?
     @State private var hasPlacedInitialFocus = false
     @State private var showsSettings = false
     @State private var scrollRequest = UUID()
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            scopePicker
+            VStack(spacing: 0) {
+                header
+                scopePicker
+            }
+            .background(Tokens.Surface.muted)
             Divider()
             AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
                                       onOpenDraft: { openWindow(id: ComposeWindow.sceneID, value: $0) }) {
@@ -61,13 +65,13 @@ struct AssistantView: View {
     }
 
     private var header: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            ChatGPTBrand(size: Tokens.Space.s6)
-                .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
-                .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        HStack(spacing: Tokens.Space.s2) {
+            ChatGPTBrand(size: Tokens.Space.s5)
+                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                Text("Assistant").font(.headline)
+                Text("Assistant").font(.headline).lineLimit(1)
                 Text(modelName)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .help(modelName)
@@ -75,7 +79,7 @@ struct AssistantView: View {
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s0_5) {
-                iconButton("New chat", symbol: "square.and.pencil") {
+                iconButton("New chat", symbol: "plus") {
                     model.newChat()
                     scrollRequest = UUID()
                     isComposerFocused = true
@@ -97,50 +101,53 @@ struct AssistantView: View {
             }
             .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, Tokens.Space.s4).padding(.top, Tokens.Space.s4).padding(.bottom, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s4).padding(.top, Tokens.Space.s3).padding(.bottom, Tokens.Space.s2)
     }
 
     private var scopePicker: some View {
         HStack(spacing: Tokens.Space.s2) {
+            Image(systemName: "envelope")
+                .foregroundStyle(.secondary).accessibilityHidden(true)
             Menu {
                 Picker("Mail scope", selection: $model.selectedScope) {
                     ForEach(AssistantScope.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.inline)
             } label: {
-                Label(model.selectedScope.title, systemImage: "envelope").lineLimit(1)
+                Text(model.selectedScope.title).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .menuIndicator(.visible).menuStyle(.borderlessButton).controlSize(.small)
-            .padding(.horizontal, Tokens.Space.s2)
-            .frame(height: Tokens.Control.iconButton)
-            .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            .overlay {
-                if contrast == .increased {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
-                        .allowsHitTesting(false)
-                }
-            }
+            .frame(maxWidth: .infinity)
             .accessibilityLabel("Mail scope").accessibilityValue(model.selectedScope.title)
             .help("Mail scope: \(model.selectedScope.title). Calendar access is managed separately in settings.")
-            Spacer(minLength: 0)
+            Divider().frame(height: Tokens.Space.s4)
             Button { showsSettings = true } label: {
-                Label("Access", systemImage: "slider.horizontal.3")
-                    .padding(.horizontal, Tokens.Space.s2)
-                    .frame(height: Tokens.Control.iconButton)
+                Image(systemName: "slider.horizontal.3")
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
             .buttonStyle(.borderless).fixedSize()
             .help("Manage mail and calendar access")
             .accessibilityLabel("Manage assistant access. \(model.enabledAccountIDs.count) enabled mail accounts")
         }
-        .font(.caption).foregroundStyle(.secondary)
+        .font(.caption)
+        .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s1)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline)
+                .allowsHitTesting(false)
+        }
         .padding(.horizontal, Tokens.Space.s4).padding(.bottom, Tokens.Space.s3)
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                TextField("Ask about mail or calendar…", text: $model.composerText, axis: .vertical)
+        VStack(spacing: 0) {
+            Divider()
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                TextField(model.messages.isEmpty ? "Ask about mail or calendar…" : "Ask a follow-up…",
+                          text: $model.composerText, axis: .vertical)
                     .font(.body).textFieldStyle(.plain).lineLimit(2...6)
                     .focused($isComposerFocused)
                     .accessibilityLabel("Message to assistant")
@@ -150,34 +157,42 @@ struct AssistantView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: Tokens.Space.s2)
                     if model.isRunning {
-                        Button("Stop response", systemImage: "stop.fill") { model.stop() }
-                            .labelStyle(.iconOnly).buttonStyle(.bordered).buttonBorderShape(.circle)
-                            .controlSize(.large).help("Stop response")
+                        Button { model.stop() } label: {
+                            Image(systemName: "stop.fill")
+                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        }
+                        .buttonStyle(.bordered).buttonBorderShape(.circle)
+                        .help("Stop response").accessibilityLabel("Stop response")
                     } else {
-                        Button("Send message", systemImage: "arrow.up", action: submit)
-                            .labelStyle(.iconOnly).buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                            .controlSize(.large).keyboardShortcut(.return, modifiers: .command)
-                            .disabled(!canSubmit).help("Send message (⌘ Return)")
+                        Button(action: submit) {
+                            Image(systemName: "arrow.up").font(.body.weight(.semibold))
+                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        }
+                        .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!canSubmit).help("Send message (⌘ Return)")
+                        .accessibilityLabel("Send message")
                     }
                 }
             }
             .padding(Tokens.Space.s3)
-            .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
             .overlay {
                 RoundedRectangle(cornerRadius: Tokens.Radius.lg)
                     .strokeBorder(isComposerFocused ? Color.accentColor : outlineColor,
                                   lineWidth: isComposerFocused ? Tokens.Border.focus : Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
+            .padding(Tokens.Space.s3)
+            .frame(maxWidth: Tokens.Assistant.contentWidth)
+            .frame(maxWidth: .infinity)
         }
-        .padding(Tokens.Space.s4)
-        .frame(maxWidth: Tokens.Assistant.contentWidth)
-        .frame(maxWidth: .infinity)
+        .background(Tokens.Surface.muted)
     }
 
     @ViewBuilder private var composerHint: some View {
         if model.isRunning {
-            Text("Replying…")
+            Label("Working…", systemImage: "ellipsis")
         } else if let setupPrompt {
             Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
         } else {
@@ -225,8 +240,31 @@ struct AssistantView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .contentShape(Rectangle())
+                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
-        .buttonStyle(.borderless).help(title).accessibilityLabel(title)
+        .buttonStyle(AssistantToolbarButtonStyle(isFocused: focusedToolbarButton == title))
+        .focused($focusedToolbarButton, equals: title)
+        .help(title).accessibilityLabel(title)
+    }
+}
+
+private struct AssistantToolbarButtonStyle: ButtonStyle {
+    let isFocused: Bool
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(isFocused || isHovered || configuration.isPressed ? Tokens.Surface.primary : .clear,
+                        in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .overlay {
+                if isFocused || (contrast == .increased && (isHovered || configuration.isPressed)) {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                        .strokeBorder(isFocused ? Color.accentColor : .primary,
+                                      lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onHover { isHovered = $0 }
     }
 }

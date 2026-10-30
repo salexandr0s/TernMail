@@ -39,11 +39,13 @@ Use the round Assistant icon at the far right of the window toolbar to open or c
 
 The assistant opens as a right sidebar inside the existing window. Mailbox navigation and the conversation list shrink while it is open. At narrow widths, mailbox navigation temporarily closes. Closing the assistant restores the earlier layout. Drag its left edge to resize it, or use **Options** to open a separate window or full-screen view. All three views share the conversation and unfinished message.
 
-The header shows the current model. Use the mail scope menu to choose which conversations to include, and **Access** to manage mail and calendar permissions. The welcome panel shows any setup step still needed, followed by suggestions with short descriptions. A new chat opens at the top of this panel, including in short windows.
+The header shows the current model. Use the mail scope menu to choose which conversations to include, and the sliders button beside it to manage mail and calendar access. The welcome panel shows any setup step still needed, followed by suggestion cards with short descriptions. A new chat opens at the top of this panel, including in short windows.
 
 The composer supports multiple lines; press **⌘ Return** to send. Your messages appear in trailing bubbles, while assistant replies use the conversation width for text and email cards. Copy controls remain beside message timestamps.
 
-Replies support headings, lists, emphasis, quotes, code, and tables. Email cards show verified sender details, dates, labels, unread/starred status, and a reason for inclusion. Available local profile pictures appear beside senders; otherwise Tern shows initials. Cards link to the original conversation. Generated text and images do not create navigation links; use the validated cards and sources.
+Replies lead with the answer and default to short paragraphs or a few useful bullets. Ask for more detail when you need it. Headings, lists, emphasis, quotes, code, and tables have distinct formatting. Small workflows and decisions can include an embedded flowchart; its controls reveal or copy the diagram source. Unsupported or unfinished diagrams remain readable code.
+
+Email cards show verified sender details, dates, labels, unread/starred status, and a reason for inclusion. Available local profile pictures appear beside senders; otherwise Tern shows initials. Cards link to the original conversation. Generated text, images, and diagrams do not create navigation links; use the validated cards and sources.
 
 **Stop response** cancels the current request. **Try again** retries a failed reply while retaining email cards and drafts already created. Retrying cannot create another draft after one has succeeded; ask in a new message to prepare another. **New chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits. Scroll up to read earlier messages without following new output; **Jump to latest** resumes following it.
 

@@ -11,66 +11,96 @@ struct AssistantConversationView<Welcome: View>: View {
     var body: some View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        if model.messages.isEmpty { welcome().id("assistant-welcome") }
-                        ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                            if beginsDay(at: index) {
-                                Text(dayTitle(message.createdAt))
-                                    .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                                    .padding(.vertical, Tokens.Space.s2)
-                                    .frame(maxWidth: .infinity)
-                            }
-                            AssistantMessageView(message: message, startsGroup: startsGroup(at: index),
-                                                 status: model.statusText, canRetry: model.canRetry(message.id),
-                                                 onRetry: { scrollTracking.followLatest(); model.retry(message.id) },
-                                                 onOpenSource: onOpenSource, onOpenDraft: onOpenDraft)
-                            if !message.calendarProposals.isEmpty || !message.availabilityChoices.isEmpty {
-                                AssistantCalendarActionsView(message: message, model: model)
-                            }
-                        }
-                        if let error = model.errorMessage, error != model.messages.last?.errorMessage {
-                            Label(error, systemImage: "exclamationmark.triangle")
-                                .font(.callout).fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled).padding(Tokens.Space.s3).ternSurface()
-                        }
-                        Color.clear.frame(height: Tokens.Space.s1).id("assistant-bottom")
-                    }
-                    .padding(Tokens.Space.s4)
-                    .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity)
-                    .background {
-                        GeometryReader { content in
-                            Color.clear.preference(key: AssistantScrollFrameKey.self,
-                                                   value: content.frame(in: .named("assistant-scroll")))
-                        }
-                    }
-                }
-                .coordinateSpace(name: "assistant-scroll")
-                .onPreferenceChange(AssistantScrollFrameKey.self) { frame in
-                    scrollTracking.update(frame: frame, viewportHeight: viewport.size.height)
-                }
-                .onChange(of: scrollRequest) { scrollTracking.followLatest(); scrollToLatest(proxy) }
-                .onChange(of: model.messages.count) { scrollToLatest(proxy) }
-                .onChange(of: model.messages.last?.text) { scrollToLatest(proxy) }
-                .onChange(of: model.messages.last?.emailResults.count) { scrollToLatest(proxy) }
-                .onChange(of: model.messages.last?.state) { scrollToLatest(proxy) }
-                .onChange(of: model.statusText) { scrollToLatest(proxy) }
-                .onAppear { scrollToLatest(proxy) }
-                .overlay(alignment: .bottom) {
-                    if !model.messages.isEmpty, !scrollTracking.followsLatest {
-                        Button("Jump to latest", systemImage: "arrow.down") {
-                            scrollTracking.followLatest()
-                            proxy.scrollTo("assistant-bottom", anchor: .bottom)
-                        }
-                        .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
-                        .background(Tokens.Surface.primary, in: Capsule())
-                        .padding(Tokens.Space.s2)
-                    }
-                }
+                observedScroll(proxy, viewportHeight: viewport.size.height)
+                    .overlay(alignment: .bottom) { jumpToLatest(proxy) }
             }
         }
         .background(Tokens.Surface.primary)
+    }
+
+    private func observedScroll(_ proxy: ScrollViewProxy, viewportHeight: CGFloat) -> some View {
+        conversationScroll(viewportHeight: viewportHeight)
+            .onChange(of: scrollRequest) { scrollTracking.followLatest(); scrollToLatest(proxy) }
+            .onChange(of: scrollContent) { scrollToLatest(proxy) }
+            .onAppear { scrollToLatest(proxy) }
+    }
+
+    private var scrollContent: AssistantScrollContent {
+        let last = model.messages.last
+        return AssistantScrollContent(messageCount: model.messages.count, text: last?.text,
+                                      emailCount: last?.emailResults.count, draftCount: last?.draftIDs.count,
+                                      proposalCount: last?.calendarProposals.count,
+                                      availabilityCount: last?.availabilityChoices.count,
+                                      state: last?.state, status: model.statusText)
+    }
+
+    private func conversationScroll(viewportHeight: CGFloat) -> some View {
+        ScrollView {
+            transcript
+                .padding(Tokens.Space.s4)
+                .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .background {
+                    GeometryReader { content in
+                        Color.clear.preference(key: AssistantScrollFrameKey.self,
+                                               value: content.frame(in: .named("assistant-scroll")))
+                    }
+                }
+        }
+        .coordinateSpace(name: "assistant-scroll")
+        .onPreferenceChange(AssistantScrollFrameKey.self) { frame in
+            scrollTracking.update(frame: frame, viewportHeight: viewportHeight)
+        }
+    }
+
+    private var transcript: some View {
+        LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            if model.messages.isEmpty { welcome().id("assistant-welcome") }
+            ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
+                messageRow(message, at: index)
+            }
+            if let error = model.errorMessage, error != model.messages.last?.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled).padding(Tokens.Space.s3).ternSurface()
+            }
+            Color.clear.frame(height: Tokens.Space.s1).id("assistant-bottom")
+        }
+    }
+
+    @ViewBuilder private func messageRow(_ message: AssistantMessage, at index: Int) -> some View {
+        if beginsDay(at: index) { daySeparator(message.createdAt) }
+        AssistantMessageView(message: message, startsGroup: startsGroup(at: index),
+                             status: model.statusText, canRetry: model.canRetry(message.id),
+                             onRetry: { scrollTracking.followLatest(); model.retry(message.id) },
+                             onOpenSource: onOpenSource, onOpenDraft: onOpenDraft)
+        if !message.calendarProposals.isEmpty || !message.availabilityChoices.isEmpty {
+            AssistantCalendarActionsView(message: message, model: model)
+        }
+    }
+
+    private func daySeparator(_ date: Date) -> some View {
+        HStack(spacing: Tokens.Space.s3) {
+            Rectangle().fill(Tokens.Surface.border).frame(height: Tokens.Border.hairline)
+            Text(dayTitle(date))
+                .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                .fixedSize()
+            Rectangle().fill(Tokens.Surface.border).frame(height: Tokens.Border.hairline)
+        }
+        .padding(.vertical, Tokens.Space.s1)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
+        if !model.messages.isEmpty, !scrollTracking.followsLatest {
+            Button("Jump to latest", systemImage: "arrow.down") {
+                scrollTracking.followLatest()
+                proxy.scrollTo("assistant-bottom", anchor: .bottom)
+            }
+            .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.regular)
+            .background(Tokens.Surface.primary, in: Capsule())
+            .padding(Tokens.Space.s3)
+        }
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy) {
@@ -140,6 +170,18 @@ struct AssistantScrollTracking {
         previousFrame = nil
         previousViewportHeight = nil
     }
+}
+
+/// One observation coalesces text and tool-result growth before scrolling.
+private struct AssistantScrollContent: Equatable {
+    let messageCount: Int
+    let text: String?
+    let emailCount: Int?
+    let draftCount: Int?
+    let proposalCount: Int?
+    let availabilityCount: Int?
+    let state: AssistantMessage.State?
+    let status: String?
 }
 
 private struct AssistantScrollFrameKey: PreferenceKey {

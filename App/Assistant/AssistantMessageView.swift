@@ -18,23 +18,28 @@ struct AssistantMessageView: View {
         HStack(alignment: .top, spacing: 0) {
             if message.isUser { Spacer(minLength: Tokens.Assistant.bubbleInset) }
             VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s2) {
-                if startsGroup {
+                if startsGroup, !message.isUser {
                     HStack(spacing: Tokens.Space.s2) {
-                        if !message.isUser {
-                            ChatGPTBrand(size: Tokens.Space.s4).accessibilityHidden(true)
-                        }
-                        Text(message.isUser ? "You" : "Assistant")
+                        ChatGPTBrand(size: Tokens.Space.s3)
+                            .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                            .accessibilityHidden(true)
+                        Text("Assistant")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(message.isUser ? .secondary : .primary)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
                 }
                 bubble
                 footer
             }
             .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         }
-        .padding(.top, startsGroup ? Tokens.Space.s4 : 0)
+        .padding(.top, startsGroup ? Tokens.Space.s5 : 0)
+        .task(id: copied) {
+            guard copied else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            copied = false
+        }
     }
 
     private var bubble: some View {
@@ -42,6 +47,8 @@ struct AssistantMessageView: View {
             if !message.text.isEmpty {
                 if message.isUser {
                     Text(message.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        .lineSpacing(Tokens.Space.s0_5)
+                        .accessibilityLabel("You: \(message.text)")
                 } else {
                     AssistantMarkdownView(text: message.text)
                 }
@@ -51,13 +58,17 @@ struct AssistantMessageView: View {
                     ProgressView().controlSize(.mini)
                     Text(status ?? "Thinking…").font(.caption).foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, Tokens.Space.s3)
                 .padding(.vertical, Tokens.Space.s2)
-                .background(Tokens.Surface.canvas, in: Capsule())
                 .accessibilityElement(children: .combine)
             }
             if !emails.isEmpty {
                 VStack(spacing: Tokens.Space.s2) {
+                    HStack {
+                        Label("Related mail", systemImage: "envelope")
+                        Spacer(minLength: Tokens.Space.s2)
+                        Text("\(emails.count)").monospacedDigit()
+                    }
+                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     ForEach(showsAllEmails ? emails : Array(emails.prefix(3))) { email in
                         AssistantEmailCard(email: email, onOpen: onOpenSource)
                     }
@@ -80,7 +91,7 @@ struct AssistantMessageView: View {
                         }
                         .font(.callout.weight(.medium))
                         .padding(Tokens.Space.s3)
-                        .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                        .background(Tokens.Assistant.userBubble, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                         .overlay {
                             if contrast == .increased {
                                 RoundedRectangle(cornerRadius: Tokens.Radius.md)
@@ -101,7 +112,6 @@ struct AssistantMessageView: View {
                 }
             }
             if !sources.isEmpty {
-                Divider()
                 DisclosureGroup(isExpanded: $showsSources) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         ForEach(sources) { source in
@@ -111,14 +121,23 @@ struct AssistantMessageView: View {
                                     .lineLimit(2).multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .buttonStyle(.link).help(title)
+                            .font(.caption).buttonStyle(.link).help(title)
                             .accessibilityLabel("Open source: \(title)")
                         }
                     }
                     .padding(.top, Tokens.Space.s2)
                 } label: {
-                    Label("\(sources.count) \(sources.count == 1 ? "source" : "sources")", systemImage: "link")
+                    Label("\(sources.count) \(sources.count == 1 ? "source" : "sources")", systemImage: "text.book.closed")
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                }
+                .padding(Tokens.Space.s3)
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .overlay {
+                    if contrast == .increased {
+                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                            .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
             if let error = message.errorMessage {
@@ -161,9 +180,12 @@ struct AssistantMessageView: View {
                     NSPasteboard.general.setString(message.text, forType: .string)
                     copied = true
                 } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    HStack(spacing: Tokens.Space.s1) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        if !message.isUser { Text(copied ? "Copied" : "Copy") }
+                    }
+                    .frame(minWidth: Tokens.Space.s6, minHeight: Tokens.Space.s6)
+                    .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
                 .buttonStyle(.borderless)
                 .help(copied ? "Copied" : (message.isUser ? "Copy message" : "Copy response"))
@@ -176,6 +198,7 @@ struct AssistantMessageView: View {
             }
         }
         .font(.caption2).foregroundStyle(.secondary)
+        .labelStyle(.titleAndIcon)
         .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
     }
 

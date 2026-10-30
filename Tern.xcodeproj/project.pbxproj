@@ -142,6 +142,7 @@
 		89DA04EFCFC5C677096729A7 /* NoticeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07C7F388D831253FD5749C5 /* NoticeView.swift */; };
 		8A7FEC940FEFE0241F30C670 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BB9B46E342248DBF893DA9 /* ThreadView.swift */; };
 		8BD5C3DC319AC6DACDB34155 /* FavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D27FD7C9C290517BF878F3 /* FavoritesView.swift */; };
+		8C7C0FCC85917D9AA7777726 /* AssistantDiagramView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B505931423070A4CF415A500 /* AssistantDiagramView.swift */; };
 		8C8AEE3BAA03A97BD75E53A9 /* CalendarActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B8CA086C6AB732F94A346D3 /* CalendarActivityView.swift */; };
 		8CAFA56EDF8661042094300E /* GmailAPI in Frameworks */ = {isa = PBXBuildFile; productRef = DADFA2A14CD8FDA35DA120E3 /* GmailAPI */; };
 		8CF9A7E0F5ED03F526B48EB4 /* SettingsEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18DCA04146B9F48B87CF1D44 /* SettingsEditorTests.swift */; };
@@ -255,6 +256,7 @@
 		F5D78A8E257DB917FCE51B9E /* SnoozePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91CA7FF62FB26BF0EC5327A /* SnoozePicker.swift */; };
 		F8BFADE9ABBA85FB519608E1 /* MailAssistantTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50845FEB4887030FFA81D657 /* MailAssistantTools.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
+		FBCD6B4B6D507B6F11016498 /* AssistantDiagram.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00C7C0E0A0991DFEA3E64177 /* AssistantDiagram.swift */; };
 		FD5F7313514A8604464DDA59 /* CalendarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 682BE50A97AB9CAD17D6F129 /* CalendarModel.swift */; };
 		FD6DE2872464C2EE7C1666B2 /* VacationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0A30A770408A3231F4632D /* VacationPane.swift */; };
 		FEBB2860AF8110BD3AE2079E /* SnoozeSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B98A499CC91C4EB6BA13D60 /* SnoozeSchedule.swift */; };
@@ -271,6 +273,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		00C7C0E0A0991DFEA3E64177 /* AssistantDiagram.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantDiagram.swift; sourceTree = "<group>"; };
 		028FE485D145D5610D43A3DB /* ComposeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModel.swift; sourceTree = "<group>"; };
 		03F47D3324023416E82D4A29 /* WritingStyleAuditFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingStyleAuditFixtures.swift; sourceTree = "<group>"; };
 		07898683B01BE7A2DBB2E477 /* LabelSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelSelectionTests.swift; sourceTree = "<group>"; };
@@ -440,6 +443,7 @@
 		B26C8CFD6D65A9D13C484DE9 /* SenderFilterActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderFilterActions.swift; sourceTree = "<group>"; };
 		B2DE3D56D2A1A73BF5B7C3BE /* ReadingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingSettingsView.swift; sourceTree = "<group>"; };
 		B41E97E37726B5A4B474A276 /* GeneralSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettings.swift; sourceTree = "<group>"; };
+		B505931423070A4CF415A500 /* AssistantDiagramView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantDiagramView.swift; sourceTree = "<group>"; };
 		B59943CD76D18A7714F5AB8E /* AttachmentFileExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentFileExport.swift; sourceTree = "<group>"; };
 		B5C4C9BF70703B761800543C /* ConversationWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWindow.swift; sourceTree = "<group>"; };
 		B608C0171CFBAF342E151CA9 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
@@ -557,6 +561,8 @@
 				0C084928F527670409BF5BD4 /* AssistantCalendarTypes.swift */,
 				506646ADB4EFE00F9A7BCBCF /* AssistantConversation.swift */,
 				6C8F67DF5AE1E76AE27E6FFE /* AssistantConversationView.swift */,
+				00C7C0E0A0991DFEA3E64177 /* AssistantDiagram.swift */,
+				B505931423070A4CF415A500 /* AssistantDiagramView.swift */,
 				FC9BA2F9008557C277714782 /* AssistantEmailCard.swift */,
 				D6A85371ECD408294E818F8C /* AssistantEmailResult.swift */,
 				C7933280D38A1A0D09A09D81 /* AssistantLauncher.swift */,
@@ -1125,6 +1131,8 @@
 				2352C7C01569B8A213F3ED41 /* AssistantCalendarTypes.swift in Sources */,
 				EBB047F51940A3F3E1E3C17B /* AssistantConversation.swift in Sources */,
 				DFF807D33E11FDE7ACE28756 /* AssistantConversationView.swift in Sources */,
+				FBCD6B4B6D507B6F11016498 /* AssistantDiagram.swift in Sources */,
+				8C7C0FCC85917D9AA7777726 /* AssistantDiagramView.swift in Sources */,
 				9B8E0C8C64397A972690370A /* AssistantEmailCard.swift in Sources */,
 				EA67EEA5A7E10A0E2E818F42 /* AssistantEmailResult.swift in Sources */,
 				AD1117685020A39017C37781 /* AssistantLauncher.swift in Sources */,
