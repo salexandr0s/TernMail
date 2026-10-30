@@ -30,7 +30,7 @@ import Testing
         #expect(requests.allSatisfy { $0.url?.path == "/v1/people/me/connections" })
         var firstQuery = query(requests[0])
         var secondQuery = query(requests[1])
-        #expect(firstQuery["personFields"] == ["names,emailAddresses,metadata"])
+        #expect(firstQuery["personFields"] == ["names,emailAddresses,metadata,photos"])
         #expect(firstQuery["pageSize"] == ["1000"])
         #expect(firstQuery["requestSyncToken"] == ["true"])
         #expect(firstQuery["syncToken"] == nil && firstQuery["pageToken"] == nil)
@@ -54,7 +54,7 @@ import Testing
             let items = query(request)
             #expect(items["syncToken"] == ["s1"])
             #expect(items["requestSyncToken"] == ["true"])
-            #expect(items["readMask"] == ["names,emailAddresses,metadata"])
+            #expect(items["readMask"] == ["names,emailAddresses,metadata,photos"])
         }
     }
 

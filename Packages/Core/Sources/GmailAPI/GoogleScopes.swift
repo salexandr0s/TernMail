@@ -10,6 +10,8 @@ public enum AccountFeature: String, Sendable, CaseIterable {
     case contacts
     /// IMAP IDLE on the Inbox.
     case inboxUpdates
+    /// Confirmed permanent deletion from Spam or Trash.
+    case permanentDeletion
     /// Google calendar events, calendar list and availability.
     case calendar
     /// Create and change calendar properties.
@@ -51,7 +53,7 @@ public enum GoogleScopes {
         switch feature {
         case .gmailSettings: [gmailSettings]
         case .contacts: [contacts, otherContacts]
-        case .inboxUpdates: [fullMail]
+        case .inboxUpdates, .permanentDeletion: [fullMail]
         case .calendar: [calendarEvents, calendarList, calendarFreeBusy]
         case .calendarManagement: [calendarManagement]
         case .calendarSharing: [calendarSharing]

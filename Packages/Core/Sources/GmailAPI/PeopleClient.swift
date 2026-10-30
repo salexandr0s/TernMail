@@ -15,9 +15,9 @@ public struct PeopleClient: Sendable {
     static let pageSize = 1000
     /// Fields asked for on every person. A sync token works only with the
     /// fields that issued it, so callers store this with the token.
-    public static let fields = "names,emailAddresses,metadata"
+    public static let fields = "names,emailAddresses,metadata,photos"
 
-    private let session: GoogleSession
+    let session: GoogleSession
 
     public init(session: GoogleSession) {
         self.session = session
@@ -111,7 +111,7 @@ public struct PeopleClient: Sendable {
         return DirectoryPage(people: page.people ?? [], nextPageToken: page.nextPageToken)
     }
 
-    private func request(path: String, query: [URLQueryItem]) throws -> URLRequest {
+    func request(path: String, query: [URLQueryItem]) throws -> URLRequest {
         var components = URLComponents()
         components.scheme = "https"
         components.host = Self.host

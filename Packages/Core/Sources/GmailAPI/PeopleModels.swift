@@ -1,7 +1,7 @@
 import Foundation
 
 // Response shapes from the People API (v1), limited to the fields Tern asks
-// for: names, email addresses and metadata.
+// for: names, email addresses, photos and metadata.
 
 public struct Person: Decodable, Sendable, Equatable {
     public struct FieldMetadata: Decodable, Sendable, Equatable {
@@ -28,13 +28,27 @@ public struct Person: Decodable, Sendable, Equatable {
         public let deleted: Bool?
     }
 
+    public struct Photo: Decodable, Sendable, Equatable {
+        public let url: String?
+        public let isDefault: Bool?
+        public let metadata: FieldMetadata?
+        enum CodingKeys: String, CodingKey { case url, metadata; case isDefault = "default" }
+    }
+
     /// Stable ID, such as "people/c123" or "otherContacts/c456".
     public let resourceName: String
     public let names: [Name]?
     public let emailAddresses: [EmailAddress]?
     public let metadata: Metadata?
+    public let photos: [Photo]?
 
     public var isDeleted: Bool { metadata?.deleted == true }
+
+    public var photoURL: URL? {
+        let values = (photos ?? []).filter { $0.metadata?.primary == true } + (photos ?? [])
+        return values.lazy.filter { $0.isDefault != true }.compactMap { $0.url.flatMap(URL.init(string:)) }
+            .first { $0.scheme?.lowercased() == "https" && $0.host != nil }
+    }
 
     /// The primary name, else the first one with any text.
     public var displayName: String? {
