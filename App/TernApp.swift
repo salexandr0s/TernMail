@@ -40,8 +40,6 @@ struct TernApp: App {
             SettingsView()
                 .environment(model)
         }
-        .defaultSize(width: Tokens.Settings.width, height: Tokens.Settings.height)
-        .windowResizability(.contentMinSize)
 
         Window("Assistant", id: AssistantWindow.sceneID) {
             AssistantWindow(model: model.assistant, onOpenSource: model.openAssistantSource)
