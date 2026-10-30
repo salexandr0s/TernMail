@@ -64,4 +64,3 @@ struct GeneralSettings: View {
         }
     }
 }
-

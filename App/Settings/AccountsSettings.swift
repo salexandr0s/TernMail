@@ -138,4 +138,3 @@ struct AccountsSettings: View {
         .padding(Tokens.Space.s3)
     }
 }
-

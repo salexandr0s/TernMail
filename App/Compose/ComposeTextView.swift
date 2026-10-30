@@ -117,4 +117,3 @@ final class ComposeTextView: NSTextView {
         return nil
     }
 }
-
