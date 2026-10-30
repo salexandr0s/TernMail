@@ -1,3 +1,4 @@
+import AppKit
 import GmailAPI
 import SwiftUI
 
@@ -59,21 +60,25 @@ struct CalendarEventEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details").font(.title2.weight(.semibold))
-                Spacer()
-                if draft.isImport { Text("Import preview").font(.caption).foregroundStyle(.secondary) }
-            }.padding(Tokens.Space.s5)
+            CalendarSheetHeading(
+                title: editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details",
+                subtitle: draft.isImport ? "Review your personal copy before adding it." : selectedCalendar.map { "\($0.accountName) · \($0.title)" } ?? "",
+                systemImage: draft.isDeletion ? "calendar.badge.minus" : "calendar",
+                color: selectedCalendar?.color ?? .accentColor
+            )
             Divider()
             Form {
-                Section {
-                    TextField("Title", text: $title).font(.headline)
+                Section("Event") {
+                    TextField("Title", text: $title, prompt: Text("Add a title"))
+                        .font(.title3.weight(.medium))
                     Picker("Calendar", selection: $draft.calendarKey) {
                         ForEach(calendars.filter { $0.canWrite || $0.id == draft.calendarKey }) { calendar in
                             Text("\(calendar.accountName) · \(calendar.title)").tag(calendar.id)
                         }
                     }
-                    TextField("Location", text: $location)
+                    TextField("Location", text: $location, prompt: Text("Add a place or address"))
+                }.disabled(draft.isDeletion)
+                Section("Date & time") {
                     Toggle("All-day", isOn: $allDay)
                         .onChange(of: allDay) { _, value in
                             if value { start = eventCalendar.startOfDay(for: start); end = max(start, eventCalendar.startOfDay(for: end)) }
@@ -84,7 +89,11 @@ struct CalendarEventEditor: View {
                         .disabled(preservesImportedDates)
                     DatePicker(allDay ? "Last day" : "Ends", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
                         .disabled(preservesImportedDates)
-                    if !allDay { TextField("Time zone", text: $zoneID).help("Use an IANA time zone, such as Europe/Vienna.").disabled(preservesImportedDates) }
+                    if !allDay {
+                        TextField("Time zone", text: $zoneID)
+                            .help("Use an IANA time zone, such as Europe/Vienna.")
+                            .disabled(preservesImportedDates)
+                    }
                 }.disabled(draft.isDeletion)
                 if isRecurring {
                     Section("Apply changes to") {
@@ -116,16 +125,20 @@ struct CalendarEventEditor: View {
                     }
                 }.disabled(draft.isDeletion)
                 Section("Guests") {
+                    if attendees.isEmpty {
+                        Label("No guests added", systemImage: "person.2")
+                            .foregroundStyle(.secondary)
+                    }
                     ForEach(Array(attendees.enumerated()), id: \.offset) { index, attendee in
                         HStack {
-                            VStack(alignment: .leading) {
-                                Text(attendee.displayName ?? attendee.email)
-                                if attendee.displayName != nil { Text(attendee.email).font(.caption).foregroundStyle(.secondary) }
+                            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                                Text(attendee.displayName ?? attendee.email).lineLimit(1).help(attendee.email)
+                                if attendee.displayName != nil { Text(attendee.email).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                                Text(Self.responseTitle(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            Text(Self.responseTitle(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
+                            Spacer(minLength: Tokens.Space.s2)
                             Toggle("Optional", isOn: Binding(get: { attendees[index].optional == true }, set: { attendees[index].optional = $0 })).toggleStyle(.checkbox).disabled(draft.isDeletion)
-                            Button { attendees.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove guest").disabled(draft.isDeletion)
+                            Button { attendees.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove guest").accessibilityLabel("Remove \(attendee.displayName ?? attendee.email)").disabled(draft.isDeletion)
                         }
                     }
                     HStack {
@@ -141,9 +154,13 @@ struct CalendarEventEditor: View {
                 Section("Video call") {
                     if let link = draft.event.hangoutLink ?? draft.event.conferenceData?.entryPoints?.first(where: { $0.entryPointType == "video" })?.uri,
                        let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                        Link("Join meeting", destination: url)
+                        Link(destination: url) { Label("Join meeting", systemImage: "video") }
+                            .buttonStyle(.bordered)
                     } else {
                         Toggle("Add Google Meet", isOn: $draft.createMeet).disabled(selectedCalendar?.entry.supportsGoogleMeet != true)
+                        if selectedCalendar?.entry.supportsGoogleMeet != true {
+                            Text("This calendar does not support Google Meet.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }.disabled(draft.isDeletion)
                 Section("Alerts") {
@@ -154,9 +171,10 @@ struct CalendarEventEditor: View {
                                 Picker("Method", selection: Binding(get: { reminders[index].method }, set: { reminders[index].method = $0 })) {
                                     Text("Notification").tag("popup"); Text("Email").tag("email")
                                 }
-                                TextField("Minutes before", value: Binding(get: { reminders[index].minutes }, set: { reminders[index].minutes = $0 }), format: .number).frame(width: 100)
-                                Text("minutes before").font(.caption)
-                                Button { reminders.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                                TextField("Minutes before", value: Binding(get: { reminders[index].minutes }, set: { reminders[index].minutes = $0 }), format: .number).frame(width: Tokens.Space.s16)
+                                Text("minutes before").font(.caption).foregroundStyle(.secondary).fixedSize()
+                                Button { reminders.remove(at: index) } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
                             }.id("\(index)-\(reminder.method)")
                         }
                         Button("Add alert") { reminders.append(CalendarReminder(minutes: 10)) }.disabled(reminders.count >= 5)
@@ -170,7 +188,12 @@ struct CalendarEventEditor: View {
                         Text("Calendar default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
                     }
                     TextField("URL", text: $eventURL)
-                    TextEditor(text: $notes).frame(minHeight: 80).accessibilityLabel("Event notes")
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Text("Notes").font(.callout).foregroundStyle(.secondary)
+                        TextEditor(text: $notes)
+                            .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4)
+                            .accessibilityLabel("Event notes")
+                    }
                     ForEach(draft.event.attachments ?? []) { attachment in
                         if let url = URL(string: attachment.fileUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                             Link(attachment.title ?? "Attachment", destination: url)
@@ -182,20 +205,24 @@ struct CalendarEventEditor: View {
             .formStyle(.grouped).disabled(!editable || isSaving)
             .environment(\.timeZone, eventZone)
             Divider()
-            HStack {
-                if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-                if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
-                    Link("Open in Google Calendar", destination: url)
-                }
-                Spacer()
-                Button(editable ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                if editable {
-                    Button(saveTitle ?? (draft.isDeletion ? "Delete event" : draft.isImport ? "Add to calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
-                        .keyboardShortcut(.defaultAction).disabled(isSaving || !canSave)
+            VStack(spacing: Tokens.Space.s3) {
+                if let error { CalendarInlineError(message: error) }
+                HStack(spacing: Tokens.Space.s3) {
+                    if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving event") }
+                    if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
+                        Link("Open in Google Calendar", destination: url)
+                    }
+                    Spacer()
+                    Button(editable ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
+                    if editable {
+                        Button(saveTitle ?? (draft.isDeletion ? "Delete event" : draft.isImport ? "Add to calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
+                            .keyboardShortcut(.defaultAction).disabled(isSaving || !canSave)
+                    }
                 }
             }.padding(Tokens.Space.s4)
+                .background(Tokens.Surface.muted)
         }
-        .frame(width: 580, height: 720)
+        .frame(width: Tokens.Calendar.editorWidth, height: CalendarSheetLayout.height(Tokens.Calendar.editorHeight))
         .interactiveDismissDisabled(isSaving)
         .onChange(of: notificationRecipients) { _, _ in confirmedNotifications = false }
         .onChange(of: draft.editScope) { _, _ in confirmedNotifications = false }
@@ -243,5 +270,50 @@ struct CalendarEventEditor: View {
     }
     private static func responseTitle(_ status: String?) -> String {
         switch status { case "accepted": "Accepted"; case "declined": "Declined"; case "tentative": "Maybe"; default: "Awaiting reply" }
+    }
+}
+
+struct CalendarSheetHeading: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    var color: Color = .accentColor
+
+    var body: some View {
+        HStack(spacing: Tokens.Space.s3) {
+            Image(systemName: systemImage)
+                .font(.title2).foregroundStyle(color)
+                .frame(width: Tokens.Control.avatarLarge, height: Tokens.Control.avatarLarge)
+                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(title).font(.title2.weight(.semibold))
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Tokens.Space.s5)
+        .background(Tokens.Surface.muted)
+    }
+}
+
+struct CalendarInlineError: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "exclamationmark.circle.fill")
+            .font(.callout).foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+}
+
+enum CalendarSheetLayout {
+    @MainActor static func height(_ preferred: CGFloat) -> CGFloat {
+        let screen = NSApp.keyWindow?.screen ?? NSScreen.main
+        return min(preferred, (screen?.visibleFrame.height ?? (preferred + Tokens.Space.s16)) - Tokens.Space.s16)
     }
 }

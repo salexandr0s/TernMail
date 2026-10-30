@@ -32,9 +32,14 @@ struct CalendarGridViews: View {
             let days = CalendarLayout.monthDays(containing: date, calendar: calendar)
             VStack(spacing: 0) {
                 CalendarWeekdayHeader(calendar: calendar)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
-                    ForEach(days, id: \.self) { day in
-                        monthCell(day, height: max(80, (geometry.size.height - 26) / 6))
+                    .background(Tokens.Surface.muted)
+                Divider()
+                ScrollView(.vertical) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
+                        ForEach(days, id: \.self) { day in
+                            monthCell(day, height: max(Tokens.Space.s16 + Tokens.Space.s8,
+                                                      (geometry.size.height - Tokens.Space.s8 - Tokens.Border.hairline) / 6))
+                        }
                     }
                 }
             }
@@ -43,20 +48,28 @@ struct CalendarGridViews: View {
 
     private func monthCell(_ day: Date, height: CGFloat) -> some View {
         let dayEvents = CalendarLayout.events(events, on: day, calendar: calendar)
-        let rowLimit = max(1, Int((height - 32) / 22))
+        let capacity = max(1, Int((height - Tokens.Space.s10) / (Tokens.Space.s6 + Tokens.Space.s0_5)))
+        let rowLimit = dayEvents.count > capacity ? max(1, capacity - 1) : capacity
+        let isCurrentMonth = calendar.isDate(day, equalTo: date, toGranularity: .month)
+        let isSelectedDay = calendar.isDate(day, inSameDayAs: date)
         return VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
             HStack {
+                if calendar.component(.day, from: day) == 1 {
+                    Text(CalendarLayout.format(day, style: .dateTime.month(.abbreviated), calendar: calendar))
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer()
                 Text("\(calendar.component(.day, from: day))")
-                    .font(.callout.weight(calendar.isDateInToday(day) ? .bold : .regular))
-                    .foregroundStyle(calendar.isDateInToday(day) ? .white : .primary)
-                    .frame(width: 25, height: 25)
-                    .background(calendar.isDateInToday(day) ? Color.red : .clear, in: Circle())
+                    .font(.callout.weight(isSelectedDay || calendar.isDateInToday(day) ? .semibold : .regular))
+                    .monospacedDigit()
+                    .foregroundStyle(isCurrentMonth ? Color.primary : Color.secondary)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
             }
             ForEach(dayEvents.prefix(rowLimit)) { event in
                 CalendarEventChip(event: event, selected: selectedID == event.id, showsTime: !event.isAllDay)
                     .onTapGesture(count: 2) { edit(event) }
-                    .onTapGesture { selectedID = event.id }
+                    .onTapGesture { selectedID = event.id; date = day }
                     .draggable(event.canEdit ? event.id : "")
                     .contextMenu { eventMenu(event) }
                     .accessibilityAddTraits(.isButton)
@@ -65,18 +78,24 @@ struct CalendarGridViews: View {
             }
             if dayEvents.count > rowLimit {
                 Button("\(dayEvents.count - rowLimit) more") { date = day; mode = .day }
-                    .font(.caption).buttonStyle(.plain).foregroundStyle(.secondary)
+                    .font(.caption.weight(.medium)).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Tokens.Space.s1)
+                    .help("Show all events on this day")
             }
             Spacer(minLength: 0)
         }
         .padding(Tokens.Space.s1)
         .frame(maxWidth: .infinity).frame(height: height)
-        .background(calendar.isDate(day, equalTo: date, toGranularity: .month) ? Tokens.Surface.primary : Tokens.Surface.muted)
+        .background(isCurrentMonth && !calendar.isDateInWeekend(day) ? Tokens.Surface.primary : Tokens.Surface.muted)
+        .overlay { if isSelectedDay { Rectangle().strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus).allowsHitTesting(false) } }
         .overlay(alignment: .bottom) { Divider() }
-        .overlay(alignment: .trailing) { Divider() }
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Tokens.Surface.border).frame(width: Tokens.Border.hairline).allowsHitTesting(false)
+        }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { newEvent(CalendarLayout.date(at: 9 * 60, on: day, calendar: calendar)) }
-        .onTapGesture { selectedID = nil }
+        .onTapGesture { selectedID = nil; date = day }
         .dropDestination(for: String.self) { values, _ in
             guard let id = values.first, let event = events.first(where: { $0.id == id }), event.canEdit else { return false }
             let time = calendar.dateComponents([.hour, .minute], from: event.start)
@@ -85,23 +104,38 @@ struct CalendarGridViews: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month().day(), calendar: calendar))
+        .accessibilityValue(isSelectedDay ? "Selected day" : calendar.isDateInToday(day) ? "Today" : "")
+        .accessibilityAction(named: "Select day") { selectedID = nil; date = day }
     }
 
     private var year: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 215), spacing: Tokens.Space.s8)], spacing: Tokens.Space.s8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s4)], spacing: Tokens.Space.s4) {
                 ForEach(1...12, id: \.self) { month in
                     if let monthDate = calendar.date(from: DateComponents(year: calendar.component(.year, from: date), month: month, day: 1)) {
                         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            Text(CalendarLayout.format(monthDate, style: .dateTime.month(.wide), calendar: calendar)).font(.title3.weight(.semibold)).foregroundStyle(.red)
+                            Button {
+                                date = monthDate; mode = .month
+                            } label: {
+                                HStack {
+                                    Text(CalendarLayout.format(monthDate, style: .dateTime.month(.wide), calendar: calendar))
+                                        .font(.title3.weight(.semibold))
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                }.contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                                .accessibilityLabel("Show " + CalendarLayout.format(monthDate, style: .dateTime.month(.wide).year(), calendar: calendar))
                             CalendarMiniMonth(date: $date, calendar: calendar, fixedMonth: monthDate, events: events) { chosen in
                                 date = chosen; mode = .day
                             }
                         }
+                        .padding(Tokens.Space.s4)
+                        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+                        .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.lg).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
                     }
                 }
-            }.padding(Tokens.Space.s6)
-        }
+            }.padding(Tokens.Space.s4)
+        }.background(Tokens.Surface.canvas)
     }
 
     @ViewBuilder private func eventMenu(_ event: CalendarDisplayEvent) -> some View {
@@ -118,37 +152,58 @@ struct CalendarEventChip: View {
     var showsTime = true
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s1) {
-            if !event.isAllDay { RoundedRectangle(cornerRadius: 2).fill(event.color).frame(width: 3, height: 14) }
-            if showsTime { Text(event.start, style: .time).font(.caption2).lineLimit(1) }
-            Text(event.title).font(.caption.weight(.medium)).lineLimit(1)
-            if event.isPending { Image(systemName: "clock.arrow.circlepath").font(.caption2) }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Tokens.Space.s1).padding(.vertical, Tokens.Space.s0_5)
-        .fixedSize(horizontal: false, vertical: true)
-        .foregroundStyle(selected ? Color.white : Color.primary)
-        .background(selected ? event.color : event.color.opacity(event.isAllDay ? 0.22 : 0.09), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .contentShape(Rectangle())
-        .help(event.title + "\n" + dateDescription)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(event.title + ", " + dateDescription)
+        content
+            .padding(.horizontal, Tokens.Space.s1_5)
+            .frame(height: Tokens.Space.s6)
+            .foregroundStyle(Color.primary)
+            .background(event.color.opacity(tint), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(outlineColor, lineWidth: Tokens.Border.focus) }
+            .contentShape(Rectangle())
+            .help(event.title + "\n" + dateDescription)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(event.title + ", " + dateDescription)
+            .accessibilityValue(selected ? "Selected" : "")
     }
+
+    private var content: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            Capsule().fill(event.color).frame(width: Tokens.Space.s0_5, height: Tokens.Space.s3)
+            Text(event.title).font(.caption.weight(.medium)).lineLimit(1)
+            Spacer(minLength: 0)
+            if showsTime {
+                Text(event.start, style: .time).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if event.isPending { Image(systemName: "clock.arrow.circlepath").font(.caption2) }
+        }
+    }
+
+    private var tint: Double {
+        if selected { return Tokens.Calendar.selectedTint }
+        return event.isAllDay ? Tokens.Calendar.allDayTint : Tokens.Calendar.eventTint
+    }
+
+    private var outlineColor: Color { selected ? .accentColor : .clear }
 
     private var dateDescription: String {
         event.start.formatted(Date.FormatStyle(date: .abbreviated, time: event.isAllDay ? .omitted : .shortened, timeZone: timeZone))
+            + (event.isAllDay ? ", all day" : " – " + event.end.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: timeZone)))
+            + (event.isPending ? ", pending sync" : "")
     }
 }
 
 struct CalendarWeekdayHeader: View {
     let calendar: Calendar
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<7) { offset in
-                Text(calendar.shortStandaloneWeekdaySymbols[(calendar.firstWeekday - 1 + offset) % 7])
-                    .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                ForEach(0..<7) { offset in
+                    Text(calendar.shortStandaloneWeekdaySymbols[(calendar.firstWeekday - 1 + offset) % 7])
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                        .frame(width: geometry.size.width / 7, height: Tokens.Space.s8)
+                }
             }
-        }.frame(height: 26)
+        }.frame(height: Tokens.Space.s8)
     }
 }
 
@@ -164,34 +219,66 @@ struct CalendarMiniMonth: View {
         VStack(spacing: Tokens.Space.s1) {
             if fixedMonth == nil {
                 HStack {
-                    Text(CalendarLayout.format(month, style: .dateTime.month(.wide).year(), calendar: calendar)).font(.caption.weight(.semibold))
+                    Text(CalendarLayout.format(month, style: .dateTime.month(.wide).year(), calendar: calendar)).font(.callout.weight(.semibold))
                     Spacer()
                     Button { shift(-1) } label: { Image(systemName: "chevron.left") }
                         .accessibilityLabel("Previous month")
+                        .help("Previous month")
                     Button { shift(1) } label: { Image(systemName: "chevron.right") }
                         .accessibilityLabel("Next month")
+                        .help("Next month")
                 }.buttonStyle(.borderless)
             }
-            CalendarWeekdayHeader(calendar: calendar)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: Tokens.Space.s1) {
-                ForEach(CalendarLayout.monthDays(containing: month, calendar: calendar), id: \.self) { day in
-                    Button {
-                        if let select { select(day) } else { date = day }
-                    } label: {
-                        VStack(spacing: 1) {
-                            Text("\(calendar.component(.day, from: day))")
-                                .font(.caption).frame(width: 23, height: 23)
-                                .foregroundStyle(calendar.isDateInToday(day) ? .white : .primary)
-                                .background(calendar.isDateInToday(day) ? Color.red : calendar.isDate(day, inSameDayAs: date) ? Color.accentColor.opacity(0.2) : .clear, in: Circle())
-                            Circle().fill(CalendarLayout.events(events, on: day, calendar: calendar).isEmpty ? Color.clear : .secondary).frame(width: 3, height: 3)
+            dateGrid(month: month)
+        }
+    }
+
+    private func dateGrid(month: Date) -> some View {
+        let days = CalendarLayout.monthDays(containing: month, calendar: calendar)
+        let cellHeight = Tokens.Space.s6 + Tokens.Space.s0_5 + Tokens.Space.s1
+        return GeometryReader { geometry in
+            let columnWidth = geometry.size.width / 7
+            VStack(spacing: Tokens.Space.s1) {
+                CalendarWeekdayHeader(calendar: calendar)
+                VStack(spacing: Tokens.Space.s1) {
+                    ForEach(0..<6) { row in
+                        HStack(spacing: 0) {
+                            ForEach(0..<7) { column in
+                                let index = row * 7 + column
+                                if index < days.count {
+                                    dayButton(days[index], month: month)
+                                        .frame(width: columnWidth, height: cellHeight)
+                                }
+                            }
                         }
-                        .opacity(calendar.isDate(day, equalTo: month, toGranularity: .month) ? 1 : 0.3)
-                    }.buttonStyle(.plain)
-                        .accessibilityLabel(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month().day().year(), calendar: calendar))
+                    }
                 }
             }
         }
+        .frame(height: Tokens.Space.s8 + 6 * (cellHeight + Tokens.Space.s1))
     }
+
+    private func dayButton(_ day: Date, month: Date) -> some View {
+        Button {
+            if let select { select(day) } else { date = day }
+        } label: {
+            VStack(spacing: Tokens.Space.s0_5) {
+                Text("\(calendar.component(.day, from: day))")
+                    .font(.caption.weight(calendar.isDateInToday(day) ? .bold : .regular)).monospacedDigit()
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .foregroundStyle(calendar.isDate(day, equalTo: month, toGranularity: .month) ? Color.primary : Color.secondary)
+                    .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
+                    .overlay { Circle().strokeBorder(calendar.isDate(day, inSameDayAs: date) ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus) }
+                Circle().fill(CalendarLayout.events(events, on: day, calendar: calendar).isEmpty ? Color.clear : .secondary)
+                    .frame(width: Tokens.Space.s1, height: Tokens.Space.s1)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .accessibilityLabel(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month().day().year(), calendar: calendar))
+            .accessibilityValue(calendar.isDate(day, inSameDayAs: date) ? "Selected" : calendar.isDateInToday(day) ? "Today" : "")
+    }
+
     private func shift(_ amount: Int) { date = calendar.date(byAdding: .month, value: amount, to: date) ?? date }
 }
 
@@ -206,14 +293,52 @@ struct CalendarSearchResults: View {
         } else {
             List(events, selection: $selectedID) { event in
                 HStack(spacing: Tokens.Space.s3) {
-                    RoundedRectangle(cornerRadius: 2).fill(event.color).frame(width: 4)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text(event.title).font(.headline)
-                        Text(CalendarLayout.format(event.start, style: .init(date: .abbreviated, time: event.isAllDay ? .omitted : .shortened), calendar: calendar)).font(.caption).foregroundStyle(.secondary)
-                        if let location = event.event.location, !location.isEmpty { Text(location).font(.caption).foregroundStyle(.secondary) }
+                    VStack(spacing: Tokens.Space.s0_5) {
+                        Text(CalendarLayout.format(event.start, style: .dateTime.month(.abbreviated), calendar: calendar))
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        Text("\(calendar.component(.day, from: event.start))")
+                            .font(.title2.weight(.semibold)).monospacedDigit()
                     }
-                    Spacer()
-                }.padding(.vertical, Tokens.Space.s1).tag(event.id).onTapGesture(count: 2) { edit(event) }
+                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    Capsule().fill(event.color).frame(width: Tokens.Space.s1, height: Tokens.Space.s10)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        HStack(spacing: Tokens.Space.s2) {
+                            Text(event.title).font(.headline).lineLimit(1)
+                            if event.isPending { Image(systemName: "clock.arrow.circlepath").font(.caption).foregroundStyle(.secondary).help("Pending sync") }
+                        }
+                        Text(CalendarLayout.format(event.start, style: .dateTime.weekday(.wide).month(.abbreviated).day().year(), calendar: calendar))
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        if let location = event.event.location, !location.isEmpty {
+                            Label(location, systemImage: "mappin.and.ellipse").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: Tokens.Space.s2)
+                    VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
+                        if event.isAllDay {
+                            Text("All day").font(.callout.weight(.medium))
+                        } else {
+                            Text(CalendarLayout.format(event.start, style: .dateTime.hour().minute(), calendar: calendar))
+                                .font(.callout.weight(.medium)).monospacedDigit()
+                            Text(CalendarLayout.format(event.end, style: .dateTime.hour().minute(), calendar: calendar))
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                    }.fixedSize()
+                }
+                .padding(.vertical, Tokens.Space.s2).tag(event.id)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { edit(event) }
+                .help(event.title)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { edit(event) }
+                .contextMenu { Button("Open event") { edit(event) } }
+            }
+            .listStyle(.inset)
+            .onKeyPress(.return) {
+                guard let event = events.first(where: { $0.id == selectedID }) else { return .ignored }
+                edit(event)
+                return .handled
             }
         }
     }

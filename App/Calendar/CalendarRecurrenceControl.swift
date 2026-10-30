@@ -27,7 +27,8 @@ struct CalendarRecurrenceControl: View {
                 Text("Custom rule").tag("CUSTOM")
             }
             if frequency == "CUSTOM" {
-                TextEditor(text: publishing($custom)).font(.system(.caption, design: .monospaced)).frame(minHeight: 70)
+                TextEditor(text: publishing($custom)).font(.system(.caption, design: .monospaced))
+                    .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s2)
                     .accessibilityLabel("Recurrence rules")
                 Text("One RRULE, RDATE or EXDATE per line. Existing custom rules are preserved.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -36,13 +37,16 @@ struct CalendarRecurrenceControl: View {
                 if frequency == "WEEKLY" {
                     HStack(spacing: Tokens.Space.s1) {
                         ForEach(Array(dayCodes.enumerated()), id: \.element) { index, code in
-                            Button(dayNames[index]) {
-                                if weekdays.contains(code) { weekdays.remove(code) } else { weekdays.insert(code) }
-                                publish()
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(weekdays.contains(code) ? .accentColor : .secondary)
-                            .accessibilityAddTraits(weekdays.contains(code) ? .isSelected : [])
+                            Toggle(dayNames[index], isOn: Binding(
+                                get: { weekdays.contains(code) },
+                                set: { included in
+                                    if included { weekdays.insert(code) } else { weekdays.remove(code) }
+                                    publish()
+                                }
+                            ))
+                            .toggleStyle(.button)
+                            .accessibilityLabel(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][index])
+                            .frame(maxWidth: .infinity)
                         }
                     }
                 }
@@ -62,7 +66,12 @@ struct CalendarRecurrenceControl: View {
         Binding(get: { value.wrappedValue }, set: { value.wrappedValue = $0; publish() })
     }
     private var unit: String {
-        switch frequency { case "DAILY": "day(s)"; case "WEEKLY": "week(s)"; case "MONTHLY": "month(s)"; default: "year(s)" }
+        switch frequency {
+        case "DAILY": interval == 1 ? "day" : "days"
+        case "WEEKLY": interval == 1 ? "week" : "weeks"
+        case "MONTHLY": interval == 1 ? "month" : "months"
+        default: interval == 1 ? "year" : "years"
+        }
     }
     private func load() {
         guard !loaded else { return }

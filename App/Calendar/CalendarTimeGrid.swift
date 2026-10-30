@@ -13,8 +13,8 @@ struct CalendarTimeGrid: View {
     let resize: (CalendarDisplayEvent, Date) -> Void
     let delete: (CalendarDisplayEvent) -> Void
     let duplicate: (CalendarDisplayEvent) -> Void
-    private let hourHeight: CGFloat = 60
-    private let gutter: CGFloat = 54
+    private let hourHeight = Tokens.Space.s16
+    private let gutter = Tokens.Space.s16
 
     private var days: [Date] {
         guard let interval = calendar.dateInterval(of: isWeek ? .weekOfYear : .day, for: date) else { return [] }
@@ -22,34 +22,22 @@ struct CalendarTimeGrid: View {
     }
 
     var body: some View {
+        GeometryReader { geometry in
+            let minimumWidth = gutter + CGFloat(days.count) * (Tokens.Space.s16 + Tokens.Space.s8)
+            let contentWidth = max(geometry.size.width, minimumWidth)
+            let columnWidth = (contentWidth - gutter) / CGFloat(max(1, days.count))
+            ScrollView(.horizontal) {
+                timeline(columnWidth: columnWidth)
+                    .frame(width: contentWidth, height: geometry.size.height)
+            }
+        }
+    }
+
+    private func timeline(columnWidth: CGFloat) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Text(calendar.timeZone.abbreviation() ?? calendar.timeZone.identifier)
-                    .font(.caption2).foregroundStyle(.secondary).frame(width: gutter)
-                ForEach(days, id: \.self) { day in
-                    VStack(spacing: Tokens.Space.s1) {
-                        Text(CalendarLayout.format(day, style: .dateTime.weekday(.abbreviated), calendar: calendar)).font(.caption).foregroundStyle(.secondary)
-                        Text("\(calendar.component(.day, from: day))").font(.title2.weight(.medium))
-                            .foregroundStyle(calendar.isDateInToday(day) ? .white : .primary)
-                            .frame(width: 34, height: 34).background(calendar.isDateInToday(day) ? Color.red : .clear, in: Circle())
-                    }.frame(maxWidth: .infinity).padding(.vertical, Tokens.Space.s2)
-                }
-            }
-            HStack(alignment: .top, spacing: 0) {
-                Text("all-day").font(.caption2).foregroundStyle(.secondary).frame(width: gutter, alignment: .trailing).padding(.top, Tokens.Space.s1)
-                ForEach(days, id: \.self) { day in
-                    VStack(spacing: Tokens.Space.s0_5) {
-                        ForEach(CalendarLayout.events(events, on: day, calendar: calendar).filter(\.isAllDay)) { event in
-                            chip(event)
-                        }
-                        Color.clear.frame(height: 8).contentShape(Rectangle()).onTapGesture(count: 2) { newAllDay(day) }
-                    }.padding(Tokens.Space.s1).frame(maxWidth: .infinity, minHeight: 24)
-                        .dropDestination(for: String.self) { values, _ in
-                            guard let id = values.first, let event = events.first(where: { $0.id == id }), event.canEdit, event.isAllDay else { return false }
-                            move(event, calendar.startOfDay(for: day)); return true
-                        }
-                }
-            }
+            dayHeaders(columnWidth: columnWidth)
+            Divider()
+            allDayLane(columnWidth: columnWidth)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
@@ -57,19 +45,71 @@ struct CalendarTimeGrid: View {
                         VStack(spacing: 0) {
                             ForEach(0..<24) { hour in
                                 Text(CalendarLayout.date(at: hour * 60, on: date, calendar: calendar), format: .dateTime.hour())
-                                    .font(.caption2).foregroundStyle(.secondary)
-                                    .frame(width: gutter - 8, height: hourHeight, alignment: .topTrailing)
-                                    .padding(.trailing, 8).id(hour)
+                                    .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                                    .frame(width: gutter - Tokens.Space.s2, height: hourHeight, alignment: .topTrailing)
+                                    .padding(.trailing, Tokens.Space.s2).id(hour)
                             }
                         }
                         ForEach(days, id: \.self) { day in
-                            dayColumn(day).frame(maxWidth: .infinity)
+                            dayColumn(day).frame(width: columnWidth)
                         }
                     }.padding(.top, Tokens.Space.s2)
                 }
                 .onAppear { proxy.scrollTo(8, anchor: .top) }
             }
         }
+    }
+
+    private func dayHeaders(columnWidth: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Text(calendar.timeZone.abbreviation(for: date) ?? calendar.timeZone.identifier)
+                .font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(width: gutter)
+                .help(calendar.timeZone.identifier)
+            ForEach(days, id: \.self) { day in
+                VStack(spacing: Tokens.Space.s1) {
+                    Text(CalendarLayout.format(day, style: .dateTime.weekday(.abbreviated), calendar: calendar))
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    Text("\(calendar.component(.day, from: day))")
+                        .font(.title2.weight(calendar.isDateInToday(day) ? .semibold : .regular)).monospacedDigit()
+                        .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
+                        .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
+                }
+                .frame(width: columnWidth).padding(.vertical, Tokens.Space.s2)
+                .background(calendar.isDateInWeekend(day) ? Tokens.Surface.muted : Tokens.Surface.primary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month(.wide).day(), calendar: calendar))
+                .accessibilityValue(calendar.isDateInToday(day) ? "Today" : "")
+            }
+        }
+    }
+
+    private func allDayLane(columnWidth: CGFloat) -> some View {
+        let rowCount = days.map { CalendarLayout.events(events, on: $0, calendar: calendar).filter(\.isAllDay).count }.max() ?? 0
+        let height = max(Tokens.Space.s8, min(CGFloat(rowCount), 3) * (Tokens.Space.s6 + Tokens.Space.s0_5) + Tokens.Space.s4)
+        return ScrollView(.vertical) {
+            HStack(alignment: .top, spacing: 0) {
+                Text("All day").font(.caption2).foregroundStyle(.secondary)
+                    .frame(width: gutter - Tokens.Space.s2, alignment: .trailing)
+                    .padding(.trailing, Tokens.Space.s2).padding(.top, Tokens.Space.s2)
+                ForEach(days, id: \.self) { day in
+                    VStack(spacing: Tokens.Space.s0_5) {
+                        ForEach(CalendarLayout.events(events, on: day, calendar: calendar).filter(\.isAllDay)) { event in
+                            chip(event)
+                        }
+                        Color.clear.frame(height: Tokens.Space.s2)
+                    }
+                    .padding(Tokens.Space.s1).frame(width: columnWidth).frame(minHeight: Tokens.Space.s8)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { newAllDay(day) }
+                    .dropDestination(for: String.self) { values, _ in
+                        guard let id = values.first, let event = events.first(where: { $0.id == id }), event.canEdit, event.isAllDay else { return false }
+                        move(event, calendar.startOfDay(for: day)); return true
+                    }
+                }
+            }
+        }
+        .frame(height: height)
+        .background(Tokens.Surface.muted)
     }
 
     private func dayColumn(_ day: Date) -> some View {
@@ -81,23 +121,24 @@ struct CalendarTimeGrid: View {
                     ForEach(0..<24) { hour in
                         Rectangle().fill(Color.clear).frame(height: hourHeight)
                             .overlay(alignment: .top) { Divider() }
+                            .overlay { Rectangle().fill(Tokens.Surface.border).frame(height: Tokens.Border.hairline).opacity(Tokens.Calendar.selectedTint) }
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) { newEvent(CalendarLayout.date(at: hour * 60, on: day, calendar: calendar)) }
                             .onTapGesture { selectedID = nil }
                     }
                 }
                 ForEach(placements) { placement in
-                    let width = max(20, (geometry.size.width - 6) / CGFloat(placement.lanes))
+                    let width = max(Tokens.Space.s1, (geometry.size.width - Tokens.Space.s1_5) / CGFloat(placement.lanes))
                     CalendarTimelineEvent(event: placement.event, selected: selectedID == placement.event.id,
-                                          height: max(22, CGFloat(placement.endMinute - placement.startMinute) / 60 * hourHeight),
+                                          height: max(Tokens.Space.s6, CGFloat(placement.endMinute - placement.startMinute) / 60 * hourHeight),
                                           hourHeight: hourHeight,
                                           select: { selectedID = placement.event.id }, edit: { edit(placement.event) },
                                           resize: { minutes in
                                               let end = calendar.date(byAdding: .minute, value: minutes, to: placement.event.end) ?? placement.event.end
                                               if end > placement.event.start { resize(placement.event, end) }
                                           })
-                        .frame(width: width - 2)
-                        .offset(x: CGFloat(placement.lane) * width + 2, y: CGFloat(placement.startMinute) / 60 * hourHeight)
+                        .frame(width: width - Tokens.Space.s0_5)
+                        .offset(x: CGFloat(placement.lane) * width + Tokens.Space.s0_5, y: CGFloat(placement.startMinute) / 60 * hourHeight)
                         .contextMenu {
                             Button("Open event") { edit(placement.event) }
                             Button("Duplicate") { duplicate(placement.event) }
@@ -107,13 +148,18 @@ struct CalendarTimeGrid: View {
                 if calendar.isDateInToday(day) {
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         let parts = calendar.dateComponents([.hour, .minute], from: context.date)
-                        Rectangle().fill(.red).frame(height: 1)
-                            .overlay(alignment: .leading) { Circle().fill(.red).frame(width: 5, height: 5) }
+                        Rectangle().fill(Color.accentColor).frame(height: Tokens.Border.focus)
+                            .overlay(alignment: .leading) { Circle().fill(Color.accentColor).frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5) }
                             .offset(y: CGFloat((parts.hour ?? 0) * 60 + (parts.minute ?? 0)) / 60 * hourHeight)
                     }.allowsHitTesting(false)
                 }
             }
-            .overlay(alignment: .trailing) { Divider() }
+            .background { if calendar.isDateInToday(day) { Color.accentColor.opacity(Tokens.Calendar.todayTint) } }
+            .background(calendar.isDateInWeekend(day) ? Tokens.Surface.muted : Tokens.Surface.primary)
+            .clipped()
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(Tokens.Surface.border).frame(width: Tokens.Border.hairline).allowsHitTesting(false)
+            }
             .dropDestination(for: String.self) { values, location in
                 guard let id = values.first, let event = events.first(where: { $0.id == id }), event.canEdit else { return false }
                 let minutes = max(0, min(23 * 60 + 45, Int((location.y / hourHeight * 60) / 15) * 15))
@@ -155,33 +201,48 @@ private struct CalendarTimelineEvent: View {
             .draggable(event.canEdit ? event.id : "")
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(event.title + ", " + timeDescription)
+            .accessibilityValue(selected ? "Selected" : "")
             .accessibilityAction { edit() }
             .accessibilityAction(named: "Extend by 15 minutes") { if event.canEdit { resize(15) } }
             .accessibilityAction(named: "Shorten by 15 minutes") { if event.canEdit { resize(-15) } }
-            .help(event.title + "\n" + event.start.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, timeZone: timeZone)))
+            .help(event.title + "\n" + timeDescription)
     }
 
     private var eventContent: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-            Text(event.title).font(.caption.weight(.semibold)).lineLimit(height > 50 ? 2 : 1)
-            if height > 35 {
-                Text(event.start, style: .time).font(.caption2)
-                if height > 70, let location = event.event.location { Text(location).font(.caption2).lineLimit(1) }
+            HStack(alignment: .top, spacing: Tokens.Space.s1) {
+                Text(event.title).font(.caption.weight(.semibold)).lineLimit(height >= Tokens.Space.s16 ? 2 : 1)
+                if event.isPending { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary) }
+            }
+            if height >= Tokens.Space.s12 {
+                Text(event.start, style: .time).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                if height > Tokens.Space.s16 + Tokens.Space.s4, let location = event.event.location, !location.isEmpty {
+                    Text(location).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
         }
-        .padding(Tokens.Space.s1)
-        .frame(maxWidth: .infinity, alignment: .leading).frame(height: max(22, height + resizeOffset))
-        .foregroundStyle(selected ? .white : .primary)
-        .background(selected ? event.color : event.color.opacity(0.20), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(event.color).frame(width: 3) }
+        .padding(.vertical, Tokens.Space.s1).padding(.horizontal, Tokens.Space.s2)
+        .frame(maxWidth: .infinity, alignment: .leading).frame(height: max(Tokens.Space.s6, height + resizeOffset))
+        .foregroundStyle(Color.primary)
+        .background(event.color.opacity(selected ? Tokens.Calendar.selectedTint : Tokens.Calendar.allDayTint), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .overlay(alignment: .leading) { Capsule().fill(event.color).frame(width: Tokens.Space.s0_5).padding(.vertical, Tokens.Space.s1) }
+        .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus) }
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+    }
+
+    private var timeDescription: String {
+        event.start.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, timeZone: timeZone))
+            + " – " + event.end.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: timeZone))
+            + (event.isPending ? ", pending sync" : "")
     }
 
     @ViewBuilder private var resizeHandle: some View {
         if event.canEdit, selected {
-            Capsule().fill(event.color).frame(width: 24, height: 4).padding(.bottom, 2)
-                .contentShape(Rectangle().inset(by: -5))
-                .gesture(DragGesture(minimumDistance: 3)
+            Capsule().fill(Color.accentColor).frame(width: Tokens.Space.s6, height: Tokens.Space.s1).padding(.bottom, Tokens.Space.s0_5)
+                .contentShape(Rectangle().inset(by: -Tokens.Space.s1_5))
+                .gesture(DragGesture(minimumDistance: Tokens.Space.s1)
                     .onChanged { resizeOffset = $0.translation.height }
                     .onEnded { value in
                         resizeOffset = 0

@@ -15,19 +15,19 @@ struct CalendarView: View {
     @State private var deleteTarget: CalendarDisplayEvent?
     @State private var showDatePicker = false
     @State private var showCalendarList = false
+    @FocusState private var searchHasFocus: Bool
     @FocusState private var hasKeyboardFocus: Bool
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                header(compact: geometry.size.width < 650)
-                Divider()
-                if geometry.size.width < 650 {
-                    calendarContent.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if geometry.size.width < Tokens.Calendar.compactWidth {
+                    calendarPane(compact: true)
                 } else {
                     HSplitView {
-                        sidebar.frame(minWidth: 190, idealWidth: 220, maxWidth: 300)
-                        calendarContent.frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                        sidebar.frame(minWidth: Tokens.Layout.sidebarWidth,
+                                      idealWidth: Tokens.Calendar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
+                        calendarPane(compact: false).frame(minWidth: Tokens.Calendar.contentMinWidth)
                     }
                 }
                 footer
@@ -37,7 +37,7 @@ struct CalendarView: View {
         .background { undoShortcutMonitor }
         .environment(\.timeZone, model.calendar.timeZone)
         .task(id: "\(model.mode.rawValue)-\(model.date.timeIntervalSince1970)") { if isActive { await model.refresh() } }
-        .task(id: "\(model.searchText)-\(model.date.timeIntervalSince1970)-\(isActive)") {
+        .task(id: searchRequest) {
             guard isActive else { return }
             await model.searchEvents()
         }
@@ -91,64 +91,127 @@ struct CalendarView: View {
         .onExitCommand { if isActive { model.selectedEventID = nil } }
     }
 
-    private func header(compact: Bool) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Tokens.Space.s3) {
-                heading(compact: compact)
-                viewPicker.frame(width: 250)
-                dateNavigation
-                searchField.frame(width: 180)
-                actions
-            }.fixedSize(horizontal: true, vertical: false).frame(maxWidth: .infinity)
-            VStack(spacing: Tokens.Space.s3) {
-                HStack(spacing: Tokens.Space.s3) { heading(compact: compact); Spacer(minLength: 0); dateNavigation; actions }
-                HStack(spacing: Tokens.Space.s3) { viewPicker; searchField }
-            }
+    private func calendarPane(compact: Bool) -> some View {
+        VStack(spacing: 0) {
+            header(compact: compact)
+            Divider()
+            calendarContent.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .buttonStyle(.borderless)
-        .padding(Tokens.Space.s3)
     }
 
-    private func heading(compact: Bool) -> some View {
-        HStack(spacing: Tokens.Space.s3) {
-            if compact {
-                Button { showCalendarList.toggle() } label: { Image(systemName: "sidebar.left") }
-                    .help("Calendars").accessibilityLabel("Show calendars")
-                    .popover(isPresented: $showCalendarList) { sidebar.frame(width: 260, height: 480) }
-            }
-            Button { model.beginNew(on: model.date) } label: { Image(systemName: "plus") }
-                .help("New event").keyboardShortcut("n", modifiers: [.command, .option])
+    private func header(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            HStack(spacing: Tokens.Space.s2) {
+                if compact {
+                    Button { showCalendarList.toggle() } label: {
+                        Image(systemName: "sidebar.left").frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    }
+                    .buttonStyle(.borderless).help("Show calendars").accessibilityLabel("Show calendars")
+                    .popover(isPresented: $showCalendarList) {
+                        sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: Tokens.Calendar.activityHeight)
+                    }
+                }
+                Button { showDatePicker.toggle() } label: {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Text(periodTitle).font(.title2.weight(.semibold)).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain).help("Go to date").accessibilityLabel("Go to date, \(periodTitle)")
+                .popover(isPresented: $showDatePicker) {
+                    DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
+                        .datePickerStyle(.graphical).padding(Tokens.Space.s4)
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                dateNavigation
+                Button { model.beginNew(on: model.date) } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label("New event", systemImage: "plus")
+                        Image(systemName: "plus")
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .help("New event (⌥⌘N)").accessibilityLabel("New event")
+                .keyboardShortcut("n", modifiers: [.command, .option])
                 .disabled(!isActive || !model.calendars.contains(where: \.canWrite))
-            Text(CalendarLayout.format(model.date, style: .dateTime.month(.wide).year(), calendar: model.calendar))
-                .font(.title2.weight(.semibold)).lineLimit(1)
+                actions
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s4) {
+                    viewPicker.frame(width: Tokens.Calendar.viewPickerWidth)
+                    Spacer(minLength: 0)
+                    searchField.frame(width: Tokens.Layout.sidebarWidth)
+                }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    viewPicker
+                    searchField
+                }
+            }
         }
+        .padding(Tokens.Space.s4)
+        .background(Tokens.Surface.primary)
+    }
+
+    private var periodTitle: String {
+        if model.mode == .week, let week = model.calendar.dateInterval(of: .weekOfYear, for: model.date),
+           let lastDay = model.calendar.date(byAdding: .day, value: -1, to: week.end) {
+            let formatter = DateIntervalFormatter()
+            formatter.calendar = model.calendar
+            formatter.timeZone = model.calendar.timeZone
+            formatter.dateTemplate = "yMMMd"
+            return formatter.string(from: week.start, to: lastDay)
+        }
+        let style: Date.FormatStyle = switch model.mode {
+        case .day: .dateTime.year().month(.wide).day()
+        case .year: .dateTime.year()
+        case .week, .month: .dateTime.month(.wide).year()
+        }
+        return CalendarLayout.format(model.date, style: style, calendar: model.calendar)
     }
 
     private var viewPicker: some View {
         Picker("View", selection: $model.mode) {
             ForEach(CalendarDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
-        }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 300)
+        }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("Calendar view")
     }
 
     private var dateNavigation: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            HStack(spacing: 0) {
-                Button { navigate(-1) } label: { Image(systemName: "chevron.left") }.help("Previous \(model.mode.title.lowercased())")
-                Button("Today") { if isActive { model.date = .now } }.keyboardShortcut("t", modifiers: [.command]).disabled(!isActive)
-                Button { navigate(1) } label: { Image(systemName: "chevron.right") }.help("Next \(model.mode.title.lowercased())")
+        HStack(spacing: Tokens.Space.s1) {
+            Button { navigate(-1) } label: {
+                Image(systemName: "chevron.left").frame(width: Tokens.Space.s6, height: Tokens.Space.s8)
             }
-            Button { showDatePicker.toggle() } label: { Image(systemName: "calendar") }.help("Go to date")
-                .popover(isPresented: $showDatePicker) {
-                    DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
-                        .datePickerStyle(.graphical).padding(Tokens.Space.s4)
-                }
-        }
+            .help("Previous \(model.mode.title.lowercased())").accessibilityLabel("Previous \(model.mode.title.lowercased())")
+            Button("Today") { model.date = .now }
+                .keyboardShortcut("t", modifiers: [.command])
+                .padding(.horizontal, Tokens.Space.s1)
+            Button { navigate(1) } label: {
+                Image(systemName: "chevron.right").frame(width: Tokens.Space.s6, height: Tokens.Space.s8)
+            }
+            .help("Next \(model.mode.title.lowercased())").accessibilityLabel("Next \(model.mode.title.lowercased())")
+        }.buttonStyle(.borderless).disabled(!isActive)
+            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
     }
 
     private var searchField: some View {
-        TextField("Search events", text: $model.searchText)
-            .textFieldStyle(.roundedBorder).frame(minWidth: 130, idealWidth: 180, maxWidth: .infinity)
-            .accessibilityLabel("Search calendar events")
+        HStack(spacing: Tokens.Space.s2) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search events", text: $model.searchText)
+                .textFieldStyle(.plain).focused($searchHasFocus)
+                .accessibilityLabel("Search calendar events")
+                .onExitCommand { model.searchText = ""; searchHasFocus = false }
+            if !model.searchText.isEmpty {
+                Button { model.searchText = ""; searchHasFocus = true } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }.buttonStyle(.plain).help("Clear search").accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, Tokens.Space.s3).frame(height: Tokens.Control.iconButton)
+        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                .strokeBorder(searchHasFocus ? Color.accentColor : Tokens.Surface.border,
+                              lineWidth: searchHasFocus ? Tokens.Border.focus : Tokens.Border.hairline)
+        }
     }
 
     private var actions: some View {
@@ -170,48 +233,36 @@ struct CalendarView: View {
                 Button("Undo last calendar change") { Task { if isActive { await model.undo() } } }
                     .disabled(!isActive || !model.canUndo)
             } label: { Image(systemName: "ellipsis.circle") }
-            .menuStyle(.borderlessButton).fixedSize().help("Calendar actions")
+            .menuStyle(.borderlessButton).fixedSize().help("Calendar actions").accessibilityLabel("Calendar actions")
     }
 
     private var sidebar: some View {
-        VStack(spacing: Tokens.Space.s3) {
-            CalendarMiniMonth(date: $model.date, calendar: model.calendar)
-                .padding(.horizontal, Tokens.Space.s3).padding(.top, Tokens.Space.s3)
-            List {
-                ForEach(model.accounts) { account in
-                    Section(account.title) {
-                        let calendars = model.calendars.filter { $0.accountID == account.id }
-                        if calendars.isEmpty {
-                            Button("Connect Google Calendar") { connect(account.id) }
-                                .font(.callout)
-                        }
-                        ForEach(calendars) { calendar in
-                            Toggle(isOn: Binding(get: { calendar.isVisible }, set: { model.setVisible(id: calendar.id, visible: $0) })) {
-                                HStack(spacing: Tokens.Space.s2) {
-                                    Circle().fill(calendar.color).frame(width: 9, height: 9)
-                                    Text(calendar.title).lineLimit(1)
-                                    if !calendar.canWrite { Image(systemName: "lock").font(.caption).foregroundStyle(.secondary) }
-                                }
-                            }
-                            .toggleStyle(.checkbox)
-                            .help(calendar.title)
-                            .contextMenu { Button("Calendar settings…") { showManagement = true } }
-                        }
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-        }
-        .background(Tokens.Surface.muted)
+        CalendarSidebar(model: model, manage: { showManagement = true }, connect: connect)
     }
 
     @ViewBuilder private var calendarContent: some View {
         if model.calendars.isEmpty, !model.isLoading {
-            TernEmptyState(title: "Your calendars in Tern", systemImage: "calendar", message: "Connect Google Calendar from the sidebar to see your schedule and add events.")
+            VStack(spacing: Tokens.Space.s4) {
+                TernEmptyState(title: "Your calendars in Tern", systemImage: "calendar", message: "Connect Google Calendar to see your schedule and add events.", fillsSpace: false)
+                ForEach(model.accounts) { account in
+                    Button("Connect \(account.title)") { connect(account.id) }.buttonStyle(.borderedProminent)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !model.calendars.isEmpty, !model.calendars.contains(where: \.isVisible) {
+            VStack(spacing: Tokens.Space.s4) {
+                TernEmptyState(title: "No calendars selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
+                Button("Show all calendars") {
+                    for calendar in model.calendars { model.setVisible(id: calendar.id, visible: true) }
+                }.buttonStyle(.bordered)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !model.searchText.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                Text(model.searchStatus).font(.caption).foregroundStyle(.secondary)
-                    .padding(Tokens.Space.s3).accessibilityLabel(model.searchStatus)
+                HStack {
+                    Text(model.searchStatus).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Done") { model.searchText = "" }.buttonStyle(.borderless)
+                }.padding(Tokens.Space.s4)
+                Divider()
                 CalendarSearchResults(events: model.searchResults, calendar: model.calendar, selectedID: $model.selectedEventID, edit: model.edit)
             }
         } else {
@@ -231,16 +282,23 @@ struct CalendarView: View {
 
     private var footer: some View {
         HStack(spacing: Tokens.Space.s2) {
-            if model.isLoading { ProgressView().controlSize(.small) }
+            if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Refreshing calendars") }
             if let error = model.errorMessage {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                 Text(error).lineLimit(2)
                 Button("Dismiss") { model.errorMessage = nil }.buttonStyle(.link)
-            } else { Text(model.statusText).foregroundStyle(.secondary) }
+            } else { Text(model.statusText).foregroundStyle(.secondary).lineLimit(1).help(model.statusText) }
             Spacer()
+            Text(model.calendar.timeZone.identifier.replacingOccurrences(of: "_", with: " "))
+                .foregroundStyle(.secondary).lineLimit(1).help("Calendar time zone")
         }
         .font(.caption).padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
         .background(Tokens.Surface.muted)
+    }
+
+    private var searchRequest: [String] {
+        [model.searchText, String(model.date.timeIntervalSince1970), String(isActive), model.calendar.timeZone.identifier]
+            + model.calendars.filter(\.isVisible).map(\.id).sorted()
     }
 
     private var selected: CalendarDisplayEvent? { (model.events + model.searchResults).first { $0.id == model.selectedEventID } }

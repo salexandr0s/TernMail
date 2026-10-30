@@ -110,13 +110,26 @@ struct CalendarImportReview: View {
     @State private var editingID: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            Text("Import events").font(.title2.weight(.semibold))
-            Text("Review the events before adding personal copies. Importing does not send invitations or RSVPs.")
-                .font(.callout).foregroundStyle(.secondary)
-            Picker("Calendar", selection: $calendarKey) {
-                ForEach(calendars.filter(\.canWrite)) { calendar in Text("\(calendar.accountName) · \(calendar.title)").tag(calendar.id) }
-            }
+        VStack(spacing: 0) {
+            CalendarSheetHeading(title: "Import events", subtitle: "Review personal copies. Importing does not send invitations or RSVPs.", systemImage: "square.and.arrow.down")
+            Divider()
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                Picker("Add to", selection: $calendarKey) {
+                    ForEach(calendars.filter(\.canWrite)) { calendar in Text("\(calendar.accountName) · \(calendar.title)").tag(calendar.id) }
+                }
+                HStack {
+                    Text("\(selected.count) of \(events.count) selected").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Select all") { selected = Set(events.filter { !$0.event.isCancelled }.map(\.id)) }
+                    Button("Deselect all") { selected.removeAll() }
+                }.buttonStyle(.borderless).disabled(isSaving || events.isEmpty)
+                if calendars.allSatisfy({ !$0.canWrite }) {
+                    Label("Choose a calendar you can edit before importing.", systemImage: "info.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }.padding(Tokens.Space.s4)
+                .disabled(isSaving)
+            Divider()
             List(events) { item in
                 HStack {
                     Toggle(isOn: Binding(get: { selected.contains(item.id) }, set: { included in
@@ -128,28 +141,36 @@ struct CalendarImportReview: View {
                             if !item.exceptions.isEmpty { Text("Repeats, with \(item.exceptions.count) changed or cancelled occurrences").font(.caption).foregroundStyle(.secondary) }
                             if item.event.isCancelled { Text("Cancelled event").font(.caption).foregroundStyle(.secondary) }
                         }
-                    }.toggleStyle(.checkbox).disabled(item.event.isCancelled)
+                    }.toggleStyle(.checkbox).disabled(item.event.isCancelled || isSaving)
                     Spacer()
                     Button("Edit…") {
                         editingID = item.id
                         editing = CalendarEditorDraft(event: item.event, calendarKey: calendarKey, isImport: true, importedExceptions: item.exceptions)
                     }.disabled(item.event.isCancelled || isSaving)
-                }
-            }.frame(minHeight: 240)
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
-            HStack {
-                if isSaving { ProgressView().controlSize(.small) }
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
-                Button("Add \(selected.count) events") {
-                    isSaving = true; error = nil
-                    Task { @MainActor in
-                        do { try await save(events.filter { selected.contains($0.id) }, calendarKey); dismiss() }
-                        catch { self.error = error.localizedDescription; isSaving = false }
+                }.padding(.vertical, Tokens.Space.s2)
+            }.listStyle(.inset)
+                .overlay {
+                    if events.isEmpty {
+                        TernEmptyState(title: "No events to import", systemImage: "calendar", message: "This file contains no events.")
                     }
-                }.keyboardShortcut(.defaultAction).disabled(isSaving || selected.isEmpty || calendarKey.isEmpty)
-            }
-        }.padding(Tokens.Space.s5).frame(width: 580, height: 500)
+                }
+            Divider()
+            VStack(spacing: Tokens.Space.s3) {
+                if let error { CalendarInlineError(message: error) }
+                HStack(spacing: Tokens.Space.s3) {
+                    if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Importing events") }
+                    Spacer()
+                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
+                    Button("Add \(selected.count) events") {
+                        isSaving = true; error = nil
+                        Task { @MainActor in
+                            do { try await save(events.filter { selected.contains($0.id) }, calendarKey); dismiss() }
+                            catch { self.error = error.localizedDescription; isSaving = false }
+                        }
+                    }.keyboardShortcut(.defaultAction).disabled(isSaving || selected.isEmpty || calendarKey.isEmpty)
+                }
+            }.padding(Tokens.Space.s4).background(Tokens.Surface.muted)
+        }.frame(width: Tokens.Calendar.editorWidth, height: CalendarSheetLayout.height(Tokens.Calendar.activityHeight))
             .onAppear { calendarKey = calendars.first(where: \.canWrite)?.id ?? ""; selected = Set(events.filter { !$0.event.isCancelled }.map(\.id)) }
             .interactiveDismissDisabled(isSaving)
             .sheet(item: $editing) { draft in

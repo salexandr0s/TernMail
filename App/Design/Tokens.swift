@@ -50,6 +50,24 @@ enum Tokens {
         static let chatBackground = Surface.canvas
     }
 
+    /// Calendar panes and sheets share native control sizing and semantic surfaces.
+    enum Calendar {
+        static let sidebarWidth: CGFloat = 248
+        static let compactWidth: CGFloat = 760
+        static let contentMinWidth: CGFloat = 420
+        static let viewPickerWidth: CGFloat = 260
+        static let editorWidth: CGFloat = 600
+        static let editorHeight: CGFloat = 680
+        static let settingsWidth: CGFloat = 760
+        static let settingsHeight: CGFloat = 680
+        static let activityWidth: CGFloat = 620
+        static let activityHeight: CGFloat = 520
+        static let eventTint = 0.12
+        static let allDayTint = 0.18
+        static let selectedTint = 0.24
+        static let todayTint = 0.04
+    }
+
     /// Native controls use the contract's compact dimensions.
     enum Control {
         static let icon = Space.s4
