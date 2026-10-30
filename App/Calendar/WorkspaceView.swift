@@ -15,7 +15,7 @@ struct WorkspaceView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        @Bindable var app = app
+        let nextDestination: WorkspaceDestination = app.destination == .mail ? .calendar : .mail
         ZStack {
             MainView(mailbox: mailbox, isActive: app.destination == .mail)
                 .opacity(app.destination == .mail ? 1 : 0)
@@ -49,11 +49,14 @@ struct WorkspaceView: View {
             ? "" : mailbox.selectedMailboxSubtitle)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Picker("Destination", selection: $app.destination) {
-                    ForEach(WorkspaceDestination.allCases) { Text($0.title).tag($0) }
+                Button {
+                    app.destination = nextDestination
+                } label: {
+                    Label("Switch to \(nextDestination.title)",
+                        systemImage: nextDestination == .calendar ? "calendar" : "envelope")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
+                .labelStyle(.iconOnly)
+                .help("Switch to \(nextDestination.title)")
             }
         }
         .task { await app.calendar.start() }
