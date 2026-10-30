@@ -8,6 +8,7 @@ struct AttachmentLibraryView: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Bindable var model: AttachmentLibraryModel
     var onOpenSource: () -> Void
+    var searchFocusRequest = 0
     @AppStorage("attachments.viewMode") private var viewMode = "list"
     @State private var showsFilters = false
     @State private var showsCoverage = false
@@ -35,19 +36,10 @@ struct AttachmentLibraryView: View {
         .background(Tokens.Surface.canvas)
         .navigationTitle(app.destination == .mail ? "Attachments" : "Calendar")
         .quickLookPreview($model.previewURL)
+        .protectAttachmentPreview(model.previewURL)
         .task(id: model.coverageKey) { await model.start() }
         .task(id: model.observationKey) { await model.reload() }
-        .toolbar {
-            if app.destination == .mail {
-                ToolbarItem(placement: .automatic) {
-                    Button { searchFocused = true } label: {
-                        Label("Find attachment", systemImage: "magnifyingglass")
-                    }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .help("Find attachment (⌘F)")
-                }
-            }
-        }
+        .onChange(of: searchFocusRequest) { _, _ in searchFocused = true }
     }
 
     private var header: some View {
@@ -295,6 +287,8 @@ struct AttachmentItemMenu: View {
     var body: some View {
         Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }
         Button("Open with Default App", systemImage: "arrow.up.forward.app") { Task { await model.openFile(item) } }
+        Button("Open With…") { Task { await model.openWith(item) } }
+        Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFile(item) } }
         Button("Save…", systemImage: "arrow.down.to.line") { Task { await model.save(item) } }
         if model.selection.count > 1, model.selection.contains(item.id) {
             Button("Save Selected Files…") { Task { await model.saveSelection() } }

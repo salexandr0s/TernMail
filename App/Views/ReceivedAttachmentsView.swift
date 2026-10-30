@@ -14,9 +14,15 @@ struct ReceivedAttachmentsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Label(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments", systemImage: "paperclip")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+            HStack {
+                Label(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments", systemImage: "paperclip")
+                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Spacer()
+                if attachments.count > 1 {
+                    Button("Save All…") { saveAll() }.font(.caption)
+                        .disabled(!loading.isEmpty)
+                }
+            }
             FlowLayout(spacing: Tokens.Space.s2) {
                 ForEach(attachments) { attachment in
                     AttachmentChip(
@@ -38,10 +44,13 @@ struct ReceivedAttachmentsView: View {
                         .accessibilityLabel("Save \(attachment.filename)")
                     }
                     .contextMenu {
+                        Button("Open", systemImage: "arrow.up.forward.app") { act(attachment) { try await AttachmentActions.open($0) } }
+                        Button("Open With…") { act(attachment) { try await AttachmentActions.openWith($0) } }
                         Button("Quick Look", systemImage: "eye") { preview(attachment) }
                             .labelStyle(.titleAndIcon)
                         Button("Save…", systemImage: "arrow.down.circle") { save(attachment) }
                             .labelStyle(.titleAndIcon)
+                        Button("Copy", systemImage: "doc.on.doc") { act(attachment) { AttachmentActions.copy($0) } }
                     }
                     .disabled(loading.contains(attachment.id))
                 }
@@ -49,6 +58,7 @@ struct ReceivedAttachmentsView: View {
         }
         .padding(.top, Tokens.Space.s1)
         .quickLookPreview($previewURL)
+        .protectAttachmentPreview(previewURL)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")
     }
@@ -61,26 +71,26 @@ struct ReceivedAttachmentsView: View {
     }
 
     private func save(_ attachment: AttachmentRecord) {
+        act(attachment) { try await AttachmentActions.save($0, filename: attachment.filename) }
+    }
+
+    private func act(_ attachment: AttachmentRecord, operation: @escaping @MainActor (URL) async throws -> Void) {
         Task {
             guard let file = await download(attachment) else { return }
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = file.lastPathComponent
-            panel.canCreateDirectories = true
-            let response = if let window = NSApp.keyWindow {
-                await panel.beginSheetModal(for: window)
-            } else {
-                await panel.begin()
+            do { try await operation(file) }
+            catch { mailbox.notice = MailboxModel.Notice(message: "Couldn't open or save “\(attachment.filename)”. Try again.", isError: true) }
+        }
+    }
+
+    private func saveAll() {
+        Task {
+            var files: [URL] = []
+            for attachment in attachments {
+                guard let file = await download(attachment) else { return }
+                files.append(file)
             }
-            guard response == .OK, let destination = panel.url else { return }
-            do {
-                // The panel already asked before replacing a file.
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.copyItem(at: file, to: destination)
-            } catch {
-                mailbox.notice = MailboxModel.Notice(message: "Tern couldn't save “\(attachment.filename)” there.", isError: true)
-            }
+            do { try await AttachmentActions.saveAll(files) }
+            catch { mailbox.notice = MailboxModel.Notice(message: "Couldn't save all attachments. Try another folder.", isError: true) }
         }
     }
 

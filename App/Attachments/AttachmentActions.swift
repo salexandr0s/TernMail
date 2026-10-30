@@ -1,0 +1,85 @@
+import AppKit
+import MailStore
+import SwiftUI
+import UniformTypeIdentifiers
+
+enum AttachmentOpenLocation: String, CaseIterable {
+    case application
+    case downloads
+    static let key = "attachmentOpenLocation"
+}
+
+/// Opening never replaces a user's Downloads file. Save panels own replacement consent.
+@MainActor
+enum AttachmentActions {
+    static func openingURL(_ source: URL) async throws -> URL {
+        guard UserDefaults.standard.string(forKey: AttachmentOpenLocation.key) == AttachmentOpenLocation.downloads.rawValue else { return source }
+        let folder = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: true).appending(path: "Tern", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return try await AttachmentFileExport.copyWithoutReplacing(source, to: folder)
+    }
+
+    static func open(_ source: URL) async throws {
+        let file = try await openingURL(source)
+        guard NSWorkspace.shared.open(file) else { throw CocoaError(.fileReadUnknown) }
+    }
+
+    static func openWith(_ source: URL) async throws {
+        let panel = NSOpenPanel()
+        panel.title = "Choose an Application"
+        panel.prompt = "Open"
+        panel.allowedContentTypes = [.application]
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(filePath: "/Applications", directoryHint: .isDirectory)
+        let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
+        guard response == .OK, let application = panel.url else { return }
+        let file = try await openingURL(source)
+        _ = try await NSWorkspace.shared.open([file], withApplicationAt: application, configuration: .init())
+    }
+
+    static func copy(_ source: URL) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([source as NSURL])
+    }
+
+    static func save(_ source: URL, filename: String) async throws {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = AttachmentFileExport.safeFilename(filename)
+        panel.canCreateDirectories = true
+        let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
+        guard response == .OK, let destination = panel.url else { return }
+        try await AttachmentFileExport.save(source, to: destination)
+    }
+
+    static func saveAll(_ files: [URL]) async throws {
+        guard !files.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Save All Attachments"
+        panel.prompt = "Save"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
+        guard response == .OK, let directory = panel.url else { return }
+        for file in files { _ = try await AttachmentFileExport.copyWithoutReplacing(file, to: directory) }
+    }
+}
+
+struct AttachmentPreferencesView: View {
+    @AppStorage(AttachmentOpenLocation.key) private var location = AttachmentOpenLocation.application.rawValue
+
+    var body: some View {
+        Form {
+            Picker("Open attachments from", selection: $location) {
+                Text("Tern's attachment folder").tag(AttachmentOpenLocation.application.rawValue)
+                Text("Downloads → Tern").tag(AttachmentOpenLocation.downloads.rawValue)
+            }
+            Text("Opening from Downloads saves a separate copy. Existing files are kept.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+    }
+}

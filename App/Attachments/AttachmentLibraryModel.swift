@@ -194,8 +194,14 @@ final class AttachmentLibraryModel {
         errorMessage = nil
         lastAction = .category(category, item)
         do {
-            try await mailbox.cache.write { tx in
-                try tx.setAttachmentCategory(category, accountID: item.accountID, messageID: item.messageID, partID: item.partID)
+            if let accounts = mailbox.accountStore {
+                let saved = try await accounts.saveAttachmentCategoryOverride(.init(accountID: item.accountID,
+                    messageID: item.messageID, partID: item.partID, category: category))
+                try await mailbox.cache.applyAttachmentCategoryOverrides([saved])
+            } else {
+                try await mailbox.cache.write { tx in
+                    try tx.setAttachmentCategory(category, accountID: item.accountID, messageID: item.messageID, partID: item.partID)
+                }
             }
             lastAction = nil
         } catch { errorMessage = "Couldn't save the document category. Try again." }
@@ -210,10 +216,16 @@ final class AttachmentLibraryModel {
         lastAction = .open(item)
         await perform {
             let url = try await file(for: item)
-            guard NSWorkspace.shared.open(url) else {
-                throw AttachmentActionError.noApplication
-            }
+            try await AttachmentActions.open(url)
         }
+    }
+
+    func openWith(_ item: AttachmentLibraryItem) async {
+        await perform { try await AttachmentActions.openWith(file(for: item)) }
+    }
+
+    func copyFile(_ item: AttachmentLibraryItem) async {
+        await perform { AttachmentActions.copy(try await file(for: item)) }
     }
 
     func openSource(_ item: AttachmentLibraryItem) async -> Bool {
