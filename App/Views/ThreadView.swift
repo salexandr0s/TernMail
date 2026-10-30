@@ -396,12 +396,15 @@ private struct MessageView: View {
                     Button("Reply", systemImage: Self.symbol(.reply)) {
                         compose(.reply(.reply, messageID: message.id, accountID: accountID))
                     }
+                    .labelStyle(.titleAndIcon)
                     Button("Reply All", systemImage: Self.symbol(.replyAll)) {
                         compose(.reply(.replyAll, messageID: message.id, accountID: accountID))
                     }
+                    .labelStyle(.titleAndIcon)
                     Button("Forward", systemImage: Self.symbol(.forward)) {
                         compose(.reply(.forward, messageID: message.id, accountID: accountID))
                     }
+                    .labelStyle(.titleAndIcon)
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                         .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)

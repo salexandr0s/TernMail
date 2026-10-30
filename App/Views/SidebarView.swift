@@ -48,6 +48,8 @@ struct SidebarView: View {
                             mailbox.showNewLabel(in: owner.account.id)
                         } label: {
                             Image(systemName: "plus")
+                                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
                         .help("New Label")
@@ -169,39 +171,35 @@ private struct MailboxRow: View {
     let color: Color
     /// Unread conversations, or the Outbox's messages. Zero shows no badge.
     let count: Int
-    /// Set on a row listing every account, for its button that shows a row per account.
-    var isExpanded: Binding<Bool>?
+    /// Set on a row listing every account to show its disclosure state.
+    var isExpanded: Bool?
+    var isAccount = false
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s2) {
+        HStack(spacing: Tokens.Space.s1) {
             if let isExpanded {
-                Button {
-                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast)) {
-                        isExpanded.wrappedValue.toggle()
-                    }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
-                        .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .help(isExpanded.wrappedValue ? "Hide Accounts" : "Show Accounts")
-                .accessibilityLabel(isExpanded.wrappedValue ? "Collapse \(box.title)" : "Expand \(box.title)")
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
+                    .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
+                    .accessibilityHidden(true)
             }
             Label {
                 Text(title)
                     .lineLimit(1)
             } icon: {
                 Image(systemName: box.systemImage)
+                    .font(.system(size: isAccount ? Tokens.Space.s3 : Tokens.Control.icon))
+                    .imageScale(.medium)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(color)
                     .frame(width: Tokens.Space.s5)
             }
         }
-        .padding(.vertical, Tokens.Space.s1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .badge(count)
     }
 }
@@ -220,9 +218,13 @@ private struct CombinedMailboxRows: View {
         let combinedID = MailboxID.combined(box.id)
         MailboxRow(
             box: box, title: box.title, color: box.color,
-            count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: $isExpanded
+            count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: isExpanded
         )
         .tag(combinedID)
+        .onTapGesture(perform: selectAndToggle)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(isExpanded ? "Hides accounts" : "Shows accounts")
+        .accessibilityAction(.default, selectAndToggle)
         if isExpanded {
             ForEach(mailbox.accounts, id: \.account.id) { owner in
                 let boxID = MailboxID.account(owner.account.id, box.id)
@@ -230,15 +232,21 @@ private struct CombinedMailboxRows: View {
                     let name = names[owner.account.id] ?? owner.account.email
                     MailboxRow(
                         box: box, title: name, color: colors[owner.account.id] ?? .secondary,
-                        count: mailbox.sidebarCount(boxID)
+                        count: mailbox.sidebarCount(boxID), isAccount: true
                     )
-                    .padding(.leading, Tokens.Space.s6)
+                    .padding(.leading, Tokens.Space.s8)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
                     .tag(boxID)
                 }
             }
         }
+    }
+
+    private func selectAndToggle() {
+        mailbox.selectedMailbox = .combined(box.id)
+        // Keep the disclosure animation local to the chevron, outside List layout.
+        isExpanded.toggle()
     }
 }
 
@@ -275,6 +283,8 @@ private struct AccountHeader: View {
                     mailbox.showNewLabel(in: owner.account.id)
                 } label: {
                     Image(systemName: "plus")
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
                 .help("New Label")
@@ -291,9 +301,11 @@ private struct AccountHeader: View {
             }
         }
         .contextMenu {
-            Button("New Label…") { mailbox.showNewLabel(in: owner.account.id) }
+            Button("New Label…", systemImage: "tag") { mailbox.showNewLabel(in: owner.account.id) }
+                .labelStyle(.titleAndIcon)
             Divider()
-            Button("Sign Out…") { app.accountToSignOut = owner.account }
+            Button("Sign Out…", systemImage: "rectangle.portrait.and.arrow.right") { app.accountToSignOut = owner.account }
+                .labelStyle(.titleAndIcon)
         }
     }
 }
@@ -324,16 +336,20 @@ private struct LabelRow: View {
             let color = Color(gmailHex: label.backgroundColor)
             let icon = LabelAppearance.shared.icon(for: label)
             Image(systemName: icon == "tag" && color != nil ? "tag.fill" : icon)
+                .font(.system(size: Tokens.Control.icon))
+                .imageScale(.medium)
                 .foregroundStyle(color ?? .secondary)
+                .frame(width: Tokens.Space.s5)
         }
-        .padding(.vertical, Tokens.Space.s1)
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
         .tag(MailboxID.account(label.accountID, label.id))
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {
-            Button("Edit Label…") { mailbox.showEditLabel(label) }
-            Button("Delete Label…") { mailbox.labelToDelete = label }
+            Button("Edit Label…", systemImage: "pencil") { mailbox.showEditLabel(label) }
+                .labelStyle(.titleAndIcon)
+            Button("Delete Label…", systemImage: "trash") { mailbox.labelToDelete = label }
+                .labelStyle(.titleAndIcon)
         }
     }
 }

@@ -39,8 +39,10 @@ struct ReceivedAttachmentsView: View {
                         .accessibilityLabel("Save \(attachment.filename)")
                     }
                     .contextMenu {
-                        Button("Quick Look") { preview(attachment) }
-                        Button("Save…") { save(attachment) }
+                        Button("Quick Look", systemImage: "eye") { preview(attachment) }
+                            .labelStyle(.titleAndIcon)
+                        Button("Save…", systemImage: "arrow.down.circle") { save(attachment) }
+                            .labelStyle(.titleAndIcon)
                     }
                 }
             }

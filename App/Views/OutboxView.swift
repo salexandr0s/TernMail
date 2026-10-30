@@ -24,9 +24,11 @@ struct OutboxView: View {
                 }
                 .contextMenu(forSelectionType: String.self) { ids in
                     if ids.count == 1, let id = ids.first {
-                        Button("Open") { open(id) }
+                        Button("Open", systemImage: "arrow.up.forward.square") { open(id) }
+                            .labelStyle(.titleAndIcon)
                         if let activity = mailbox.selectedOutbox.first(where: { $0.id == id }), Self.canUndoSend(activity) {
-                            Button("Undo Send") { undoSend(id) }
+                            Button("Undo Send", systemImage: "arrow.uturn.backward") { undoSend(id) }
+                                .labelStyle(.titleAndIcon)
                         }
                     }
                 } primaryAction: { ids in

@@ -10,6 +10,7 @@ struct RecipientField: NSViewRepresentable {
     /// Set to move the cursor here. The field clears it once it has the cursor.
     @Binding var requestsFocus: Bool
     var isEditable: Bool
+    var onFocusChange: @MainActor (Bool) -> Void = { _ in }
     let suggestions: @MainActor (String) async -> [EmailAddress]
 
     func makeCoordinator() -> Coordinator {
@@ -27,11 +28,12 @@ struct RecipientField: NSViewRepresentable {
         return field.firstBaselineOffsetFromTop
     }()
 
-    private static func makeField() -> NSTokenField {
-        let field = NSTokenField()
+    private static func makeField() -> FocusAwareTokenField {
+        let field = FocusAwareTokenField()
         field.isBordered = false
         field.drawsBackground = false
-        field.focusRingType = .exterior
+        // ComposeView outlines the whole row, including its label and padding.
+        field.focusRingType = .none
         field.font = NSFont.preferredFont(forTextStyle: .body)
         field.tokenizingCharacterSet = CharacterSet(charactersIn: ",;")
         field.completionDelay = 0.1
@@ -44,6 +46,9 @@ struct RecipientField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTokenField {
         let field = Self.makeField()
         field.delegate = context.coordinator
+        field.focusChanged = { [weak coordinator = context.coordinator] in
+            coordinator?.reportFocus()
+        }
         field.setAccessibilityLabel(label)
         context.coordinator.field = field
         context.coordinator.show(addresses)
@@ -56,10 +61,11 @@ struct RecipientField: NSViewRepresentable {
         if addresses != context.coordinator.shownAddresses {
             context.coordinator.show(addresses)
         }
-        if requestsFocus {
+        if requestsFocus, isEditable {
             // Changing focus or the binding during a view update isn't allowed.
             Task { @MainActor in
-                field.window?.makeFirstResponder(field)
+                // A click in the current row's padding must not select its text again.
+                if field.currentEditor() == nil { field.window?.makeFirstResponder(field) }
                 requestsFocus = false
             }
         }
@@ -78,6 +84,24 @@ struct RecipientField: NSViewRepresentable {
         guard let name = address.name, !name.isEmpty else { return address.address }
         let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\" <\(address.address)>"
+    }
+
+    /// Keyboard focus can arrive before the field editor begins editing.
+    @MainActor
+    private final class FocusAwareTokenField: NSTokenField {
+        var focusChanged: (() -> Void)?
+
+        override func becomeFirstResponder() -> Bool {
+            let accepted = super.becomeFirstResponder()
+            if accepted { focusChanged?() }
+            return accepted
+        }
+
+        override func resignFirstResponder() -> Bool {
+            let resigned = super.resignFirstResponder()
+            if resigned { focusChanged?() }
+            return resigned
+        }
     }
 
     /// The address in one token. Tokens hold objects, not values.
@@ -104,6 +128,7 @@ struct RecipientField: NSViewRepresentable {
         /// Never on screen or edited, so SwiftUI can measure it at any time.
         private let sizingField = RecipientField.makeField()
         private var sizedAddresses: [EmailAddress]?
+        private var reportedFocus = false
 
         init(_ parent: RecipientField) {
             self.parent = parent
@@ -114,6 +139,20 @@ struct RecipientField: NSViewRepresentable {
         func show(_ addresses: [EmailAddress]) {
             shownAddresses = addresses
             field?.objectValue = addresses.map(Token.init)
+        }
+
+        /// AppKit can change focus during a SwiftUI update. Read the current
+        /// responder after that update so queued notifications cannot restore stale focus.
+        func reportFocus() {
+            Task { @MainActor [weak self] in
+                guard let self, let field else { return }
+                let responder = field.window?.firstResponder
+                let ownsEditor = field.currentEditor().map { responder === $0 } ?? false
+                let isFocused = responder === field || ownsEditor
+                guard isFocused != reportedFocus else { return }
+                reportedFocus = isFocused
+                parent.onFocusChange(isFocused)
+            }
         }
 
         /// The size of the shown addresses, wrapped at `width`. A width that
@@ -131,12 +170,17 @@ struct RecipientField: NSViewRepresentable {
 
         // MARK: NSTokenFieldDelegate
 
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            reportFocus()
+        }
+
         func controlTextDidChange(_ notification: Notification) {
             publish()
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
             publish()
+            reportFocus()
         }
 
         func tokenField(
