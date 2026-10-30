@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 /// Allocate the assistant inside the existing window. At narrow widths the
@@ -31,20 +32,23 @@ struct AssistantSidebarLayout {
 
 /// Keeps the native split controller and its constraints in charge. Probes find
 /// only their own ancestors, so a detached assistant never affects another window.
-@MainActor
+@Observable @MainActor
 final class AssistantMailPaneSizing {
     enum Pane: CaseIterable { case navigation, list }
+    private(set) var contentTopInset: CGFloat = 0
     private struct Divider {
         weak var split: NSSplitView?
         weak var pane: NSView?
         let index: Int
     }
     private enum Mode: Equatable { case normal, compressed, restoring }
-    private var dividers: [Pane: Divider] = [:]
-    private var originalWidths: [Pane: CGFloat] = [:]
-    private var mode = Mode.normal
-    private var remainingAttempts = 0
-    private var scheduled = false
+    @ObservationIgnored private var dividers: [Pane: Divider] = [:]
+    @ObservationIgnored private var originalWidths: [Pane: CGFloat] = [:]
+    @ObservationIgnored private var mode = Mode.normal
+    @ObservationIgnored private var remainingAttempts = 0
+    @ObservationIgnored private var scheduled = false
+    @ObservationIgnored private weak var safeAreaSplit: NSSplitView?
+    @ObservationIgnored private var safeAreaUpdateScheduled = false
 
     func beginPresentation() {
         guard mode != .compressed else { return }
@@ -70,12 +74,36 @@ final class AssistantMailPaneSizing {
             if let split = parent as? NSSplitView, split.isVertical,
                let index = split.arrangedSubviews.firstIndex(where: { $0 === child }),
                index < split.arrangedSubviews.count - 1 {
+                updateWindowSafeArea(from: split)
                 let old = dividers[role]
                 dividers[role] = Divider(split: split, pane: child, index: index)
                 if old?.split !== split || old?.pane !== child { requestApply() }
                 return
             }
             child = parent
+        }
+    }
+
+    func refreshWindowSafeArea() {
+        guard let split = safeAreaSplit else { return }
+        updateWindowSafeArea(from: split)
+    }
+
+    /// Nested split views extend beneath the toolbar even when a rendering host
+    /// drops their native top inset. Measure the unpadded split once layout has
+    /// settled, then let each SwiftUI column reserve the missing safe area.
+    private func updateWindowSafeArea(from split: NSSplitView) {
+        safeAreaSplit = split
+        guard !safeAreaUpdateScheduled else { return }
+        safeAreaUpdateScheduled = true
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            safeAreaUpdateScheduled = false
+            guard let split = safeAreaSplit, let window = split.window else { return }
+            let overlap = split.convert(split.bounds, to: nil).maxY - window.contentLayoutRect.maxY
+            let missingTop = max(0, overlap - split.safeAreaInsets.top)
+            if abs(contentTopInset - missingTop) > 0.5 { contentTopInset = missingTop }
         }
     }
 

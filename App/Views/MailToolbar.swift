@@ -10,8 +10,6 @@ struct MailToolbar: ToolbarContent {
     var isCompact = false
 
     var body: some ToolbarContent {
-        let ids = mailbox.selectedThreadIDs
-        let isRead = mailbox.allRead(ids)
         ToolbarItemGroup(placement: .primaryAction) {
             Button { mailbox.perform(.archive) } label: {
                 Label("Archive", systemImage: "archivebox")
@@ -25,56 +23,28 @@ struct MailToolbar: ToolbarContent {
             .help("Move to Trash")
             .disabled(!mailbox.canTrash)
 
-            Button { mailbox.toggleRead() } label: {
-                Label(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open")
-            }
-            .help(isRead ? "Mark as Unread" : "Mark as Read")
-            .disabled(ids.isEmpty)
-
-            // The menu commands and the context menu open these popovers too.
-            Button { mailbox.showMoveTo() } label: {
-                Label("Move to", systemImage: "folder")
-            }
-            .help("Move to")
-            .disabled(ids.isEmpty)
-            .popover(isPresented: isMoving, arrowEdge: .bottom) {
-                MoveToView(targets: mailbox.moveChoices, onMove: { mailbox.move(to: $0) })
-            }
-
-            Button { mailbox.showEditLabels() } label: {
-                Label("Edit Labels", systemImage: "tag")
-            }
-            .help("Edit Labels")
-            .disabled(ids.isEmpty)
-            .popover(isPresented: isEditingLabels, arrowEdge: .bottom) {
-                if let edit = mailbox.labelEdit {
-                    EditLabelsView(
-                        labels: mailbox.labelChoices,
-                        applied: edit.applied,
-                        onApply: { mailbox.applyLabels($0) },
-                        onCreateLabel: { mailbox.createLabel(named: $0, after: $1) }
-                    )
+            if isCompact {
+                Menu {
+                    readAction
+                    moveAction
+                    editLabelsAction
+                    snoozeMenu
+                } label: {
+                    Label("More mail actions", systemImage: "ellipsis")
                 }
+                .menuIndicator(.hidden)
+                .help("More mail actions")
+                .accessibilityLabel("More mail actions")
+                .popover(isPresented: isMoving, arrowEdge: .bottom) { movePicker }
+                .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
+            } else {
+                readAction
+                moveAction
+                    .popover(isPresented: isMoving, arrowEdge: .bottom) { movePicker }
+                editLabelsAction
+                    .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
+                snoozeMenu
             }
-
-            Menu {
-                SnoozeMenuItems(
-                    onSnooze: { mailbox.snooze(until: $0) },
-                    onChooseDate: { mailbox.showSnoozeDate() }
-                )
-                if mailbox.showsSnoozed {
-                    Divider()
-                    Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox.unsnooze() }
-                        .labelStyle(.titleAndIcon)
-                }
-            } label: {
-                Label("Snooze", systemImage: "clock")
-            }
-            .menuIndicator(.hidden)
-            // Without it, VoiceOver names the menu after its arrow image.
-            .accessibilityLabel("Snooze")
-            .help("Snooze")
-            .disabled(!mailbox.canSnooze)
         }
 
         // Liquid Glass draws each run of items as one capsule. Earlier
@@ -112,10 +82,70 @@ struct MailToolbar: ToolbarContent {
             )
             .frame(
                 minWidth: Tokens.Layout.searchMinWidth,
-                idealWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth,
                 maxWidth: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchMaxWidth
             )
             .help("Search mail (⌥⌘F). Return searches Gmail.")
+        }
+    }
+
+    private var readAction: some View {
+        let isRead = mailbox.allRead(mailbox.selectedThreadIDs)
+        return Button { mailbox.toggleRead() } label: {
+            Label(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open")
+        }
+        .help(isRead ? "Mark as Unread" : "Mark as Read")
+        .disabled(mailbox.selectedThreadIDs.isEmpty)
+    }
+
+    private var moveAction: some View {
+        Button { mailbox.showMoveTo() } label: {
+            Label("Move to", systemImage: "folder")
+        }
+        .help("Move to")
+        .disabled(mailbox.selectedThreadIDs.isEmpty)
+    }
+
+    private var editLabelsAction: some View {
+        Button { mailbox.showEditLabels() } label: {
+            Label("Edit Labels", systemImage: "tag")
+        }
+        .help("Edit Labels")
+        .disabled(mailbox.selectedThreadIDs.isEmpty)
+    }
+
+    private var snoozeMenu: some View {
+        Menu {
+            SnoozeMenuItems(
+                onSnooze: { mailbox.snooze(until: $0) },
+                onChooseDate: { mailbox.showSnoozeDate() }
+            )
+            if mailbox.showsSnoozed {
+                Divider()
+                Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox.unsnooze() }
+                    .labelStyle(.titleAndIcon)
+            }
+        } label: {
+            Label("Snooze", systemImage: "clock")
+        }
+        .menuIndicator(.hidden)
+        .accessibilityLabel("Snooze")
+        .help("Snooze")
+        .disabled(!mailbox.canSnooze)
+    }
+
+    // Menu commands and context menus present these from the visible toolbar control.
+    private var movePicker: some View {
+        MoveToView(targets: mailbox.moveChoices, onMove: { mailbox.move(to: $0) })
+    }
+
+    @ViewBuilder private var labelPicker: some View {
+        if let edit = mailbox.labelEdit {
+            EditLabelsView(
+                labels: mailbox.labelChoices,
+                applied: edit.applied,
+                onApply: { mailbox.applyLabels($0) },
+                onCreateLabel: { mailbox.createLabel(named: $0, after: $1) }
+            )
         }
     }
 

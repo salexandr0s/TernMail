@@ -24,11 +24,12 @@ struct MainView: View {
 
     var body: some View {
         @Bindable var app = app
+        let contentTopInset = paneSizing.contentTopInset
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
                 preferredWidth: preferredAssistantWidth, isPresented: showsAssistant)
             HStack(spacing: 0) {
-                mailContent
+                mailContent(topInset: contentTopInset)
                     .frame(width: layout.mailWidth)
                     .clipped()
                 if showsAssistant {
@@ -59,6 +60,9 @@ struct MainView: View {
             .onChange(of: layout.mailWidth, initial: true) { _, width in
                 isCompactWindow = width < Tokens.Layout.compactToolbarWidth
                 paneSizing.requestApply()
+            }
+            .onChange(of: geometry.size.height, initial: true) { _, _ in
+                paneSizing.refreshWindowSafeArea()
             }
         }
         .background {
@@ -102,10 +106,11 @@ struct MainView: View {
         .modifier(AttachmentLibraryPresentation(mailbox: mailbox))
     }
 
-    private var mailContent: some View {
+    private func mailContent(topInset: CGFloat) -> some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(mailbox: mailbox)
                 .toolbar(removing: .sidebarToggle)
+                .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
                 .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .navigation, isPresented: showsAssistant) }
                 .padding(.trailing, Tokens.Space.s3)
                 .overlay(alignment: .trailing) {
@@ -125,6 +130,7 @@ struct MainView: View {
                     ThreadListView(mailbox: mailbox)
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
             .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .list, isPresented: showsAssistant) }
             .onChange(of: mailbox.search.listFocusRequest) {
                 outboxFocused = showsOutbox
@@ -157,6 +163,7 @@ struct MainView: View {
             }
         } detail: {
             DetailView(mailbox: mailbox)
+                .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
                 .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
                 .background(Tokens.Surface.canvas)
                 .toolbar {
