@@ -8,6 +8,7 @@ import TernAI
 @Observable
 final class AssistantModel {
     let connection: ChatGPTConnection
+    let writingStyle: AssistantWritingStyleModel
     private(set) var models: [AIModel] = []
     private(set) var isLoadingModels = false
     private(set) var modelErrorMessage: String?
@@ -15,6 +16,7 @@ final class AssistantModel {
         didSet {
             defaults?.set(selectedModelID, forKey: Self.modelKey)
             if selectedModelID != oldValue { calendarExtractionRevision += 1 }
+            refreshWritingStyleAccess()
         }
     }
     private(set) var messages: [AssistantMessage] = []
@@ -40,6 +42,7 @@ final class AssistantModel {
     @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let contextOverride: (@MainActor () -> AssistantContext)?
     @ObservationIgnored private let toolFactory: (@MainActor (AssistantScopeSnapshot) -> AssistantToolSession)?
+    @ObservationIgnored private let hasWritingStyleOverride: Bool
     @ObservationIgnored private var history: [AIJSON] = []
     @ObservationIgnored private var observedScope: AssistantScopeSnapshot?
     @ObservationIgnored private var toolSession: AssistantToolSession?
@@ -61,7 +64,8 @@ final class AssistantModel {
     init(app: AppModel, connection: ChatGPTConnection = ChatGPTConnection(),
          provider: (any AIProvider)? = nil, defaults: UserDefaults? = nil,
          context: (@MainActor () -> AssistantContext)? = nil,
-         makeTools: (@MainActor (AssistantScopeSnapshot) -> AssistantToolSession)? = nil) {
+         makeTools: (@MainActor (AssistantScopeSnapshot) -> AssistantToolSession)? = nil,
+         writingStyle: AssistantWritingStyleModel? = nil) {
         let persistence: UserDefaults?
         if let defaults { persistence = defaults }
         else if AssistantRuntimeEnvironment.isTestHost { persistence = nil }
@@ -70,10 +74,13 @@ final class AssistantModel {
         // user's preferences. Without persistence, these values stay in memory.
         self.app = app; self.connection = connection; self.defaults = persistence
         self.contextOverride = context; self.toolFactory = makeTools
-        self.provider = provider ?? ChatGPTProvider(accessToken: { [weak connection] in
+        let activeProvider = provider ?? ChatGPTProvider(accessToken: { [weak connection] in
             guard let connection else { throw AIProviderError.signInRequired }
             return try await connection.accessToken()
         })
+        self.provider = activeProvider
+        self.writingStyle = writingStyle ?? AssistantWritingStyleBindings.make(app: app, provider: activeProvider)
+        hasWritingStyleOverride = writingStyle != nil
         selectedModelID = persistence?.string(forKey: Self.modelKey) ?? ""
         enabledAccountIDs = Set(persistence?.stringArray(forKey: Self.accountsKey) ?? [])
     }
@@ -141,6 +148,13 @@ final class AssistantModel {
         refreshAccess()
     }
 
+    func forgetAccount(_ id: String) {
+        enabledAccountIDs.remove(id)
+        defaults?.set(enabledAccountIDs.sorted(), forKey: Self.accountsKey)
+        writingStyle.forgetAccount(id)
+        refreshAccess()
+    }
+
     /// Also called by mailbox lifecycle observers while no request is active.
     func refreshAccess() {
         let current = context()
@@ -167,6 +181,21 @@ final class AssistantModel {
             catalogueTask?.cancel(); catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil
             isLoadingModels = false
         }
+        refreshWritingStyleAccess()
+    }
+
+    private func refreshWritingStyleAccess() {
+        // Existing injected chat tests never start unscripted sent-mail analysis.
+        guard contextOverride == nil || hasWritingStyleOverride else { return }
+        let current = context()
+        let ready = current.canUsePlan && catalogueRevision == current.connectionRevision
+            && models.contains(where: { $0.id == selectedModelID })
+        let accounts = current.accounts.map {
+            AssistantWritingStyleAccount(id: $0.id, email: $0.email, displayName: $0.displayName,
+                instanceID: current.accountInstances[$0.id], isMailAccessEnabled: enabledAccountIDs.contains($0.id))
+        }
+        writingStyle.refresh(accounts: accounts, accountListReady: current.isAccountListReady,
+            connectionRevision: current.connectionRevision, modelID: ready ? selectedModelID : nil)
     }
 
     func refreshConnection() async {
@@ -192,6 +221,7 @@ final class AssistantModel {
                 catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil
                 isLoadingModels = false
             }
+            refreshWritingStyleAccess()
         }
         do {
             let choices = try await request.value
@@ -401,7 +431,7 @@ final class AssistantModel {
 
     private func tools(for snapshot: AssistantScopeSnapshot) throws -> AssistantToolSession {
         if let toolSession { return toolSession }
-        let session: AssistantToolSession
+        var session: AssistantToolSession
         if let toolFactory { session = toolFactory(snapshot) }
         else {
             guard let app else { throw AssistantError.accessChanged }
@@ -412,6 +442,11 @@ final class AssistantModel {
             }
             let tools = MailAssistantTools(app: app, allowedAccountIDs: snapshot.accountIDs,
                 allowedThreadIDs: snapshot.threadIDs, isScopeValid: isValid)
+            let style = writingStyle
+            tools.writingStyleGate = { accountID, round in try await style.draftDecision(accountID: accountID, round: round) }
+            tools.writingStyleIsCurrent = { accountID, round, decision in
+                style.isDraftDecisionCurrent(accountID: accountID, round: round, decision: decision)
+            }
             let calendarTools = CalendarAssistantTools(scope: snapshot.calendarScope,
                 bindings: app.calendar.assistantBindings, isScopeValid: isValid)
             let mailDefinitions = snapshot.accountIDs.isEmpty ? [] : MailAssistantTools.definitions
@@ -424,6 +459,10 @@ final class AssistantModel {
                     }
                     return try await tools.execute(call)
                 })
+            session.executeWithWritingStyle = { call, round in
+                if calendarDefinitions.contains(where: { $0.name == call.name }) { return try await calendarTools.execute(call) }
+                return try await tools.execute(call, writingStyleRound: round)
+            }
         }
         toolSession = session
         return session
@@ -463,6 +502,9 @@ final class AssistantModel {
             for round in 0..<Self.maximumRounds {
                 try ensureCurrent(snapshot, turn: turn)
                 try checkHistory(input)
+                refreshWritingStyleAccess()
+                let styleRound = writingStyle.round(accountIDs: snapshot.accountIDs, requestID: turn)
+                let styleInstructions = try styleRound.promptContext()
                 let answerOnly = answerNext || round == Self.maximumRounds - 1
                 let presentationOnly = !answerOnly && (finalizeNext || round >= Self.maximumRounds - 2 || callCount >= Self.maximumToolCalls - 1)
                 let roundDefinitions = answerOnly ? [] : (presentationOnly ? definitions.filter { $0.name == "present_emails" } : definitions)
@@ -479,7 +521,7 @@ final class AssistantModel {
                 let prefix = messages.first(where: { $0.id == messageID })?.text ?? ""
                 var streamedText = ""
                 for try await event in provider.respond(AIRequest(model: model, input: input,
-                    instructions: instructions + "\n" + budgetInstructions, tools: roundDefinitions)) {
+                    instructions: instructions + "\n" + budgetInstructions + "\n" + styleInstructions, tools: roundDefinitions)) {
                     try ensureCurrent(snapshot, turn: turn)
                     switch event {
                     case .textDelta(let delta):
@@ -543,7 +585,9 @@ final class AssistantModel {
                     do {
                         attemptedThisRound += 1
                         callCount += 1
-                        let result = try await tools.execute(call)
+                        let result: MailAssistantToolResult
+                        if let execute = tools.executeWithWritingStyle { result = try await execute(call, styleRound) }
+                        else { result = try await tools.execute(call) }
                         try ensureCurrent(snapshot, turn: turn)
                         guard result.sources.allSatisfy(snapshot.allows),
                               result.emailResults.allSatisfy({ !$0.source.isCalendar && snapshot.allows($0.source) }),
@@ -555,6 +599,7 @@ final class AssistantModel {
                         update(messageID) { message in
                             for source in result.sources where !message.sources.contains(where: { $0.id == source.id }) { message.sources.append(source) }
                             if let id = result.createdDraftID, !message.draftIDs.contains(id) { message.draftIDs.append(id) }
+                            if let id = result.createdDraftID, let note = result.draftStyleNote { message.draftStyleNotes[id] = note }
                             if call.name == "present_emails" { message.emailResults = result.emailResults }
                             for proposal in result.calendarProposals where !message.calendarProposals.contains(where: { $0.id == proposal.id }) {
                                 message.calendarProposals.append(proposal)

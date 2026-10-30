@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import SyncEngine
 import Testing
 import TernAI
 @testable import Tern
@@ -23,6 +24,48 @@ import TernAI
         #expect(requests.count == 2)
         #expect(requests[1].input.contains { $0["type"]?.stringValue == "function_call_output" && $0["call_id"]?.stringValue == "read-1" })
         #expect(try requests[1].input.last?.jsonString().contains("Send the proposal Friday.") == true)
+    }
+
+    @Test func readyConnectionLearnsEnabledAccountsAndSuppliesOnlyTheCurrentSenderStyle() async throws {
+        var sampledAccounts: [String] = []
+        let style = AssistantWritingStyleModel(store: MemoryAssistantWritingStyleStore(), readSamples: { account, authorized in
+            #expect(await authorized())
+            sampledAccounts.append(account.id)
+            return .init(accountID: account.id, requestedCount: 100, selectedCount: 5, inspectedCount: 5,
+                samples: (0..<5).map { .init(messageID: "sample-\($0)", date: .now, text: account.id, truncated: false) },
+                skippedCount: 0, failures: [], truncated: false, hasMoreSentMail: false)
+        }, analyze: { samples, _, date in
+            try .init(sampleCount: samples.count, profiledAt: date,
+                traits: .init(formality: samples.first == "a" ? .formal : .informal, directness: .direct, detail: .brief))
+        })
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("First answer.")), .complete(Self.answer("Second answer."))])
+        let fixture = try Fixture(provider: provider, restoredAccountIDs: ["a", "b"], writingStyle: style)
+        defer { fixture.clean() }
+        #expect(sampledAccounts.isEmpty)
+        await fixture.model.refreshConnection()
+        await style.waitForLearning()
+        #expect(sampledAccounts == ["a", "b"])
+        let explicitRequest = "Draft a reply, but use a playful style for this message."
+        fixture.model.send(explicitRequest)
+        await fixture.model.waitForCurrentTurn()
+        fixture.context.currentAccounts = ["b"]
+        fixture.model.refreshAccess()
+        fixture.model.send("Draft for this account.")
+        await fixture.model.waitForCurrentTurn()
+
+        let requests = await provider.requests
+        #expect(requests.count == 2)
+        for (request, id) in zip(requests, ["a", "b"]) {
+            let lastLine = try #require(request.instructions.split(separator: "\n").last)
+            let rows = try #require(AIJSON.decode(Data(lastLine.utf8)).arrayValue)
+            #expect(rows.count == 1)
+            #expect(rows.first?["account_id"]?.stringValue == id)
+            let profile = try #require(style.round(accountIDs: [id], requestID: UUID()).hints[id]?.profile)
+            #expect(rows.first?["preferences"]?.stringValue == (try profile.promptContext()))
+            #expect(request.instructions.contains("override an explicit user request about style"))
+        }
+        #expect(requests.first?.input.first?["content"]?.stringValue == explicitRequest)
+        #expect(sampledAccounts == ["a", "b"])
     }
 
     @Test func revokingAnAccountClearsDisplayAndProviderHistory() async throws {
@@ -597,6 +640,7 @@ import TernAI
 
         init(provider: any AIProvider,
              accountsReady: Bool = true, restoredAccountIDs: [String] = [],
+             writingStyle: AssistantWritingStyleModel? = nil,
              acknowledge: @escaping @MainActor (String) -> Void = { _ in },
              execute: @escaping @MainActor (AIToolCall) async throws -> MailAssistantToolResult = { _ in .init(data: .null) }) throws {
             domain = "TernAssistantTests." + UUID().uuidString
@@ -608,7 +652,7 @@ import TernAI
             model = AssistantModel(app: AppModel(), connection: ChatGPTConnection(store: VolatileAIConnectionStore()),
                 provider: provider, defaults: defaults, context: { context.value() }, makeTools: { _ in
                     .init(definitions: MailAssistantTools.definitions, acknowledge: acknowledge, execute: execute)
-                })
+                }, writingStyle: writingStyle)
             model.selectedScope = .currentAccount
             model.setAccountEnabled("a", enabled: true)
         }

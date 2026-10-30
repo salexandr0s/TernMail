@@ -11,7 +11,7 @@ The feature list and AI-first priority reflect the owner's request. The owner su
 | ID | Feature | Intended result |
 |---|---|---|
 | F00 | Shared AI integration | One service that every AI feature can call, with mail access, attachment reading, source links, and controlled actions. Build first. |
-| F01 | Personal assistant | A floating chatbot that can answer questions and prepare work across the mailbox. |
+| F01 | Personal assistant | A sidebar chat that answers questions and prepares work across the mailbox, with popout and fullscreen views. |
 | F15 | Calendar | Apple Calendar-style views and interactions backed by Google Calendar, events detected in email, and calendar-aware assistant proposals. Build immediately after F00/F01. |
 | F02 | Attachment library | All received attachments in list and card views, with search and filters. |
 | F03 | Thread summaries and open tasks | An assistant summary bubble above the conversation, including decisions and unfinished work. |
@@ -86,14 +86,15 @@ Use synthetic mail for repeatable checks and an explicitly enabled account for l
 
 ### F01. Personal assistant
 
-- A floating entry point at the bottom right opens the chatbot.
+- Open the assistant in a right sidebar, narrowing the reader and minimizing the mail navigation and list panes.
 - The conversation can expand to fullscreen or detach into a separate window, similar to a compose window. Preserve the same conversation when changing presentation.
 - Answer questions such as "What are my priorities?", "What did we agree with Anna?", and "Which emails still need a reply?"
 - Read entire threads, inspect attachments, and work across the selected mailbox scope. Support explicit full-mailbox analysis through the scanning workflow described in F00.
 - Prepare new messages and replies on request, and use additional registered actions as they become available.
+- Learn each enabled account's writing style from up to 100 recent sent messages when ChatGPT is ready. Apply that account's tone, language, formatting, capitalization, and emoji habits to drafts; follow explicit user instructions first. Show learning status and provide relearn and off controls.
 - Show the context in use, clickable sources, progress, and any gaps in what was read. Let the user start a new conversation or clear saved assistant history.
 
-The initial integration includes compact chat, fullscreen, and a detached window. Broader mailbox analysis can follow through the same service layer.
+The integration includes sidebar chat, fullscreen, a detached window, and [account writing profiles](assistant-writing-style.md). Broader mailbox analysis can follow through the same service layer.
 
 ### F15. Calendar
 

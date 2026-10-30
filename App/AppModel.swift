@@ -613,11 +613,14 @@ final class AppModel {
     private func removeAccountData(
         _ account: AccountRecord, session: AccountSession?, from accounts: AccountStore
     ) async throws {
+        assistantModel?.forgetAccount(account.id)
         try await accounts.deleteAccount(id: account.id)
         await calendarModel?.removeAccount(account.id)
         session?.signOut()
         // A session that failed to restore at launch can leave its item behind.
         try? KeychainStore.delete(account: account.id)
+        do { try AssistantWritingStyleCleanup.remove(accountID: account.id) }
+        catch { reportSignInError("Some saved writing-style data could not be deleted.") }
         try await removeCachedData(accountIDs: [account.id])
     }
 

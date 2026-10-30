@@ -67,6 +67,7 @@ struct MainView: View {
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
         .focusedSceneValue(\.mailboxModel, isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID ? mailbox : nil)
         .onAppear { mailbox.undoManager = undoManager }
+        .task { await app.assistant.refreshConnection() }
         .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }

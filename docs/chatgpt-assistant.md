@@ -15,6 +15,16 @@ The assistant can search mail, read threads, extract supported attachments, and 
 
 Broad requests review a bounded selection of conversations. Tern reserves the end of each request for displaying relevant emails and answering from the results already gathered; replies should identify incomplete coverage.
 
+## Learn your writing style
+
+Once ChatGPT, a model, and mail access are ready, Tern learns a separate writing profile for each enabled mail account. It inspects up to 100 recent sent messages and sends bounded excerpts of your authored text to ChatGPT. Common quoted exchanges, forwarded messages, and signatures are removed first; this filtering is a heuristic and can miss unusual formats. Ordinary attachments are not used for learning.
+
+The profile records tone, length, greetings, closing patterns, formatting, and observed languages. It contains no saved excerpts or message facts. Profiles stay on this device and survive ordinary reconnection. A draft uses the profile for its sending account, follows the current conversation's language and recipient context, and gives your explicit instructions priority. Learning does not change the assistant's chat voice or send mail.
+
+Open **Settings → Assistant → Writing style** to see progress and the number of samples used. **Relearn** refreshes the profile from sent mail. Turning off learning deletes that account's profile; removing its assistant mail access also deletes it. Accounts with fewer than five usable samples or too little authored text show insufficient evidence rather than a guessed profile.
+
+If a draft is requested during learning, Tern waits briefly for the profile before creating it. When learning is still running, it reports that no draft was created. If learning failed or there is too little evidence, drafts can still use the current conversation; Tern reports that the personal style was unavailable.
+
 ## Chat controls and data
 
 The assistant opens as a right sidebar inside the existing window. Mailbox navigation and the conversation list shrink while it is open. At narrow widths, mailbox navigation temporarily closes. Closing the assistant restores the earlier layout. Drag its left edge to resize it, or use **Options** to open a separate window or full-screen view. All three views share the conversation and unfinished message.
@@ -23,7 +33,7 @@ Replies support headings, lists, emphasis, quotes, code, and tables. Email cards
 
 **Stop response** cancels the current request. **Try again** retries a failed reply while retaining email cards and drafts already created. Retrying cannot create another draft after one has succeeded; ask in a new message to prepare another. **New chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits. Scroll up to read earlier messages without following new output; **Jump to latest** resumes following it.
 
-Mail access starts disabled. Relevant content from enabled accounts is sent to OpenAI when needed for your requests. Changing the effective scope or removing access clears retained conversation content and cancels active work. Reading mail through the assistant does not mark it read. Sending remains an action in the compose window.
+Mail access starts disabled. Relevant content from enabled accounts is sent to OpenAI for your requests and for automatic writing-style setup when learning is enabled. Changing the effective scope or removing access clears retained conversation content and cancels active work. Reading mail through the assistant does not mark it read. Sending remains an action in the compose window.
 
 Tern stores its own ChatGPT connection in macOS Keychain, separate from Gmail and other apps. **Disconnect** clears local authorization and requests remote revocation. If revocation fails, Tern reports it; local use remains disabled. **Manage usage** opens ChatGPT's usage controls.
 
@@ -52,5 +62,7 @@ The independent Swift implementation follows the [official cookbook](https://dev
 The shared `TernAI` Core module handles authentication, model discovery, streaming Responses, namespaced tools, and structured output. The app supplies Keychain storage, browser sign-in, account permissions, attachment extraction, and conversation state. SyncEngine supplies bounded mail reads and queued draft creation. The same provider and scoped retrieval support `AssistantModel.summarize(thread:)`, which returns validated source references, decisions, and open tasks for future reader features.
 
 For live testing with synthetic mail, launch a Debug build with `--ui-audit --ui-audit-live-chatgpt`. The second flag explicitly enables Tern's ordinary ChatGPT Keychain storage while mail remains synthetic. Without it, audit previews use a temporary connection that ends when the preview quits. Hosted tests always use isolated connection storage.
+
+Add `--ui-audit-writing-style` for 100 synthetic sent messages per account, with informal English and formal German examples. Writing profiles in audit previews stay in memory. See the [writing-style plan](plans/assistant-writing-style.md) for limits and verification.
 
 See the [implementation plan](plans/chatgpt-integration.md) for verification targets and the [feature roadmap](plans/ai-and-features-roadmap.md) for later product features.

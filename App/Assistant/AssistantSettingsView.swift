@@ -11,6 +11,7 @@ struct AssistantSettingsView: View {
                 connectionSection
                 if model.connection.canUsePlan { modelSection }
                 accountsSection
+                AssistantWritingStyleSettingsSection(model: model.writingStyle)
                 privacySection
             }
             .padding(Tokens.Space.s5)
@@ -256,7 +257,7 @@ struct AssistantSettingsView: View {
     private var privacySection: some View {
         AssistantSettingsSection("Privacy", systemImage: "lock") {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                Text("When you ask, relevant mail and attachment text from enabled accounts can be sent to OpenAI. The assistant prepares drafts; you review and send them in Tern.")
+                Text("Relevant mail and attachment text from enabled accounts can be sent to OpenAI for your requests. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -61,11 +61,19 @@ struct AssistantMessageView: View {
                 }
             }
             ForEach(message.draftIDs, id: \.self) { draftID in
-                Button { onOpenDraft(draftID) } label: {
-                    Label("Review draft", systemImage: "square.and.pencil")
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Button { onOpenDraft(draftID) } label: {
+                        Label("Review draft", systemImage: "square.and.pencil")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Open the editable draft in Tern")
+                    if let note = message.draftStyleNotes[draftID] {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .help("Open the editable draft in Tern")
             }
             if !sources.isEmpty {
                 DisclosureGroup(isExpanded: $showsSources) {

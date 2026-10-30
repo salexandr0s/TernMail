@@ -81,6 +81,15 @@ actor AuditGmail: GmailService {
                     ageDays: index == 124 ? 730 : index)
             }
         }
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit-writing-style") {
+            mail += (0..<100).map { index in
+                Message(id: "writing-\(index)", thread: "writing-thread-\(index)",
+                    subject: "Synthetic sent reply \(index + 1)",
+                    text: WritingStyleAuditFixtures.message(index: index, formal: account == .second),
+                    html: false, labels: ["SENT"],
+                    from: account == .first ? "UI Audit <audit@example.invalid>" : "Second Audit <second@example.invalid>")
+            }
+        }
     }
 
     private static let secondMail: [Message] = [
@@ -123,7 +132,7 @@ actor AuditGmail: GmailService {
             labelIDs.allSatisfy(message.labels.contains) && (includeSpamTrash || message.labels.isDisjoint(with: ["TRASH", "SPAM"]))
                 && (query != "has:attachment" || message.attachment != nil)
         }
-        if query == "has:attachment" {
+        if query == "has:attachment" || query == "in:sent" {
             let offset = Int(pageToken ?? "0") ?? 0
             let page = selected.dropFirst(offset).prefix(maxResults)
             var json: [String: Any] = ["messages": page.map { ["id": $0.id, "threadId": $0.thread] }]

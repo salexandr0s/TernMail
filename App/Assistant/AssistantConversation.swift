@@ -24,6 +24,7 @@ struct AssistantMessage: Identifiable {
     var sources: [AssistantSource]
     var emailResults: [AssistantEmailResult]
     var draftIDs: [String]
+    var draftStyleNotes: [String: String] = [:]
     var calendarProposals: [AssistantCalendarProposal] = []
     var availabilityChoices: [AssistantAvailabilityChoice] = []
     var state: State
@@ -110,6 +111,7 @@ struct AssistantToolSession {
     let definitions: [AIToolDefinition]
     let execute: @MainActor (AIToolCall) async throws -> MailAssistantToolResult
     let acknowledge: @MainActor (String) -> Void
+    var executeWithWritingStyle: (@MainActor (AIToolCall, AssistantWritingStyleRound) async throws -> MailAssistantToolResult)?
 
     init(definitions: [AIToolDefinition],
          acknowledge: @escaping @MainActor (String) -> Void = { _ in },

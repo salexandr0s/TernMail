@@ -53,16 +53,18 @@ struct AssistantToolResult: Sendable {
     let emailResults: [AssistantEmailResult]
     let calendarProposals: [AssistantCalendarProposal]
     let availabilityChoices: [AssistantAvailabilityChoice]
+    let draftStyleNote: String?
 
     init(data: AIJSON, sources: [AssistantSource] = [], createdDraftID: String? = nil,
          emailResults: [AssistantEmailResult] = [], calendarProposals: [AssistantCalendarProposal] = [],
-         availabilityChoices: [AssistantAvailabilityChoice] = []) {
+         availabilityChoices: [AssistantAvailabilityChoice] = [], draftStyleNote: String? = nil) {
         self.data = data
         self.sources = sources
         self.createdDraftID = createdDraftID
         self.emailResults = emailResults
         self.calendarProposals = calendarProposals
         self.availabilityChoices = availabilityChoices
+        self.draftStyleNote = draftStyleNote
     }
 }
 
@@ -79,6 +81,8 @@ final class MailAssistantTools {
     private let allowedThreadIDs: Set<ThreadKey>?
     private let isScopeValid: @MainActor () -> Bool
     private var draftCalls = DraftCalls()
+    var writingStyleGate: (@MainActor (String, AssistantWritingStyleRound?) async throws -> AssistantDraftStyleDecision)?
+    var writingStyleIsCurrent: (@MainActor (String, AssistantWritingStyleRound?, AssistantDraftStyleDecision) -> Bool)?
     private var emailSources: [String: String] = [:]
     private var retrievedEmails: [String: RegisteredEmail] = [:]
 
@@ -110,6 +114,19 @@ final class MailAssistantTools {
         }
 
         private var calls: [String: Reservation] = [:]
+
+        mutating func completed(_ call: AIToolCall, arguments: AIJSON) throws -> MailAssistantToolResult? {
+            if let prior = calls[call.id] {
+                guard prior.matches(call, arguments: arguments) else { throw ToolError.changedCall }
+                return prior.result
+            }
+            if let prior = calls.values.first(where: { !$0.published && $0.result != nil && $0.matches(call, arguments: arguments) }) {
+                guard calls.count < 50 else { throw ToolError.narrowScope }
+                calls[call.id] = prior
+                return prior.result
+            }
+            return nil
+        }
 
         mutating func reserve(_ call: AIToolCall, arguments: AIJSON) throws -> Reservation {
             if let prior = calls[call.id] {
@@ -148,7 +165,7 @@ final class MailAssistantTools {
         self.isScopeValid = isScopeValid
     }
 
-    func execute(_ call: AIToolCall) async throws -> MailAssistantToolResult {
+    func execute(_ call: AIToolCall, writingStyleRound: AssistantWritingStyleRound? = nil) async throws -> MailAssistantToolResult {
         try checkScope()
         guard call.namespace == "tern", !call.id.isEmpty, call.arguments.utf8.count <= 150_000,
               let definition = Self.definitions.first(where: { $0.name == call.name }),
@@ -161,7 +178,7 @@ final class MailAssistantTools {
         case "read_thread": result = try await readThread(arguments)
         case "read_attachment": result = try await readAttachment(arguments)
         case "present_emails": result = try presentEmails(arguments)
-        case "prepare_draft": result = try await prepareDraft(arguments, call: call)
+        case "prepare_draft": result = try await prepareDraft(arguments, call: call, writingStyleRound: writingStyleRound)
         default: throw ToolError.invalidArguments
         }
         try checkScope()
@@ -345,7 +362,8 @@ final class MailAssistantTools {
         ]), sources: [source])
     }
 
-    private func prepareDraft(_ args: [String: AIJSON], call: AIToolCall) async throws -> MailAssistantToolResult {
+    private func prepareDraft(_ args: [String: AIJSON], call: AIToolCall,
+                              writingStyleRound: AssistantWritingStyleRound?) async throws -> MailAssistantToolResult {
         let accountID = try string(args, "account_id")
         let mode = try string(args, "reply_mode")
         let threadID = try optionalString(args, "thread_id")
@@ -370,6 +388,15 @@ final class MailAssistantTools {
             kind = mode == "reply" ? .reply : .replyAll
         default: throw ToolError.invalidArguments
         }
+        if let completed = try draftCalls.completed(call, arguments: .object(args)) { return completed }
+        let styleDecision = try await writingStyleGate?(accountID, writingStyleRound)
+        try checkOwner(owner)
+        if let styleDecision, !styleDecision.mayCreateDraft {
+            return .init(data: .object([
+                "status": .string("draft_not_created"), "style_applied": .bool(false),
+                "style_status": .string(styleDecision.status), "note": .string(styleDecision.note),
+            ]))
+        }
         let reserved = try draftCalls.reserve(call, arguments: .object(args))
         if let result = reserved.result { return result }
         let draft = try await owner.engine.assistantPrepareDraft(
@@ -378,15 +405,26 @@ final class MailAssistantTools {
             isAuthorized: { [weak self, weak owner] in
                 await MainActor.run {
                     guard let self, let owner else { return false }
-                    return (try? self.checkOwner(owner)) != nil
+                    guard (try? self.checkOwner(owner)) != nil else { return false }
+                    if let styleDecision {
+                        return self.writingStyleIsCurrent?(accountID, writingStyleRound, styleDecision) ?? true
+                    }
+                    return true
                 }
             }
         )
-        let result = MailAssistantToolResult(data: .object([
+        var data: [String: AIJSON] = [
             "draft_id": .string(draft.id), "account_id": .string(accountID),
             "status": .string("Editable draft created; Gmail draft save queued. Nothing was sent."),
             "subject": .string(draft.subject), "to": .array(draft.to.map { .string($0.address) })
-        ]), createdDraftID: draft.id)
+        ]
+        if let styleDecision {
+            data["style_applied"] = .bool(styleDecision.styleApplied)
+            data["style_status"] = .string(styleDecision.status)
+            data["style_note"] = .string(styleDecision.note)
+        }
+        let result = MailAssistantToolResult(data: .object(data), createdDraftID: draft.id,
+            draftStyleNote: styleDecision.flatMap { $0.styleApplied ? nil : $0.note })
         // The cache transaction has committed. Preserve its outcome even if scope
         // revocation or cancellation prevents this call from publishing it.
         reserved.result = result
