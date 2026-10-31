@@ -60,8 +60,10 @@ enum AttachmentActions {
         return destination
     }
 
-    static func saveAll(_ files: [URL]) async throws {
-        guard !files.isEmpty else { return }
+    /// How many of `files` reached the chosen folder, or nil when the panel was cancelled.
+    /// A file that fails to copy is skipped, so the rest still arrive.
+    static func saveAll(_ files: [URL]) async -> Int? {
+        guard !files.isEmpty else { return 0 }
         let panel = NSOpenPanel()
         panel.title = "Save All Attachments"
         panel.prompt = "Save"
@@ -69,8 +71,10 @@ enum AttachmentActions {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
-        guard response == .OK, let directory = panel.url else { return }
-        for file in files { _ = try await AttachmentFileExport.copyWithoutReplacing(file, to: directory) }
+        guard response == .OK, let directory = panel.url else { return nil }
+        var saved = 0
+        for file in files where (try? await AttachmentFileExport.copyWithoutReplacing(file, to: directory)) != nil { saved += 1 }
+        return saved
     }
 }
 

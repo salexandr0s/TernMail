@@ -21,6 +21,9 @@ struct CalendarTimeGrid: View {
     @State var drag: CalendarTimelineDrag?
     @State var dragCancelled = false
     @GestureState var pointerIsDown = false
+    /// Starts at 8 AM: the top padding plus eight `hourHeight` rows. A user's scroll
+    /// replaces the point, so the grid is never pulled back to it.
+    @State private var hourScroll = ScrollPosition(y: Tokens.Space.s2 + 8 * Tokens.Space.s16)
 
     var days: [Date] {
         guard let interval = calendar.dateInterval(of: isWeek ? .weekOfYear : .day, for: date) else { return [] }
@@ -79,27 +82,25 @@ struct CalendarTimeGrid: View {
             Divider()
             allDayLane(columnWidth: columnWidth)
             Divider()
-            ScrollViewReader { proxy in
-                ScrollView(.vertical) {
-                    HStack(alignment: .top, spacing: 0) {
-                        VStack(spacing: 0) {
-                            ForEach(0..<24) { hour in
-                                Text(CalendarLayout.format(CalendarInteraction.date(at: hour * 60, on: date, calendar: calendar),
-                                                           style: .dateTime.hour(), calendar: calendar))
-                                    .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
-                                    .frame(width: gutter - Tokens.Space.s2, height: hourHeight, alignment: .topTrailing)
-                                    .padding(.trailing, Tokens.Space.s2).id(hour)
-                            }
+            ScrollView(.vertical) {
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        ForEach(0..<24) { hour in
+                            Text(CalendarLayout.format(CalendarInteraction.date(at: hour * 60, on: date, calendar: calendar),
+                                                       style: .dateTime.hour(), calendar: calendar))
+                                .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                                .frame(width: gutter - Tokens.Space.s2, height: hourHeight, alignment: .topTrailing)
+                                .padding(.trailing, Tokens.Space.s2)
                         }
-                        ForEach(days, id: \.self) { day in dayColumn(day, width: columnWidth) }
                     }
-                    .calendarTimelineFrame(.content)
-                    .background(CalendarDragAutoScroll(direction: scrollDirection))
-                    .padding(.top, Tokens.Space.s2)
+                    ForEach(days, id: \.self) { day in dayColumn(day, width: columnWidth) }
                 }
-                .calendarTimelineFrame(.viewport)
-                .onAppear { proxy.scrollTo(8, anchor: .top) }
+                .calendarTimelineFrame(.content)
+                .background(CalendarDragAutoScroll(direction: scrollDirection))
+                .padding(.top, Tokens.Space.s2)
             }
+            .scrollPosition($hourScroll)
+            .calendarTimelineFrame(.viewport)
         }
     }
 

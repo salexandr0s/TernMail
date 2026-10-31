@@ -12,7 +12,10 @@ struct ReceivedAttachmentsView: View {
     let attachments: [AttachmentRecord]
     let mailbox: MailboxModel
 
-    @State private var loading: Set<String> = []
+    /// A second request for a file waits for its download instead of starting another.
+    @State private var downloads = InFlightTasks<String, URL?>()
+    @State private var isSavingAll = false
+    @State private var previewRequest: UUID?
     @State private var previewURL: URL?
     @State private var previewItems: [URL] = []
     /// Where Save… put each file, for Show in Finder.
@@ -26,7 +29,7 @@ struct ReceivedAttachmentsView: View {
                 Spacer()
                 if attachments.count > 1 {
                     Button("Save All…") { saveAll() }.font(.callout)
-                        .disabled(!loading.isEmpty)
+                        .disabled(isSavingAll)
                 }
             }
             FlowLayout(spacing: Tokens.Space.s2) {
@@ -34,7 +37,7 @@ struct ReceivedAttachmentsView: View {
                     AttachmentChip(
                         filename: attachment.filename,
                         size: attachment.size,
-                        isLoading: loading.contains(attachment.id),
+                        isLoading: downloads.isRunning(attachment.id),
                         open: { preview(attachment) }
                     ) {
                         Button {
@@ -64,7 +67,7 @@ struct ReceivedAttachmentsView: View {
                         Button("Copy", systemImage: "doc.on.doc") { act(attachment) { AttachmentActions.copy($0) } }
                         ShareLink(item: AttachmentFileItem(attachment: attachment, mailbox: mailbox), preview: SharePreview(attachment.filename))
                     }
-                    .disabled(loading.contains(attachment.id))
+                    .disabled(downloads.isRunning(attachment.id))
                 }
             }
         }
@@ -75,19 +78,24 @@ struct ReceivedAttachmentsView: View {
         .accessibilityLabel(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")
     }
 
-    /// Quick Look pages through the message's files, so they all come down first.
+    /// Quick Look opens as soon as the clicked file is here. The message's other
+    /// files join its list in message order as they arrive, so the arrow keys page
+    /// through them. Closing the panel or clicking another file stops the rest.
     private func preview(_ attachment: AttachmentRecord) {
+        let request = UUID()
+        previewRequest = request
         Task {
-            var files: [URL] = []
-            var selected: URL?
-            for item in attachments {
-                guard let file = await download(item) else { continue }
-                files.append(file)
-                if item.id == attachment.id { selected = file }
-            }
-            guard let selected else { return }
-            previewItems = files
+            guard let selected = await download(attachment), previewRequest == request else { return }
+            var files = [attachment.id: selected]
+            previewItems = [selected]
             previewURL = selected
+            for item in attachments where files[item.id] == nil {
+                guard previewRequest == request, previewURL != nil else { return }
+                guard let file = await download(item) else { continue }
+                guard previewRequest == request, previewURL != nil else { return }
+                files[item.id] = file
+                previewItems = attachments.compactMap { files[$0.id] }
+            }
         }
     }
 
@@ -105,22 +113,29 @@ struct ReceivedAttachmentsView: View {
         }
     }
 
+    /// Files that fail to download or copy are skipped, and the notice says how many arrived.
     private func saveAll() {
+        isSavingAll = true
         Task {
+            defer { isSavingAll = false }
             var files: [URL] = []
             for attachment in attachments {
-                guard let file = await download(attachment) else { return }
-                files.append(file)
+                if let file = await download(attachment) { files.append(file) }
             }
-            do { try await AttachmentActions.saveAll(files) }
-            catch { mailbox.notice = MailboxModel.Notice(message: "Couldn't save all attachments. Try another folder.", isError: true) }
+            // A failed download has already shown why.
+            guard !files.isEmpty, let saved = await AttachmentActions.saveAll(files) else { return }
+            let total = attachments.count
+            mailbox.notice = switch saved {
+            case total: MailboxModel.Notice(message: "Saved all \(total) attachments.")
+            case 0: MailboxModel.Notice(message: "Couldn't save the attachments. Try another folder.", isError: true)
+            default: MailboxModel.Notice(message: "Saved \(saved) of \(total) attachments.", isError: true)
+            }
         }
     }
 
     private func download(_ attachment: AttachmentRecord) async -> URL? {
-        guard loading.insert(attachment.id).inserted else { return nil }
-        defer { loading.remove(attachment.id) }
-        return await mailbox.download(attachment)
+        let mailbox = mailbox
+        return await downloads.value(for: attachment.id) { await mailbox.download(attachment) }
     }
 }
 
