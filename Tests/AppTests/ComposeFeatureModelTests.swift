@@ -84,6 +84,50 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func automaticSenderChangeShowsInTheCopyAndUndoMovesTheMessageBack() async throws {
+        let old = UserDefaults.standard.object(forKey: ComposePreferences.defaultAccountKey)
+        UserDefaults.standard.set("", forKey: ComposePreferences.defaultAccountKey)
+        defer { UserDefaults.standard.set(old, forKey: ComposePreferences.defaultAccountKey) }
+        let store = try AccountStore.inMemory()
+        let first = AccountRecord(id: "a", email: "first@example.com", displayName: nil, grantedScopes: [], addedAt: .now)
+        let second = AccountRecord(id: "b", email: "second@example.com", displayName: "Second Audit", grantedScopes: [], addedAt: .now)
+        try await store.save(first); try await store.save(second)
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            _ = try tx.upsertMessages([CacheTransaction.MessageUpdate(record: MessageRecord(
+                accountID: second.id, id: "recent", threadID: "t", historyID: 1, date: .now,
+                snippet: "", sender: "pat@example.com", recipients: second.email, cc: nil, subject: "", sizeEstimate: 0
+            ), labelIDs: [])])
+        }
+        let mailbox = MailboxModel(account: first, cache: cache, gmail: AuditGmail(),
+                                   outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString), snoozeStore: store)
+        await mailbox.addAccount(second, gmail: AuditGmail(.second))
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.content.to = [.init(name: "Pat", address: "pat@example.com")]
+        try await waitUntil { model.phase != .open && model.phase != .moving }
+        guard case .moved(let movedID) = model.phase else { Issue.record("The sender didn't change"); return }
+        let change = try #require(model.copySenderChange)
+        #expect(change.note == "Sending from Second Audit because your last email with Pat is there.")
+        #expect(change.previousAccountID == first.id && change.previousAddress == first.email)
+
+        let copy = ComposeModel(localDraftID: movedID, mailbox: mailbox, senderChange: change)
+        copy.start()
+        try await waitUntil { copy.phase == .open }
+        #expect(copy.draft?.accountID == second.id && copy.senderChange == change)
+        copy.undoSenderChange()
+        try await waitUntil { copy.phase != .open && copy.phase != .moving }
+        guard case .moved(let backID) = copy.phase else { Issue.record("Undo didn't move the message"); return }
+        // Undo is a choice, so the message's next copy has no note.
+        #expect(copy.copySenderChange == nil)
+        let back = try #require(try await cache.read { try $0.localDraft(id: backID) })
+        #expect(back.accountID == first.id && back.fromAddress == first.email && back.to.map(\.address) == ["pat@example.com"])
+        await mailbox.stop()
+    }
+
     @Test func groupCompletionInsertsOnlyACompleteExpansionAndCancelsLateResults() async throws {
         let existing = EmailAddress(address: "existing@example.com")
         var recipients = [existing]
@@ -172,5 +216,11 @@ import Testing
         UserDefaults.standard.set("b", forKey: ComposePreferences.defaultAccountKey)
         #expect(mailbox.composeAccount.account.id == "b")
         await mailbox.stop()
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(condition(), "The compose window did not reach the expected state")
     }
 }

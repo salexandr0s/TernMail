@@ -13,13 +13,18 @@ struct ComposeWindow: View {
 
     /// Changes when the message moves to another account, which makes a copy.
     @Binding var localDraftID: String?
+    /// What the view of the moved message passes to the copy's view.
+    @State private var handoff: ComposeView.Handoff?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
             if let id = localDraftID, let mailbox = app.mailbox {
-                ComposeView(localDraftID: id, mailbox: mailbox) { localDraftID = $0 }
+                ComposeView(localDraftID: id, mailbox: mailbox, handoff: handoff?.localDraftID == id ? handoff : nil) {
+                    handoff = $0
+                    localDraftID = $0.localDraftID
+                }
                     // Each draft, and a new sign-in's mailbox, needs its own model.
                     .id(id)
                     .id(ObjectIdentifier(mailbox))
@@ -40,8 +45,16 @@ struct ComposeView: View {
     static let minWidth = Tokens.Layout.composeMinWidth
     static let minHeight = Tokens.Layout.composeMinHeight
 
-    private enum Field: Hashable {
-        case to, cc, bcc, subject, from
+    enum Field: Hashable {
+        case to, cc, bcc, subject, from, message
+    }
+
+    /// What a view passes to the one showing the copy its message moved to.
+    struct Handoff {
+        let localDraftID: String
+        /// Where the cursor was, so typing carries on in the same field.
+        let focus: Field?
+        let senderChange: ComposeModel.SenderChange?
     }
 
     @State private var model: ComposeModel
@@ -55,12 +68,22 @@ struct ComposeView: View {
     /// views, which `focus` can't reach.
     @State private var recipientFocus: Field?
     @State private var focusedRecipient: Field?
+    /// Where the cursor was last while the message could change.
+    @State private var lastFocus: Field?
+    /// Moves the cursor to the end of Subject, which selects all its text when it takes focus.
+    @State private var subjectSelection: TextSelection?
+    /// Set while the cursor goes back to Subject in a copy made by a move.
+    @State private var keepsSubjectText = false
+    @State private var highlightsFrom = false
     @Environment(\.dismiss) private var dismiss
+    /// Where the cursor starts in a copy made by a move.
+    private let restoredFocus: Field?
     /// Shows the copy the window's message became in another account.
-    private let onMove: (String) -> Void
+    private let onMove: (Handoff) -> Void
 
-    init(localDraftID: String, mailbox: MailboxModel, onMove: @escaping (String) -> Void) {
-        _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox))
+    init(localDraftID: String, mailbox: MailboxModel, handoff: Handoff? = nil, onMove: @escaping (Handoff) -> Void) {
+        _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox, senderChange: handoff?.senderChange))
+        restoredFocus = handoff?.focus
         self.onMove = onMove
     }
 
@@ -96,9 +119,20 @@ struct ComposeView: View {
             case .loading, .moving: break
             case .open: await placeFocus()
             case .closed: dismiss()
-            case .moved(let localDraftID): onMove(localDraftID)
+            case .moved(let localDraftID):
+                onMove(Handoff(localDraftID: localDraftID, focus: lastFocus, senderChange: model.copySenderChange))
             }
         }
+        // Runs when the copy of a move the window made by itself opens.
+        .task(id: model.phase == .open ? model.senderChange : nil) { await highlightSenderChange() }
+        .onChange(of: focus) { _, field in
+            if let field { noteFocus(field) }
+            if field == .subject, keepsSubjectText {
+                keepsSubjectText = false
+                subjectSelection = TextSelection(insertionPoint: model.content.subject.endIndex)
+            }
+        }
+        .onChange(of: model.isEditingMessage) { _, isEditing in if isEditing { noteFocus(.message) } }
         .onAppear(perform: configureSenderAvatars)
         .onChange(of: senderAvatarIdentity) { _, _ in configureSenderAvatars() }
         .onDisappear { senderAvatars.stop(); model.windowClosed() }
@@ -226,7 +260,7 @@ struct ComposeView: View {
             }
             rowDivider
             fieldRow("Subject:", field: .subject) {
-                TextField("", text: $model.content.subject)
+                TextField("", text: $model.content.subject, selection: $subjectSelection)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .labelsHidden()
@@ -236,6 +270,9 @@ struct ComposeView: View {
             if model.showsFrom {
                 rowDivider
                 fromField
+                if let change = model.senderChange {
+                    senderChangeNote(change)
+                }
             }
         }
         .disabled(!model.isEditable)
@@ -308,10 +345,37 @@ struct ComposeView: View {
         .menuIndicator(.hidden)
         .controlSize(.regular)
         .focused($focus, equals: .from)
+        .background {
+            if highlightsFrom {
+                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                    .fill(Color.accentColor.opacity(Tokens.Opacity.tint))
+                    .padding(.vertical, Tokens.Space.s0_5)
+                    .transition(.opacity)
+            }
+        }
         .overlay { focusRing(focus == .from) }
+        .ternAnimation(value: highlightsFrom)
         .help(model.canChangeAccount ? "Choose a sending address." : "Choose a sending address from this conversation’s account.")
         .accessibilityLabel("From")
         .accessibilityValue(model.fromEmail)
+    }
+
+    /// Says why the window changed the sender, with a way back.
+    private func senderChangeNote(_ change: ComposeModel.SenderChange) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+            Text(change.note)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Undo") { model.undoSenderChange() }
+                .controlSize(.small)
+                .help("Send from \(change.previousAccountName) instead")
+        }
+        // Lines up with the From value above.
+        .padding(.leading, Tokens.Space.s2 + Tokens.Layout.composeLabelWidth + Tokens.Space.s2)
+        .padding(.trailing, Tokens.Space.s2)
+        .padding(.bottom, Tokens.Space.s1_5)
     }
 
     private func fieldRow<Content: View>(
@@ -355,7 +419,15 @@ struct ComposeView: View {
         case .to, .cc, .bcc:
             focus = nil
             recipientFocus = field
+        case .message:
+            focus = nil
+            recipientFocus = nil
+            model.editor?.focus()
         }
+    }
+
+    private func noteFocus(_ field: Field) {
+        if model.isEditable { lastFocus = field }
     }
 
     private func recipientField(_ label: String, addresses: Binding<[EmailAddress]>, field: Field) -> some View {
@@ -371,6 +443,7 @@ struct ComposeView: View {
             onFocusChange: { isFocused in
                 if isFocused {
                     focusedRecipient = field
+                    noteFocus(field)
                 } else if focusedRecipient == field {
                     focusedRecipient = nil
                 }
@@ -388,7 +461,7 @@ struct ComposeView: View {
         switch field {
         case .cc: model.showsCc = true
         case .bcc: model.showsBcc = true
-        case .to, .subject, .from: break
+        case .to, .subject, .from, .message: break
         }
         focusField(field)
     }
@@ -530,18 +603,36 @@ struct ComposeView: View {
     // MARK: Private
 
     /// A reply starts in the message; anything without recipients starts in To.
+    /// A copy made by a move starts where the cursor was, so the next Tab
+    /// goes where it would have gone without the move.
     private func placeFocus() async {
         guard !hasPlacedFocus, let draft = model.draft else { return }
         hasPlacedFocus = true
         // Let the fields and editor join the window first.
         await Task.yield()
-        if draft.to.isEmpty && draft.cc.isEmpty && draft.bcc.isEmpty {
+        if let restoredFocus {
+            // Typing carries on after the subject instead of replacing it.
+            keepsSubjectText = restoredFocus == .subject
+            reveal(restoredFocus)
+        } else if draft.to.isEmpty && draft.cc.isEmpty && draft.bcc.isEmpty {
             recipientFocus = .to
         } else if draft.subject.isEmpty {
             focus = .subject
         } else {
             model.editor?.focus()
         }
+    }
+
+    /// Lights up the From row for a moment and reads the note aloud.
+    private func highlightSenderChange() async {
+        guard let change = model.senderChange, model.phase == .open else {
+            highlightsFrom = false
+            return
+        }
+        AccessibilityNotification.Announcement(change.note).post()
+        highlightsFrom = true
+        try? await Task.sleep(for: Tokens.Toast.info)
+        highlightsFrom = false
     }
 }
 

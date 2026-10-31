@@ -102,6 +102,27 @@ import Testing
         #expect(objects.compactMap { ($0 as? RecipientField.Token)?.address } == [original, second])
     }
 
+    @Test func focusingAFieldWithRecipientsLetsTypingAddAnother() throws {
+        let original = EmailAddress(name: "Original Bank", address: "team@original.invalid")
+        let recipient = RecipientField(label: "To", addresses: .constant([original]), requestsFocus: .constant(false), isEditable: true) { _ in [] }
+        let coordinator = recipient.makeCoordinator()
+        let field = RecipientField.makeField()
+        field.frame = NSRect(x: 0, y: 0, width: 500, height: 60)
+        field.delegate = coordinator
+        coordinator.field = field
+        coordinator.show([original])
+        let window = NSWindow(contentRect: field.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView?.addSubview(field)
+        defer { coordinator.cancelRequests(); window.close() }
+        // How the copy a sender change makes puts the cursor back in To.
+        RecipientField.focus(field)
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        try press("b", keyCode: 11, in: editor, window: window)
+        // The token is still there, with the typing after it.
+        #expect(editor.string == "\u{FFFC}b")
+    }
+
     @Test func staleSuggestionSelectionAndInputCompositionCannotReplaceText() throws {
         let recipient = RecipientField(label: "To", addresses: .constant([]), requestsFocus: .constant(false), isEditable: true) { _ in [] }
         let coordinator = recipient.makeCoordinator()
