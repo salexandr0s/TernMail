@@ -56,7 +56,7 @@ public struct CacheTransaction {
         "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "effectiveLabel",
         "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
-        "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold", "ownAddress",
+        "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold", "ownAddress", "unreadDelta",
         "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
     ]
 
@@ -64,18 +64,28 @@ public struct CacheTransaction {
 
     /// Replaces the account's labels with `labels`, writing only the rows that
     /// differ, so a refresh whose counts did not move wakes no observer.
-    public func replaceLabels(_ labels: [LabelRecord], accountID: String) throws {
+    /// `countedAt` is when Gmail was asked for the counts: the unread deltas
+    /// of changes it had accepted by then are in them, so they go. Counts
+    /// that don't come from Gmail pass nil and leave every delta.
+    public func replaceLabels(_ labels: [LabelRecord], accountID: String, countedAt: Date? = nil) throws {
         let stored = try storedLabels(accountID: accountID)
         let kept = try saveLabels(labels, stored: stored)
         for (id, old) in stored where !kept.contains(id) {
             try old.delete(db)
         }
+        if let countedAt {
+            try settleUnreadDeltas(labelIDs: nil, countedAt: countedAt, accountID: accountID)
+        }
     }
 
     /// Stores or updates `labels` and leaves the account's other labels as
     /// they are. A pass uses it for the labels whose counts its history moved.
-    public func saveLabels(_ labels: [LabelRecord], accountID: String) throws {
+    /// `countedAt` settles those labels' unread deltas as in `replaceLabels`.
+    public func saveLabels(_ labels: [LabelRecord], accountID: String, countedAt: Date? = nil) throws {
         _ = try saveLabels(labels, stored: try storedLabels(accountID: accountID))
+        if let countedAt {
+            try settleUnreadDeltas(labelIDs: Set(labels.map(\.id)), countedAt: countedAt, accountID: accountID)
+        }
     }
 
     /// Every label any of `messageIDs` carries.
@@ -398,7 +408,8 @@ public struct CacheTransaction {
     // MARK: Pending actions
 
     /// Records a local label change and rebuilds the affected threads so the UI
-    /// shows it at once. The diff is taken against what the user currently sees.
+    /// shows it at once, unread counts included. The diff is taken against
+    /// what the user currently sees.
     /// Nil when the change would alter no label the cache knows: nothing to
     /// show, send or undo. A deletion, or a message the cache has not seen,
     /// is never a no-op. Nor is a `compensating` change: it makes Gmail match
@@ -453,7 +464,7 @@ public struct CacheTransaction {
             createdAt: now, notBefore: notBefore, sentAt: nil
         )
         try action.insert(db)
-        try rebuildThreads(affectedThreads, accountID: accountID)
+        try rebuildThreads(affectedThreads, countingUnreadChangesOf: action)
         return action
     }
 
@@ -545,7 +556,8 @@ public struct CacheTransaction {
 
     /// Recovers rows a quit or crash left mid-send. `sending` rows go back in
     /// the queue (resending a label change is harmless) and `undone` rows are
-    /// dropped, since their inverse is already queued.
+    /// dropped, since their inverse is already queued, along with any unread
+    /// deltas left for changes that no longer apply.
     public func requeueInterruptedActions(accountID: String) throws {
         try db.execute(
             sql: "DELETE FROM pendingAction WHERE accountID = ? AND state = ?",
@@ -555,15 +567,18 @@ public struct CacheTransaction {
             sql: "UPDATE pendingAction SET state = ?, attempts = MAX(attempts, 1) WHERE accountID = ? AND state = ?",
             arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
         )
+        try forgetStaleUnreadDeltas(accountID: accountID)
     }
 
     /// Saves a change to a row. When the change alters what the row does to
     /// labels (its state, targets or labels), the conversations it reaches are
     /// rebuilt so their effective labels follow; one that keeps the effect,
-    /// such as a new attempt count, rebuilds nothing.
+    /// such as a new attempt count, rebuilds nothing. The row's unread deltas
+    /// follow its state (`followUnreadDeltas`).
     public func updateAction(_ action: PendingAction) throws {
         let stored = try action.id.flatMap { try PendingAction.fetchOne(db, key: $0) }
         try action.update(db)
+        try followUnreadDeltas(of: action)
         guard let stored, OverlayEffect(stored) != OverlayEffect(action) else { return }
         let threads = try overlayThreadIDs(of: stored).union(try overlayThreadIDs(of: action))
         try rebuildThreads(threads, accountID: action.accountID)
@@ -580,10 +595,11 @@ public struct CacheTransaction {
     }
 
     /// Removes an action and rebuilds the conversations it reached, which
-    /// reverts it locally.
+    /// reverts it locally. Its unread deltas go too, unless Gmail accepted it.
     public func deleteAction(id: Int64) throws {
         guard let action = try PendingAction.fetchOne(db, key: id) else { return }
         try action.delete(db)
+        try forgetUnsentUnreadDeltas(actionID: id, accountID: action.accountID)
         try rebuildThreads(try overlayThreadIDs(of: action), accountID: action.accountID)
     }
 
@@ -596,6 +612,8 @@ public struct CacheTransaction {
     /// those Gmail confirmed no history for whose send finished before
     /// `passStart`. A deleted label also comes off its messages again, since a
     /// pass that fetched before the delete reached Gmail may have stored it back.
+    /// Their unread deltas stay until a label refresh counted after the send
+    /// (`settleUnreadDeltas`), which follows the pass.
     public func dropSentActions(confirmedThrough cursor: Int64, passStart: Date, accountID: String) throws {
         let sent = try PendingAction
             .filter(Column("accountID") == accountID && Column("state") == PendingAction.State.sent.rawValue)

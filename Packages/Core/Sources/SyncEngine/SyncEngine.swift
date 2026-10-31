@@ -465,9 +465,10 @@ public actor SyncEngine {
         let deleted = deletedMessageIDs
         let profile = try await gmail.profile()
         guard let historyID = Int64(profile.historyId), historyID > 0 else { throw SyncError.invalidHistoryID }
+        let countedAt = now()
         let labels = try await fetchLabels()
         if !reset {
-            try await write { tx in try tx.replaceLabels(labels, accountID: accountID) }
+            try await write { tx in try tx.replaceLabels(labels, accountID: accountID, countedAt: countedAt) }
         }
 
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
@@ -509,7 +510,7 @@ public actor SyncEngine {
                 // thread loads can have added protected targets while we awaited.
                 let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
                 guard remaining.isEmpty else { return remaining }
-                try tx.replaceLabels(labels, accountID: accountID)
+                try tx.replaceLabels(labels, accountID: accountID, countedAt: countedAt)
                 try tx.replaceDrafts(drafts, accountID: accountID)
                 deleted.withLock { $0.formUnion(gone) }
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
@@ -612,16 +613,19 @@ public actor SyncEngine {
     /// all of them when the listing is older than `labelRefreshInterval`,
     /// otherwise only the counts of the labels the pass touched. A failure
     /// leaves the mail committed and makes the next pass list everything.
+    /// The counts hold every change Gmail accepted before they were asked
+    /// for, so those changes' unread deltas go with the write.
     private func refreshLabels(touched: Set<String>, passStart: Date) async throws {
         let accountID = accountID
+        let countedAt = now()
         do {
             if let refreshedAt = labelsRefreshedAt, passStart.timeIntervalSince(refreshedAt) < Self.labelRefreshInterval {
                 guard !touched.isEmpty else { return }
                 let labels = try await fetchLabels(ids: touched.sorted())
-                try await write { tx in try tx.saveLabels(labels, accountID: accountID) }
+                try await write { tx in try tx.saveLabels(labels, accountID: accountID, countedAt: countedAt) }
             } else {
                 let labels = try await fetchLabels()
-                try await write { tx in try tx.replaceLabels(labels, accountID: accountID) }
+                try await write { tx in try tx.replaceLabels(labels, accountID: accountID, countedAt: countedAt) }
                 labelsRefreshedAt = passStart
             }
         } catch {

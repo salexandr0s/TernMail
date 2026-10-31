@@ -349,6 +349,40 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         try await engine.sync()
         #expect(try await pendingActions(cache).isEmpty)
     }
+
+    @Test func theInboxCountFollowsAnArchiveUntilGmailCountsIt() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread]), ("m2", "t2", [SystemLabel.inbox, SystemLabel.unread])], cursor: 100)
+        func inbox(unread: Int) throws -> [GmailLabel] {
+            [try decode(GmailLabel.self, #"{"id":"INBOX","name":"INBOX","type":"system","threadsUnread":\#(unread)}"#)]
+        }
+        func inboxCounts() async throws -> LabelCounts? {
+            try await cache.read { tx in try tx.unreadCounts(accountID: account)[SystemLabel.inbox] }
+        }
+        await gmail.setLabels(try inbox(unread: 2))
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId": "110"}"#))
+        try await engine.sync()
+        #expect(try await inboxCounts()?.threadsUnread == 2)
+
+        await gmail.confirmChanges(at: 150)
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        #expect(try await inboxCounts()?.threadsUnread == 1)
+
+        // The pass after the send refreshes the Inbox count, which now holds
+        // the archive, so the local change stops counting.
+        clock.advance(3)
+        await engine.sendDueActions()
+        await gmail.setLabels(try inbox(unread: 1))
+        await gmail.queueHistory(try decode(HistoryPage.self, """
+            {"historyId": "160", "history": [
+              {"id": "150", "labelsRemoved": [{"message": {"id": "m1", "threadId": "t1"}, "labelIds": ["INBOX"]}]}
+            ]}
+            """))
+        clock.advance(1)
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+        #expect(try await inboxCounts() == LabelCounts(threadsUnread: 1, messagesUnread: nil, includesLocalChanges: false))
+    }
 }
 
 @Suite struct SyncPassTests {

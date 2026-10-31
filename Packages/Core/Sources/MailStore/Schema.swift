@@ -449,6 +449,23 @@ enum Schema {
                 t.primaryKey(["accountID", "address"])
             }
         }
+        migrator.registerMigration("unread-deltas-v1") { db in
+            // How each local change moves unread counts until Gmail's own
+            // counts include it, per label, in conversations and messages
+            // (`UnreadCounts.swift`). `sentAt` is set once Gmail accepts the
+            // change, and the first label refresh counted after it deletes
+            // the row. Changes queued before this have no rows and count as
+            // Gmail reports them.
+            try db.create(table: "unreadDelta") { t in
+                t.column("accountID", .text).notNull()
+                t.column("actionID", .integer).notNull()
+                t.column("labelID", .text).notNull()
+                t.column("threads", .integer).notNull()
+                t.column("messages", .integer).notNull()
+                t.column("sentAt", .datetime)
+                t.primaryKey(["accountID", "actionID", "labelID"])
+            }
+        }
         return migrator
     }
 

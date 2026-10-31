@@ -29,6 +29,7 @@ extension CacheTransaction {
         failed.lastError = message
         failed.sentAt = nil
         try failed.update(db)
+        try forgetUnsentUnreadDeltas(actionID: id, accountID: failed.accountID)
         try rebuildThreads(try overlayThreadIDs(of: failed), accountID: failed.accountID)
     }
 
@@ -69,7 +70,7 @@ extension CacheTransaction {
         row.notBefore = now
         row.lastError = nil
         try row.update(db)
-        try rebuildThreads(affectedThreads, accountID: accountID)
+        try rebuildThreads(affectedThreads, countingUnreadChangesOf: row)
         return true
     }
 
