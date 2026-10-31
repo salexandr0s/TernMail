@@ -12,7 +12,7 @@ struct MessageListRow: View {
     @AppStorage("mailTextScale") private var textScale = 1.0
 
     private var compact: Bool { mailbox.listPreferences.density == .compact }
-    private let avatarSize = Tokens.Space.s5
+    private let avatarSize = Tokens.Control.listAvatar
     private var scale: Double { min(1.5, max(0.85, textScale)) }
     private var thread: ThreadRecord { item.thread }
     private var displayedLabels: [LabelRecord] {

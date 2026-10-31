@@ -14,7 +14,7 @@ struct SuggestionBlocklistPane: View {
             SettingsGroup("Recipient suggestions", systemImage: "person.crop.circle.badge.checkmark") {
                 SettingsControlRow("Account") {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
-                        .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 Divider().padding(.horizontal, Tokens.Space.s4)
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {

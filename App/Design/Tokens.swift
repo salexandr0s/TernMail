@@ -37,6 +37,24 @@ enum Tokens {
         static let focus: CGFloat = 2
     }
 
+    /// Status colors. System colors carry Increase Contrast and dark variants
+    /// that the literal `.red` and friends lack.
+    enum Status {
+        static let error = Color(nsColor: .systemRed)
+        static let warning = Color(nsColor: .systemOrange)
+        static let success = Color(nsColor: .systemGreen)
+        static let star = Color(nsColor: .systemYellow)
+        static let important = Color(nsColor: .systemOrange)
+    }
+
+    /// Tint strengths for hover, pressed and selected states.
+    enum Opacity {
+        static let hover = 0.06
+        static let pressed = 0.10
+        static let tint = 0.14
+        static let disabled = 0.5
+    }
+
     /// Generated reading aids sit more quietly than the original message cards.
     enum ConversationHeader {
         static let surface = Surface.primary.opacity(0.45)
@@ -84,6 +102,8 @@ enum Tokens {
         static let sidebarWidth: CGFloat = 208
         static let contentWidth: CGFloat = 640
         static let controlWidth: CGFloat = 280
+        /// Pickers and fields inside a settings group.
+        static let pickerWidth: CGFloat = 240
         static let navigationIcon = Space.s5
         static let groupTint = 0.045
         static let rowHeight = Space.s6 + Space.s1
@@ -99,13 +119,16 @@ enum Tokens {
         static let iconButton = Space.s8
         static let avatar = Space.s8
         static let avatarLarge = Space.s10
+        /// Message list rows show a smaller disc than headers do.
+        static let listAvatar = Space.s5
     }
 
     enum Layout {
         static let windowWidth: CGFloat = 1280
         static let windowHeight: CGFloat = 800
-        static let windowMinWidth: CGFloat = 960
-        static let windowMinHeight: CGFloat = 600
+        // Two windows fit side by side on a 13-inch display.
+        static let windowMinWidth: CGFloat = 720
+        static let windowMinHeight: CGFloat = 480
         static let compactToolbarWidth: CGFloat = 1120
         static let sidebarMinWidth: CGFloat = 180
         static let sidebarWidth: CGFloat = 220
@@ -119,6 +142,12 @@ enum Tokens {
         static let emptyStateWidth: CGFloat = 320
         static let composeMinWidth: CGFloat = 480
         static let composeMinHeight: CGFloat = 360
+        /// The To, Cc and Subject column in a compose header.
+        static let composeLabelWidth: CGFloat = 64
+        /// Room to write below the recipients, files and quoted text.
+        static let editorMinHeight: CGFloat = 128
+        /// A sender name keeps this much width before the metadata wraps below it.
+        static let senderMinWidth: CGFloat = 128
         static let quoteMaxHeight: CGFloat = 128
         static let linkEditorWidth: CGFloat = 320
         static let attachmentWidth: CGFloat = 240

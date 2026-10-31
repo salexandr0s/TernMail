@@ -129,11 +129,67 @@ private struct TernAnimation<Value: Equatable>: ViewModifier {
     }
 }
 
+/// Hover feedback for rows and chips that act on a click. The tint fades
+/// unless Reduce Motion is on.
+private struct TernHover: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+    let radius: CGFloat
+    let pointer: PointerStyle?
+
+    func body(content: Content) -> some View {
+        content
+            .background(Color.primary.opacity(isHovered ? Tokens.Opacity.hover : 0),
+                        in: RoundedRectangle(cornerRadius: radius))
+            .onHover { isHovered = $0 }
+            .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isHovered)
+            .pointerStyle(pointer)
+    }
+}
+
 extension View {
     /// Adds a card surface without clipping controls or their focus rings.
     func ternSurface() -> some View { modifier(TernSurface()) }
 
     func ternAnimation<Value: Equatable>(value: Value) -> some View {
         modifier(TernAnimation(value: value))
+    }
+
+    /// Highlights the view under the pointer. Pass `.link` for views that open something.
+    func ternHover(radius: CGFloat = Tokens.Radius.sm, pointer: PointerStyle? = nil) -> some View {
+        modifier(TernHover(radius: radius, pointer: pointer))
+    }
+
+    /// The resize pointer for a divider or grip that moves along `axis`.
+    func ternResizeCursor(_ axis: Axis) -> some View {
+        pointerStyle(axis == .horizontal ? .columnResize(directions: .all) : .rowResize(directions: .all))
+    }
+
+    /// Asks before a destructive action. `message` says what happens to the data.
+    func ternConfirm(_ title: String, isPresented: Binding<Bool>, actionTitle: String, message: String,
+                     action: @escaping () -> Void) -> some View {
+        confirmationDialog(title, isPresented: isPresented, titleVisibility: .visible) {
+            Button(actionTitle, role: .destructive, action: action)
+        } message: {
+            Text(message)
+        }
+    }
+
+    /// Asks before a destructive action on `item`. Dismissing clears it.
+    func ternConfirm<Item>(_ title: String, item: Binding<Item?>, actionTitle: String, message: String,
+                           action: @escaping (Item) -> Void) -> some View {
+        confirmationDialog(
+            title,
+            isPresented: Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } }),
+            titleVisibility: .visible,
+            presenting: item.wrappedValue
+        ) { value in
+            Button(actionTitle, role: .destructive) {
+                action(value)
+                item.wrappedValue = nil
+            }
+        } message: { _ in
+            Text(message)
+        }
     }
 }

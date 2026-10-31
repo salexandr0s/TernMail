@@ -35,6 +35,7 @@
 		138BF9A1E3C38250DB455AAF /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
 		13C61620FC78DF39AB175B88 /* AIKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EFA2021825E119521E4EBA5 /* AIKeychainStore.swift */; };
 		1414E892B3205CC6D6AC8224 /* CalendarNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3252143356B0A34447719E42 /* CalendarNotifications.swift */; };
+		19DCEC093A715CC5BE5A7CF0 /* ShortcutCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17191321573C1967BF425698 /* ShortcutCatalogTests.swift */; };
 		1A801654E5A0E3D8AE2C52E1 /* CalendarManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E29A0B0B690F25D229A8C9B8 /* CalendarManagementView.swift */; };
 		1A83D898D548471315EB7094 /* AccountsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4297592C028D1762FD28480 /* AccountsSettings.swift */; };
 		1BE83A4C7652FFEB2974E6EA /* MailToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6E763B99120FDE987E6302E /* MailToolbar.swift */; };
@@ -284,6 +285,7 @@
 		F8BFADE9ABBA85FB519608E1 /* MailAssistantTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50845FEB4887030FFA81D657 /* MailAssistantTools.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
 		FBCD6B4B6D507B6F11016498 /* AssistantDiagram.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00C7C0E0A0991DFEA3E64177 /* AssistantDiagram.swift */; };
+		FCB2F6AD3C28DE6BEA9B7276 /* ShortcutCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C212AD8A8418047F6F4415 /* ShortcutCatalog.swift */; };
 		FD5BC0A9FAAFF1C7DEDB9685 /* DomainLogoImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5DFA8E241F0AC62F3F35C7 /* DomainLogoImages.swift */; };
 		FD5F7313514A8604464DDA59 /* CalendarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 682BE50A97AB9CAD17D6F129 /* CalendarModel.swift */; };
 		FD6DE2872464C2EE7C1666B2 /* VacationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0A30A770408A3231F4632D /* VacationPane.swift */; };
@@ -317,6 +319,7 @@
 		1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Snooze.swift"; sourceTree = "<group>"; };
 		14B2A60E7704812D2193EEA4 /* SenderAccountLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderAccountLabel.swift; sourceTree = "<group>"; };
 		15569EF35E74AFD2FC46ED3C /* AssistantSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSettingsView.swift; sourceTree = "<group>"; };
+		17191321573C1967BF425698 /* ShortcutCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutCatalogTests.swift; sourceTree = "<group>"; };
 		173B0F77FBAB74E108DD247F /* MailNotificationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailNotificationScheduler.swift; sourceTree = "<group>"; };
 		1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedAttachmentsView.swift; sourceTree = "<group>"; };
 		18DCA04146B9F48B87CF1D44 /* SettingsEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsEditorTests.swift; sourceTree = "<group>"; };
@@ -444,6 +447,7 @@
 		91AE86CEAF17C226E2E350ED /* ComposeTemplatesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeTemplatesPane.swift; sourceTree = "<group>"; };
 		92A893BD94B24ACC112006B6 /* MailboxModel+ComposeFeatures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+ComposeFeatures.swift"; sourceTree = "<group>"; };
 		94555E55243A61189CBBD92E /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
+		94C212AD8A8418047F6F4415 /* ShortcutCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutCatalog.swift; sourceTree = "<group>"; };
 		95CE9581BB2047BF72CC7A0B /* AccountPreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountPreferencesView.swift; sourceTree = "<group>"; };
 		96214EE63FDC52A0940F4105 /* MessageWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageWebView.swift; sourceTree = "<group>"; };
 		9679918B03DAB67FE3C24F48 /* MailNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailNotificationCoordinator.swift; sourceTree = "<group>"; };
@@ -813,6 +817,7 @@
 				DDED45524A7D8FB43C18C976 /* ReadingPolicyTests.swift */,
 				AEBAF0C5D5B662AD2DEF77F1 /* RecipientAvatarTests.swift */,
 				18DCA04146B9F48B87CF1D44 /* SettingsEditorTests.swift */,
+				17191321573C1967BF425698 /* ShortcutCatalogTests.swift */,
 				9DD4C19226784FEDAB30FCAB /* ShortcutMonitorTests.swift */,
 				8C3CD5D6DA0EF678721D5E20 /* SidebarLayoutTests.swift */,
 				8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */,
@@ -1006,6 +1011,7 @@
 				F303E86307AC14A9B36655CA /* KeyboardShortcutsView.swift */,
 				50BC5CC58387671AC6A5DD09 /* MailCommands.swift */,
 				481227BFC99B0F3E45B5305A /* MailViewCommands.swift */,
+				94C212AD8A8418047F6F4415 /* ShortcutCatalog.swift */,
 				5FC02FDB1D2719CB6643F0A8 /* ShortcutMonitor.swift */,
 				815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */,
 			);
@@ -1195,6 +1201,7 @@
 				A423ECB1E5B34F231D1F3BC9 /* ReadingPolicyTests.swift in Sources */,
 				5BEFB514E521AE661D45D4A6 /* RecipientAvatarTests.swift in Sources */,
 				8CF9A7E0F5ED03F526B48EB4 /* SettingsEditorTests.swift in Sources */,
+				19DCEC093A715CC5BE5A7CF0 /* ShortcutCatalogTests.swift in Sources */,
 				05F0CC6DB19236C30864F97D /* ShortcutMonitorTests.swift in Sources */,
 				41BF834483C5F430BB978DD6 /* SidebarLayoutTests.swift in Sources */,
 				3C4C4E7AE93BF4735A855D07 /* SingleKeyShortcutsTests.swift in Sources */,
@@ -1407,6 +1414,7 @@
 				BBD5832EB0F99AF50D9DE0BE /* SettingsPanes.swift in Sources */,
 				24F66D88CC6E1913CBA4A4CC /* SettingsSnapshot.swift in Sources */,
 				1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */,
+				FCB2F6AD3C28DE6BEA9B7276 /* ShortcutCatalog.swift in Sources */,
 				22D886A27E9AA061307613F2 /* ShortcutMonitor.swift in Sources */,
 				472F55A7C6973F61690CF807 /* SidebarSettingsView.swift in Sources */,
 				08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */,

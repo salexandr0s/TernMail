@@ -19,7 +19,7 @@ struct ComposePreferencesPane: View {
                         ForEach(accounts) { Text($0.email).tag($0.id) }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                    .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 SettingsNote("Automatic uses the selected mailbox's account. In combined mailboxes, it uses the account that last exchanged mail with the first recipient.")
                     .padding(.horizontal, Tokens.Space.s4)

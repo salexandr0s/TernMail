@@ -8,6 +8,8 @@ struct PopupHeader: View {
     var iconForeground: Color = .accentColor
     var iconBackground: Color = Tokens.Surface.muted
     var iconAction: (() -> Void)? = nil
+    /// Help and VoiceOver text for the icon button.
+    var iconActionLabel = "Choose Icon"
 
     var body: some View {
         HStack(spacing: Tokens.Space.s3) {
@@ -19,8 +21,8 @@ struct PopupHeader: View {
                         iconAction()
                         return .handled
                     }
-                    .help("Choose label icon")
-                    .accessibilityLabel("Choose label icon")
+                    .help(iconActionLabel)
+                    .accessibilityLabel(iconActionLabel)
             } else {
                 icon.accessibilityHidden(true)
             }

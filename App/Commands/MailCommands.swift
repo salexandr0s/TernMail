@@ -34,11 +34,11 @@ struct MailCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Message", systemImage: "square.and.pencil") { open(.newMessage) }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("n")
+                .keyboardShortcut(ShortcutCatalog.newMessage.shortcut)
                 .disabled(mailbox == nil)
             Button("Attach Files…", systemImage: "paperclip") { compose?.isChoosingFiles = true }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("a", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.attachFiles.shortcut)
                 .disabled(!canEdit)
             Divider()
             Button("Add Account…", systemImage: "person.crop.circle.badge.plus") { Task { await app.addAccount() } }
@@ -55,54 +55,54 @@ struct MailCommands: Commands {
         CommandGroup(after: .textEditing) {
             Button("Search Mail", systemImage: "magnifyingglass") { focusedMailbox?.search.focusField() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("f", modifiers: [.option, .command])
+                .keyboardShortcut(ShortcutCatalog.searchMail.shortcut)
                 .disabled(focusedMailbox == nil)
         }
         CommandMenu("Message") {
             Button("Send", systemImage: "paperplane") { Task { await compose?.send() } }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("d", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.send.shortcut)
                 .disabled(!canEdit)
             Divider()
             Button("Reply", systemImage: "arrowshape.turn.up.left") { reply(.reply) }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("r")
+                .keyboardShortcut(ShortcutCatalog.reply.shortcut)
                 .disabled(!canReply)
             Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { reply(.replyAll) }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("r", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.replyAll.shortcut)
                 .disabled(!canReply)
             Button("Forward", systemImage: "arrowshape.turn.up.right") { reply(.forward) }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("f", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.forward.shortcut)
                 .disabled(!canReply)
             Divider()
             Button("Archive", systemImage: "archivebox") { performMailAction(.archive) }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("a", modifiers: [.control, .command])
+                .keyboardShortcut(ShortcutCatalog.archive.shortcut)
                 .disabled(conversationLink == nil && !(focusedMailbox?.canArchive ?? false))
             // In a compose window ⌘⌫ deletes to the start of the line instead.
             Button("Move to Trash", systemImage: "trash") { performMailAction(.trash) }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut(.delete, modifiers: .command)
+                .keyboardShortcut(ShortcutCatalog.moveToTrash.shortcut)
                 .disabled(conversationLink == nil && !(focusedMailbox?.canTrash ?? false))
             Divider()
             Button(isRead ? "Mark as Unread" : "Mark as Read", systemImage: isRead ? "envelope.badge" : "envelope.open") { focusedMailbox?.toggleRead() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("u", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.toggleRead.shortcut)
                 .disabled(!hasSelection)
             Button(isStarred ? "Remove Star" : "Star", systemImage: isStarred ? "star.fill" : "star") { focusedMailbox?.toggleStar() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("l", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.toggleStar.shortcut)
                 .disabled(!hasSelection)
             Divider()
             Button("Edit Labels…", systemImage: "tag") { focusedMailbox?.showEditLabels() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("l", modifiers: [.option, .command])
+                .keyboardShortcut(ShortcutCatalog.editLabels.shortcut)
                 .disabled(!hasSelection)
             Button("Move to…", systemImage: "folder") { focusedMailbox?.showMoveTo() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("m", modifiers: [.control, .command])
+                .keyboardShortcut(ShortcutCatalog.moveTo.shortcut)
                 .disabled(!hasSelection)
             Divider()
             Menu {
@@ -118,7 +118,7 @@ struct MailCommands: Commands {
             // A shortcut can't open the submenu, so it opens Choose Date & Time.
             Button("Snooze…", systemImage: "clock") { focusedMailbox?.showSnoozeDate() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("b", modifiers: [.control, .command])
+                .keyboardShortcut(ShortcutCatalog.snooze.shortcut)
                 .disabled(!canSnooze)
             if focusedMailbox?.showsSnoozed ?? false {
                 Button("Unsnooze", systemImage: "clock.arrow.circlepath") { focusedMailbox?.unsnooze() }
@@ -129,11 +129,11 @@ struct MailCommands: Commands {
         CommandMenu("Mailbox") {
             Button("Check for New Mail", systemImage: "arrow.clockwise") { mailbox?.syncNow() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("n", modifiers: [.shift, .command])
+                .keyboardShortcut(ShortcutCatalog.checkForNewMail.shortcut)
                 .disabled(mailbox == nil)
             Button("New Label…", systemImage: "tag") { focusedMailbox?.showNewLabel() }
                 .labelStyle(.titleAndIcon)
-                .keyboardShortcut("n", modifiers: [.option, .command])
+                .keyboardShortcut(ShortcutCatalog.newLabel.shortcut)
                 .disabled(focusedMailbox == nil)
             Divider()
             if let mailbox, mailbox.hasSeveralAccounts {
@@ -155,14 +155,13 @@ struct MailCommands: Commands {
         }
         CommandMenu("Go") {
             Button("Go to Label…", systemImage: "tag") { focusedMailbox?.navigation.isShowingSwitcher = true }
-                .keyboardShortcut("l", modifiers: [.control, .option, .command])
+                .keyboardShortcut(ShortcutCatalog.goToLabel.shortcut)
                 .disabled(focusedMailbox == nil)
             Divider()
-            // In the sidebar's order, so each number matches a row.
-            ForEach(Array(SystemMailbox.numbered.enumerated()), id: \.element.id) { index, box in
+            ForEach(Array(zip(SystemMailbox.numbered, ShortcutCatalog.mailboxes)), id: \.0.id) { box, command in
                 Button(box.title, systemImage: box.systemImage) { focusedMailbox?.go(to: box.id) }
                     .labelStyle(.titleAndIcon)
-                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
+                    .keyboardShortcut(command.shortcut)
                     .disabled(focusedMailbox == nil)
             }
             Button("All Mail", systemImage: "archivebox") { focusedMailbox?.go(to: SystemLabel.allMail) }
@@ -177,13 +176,13 @@ struct MailCommands: Commands {
             Group {
                 Button("Bold", systemImage: "bold") { formattingEditor?.toggleBold() }
                     .labelStyle(.titleAndIcon)
-                    .keyboardShortcut("b")
+                    .keyboardShortcut(ShortcutCatalog.bold.shortcut)
                 Button("Italic", systemImage: "italic") { formattingEditor?.toggleItalic() }
                     .labelStyle(.titleAndIcon)
-                    .keyboardShortcut("i")
+                    .keyboardShortcut(ShortcutCatalog.italic.shortcut)
                 Button("Underline", systemImage: "underline") { formattingEditor?.toggleUnderline() }
                     .labelStyle(.titleAndIcon)
-                    .keyboardShortcut("u")
+                    .keyboardShortcut(ShortcutCatalog.underline.shortcut)
                 Divider()
                 Button("Bulleted List", systemImage: "list.bullet") { formattingEditor?.toggleList(.bulleted) }
                     .labelStyle(.titleAndIcon)
@@ -195,7 +194,7 @@ struct MailCommands: Commands {
                     else { compose?.isEditingLink = true }
                 }
                     .labelStyle(.titleAndIcon)
-                    .keyboardShortcut("k")
+                    .keyboardShortcut(ShortcutCatalog.link.shortcut)
             }
             .disabled(settingsEditor == nil && !(compose?.canFormat ?? false))
         }

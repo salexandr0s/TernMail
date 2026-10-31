@@ -62,7 +62,8 @@ struct LabelEditorSheet: View {
                 subtitle: "Click the icon to change it.",
                 iconForeground: draft.color == nil ? .accentColor : previewForeground,
                 iconBackground: previewBackground,
-                iconAction: { isChoosingIcon = true }
+                iconAction: { isChoosingIcon = true },
+                iconActionLabel: "Choose Label Icon"
             )
             .popover(isPresented: $isChoosingIcon, arrowEdge: .bottom) {
                 LabelIconPicker(selection: $draft.icon) { isChoosingIcon = false }

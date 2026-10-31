@@ -540,7 +540,7 @@ private struct MessageView: View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: Tokens.Space.s2) {
                 senderHeader
-                    .frame(minWidth: Tokens.Space.s16 * 2)
+                    .frame(minWidth: Tokens.Layout.senderMinWidth)
                 messageMetadata
             }
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {

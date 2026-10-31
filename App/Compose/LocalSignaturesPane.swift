@@ -59,7 +59,7 @@ struct LocalSignaturesPane: View {
             SettingsGroup("Signature defaults", systemImage: "envelope") {
                 SettingsControlRow("Account") {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
-                        .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("Address") {
@@ -67,17 +67,17 @@ struct LocalSignaturesPane: View {
                         Text("Account default").tag("")
                         ForEach(identities, id: \.lowercasedAddress) { Text($0.address).tag($0.lowercasedAddress) }
                     }
-                    .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                    .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("New messages") {
                     signaturePicker("New messages", selection: $assignment.newMessages)
-                        .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("Replies and forwards") {
                     signaturePicker("Replies and forwards", selection: $assignment.replies)
-                        .frame(maxWidth: Tokens.Layout.attachmentWidth)
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Place signature above quoted text", isOn: $assignment.placeAboveQuote)

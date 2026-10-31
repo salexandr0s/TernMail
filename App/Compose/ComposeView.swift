@@ -146,7 +146,7 @@ struct ComposeView: View {
             ) { model.editor = $0 } onAttach: { model.attach($0, inlineImages: true) } onFocusChange: { model.isEditingMessage = $0 }
             // Keep room to write when recipients, files and quoted text are visible.
             // The native window minimum grows with the other controls' intrinsic sizes.
-            .frame(minHeight: Tokens.Space.s16 * 2)
+            .frame(minHeight: Tokens.Layout.editorMinHeight)
             if model.attachments.contains(where: { $0.contentID == nil }) {
                 AttachmentStrip(attachments: model.attachments.filter { $0.contentID == nil }, isEditable: model.isEditable) {
                     model.removeAttachment($0)
@@ -332,7 +332,7 @@ struct ComposeView: View {
         Text(text)
             .font(.callout.weight(.medium))
             .foregroundStyle(.secondary)
-            .frame(width: Tokens.Space.s16, alignment: .leading)
+            .frame(width: Tokens.Layout.composeLabelWidth, alignment: .leading)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

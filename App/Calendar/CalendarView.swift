@@ -127,8 +127,8 @@ struct CalendarView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .help("New event (⌥⌘N)").accessibilityLabel("New event")
-                .keyboardShortcut("n", modifiers: [.command, .option])
+                .help("New event (\(ShortcutCatalog.newEvent.label))").accessibilityLabel("New event")
+                .keyboardShortcut(ShortcutCatalog.newEvent.shortcut)
                 .disabled(!isActive || !model.calendars.contains(where: \.canWrite))
                 actions
             }
@@ -178,7 +178,7 @@ struct CalendarView: View {
             }
             .help("Previous \(model.mode.title.lowercased())").accessibilityLabel("Previous \(model.mode.title.lowercased())")
             Button("Today") { model.date = .now }
-                .keyboardShortcut("t", modifiers: [.command])
+                .keyboardShortcut(ShortcutCatalog.today.shortcut)
                 .padding(.horizontal, Tokens.Space.s1)
             Button { navigate(1) } label: {
                 Image(systemName: "chevron.right").frame(width: Tokens.Space.s6, height: Tokens.Space.s8)

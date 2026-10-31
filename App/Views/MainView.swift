@@ -170,7 +170,8 @@ struct MainView: View {
                 Button { libraryToolbar.searchFocusRequest += 1 } label: {
                     Label("Find attachment", systemImage: "magnifyingglass")
                 }
-                .keyboardShortcut("f", modifiers: .command).help("Find attachment (⌘F)")
+                .keyboardShortcut(ShortcutCatalog.findAttachment.shortcut)
+                .help("Find attachment (\(ShortcutCatalog.findAttachment.label))")
             }
             .mailToolbarVisible(isActive && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
             ToolbarItem(id: "mail.sidebar", placement: .navigation) {
