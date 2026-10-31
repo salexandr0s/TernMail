@@ -139,7 +139,7 @@ struct CalendarEventEditor: View {
                                 Text(Self.responseTitle(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: Tokens.Space.s2)
-                            Toggle("Optional", isOn: Binding(get: { attendees[index].optional == true }, set: { attendees[index].optional = $0 })).toggleStyle(.checkbox).disabled(draft.isDeletion)
+                            Toggle("Optional", isOn: $attendees[index].optional.or(false)).toggleStyle(.checkbox).disabled(draft.isDeletion)
                             Button { attendees.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove guest").accessibilityLabel("Remove \(attendee.displayName ?? attendee.email)").disabled(draft.isDeletion)
                         }
                     }
@@ -170,10 +170,10 @@ struct CalendarEventEditor: View {
                     if !useDefaultAlerts {
                         ForEach(Array(reminders.enumerated()), id: \.offset) { index, reminder in
                             HStack {
-                                Picker("Method", selection: Binding(get: { reminders[index].method }, set: { reminders[index].method = $0 })) {
+                                Picker("Method", selection: $reminders[index].method) {
                                     Text("Notification").tag("popup"); Text("Email").tag("email")
                                 }
-                                TextField("Minutes before", value: Binding(get: { reminders[index].minutes }, set: { reminders[index].minutes = $0 }), format: .number).frame(width: Tokens.Space.s16)
+                                TextField("Minutes before", value: $reminders[index].minutes, format: .number).frame(width: Tokens.Space.s16)
                                 Text("minutes before").font(.caption).foregroundStyle(.secondary).fixedSize()
                                 Button { reminders.remove(at: index) } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
@@ -183,10 +183,10 @@ struct CalendarEventEditor: View {
                     }
                 }.disabled(draft.isDeletion)
                 Section {
-                    Picker("Show as", selection: Binding(get: { draft.event.transparency ?? "opaque" }, set: { draft.event.transparency = $0 })) {
+                    Picker("Show as", selection: $draft.event.transparency.or("opaque")) {
                         Text("Busy").tag("opaque"); Text("Free").tag("transparent")
                     }
-                    Picker("Visibility", selection: Binding(get: { draft.event.visibility ?? "default" }, set: { draft.event.visibility = $0 })) {
+                    Picker("Visibility", selection: $draft.event.visibility.or("default")) {
                         Text("Calendar Default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
                     }
                     TextField("URL", text: $eventURL)

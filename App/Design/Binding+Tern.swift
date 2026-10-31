@@ -24,6 +24,13 @@ extension Binding {
         })
     }
 
+    /// `true` while the value is `value`, for radio-style menu items. Setting
+    /// `true` selects `value`; setting `false` does nothing, since picking another
+    /// item is what deselects this one.
+    func selecting(_ value: Value) -> Binding<Bool> where Value: Equatable {
+        Binding<Bool>(get: { wrappedValue == value }, set: { if $0 { wrappedValue = value } })
+    }
+
     /// `true` while the set holds `element`. Setting it inserts or removes the element.
     func contains<Element: Hashable>(_ element: Element) -> Binding<Bool> where Value == Set<Element> {
         Binding<Bool>(get: { wrappedValue.contains(element) }, set: { isOn in
