@@ -102,7 +102,7 @@ enum ShortcutCatalog {
     // MARK: Edit
 
     /// Finds in the destination that has a search field. Mail keeps ⌥⌘F for its Gmail search.
-    static let find = Command("edit.find", menu: .edit, title: "Find…", key: "f", scopes: [.calendar, .attachments])
+    static let find = Command("edit.find", menu: .edit, title: "Find…", key: "f", scopes: [.mail, .conversation, .calendar, .attachments])
     static let searchMail = Command("edit.searchMail", menu: .edit, title: "Search Mail", key: "f",
                                     modifiers: [.option, .command], scopes: [.mail])
 

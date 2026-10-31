@@ -28,6 +28,12 @@ struct ThreadView: View {
     @State private var resourceRevision = 0
     @State private var delayedRead = DelayedReadController()
     @State private var selectedMailQuote: SelectedMailQuote?
+    @State private var focusedMessageID: String?
+    @State private var hoveredLink: (messageID: String, url: String)?
+    @State private var scrollPosition = ScrollPosition()
+    @State private var paging = ReaderPaging()
+    @State private var finder = ReaderFindModel()
+    @FocusState private var readerFocused: Bool
     @AppStorage(ReadingPreferences.orderKey) private var messageOrder = ReadingPreferences.Order.oldestFirst.rawValue
     @AppStorage(ReadingPreferences.markReadKey) private var markReadPolicy = ReadingPreferences.MarkRead.immediately.rawValue
     @AppStorage(ReadingPreferences.readDelayKey) private var readDelay = 3.0
@@ -86,6 +92,11 @@ struct ThreadView: View {
                 ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, exportsPDF: asPDF) { error in
                     if let error { mailbox.notice = .init(message: error, isError: true) }
                 }
+            },
+            find: {
+                // Collapsed messages have no body on screen, so Find opens them all.
+                expanded.formUnion(ids)
+                finder.show()
             }
         )
     }
@@ -94,6 +105,7 @@ struct ThreadView: View {
         Group {
             if let detail = readingDetail {
                 ScrollViewReader { scroll in
+                    let messages = orderedMessages(detail)
                     ScrollView {
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                             ThreadHeading(detail: detail, key: key, mailbox: mailbox, messageID: selectedMessageID)
@@ -138,14 +150,16 @@ struct ThreadView: View {
                             }
                             }
                             VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                                ForEach(messageOrder == ReadingPreferences.Order.newestFirst.rawValue ? Array(detail.messages.reversed()) : detail.messages) { message in
+                                ForEach(messages) { message in
                                     MessageView(
                                         message: message,
                                         blocker: blocker,
                                         isExpanded: expanded.contains(message.id),
+                                        isFocused: readerFocused && focusedMessageID == message.id,
                                         resourceRevision: resourceRevision,
                                         bodyLoadFailed: bodyLoadFailed,
                                         mailbox: mailbox,
+                                        finder: finder,
                                         compose: compose,
                                         onRetry: { loadAttempt += 1 },
                                         reportSelection: { text in
@@ -156,6 +170,15 @@ struct ThreadView: View {
                                                 selectedMailQuote = SelectedMailQuote(accountID: message.record.accountID,
                                                     threadID: message.record.threadID, messageID: message.id, text: text)
                                             }
+                                        },
+                                        onHoverLink: { url in
+                                            if let url { hoveredLink = (message.id, url) }
+                                            else if hoveredLink?.messageID == message.id { hoveredLink = nil }
+                                        },
+                                        onMarkUnreadFromHere: {
+                                            // This message and every later one, whichever way the list reads.
+                                            mailbox.markUnread(messageIDs: detail.messages.drop { $0.id != message.id }.map(\.id),
+                                                               accountID: key.accountID)
                                         }
                                     ) {
                                         if expanded.contains(message.id) {
@@ -172,6 +195,27 @@ struct ThreadView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
                     }
+                    .scrollPosition($scrollPosition)
+                    .onScrollGeometryChange(for: ReaderPage.self, of: ReaderPage.init) { _, page in paging.page = page }
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($readerFocused)
+                    .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                        guard press.modifiers.contains(.command) else { return .ignored }
+                        moveFocus(by: press.key == .downArrow ? 1 : -1, in: messages, scroll: scroll)
+                        return .handled
+                    }
+                    .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+                        guard let id = focusedMessageID, messages.contains(where: { $0.id == id }) else { return .ignored }
+                        if press.key == .rightArrow { expanded.insert(id) } else { expanded.remove(id) }
+                        return .handled
+                    }
+                    .onKeyPress(.space) { pageDown() }
+                    .overlay(alignment: .bottomLeading) { linkReadout }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if finder.isVisible { ReaderFindBar(model: finder) }
+                    }
+                    .onChange(of: messages.map(\.id), initial: true) { _, ids in finder.order = ids }
                     .onChange(of: app.mailURLs.focusRequest?.id, initial: true) { _, _ in
                         guard let request = app.mailURLs.focusRequest, request.key == key,
                               detail.messages.contains(where: { $0.id == request.messageID }) else { return }
@@ -211,7 +255,10 @@ struct ThreadView: View {
         .background(Tokens.Surface.canvas)
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
-        .onChange(of: key) { _, _ in selectedMailQuote = nil }
+        .onChange(of: key) { _, _ in
+            selectedMailQuote = nil
+            finder.hide()
+        }
         .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
         .task {
@@ -269,7 +316,10 @@ struct ThreadView: View {
                 delayedRead.schedule(delay: ReadingPreferences.readDelay(readDelay)) { await mailbox.markConversationRead(key, messageID: selectedMessageID) }
             }
         }
-        .onDisappear { delayedRead.cancel() }
+        .onDisappear {
+            delayedRead.cancel()
+            finder.hide()
+        }
         .task(id: CalendarSuggestionLoadIdentity(detail: readingDetail, storeReady: app.calendar.store != nil,
             access: app.calendar.accessRevision, timeZone: app.calendar.calendar.timeZone.identifier)) {
             guard let detail = readingDetail else { return }
@@ -325,6 +375,79 @@ struct ThreadView: View {
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
     }
+
+    private func orderedMessages(_ detail: ThreadDetail) -> [MessageDetail] {
+        messageOrder == ReadingPreferences.Order.newestFirst.rawValue ? detail.messages.reversed() : detail.messages
+    }
+
+    /// ⌘↓ and ⌘↑ step through the messages as shown, opening each one. With
+    /// nothing focused yet they start from the first open message.
+    private func moveFocus(by delta: Int, in messages: [MessageDetail], scroll: ScrollViewProxy) {
+        guard !messages.isEmpty else { return }
+        let current = messages.firstIndex { $0.id == focusedMessageID }
+            ?? messages.firstIndex { expanded.contains($0.id) }
+            ?? (delta > 0 ? -1 : messages.count)
+        let message = messages[min(max(current + delta, 0), messages.count - 1)]
+        focusedMessageID = message.id
+        expanded.insert(message.id)
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) {
+                scroll.scrollTo(message.id, anchor: .top)
+            }
+        }
+    }
+
+    /// Space shows the next screen of the conversation, keeping a strip of
+    /// the previous one in view. At the end the key passes on.
+    private func pageDown() -> KeyPress.Result {
+        let page = paging.page
+        let bottom = page.contentHeight - page.visibleHeight
+        guard page.visibleHeight > 0, page.offset < bottom - Tokens.Border.hairline else { return .ignored }
+        withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) {
+            scrollPosition.scrollTo(y: min(page.offset + page.visibleHeight - Tokens.Space.s8, bottom))
+        }
+        return .handled
+    }
+
+    /// The hovered link's destination, over the bottom of the reader like Safari's status bar.
+    @ViewBuilder private var linkReadout: some View {
+        if let url = hoveredLink?.url {
+            Text(url)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s1)
+                .background(.bar, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline))
+                .padding(Tokens.Space.s2)
+                .allowsHitTesting(false)
+                .accessibilityLabel("Link destination: \(url)")
+        }
+    }
+}
+
+/// Where the reader is scrolled, for Space paging.
+private struct ReaderPage: Equatable {
+    var offset: CGFloat = 0
+    var visibleHeight: CGFloat = 0
+    var contentHeight: CGFloat = 0
+
+    init() {}
+
+    init(_ geometry: ScrollGeometry) {
+        offset = geometry.contentOffset.y
+        visibleHeight = geometry.containerSize.height
+        contentHeight = geometry.contentSize.height
+    }
+}
+
+/// Holds the scroll geometry outside SwiftUI state, so scrolling doesn't
+/// rebuild the conversation.
+@MainActor
+private final class ReaderPaging {
+    var page = ReaderPage()
 }
 
 /// The subject, followed by a chip for the Inbox and each user label the
@@ -343,7 +466,8 @@ private struct ThreadHeading: View {
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(chips, id: \.id) { label in
                 if label.id == SystemLabel.inbox {
-                    LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive") {
+                    LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive", showTitle: "Show Inbox",
+                              onShow: { show(label.id) }) {
                         if let messageID { mailbox.performReadingAction(.archive, name: "Archive", messageID: messageID, accountID: key.accountID) }
                         else { mailbox.perform(.archive, on: [key]) }
                     }
@@ -351,23 +475,30 @@ private struct ThreadHeading: View {
                     let icon = LabelAppearance.shared.icon(for: label)
                     LabelChip(
                         name: label.name, symbol: icon == "tag" ? "tag.fill" : icon,
-                        tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label"
+                        tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label", showTitle: "Show Label",
+                        onShow: { show(label.id) }
                     ) {
                         if let messageID { mailbox.removeReadingLabel(label.id, messageID: messageID, accountID: key.accountID) }
                         else { mailbox.removeLabel(label.id, from: key) }
                     }
                 }
             }
+            let canPrint = !detail.messages.contains { $0.body == nil }
             Menu {
                 Button("Print Conversation…") { printConversation() }
                 Button("Export Conversation as PDF…") { printConversation(pdf: true) }
             } label: { Image(systemName: "ellipsis.circle") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .accessibilityLabel("Conversation actions")
-            .disabled(detail.messages.contains { $0.body == nil })
-            .help("Print after all message bodies have loaded")
+            .disabled(!canPrint)
+            .help(canPrint ? "Print or export the conversation" : "Print after all message bodies have loaded")
         }
         .padding(.bottom, Tokens.Space.s0_5)
+    }
+
+    /// Show Label and Show Inbox take the main window to that mailbox.
+    private func show(_ labelID: String) {
+        mailbox.selectedMailbox = .account(key.accountID, labelID)
     }
 
     private func printConversation(pdf: Bool = false) {
@@ -389,11 +520,15 @@ private struct ThreadHeading: View {
 
 }
 
+/// A label the conversation carries. Its context menu removes the label or
+/// shows the mailbox.
 private struct LabelChip: View {
     let name: String
     var symbol = "tag.fill"
     let tint: Color
     let removeHelp: String
+    let showTitle: String
+    let onShow: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
@@ -421,6 +556,10 @@ private struct LabelChip: View {
         .padding(.trailing, Tokens.Space.s0_5)
         .background(Tokens.Surface.primary, in: Capsule())
         .overlay(Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline))
+        .contextMenu {
+            Button(removeHelp, action: onRemove)
+            Button(showTitle, action: onShow)
+        }
     }
 }
 
@@ -476,12 +615,17 @@ private struct MessageView: View {
     let message: MessageDetail
     let blocker: WKContentRuleList?
     let isExpanded: Bool
+    /// Keyboard navigation in the reader rests on this message.
+    let isFocused: Bool
     let resourceRevision: Int
     let bodyLoadFailed: Bool
     let mailbox: MailboxModel
+    let finder: ReaderFindModel
     let compose: (MailboxModel.ComposeStart) -> Void
     let onRetry: () -> Void
     let reportSelection: (String) -> Void
+    let onHoverLink: (String?) -> Void
+    let onMarkUnreadFromHere: () -> Void
     let onToggle: () -> Void
 
     @State private var rendered: RenderedMessage?
@@ -491,9 +635,10 @@ private struct MessageView: View {
     @State private var allowsImagesOnce = false
     @State private var allowsSenderImages = false
     @State private var showsLightBackground = false
-    @State private var hoveredURL: String?
     @State private var selectedText = ""
     @State private var activeBlocker: WKContentRuleList?
+    @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(ReadingPreferences.blockImagesKey) private var blocksImages = true
     @AppStorage(ReadingPreferences.adaptDarkKey) private var adaptsDark = true
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
@@ -534,6 +679,13 @@ private struct MessageView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .ternSurface()
+        .overlay {
+            if isFocused {
+                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                    .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
+                    .allowsHitTesting(false)
+            }
+        }
         .ternAnimation(value: isExpanded)
         .task(id: RenderIdentity(accountID: message.record.accountID, messageID: message.id, body: message.body,
             resourceRevision: resourceRevision, allowsImages: allowsImages, showsLight: showsLightBackground, adaptsDark: adaptsDark,
@@ -545,10 +697,10 @@ private struct MessageView: View {
             guard !Task.isCancelled else { return }
             allowsSenderImages = allowed?.contains(senderAddress.lowercased()) == true
         }
-        .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; hoveredURL = nil } }
+        .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; onHoverLink(nil) } }
         .onChange(of: selectedText) { _, text in reportSelection(text) }
-        .onDisappear { reportSelection("") }
-        .onChange(of: allowsImages) { _, _ in rendered = nil; selectedText = ""; hoveredURL = nil }
+        .onDisappear { reportSelection(""); onHoverLink(nil) }
+        .onChange(of: allowsImages) { _, _ in rendered = nil; selectedText = ""; onHoverLink(nil) }
         .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
             guard change.userInfo?["account"] as? String == message.record.accountID,
                   change.userInfo?["sender"] as? String == senderAddress.lowercased(),
@@ -558,6 +710,7 @@ private struct MessageView: View {
         }
     }
 
+    /// A collapsed header opens on a click anywhere; its controls keep their own clicks.
     private var header: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: Tokens.Space.s2) {
@@ -572,6 +725,12 @@ private struct MessageView: View {
                     messageMetadata
                 }
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if !isExpanded { onToggle() } }
+        .contextMenu {
+            MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText,
+                             markUnreadFromHere: onMarkUnreadFromHere, showsStar: true)
         }
     }
 
@@ -604,7 +763,6 @@ private struct MessageView: View {
                 } else {
                     Text(message.record.snippet)
                         .font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                        .onTapGesture(perform: onToggle)
                 }
             }
             Spacer(minLength: Tokens.Space.s2)
@@ -616,7 +774,7 @@ private struct MessageView: View {
     private var messageMetadata: some View {
         VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
             Text(ThreadDate.short(message.record.date))
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .help(Self.dateFormatter.string(from: message.record.date))
@@ -629,7 +787,7 @@ private struct MessageView: View {
             } else if message.isStarred {
                 Image(systemName: "star.fill")
                     .imageScale(.small)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Tokens.Status.star)
                     .accessibilityLabel("Starred")
             }
         }
@@ -643,7 +801,7 @@ private struct MessageView: View {
                 MessageAddressMenu(address: address, accountID: message.record.accountID, mailbox: mailbox)
             }
         }
-            .font(.caption)
+            .font(.subheadline)
             .lineLimit(1)
             .help(header)
     }
@@ -670,7 +828,7 @@ private struct MessageView: View {
                         }.buttonStyle(.borderless)
                     }
                 }
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(Tokens.Space.s2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -682,24 +840,23 @@ private struct MessageView: View {
             }
             if allowsSenderImages {
                 Button("Block Images for Sender") { allowSenderImages(false) }
-                    .font(.caption).buttonStyle(.borderless)
+                    .font(.callout).buttonStyle(.borderless)
             }
-            if adaptsDark {
+            // Light mail already reads as the sender made it; the switch matters in Dark.
+            if adaptsDark, colorScheme == .dark {
                 Button(showsLightBackground ? "Use Dark Mode" : "Show with Light Background") { showsLightBackground.toggle() }
-                    .font(.caption).buttonStyle(.borderless)
+                    .font(.callout).buttonStyle(.borderless)
             }
             MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
                 adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
                 forcesLightAppearance: showsLightBackground,
-                onHover: { hoveredURL = $0 }, onSelectionChange: { selectedText = $0 })
+                onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
+                onOpenMailLink: { app.mailURLs.receive($0) },
+                onCreate: { finder.register($0, for: message.id) }, onDismantle: { finder.unregister($0) })
                 .id(inlineResources.scope + ":\(showsLightBackground):\(adaptsDark)")
                 .frame(height: max(height, Tokens.Space.s5))
                 .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .accessibilityLabel("Message from \(senderName)")
-            if let hoveredURL {
-                Text(hoveredURL).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
-                    .accessibilityLabel("Link destination: \(hoveredURL)")
-            }
         } else if hasNoText {
             Text("This message has no text.")
                 .foregroundStyle(.secondary)
@@ -746,7 +903,7 @@ private struct MessageView: View {
     /// Without the rule list that blocks remote loads, only text is shown.
     private func render() async {
         guard isExpanded else {
-            rendered = nil; selectedText = ""; hoveredURL = nil; height = 0
+            rendered = nil; selectedText = ""; onHoverLink(nil); height = 0
             inlineResources = InlineResourceMap()
             return
         }

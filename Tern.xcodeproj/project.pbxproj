@@ -252,6 +252,7 @@
 		CE5838DB32E85E4BC42F3C83 /* ThreadListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 313612542F6E2902BDDD3B95 /* ThreadListView.swift */; };
 		CEEAB0A9AE38942E2784B220 /* DefaultMailApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 648E619EA8F67283649EE413 /* DefaultMailApp.swift */; };
 		CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298461CDC5883F34E395CE4F /* AuditGmail.swift */; };
+		D05C0B7DB7E7D79E7447A48A /* ReaderFindBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB703773AA5A7152A3E3FA5 /* ReaderFindBar.swift */; };
 		D45BACF8FBD34E32D477AE15 /* TernApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB3C8158C8A6AFF45439BC /* TernApp.swift */; };
 		D57BC28D2CECC3B0C07298A2 /* IntegrationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2769D25B8C801EB7693E561A /* IntegrationSettingsView.swift */; };
 		D5939A9A28A12206E59092AD /* KeyboardShortcutsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F303E86307AC14A9B36655CA /* KeyboardShortcutsView.swift */; };
@@ -562,6 +563,7 @@
 		DA124333B1DFA482713D8A81 /* AssistantWritingStyleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleModel.swift; sourceTree = "<group>"; };
 		DC15FBA92C4C43F3FF31B932 /* MessageListHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListHeader.swift; sourceTree = "<group>"; };
 		DD6205EBA779F2BE40B6F7A5 /* AssistantSidebarLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSidebarLayout.swift; sourceTree = "<group>"; };
+		DDB703773AA5A7152A3E3FA5 /* ReaderFindBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderFindBar.swift; sourceTree = "<group>"; };
 		DDEC532495FD2A3C794B4C77 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		DDED45524A7D8FB43C18C976 /* ReadingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingPolicyTests.swift; sourceTree = "<group>"; };
 		E084EBEC496D72C477C9D2FB /* AttachmentLibraryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibraryModel.swift; sourceTree = "<group>"; };
@@ -734,6 +736,7 @@
 				F07C7F388D831253FD5749C5 /* NoticeView.swift */,
 				40D6C73B88219FEA3708EA95 /* OriginalMessageView.swift */,
 				F5A712DF8EDEF3D7C840B901 /* OutboxView.swift */,
+				DDB703773AA5A7152A3E3FA5 /* ReaderFindBar.swift */,
 				9DF6F5C20C9AC987095C8391 /* ReadingPreferences.swift */,
 				1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */,
 				23EC422401223F0466F16E57 /* SavedSearchEditor.swift */,
@@ -1428,6 +1431,7 @@
 				5840EA4BF86FE556597B4A0D /* ProfileScheduleView.swift in Sources */,
 				C8C1036B7D524C6CBABAF655 /* ProfilesView.swift in Sources */,
 				97158050EEF68C1A3D6265F8 /* PublicSuffix.swift in Sources */,
+				D05C0B7DB7E7D79E7447A48A /* ReaderFindBar.swift in Sources */,
 				B89055893CBEFA64BBE69710 /* ReadingPreferences.swift in Sources */,
 				B4010CCF9DD816AB59EC8C64 /* ReadingSettingsView.swift in Sources */,
 				E389A8AE70C8A33491A7BE56 /* ReceivedAttachmentsView.swift in Sources */,

@@ -37,6 +37,12 @@ struct TernApp: App {
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .commandsRemoved()
 
+        WindowGroup("Original Message", id: OriginalMessageWindow.sceneID, for: MailLink.self) { $link in
+            OriginalMessageWindow(link: link).environment(model)
+        }
+        .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
+        .commandsRemoved()
+
         // One window per local draft. Opening a draft that has a window brings it forward.
         WindowGroup("New Message", id: ComposeWindow.sceneID, for: String.self) { $localDraftID in
             ComposeWindow(localDraftID: $localDraftID)

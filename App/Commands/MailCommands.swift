@@ -111,7 +111,7 @@ struct MailCommands: Commands {
             Button("Find…", systemImage: "magnifyingglass") { find() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.find.shortcut)
-                .disabled(calendarActions == nil && libraryToolbar == nil)
+                .disabled(reader == nil && calendarActions == nil && libraryToolbar == nil)
             Button("Search Mail", systemImage: "magnifyingglass") { focusedMailbox?.search.focusField() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.searchMail.shortcut)
@@ -407,10 +407,12 @@ struct MailCommands: Commands {
         }
     }
 
-    /// ⌘F focuses the search of the destination that has one. The reader's
-    /// find bar joins in a later phase.
+    /// ⌘F finds in the open conversation, or focuses the search of the
+    /// destination that has one.
     private func find() {
-        if let libraryToolbar {
+        if let reader {
+            reader.find()
+        } else if let libraryToolbar {
             libraryToolbar.searchFocusRequest += 1
         } else {
             calendarActions?.find()

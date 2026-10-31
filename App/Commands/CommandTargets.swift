@@ -9,6 +9,8 @@ struct ReaderActions {
     let expandAll: @MainActor () -> Void
     let collapseAll: @MainActor () -> Void
     let print: @MainActor (_ asPDF: Bool) -> Void
+    /// Edit ▸ Find… shows the find bar over the open messages.
+    let find: @MainActor () -> Void
 }
 
 /// Calendar panels and sheets the menu bar opens. The calendar publishes

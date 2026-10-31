@@ -45,13 +45,16 @@ enum AttachmentActions {
         NSPasteboard.general.writeObjects([source as NSURL])
     }
 
-    static func save(_ source: URL, filename: String) async throws {
+    /// Returns where the file went, or nil when the panel was cancelled.
+    @discardableResult
+    static func save(_ source: URL, filename: String) async throws -> URL? {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = AttachmentFileExport.safeFilename(filename)
         panel.canCreateDirectories = true
         let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
-        guard response == .OK, let destination = panel.url else { return }
+        guard response == .OK, let destination = panel.url else { return nil }
         try await AttachmentFileExport.save(source, to: destination)
+        return destination
     }
 
     static func saveAll(_ files: [URL]) async throws {

@@ -140,6 +140,13 @@ final class MailTriageModel {
 }
 
 extension MailboxModel {
+    /// Mark Unread from Here: one message and the ones that follow it.
+    @discardableResult
+    func markUnread(messageIDs: [String], accountID: String) -> Task<Void, Never>? {
+        guard !messageIDs.isEmpty, let owner = account(id: accountID) else { return nil }
+        return queueUndoable("Mark as Unread", in: owner) { try await $0.perform(.markUnread, target: .messages(messageIDs)) }
+    }
+
     /// The Delete key does what Settings says. Archiving inside a user label
     /// takes the selection out of that label, so it leaves the list shown.
     @discardableResult

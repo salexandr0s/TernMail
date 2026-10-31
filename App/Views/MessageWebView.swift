@@ -4,9 +4,9 @@ import SwiftUI
 import WebKit
 
 /// Shows one rendered message. Page scripts are off, every network load is
-/// blocked by a content rule list (on top of the page's CSP), links open in
-/// the default browser, HTML mail follows dark mode, and the view grows to fit
-/// its content so the thread scrolls as one page.
+/// blocked by a content rule list (on top of the page's CSP), web links open
+/// in the default browser and mail links stay in Tern, HTML mail follows dark
+/// mode, and the view grows to fit its content so the thread scrolls as one page.
 struct MessageWebView: NSViewRepresentable {
     let html: String
     let blocker: WKContentRuleList?
@@ -16,9 +16,29 @@ struct MessageWebView: NSViewRepresentable {
     var forcesLightAppearance = false
     var onHover: (String?) -> Void = { _ in }
     var onSelectionChange: (String) -> Void = { _ in }
+    /// `mailto:` and `tern:` links stay in Tern; the app's router opens them.
+    var onOpenMailLink: (URL) -> Void = { _ in }
+    /// The find bar searches the web views that exist; these report each one.
+    var onCreate: (WKWebView) -> Void = { _ in }
+    var onDismantle: (WKWebView) -> Void = { _ in }
+
+    /// Where a clicked link goes. Anything but web and mail links is dropped.
+    enum LinkAction: Equatable {
+        case browser, mail, ignored
+    }
+
+    static func linkAction(for url: URL) -> LinkAction {
+        switch url.scheme?.lowercased() {
+        case "http", "https": .browser
+        case "mailto", "tern": .mail
+        default: .ignored
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(height: $height, onHover: onHover, onSelectionChange: onSelectionChange)
+        let coordinator = Coordinator(height: $height, onHover: onHover, onSelectionChange: onSelectionChange, onOpenMailLink: onOpenMailLink)
+        coordinator.onDismantle = onDismantle
+        return coordinator
     }
 
     func makeNSView(context: Context) -> ContentSizedWebView {
@@ -41,7 +61,9 @@ struct MessageWebView: NSViewRepresentable {
             guard let view else { return }
             coordinator?.measure(view)
         }
+        view.onOpenLink = { [weak coordinator = context.coordinator] url, behind in coordinator?.open(url, behind: behind) }
         context.coordinator.load(html, in: view)
+        onCreate(view)
         return view
     }
 
@@ -49,6 +71,8 @@ struct MessageWebView: NSViewRepresentable {
         context.coordinator.height = $height
         context.coordinator.onHover = onHover
         context.coordinator.onSelectionChange = onSelectionChange
+        context.coordinator.onOpenMailLink = onOpenMailLink
+        context.coordinator.onDismantle = onDismantle
         if context.coordinator.needsLoad(html) {
             view.configuration.userContentController.removeAllContentRuleLists()
             if let blocker { view.configuration.userContentController.add(blocker) }
@@ -58,6 +82,7 @@ struct MessageWebView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: ContentSizedWebView, coordinator: Coordinator) {
+        coordinator.onDismantle(view)
         view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternHeight", contentWorld: .defaultClient)
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternReading", contentWorld: .defaultClient)
@@ -122,13 +147,17 @@ struct MessageWebView: NSViewRepresentable {
         var height: Binding<CGFloat>
         var onHover: (String?) -> Void
         var onSelectionChange: (String) -> Void
+        var onOpenMailLink: (URL) -> Void
+        var onDismantle: (WKWebView) -> Void = { _ in }
         private var loadedHTML: String?
         private var revision = 0
 
-        init(height: Binding<CGFloat>, onHover: @escaping (String?) -> Void = { _ in }, onSelectionChange: @escaping (String) -> Void = { _ in }) {
+        init(height: Binding<CGFloat>, onHover: @escaping (String?) -> Void = { _ in }, onSelectionChange: @escaping (String) -> Void = { _ in },
+             onOpenMailLink: @escaping (URL) -> Void = { _ in }) {
             self.height = height
             self.onHover = onHover
             self.onSelectionChange = onSelectionChange
+            self.onOpenMailLink = onOpenMailLink
         }
 
         func needsLoad(_ html: String) -> Bool { html != loadedHTML }
@@ -146,12 +175,25 @@ struct MessageWebView: NSViewRepresentable {
             view.loadHTMLString(html, baseURL: nil)
         }
 
+        /// Web links go to the default browser, in front of Tern or behind it;
+        /// mail links go to Tern's own router.
+        func open(_ url: URL, behind: Bool = false) {
+            switch MessageWebView.linkAction(for: url) {
+            case .browser:
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = !behind
+                NSWorkspace.shared.open(url, configuration: configuration)
+            case .mail:
+                onOpenMailLink(url)
+            case .ignored:
+                break
+            }
+        }
+
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
             guard let url = navigationAction.request.url else { return .cancel }
             if navigationAction.navigationType == .linkActivated {
-                if let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme) {
-                    NSWorkspace.shared.open(url)
-                }
+                open(url)
                 return .cancel
             }
             // Only the page Tern loads itself; refreshes, form posts and frames are refused.
@@ -180,7 +222,11 @@ struct MessageWebView: NSViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "ternReading", message.frameInfo.isMainFrame,
                let value = message.body as? [String: Any], (value["revision"] as? NSNumber)?.intValue == revision {
-                if let hover = value["hover"] as? String { onHover(hover.isEmpty ? nil : String(hover.prefix(4_096))) }
+                if let hover = value["hover"] as? String {
+                    let link = hover.isEmpty ? nil : String(hover.prefix(4_096))
+                    (message.webView as? ContentSizedWebView)?.hoveredLink = link.flatMap { URL(string: $0) }
+                    onHover(link)
+                }
                 if let selection = value["selection"] as? String { onSelectionChange(String(selection.prefix(100_000))) }
                 return
             }
@@ -228,11 +274,67 @@ enum MessageWebViewWarmup {
 }
 
 /// Passes vertical scrolling to the enclosing scroll view, keeps horizontal
-/// scrolling for mail wider than the pane, and reports width changes, which
-/// reflow the message and change its height.
+/// scrolling for mail wider than the pane, reports width changes, which
+/// reflow the message and change its height, and gives links their own
+/// context menu.
 final class ContentSizedWebView: WKWebView {
     var onWidthChange: (() -> Void)?
+    /// The link under the pointer, as the page script reports it.
+    var hoveredLink: URL?
+    /// Opens a link in front of Tern, or behind it when `behind` is true.
+    var onOpenLink: ((_ url: URL, _ behind: Bool) -> Void)?
     private var scrollDirection = ScrollDirection()
+
+    /// WebKit's own link items either navigate this view, which the policy
+    /// refuses, or need a UI delegate that makes windows. Tern's take their
+    /// place. Reload and history items go too: the page is Tern's own.
+    private static let replacedItems: Set<String> = [
+        "WKMenuItemIdentifierOpenLink", "WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierDownloadLinkedFile",
+        "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierReload", "WKMenuItemIdentifierGoBack", "WKMenuItemIdentifierGoForward",
+    ]
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        for item in menu.items where item.identifier.map({ Self.replacedItems.contains($0.rawValue) }) == true {
+            menu.removeItem(item)
+        }
+        if let hoveredLink {
+            var items = [NSMenuItem(title: "Open Link", action: #selector(openLink), keyEquivalent: "")]
+            if MessageWebView.linkAction(for: hoveredLink) == .browser {
+                items.append(NSMenuItem(title: "Open Link Behind Tern", action: #selector(openLinkBehind), keyEquivalent: ""))
+            }
+            items.append(NSMenuItem(title: "Copy Link", action: #selector(copyLink), keyEquivalent: ""))
+            items.append(.separator())
+            for (index, item) in items.enumerated() {
+                item.target = self
+                menu.insertItem(item, at: index)
+            }
+        }
+        removeStraySeparators(from: menu)
+    }
+
+    private func removeStraySeparators(from menu: NSMenu) {
+        var previousWasSeparator = true
+        for item in menu.items {
+            if item.isSeparatorItem, previousWasSeparator { menu.removeItem(item); continue }
+            previousWasSeparator = item.isSeparatorItem
+        }
+        if let last = menu.items.last, last.isSeparatorItem { menu.removeItem(last) }
+    }
+
+    @objc private func openLink() {
+        if let hoveredLink { onOpenLink?(hoveredLink, false) }
+    }
+
+    @objc private func openLinkBehind() {
+        if let hoveredLink { onOpenLink?(hoveredLink, true) }
+    }
+
+    @objc private func copyLink() {
+        guard let hoveredLink else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(hoveredLink.absoluteString, forType: .string)
+    }
 
     override func scrollWheel(with event: NSEvent) {
         let scrollsHorizontally = scrollDirection.isHorizontal(

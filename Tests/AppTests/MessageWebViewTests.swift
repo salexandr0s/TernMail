@@ -6,6 +6,14 @@ import WebKit
 @testable import Tern
 
 @Suite @MainActor struct MessageWebViewTests {
+    @Test func mailLinksStayInTernAndWebLinksGoToTheBrowser() throws {
+        #expect(MessageWebView.linkAction(for: try #require(URL(string: "mailto:friend@example.com"))) == .mail)
+        #expect(MessageWebView.linkAction(for: try #require(URL(string: "tern://conversation?account=a&thread=t"))) == .mail)
+        #expect(MessageWebView.linkAction(for: try #require(URL(string: "HTTPS://example.com/page"))) == .browser)
+        #expect(MessageWebView.linkAction(for: try #require(URL(string: "javascript:alert(1)"))) == .ignored)
+        #expect(MessageWebView.linkAction(for: try #require(URL(string: "file:///etc/hosts"))) == .ignored)
+    }
+
     @Test func bothImagePrivacyRuleSetsCompileInWebKit() async throws {
         _ = try #require(await RemoteContentBlocker.ruleList())
         _ = try #require(await RemoteContentBlocker.ruleList(allowsRemoteImages: true))
