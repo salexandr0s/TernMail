@@ -101,7 +101,7 @@ import Testing
             for (role, pane) in [(AssistantMailPaneSizing.Pane.navigation, navigation), (.list, list)] {
                 let probe = NSView(frame: pane.bounds)
                 pane.addSubview(probe)
-                sizing.attach(probe, pane: role)
+                EnclosingSplitDivider(of: probe).map { sizing.attach($0, as: role) }
             }
         }
 
