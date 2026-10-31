@@ -105,6 +105,11 @@ struct CalendarDisplayEvent: Identifiable, Equatable, Sendable {
         isAllDay = beginning?.isAllDay == true
         isRecurring = event.recurringEventId != nil || !(event.recurrence ?? []).isEmpty
     }
+
+    func replacingEvent(_ event: GoogleCalendarEvent) -> Self {
+        Self(event: event, accountID: accountID, calendarID: calendarID, colorHex: colorHex,
+             isPending: isPending, canEdit: canEdit, fallbackTimeZoneID: fallbackTimeZoneID)
+    }
 }
 
 enum CalendarEditScope: String, CaseIterable, Identifiable {

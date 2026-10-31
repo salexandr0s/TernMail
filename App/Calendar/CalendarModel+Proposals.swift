@@ -93,7 +93,9 @@ extension CalendarModel {
                     guard revision == accessRevision else { return }
                     draft.seriesMaster = master
                     draft.additionalNotificationRecipients = (master.attendees ?? []).map(\.email)
-                    draft.source?.event.recurrence = master.recurrence
+                    var sourceEvent = source.event
+                    sourceEvent.recurrence = master.recurrence
+                    draft.source = source.replacingEvent(sourceEvent)
                     draft.event.recurrence = master.recurrence
                 } catch { errorMessage = error.localizedDescription; return }
             }

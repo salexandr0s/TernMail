@@ -187,7 +187,8 @@ extension CalendarModel {
     private func remember(_ snapshot: CalendarRangeSnapshot, for key: CalendarRangeIdentity) {
         let budget = 12 * 1_024 * 1_024
         guard snapshot.byteCost <= budget else { return }
-        rangeSnapshots[key] = snapshot
+        rangeSnapshots[key] = CalendarRangeSnapshot(presentation: presentation ?? snapshot.presentation,
+            checkedAt: snapshot.checkedAt, stale: snapshot.stale, byteCost: snapshot.byteCost)
         touchRange(key)
         while rangeSnapshotOrder.count > 3 || rangeSnapshots.values.reduce(0, { $0 + $1.byteCost }) > budget {
             guard !rangeSnapshotOrder.isEmpty else { break }
