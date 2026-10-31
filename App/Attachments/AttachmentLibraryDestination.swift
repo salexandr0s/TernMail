@@ -15,12 +15,15 @@ struct AttachmentLibraryDestination: View {
                 .navigationSplitViewColumnWidth(min: Tokens.Layout.sidebarMinWidth,
                     ideal: Tokens.Layout.sidebarWidth, max: Tokens.Layout.sidebarMaxWidth)
         } detail: {
-            AttachmentLibraryView(model: model, onOpenSource: {}, searchFocusRequest: toolbar.searchFocusRequest)
+            AttachmentLibraryView(model: model, viewMode: toolbar.viewMode, onOpenSource: {},
+                focusSearch: { toolbar.searchFocusRequest += 1 })
         }
         .toolbar(removing: .sidebarToggle)
         .onDisappear { model.dismissPresentation() }
         .onChange(of: toolbar.searchText) { _, text in if model.search != text { model.search = text } }
         .onChange(of: model.search, initial: true) { _, text in if toolbar.searchText != text { toolbar.searchText = text } }
+        .onChange(of: toolbar.sort) { _, sort in if model.sort != sort { model.sort = sort } }
+        .onChange(of: model.sort, initial: true) { _, sort in if toolbar.sort != sort { toolbar.sort = sort } }
         .onChange(of: app.accountsNeedingSignIn, initial: true) { _, ids in model.unavailableAccountIDs = ids }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, ids in
             if let key = model.sourceThreadKey, !ids.contains(key.accountID) { model.sourceThreadKey = nil }

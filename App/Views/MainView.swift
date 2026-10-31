@@ -198,6 +198,7 @@ struct MainView: View {
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             CalendarToolbar(model: app.calendar)
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
+            AttachmentLibraryToolbar(state: libraryToolbar).mailToolbarVisible(isActive && showsLibrary)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
                     .help("New Message")

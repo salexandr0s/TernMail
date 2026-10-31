@@ -5,23 +5,24 @@ import SwiftUI
 
 struct AttachmentLibraryView: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.colorSchemeContrast) private var contrast
     @Bindable var model: AttachmentLibraryModel
+    let viewMode: AttachmentLibraryViewMode
     var onOpenSource: () -> Void
-    var searchFocusRequest = 0
-    @AppStorage("attachments.viewMode") private var viewMode = "list"
+    /// Moves focus to the window's search field, which searches the library.
+    var focusSearch: () -> Void = {}
     @State private var showsFilters = false
     @State private var showsCoverage = false
-    @FocusState private var searchFocused: Bool
 
     private var filterCount: Int { AttachmentFilterChip.values(for: model).filter { $0.id != "search" }.count }
     private var hasFilters: Bool { !AttachmentFilterChip.values(for: model).isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            filterBar
             Divider()
-            resultsToolbar
+            resultsTitle
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
             if let error = model.errorMessage { errorBanner(error) }
             GeometryReader { geometry in
                 if model.items.isEmpty { emptyState }
@@ -39,84 +40,38 @@ struct AttachmentLibraryView: View {
         .protectAttachmentPreview(model.previewURL)
         .task(id: model.coverageKey) { await model.start() }
         .task(id: model.observationKey) { await model.reload() }
-        .onChange(of: searchFocusRequest) { _, _ in searchFocused = true }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+    /// Category shortcuts and the Filters popover. Search, the layout and the
+    /// sort order are in the window's toolbar.
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s3) {
-                Image(systemName: "paperclip")
-                    .font(.title2.weight(.medium)).foregroundStyle(Color.accentColor)
-                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
-                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Attachments").font(.title.weight(.semibold))
-                    Text("Files from your connected mail accounts")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+                AttachmentCategoryShortcuts(model: model)
                 Spacer(minLength: 0)
+                filtersButton
             }
-            HStack(spacing: Tokens.Space.s3) {
-                searchField
-                Button { showsFilters.toggle() } label: {
-                    HStack(spacing: Tokens.Space.s2) {
-                        Image(systemName: "line.3.horizontal.decrease")
-                        Text("Filters")
-                        if filterCount > 0 {
-                            Text(filterCount.formatted()).font(.caption.weight(.semibold))
-                                .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
-                                .background(Color.accentColor.opacity(0.14), in: Capsule())
-                        }
-                    }
-                    .frame(minHeight: Tokens.Space.s6)
-                }
-                .fixedSize().controlSize(.large)
-                .accessibilityLabel(filterCount == 0 ? "Filters" : "Filters, \(filterCount) active")
-                .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
-            }
-            AttachmentCategoryShortcuts(model: model)
             AttachmentActiveFilters(model: model)
         }
-        .padding(Tokens.Space.s5)
+        .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
     }
 
-    private var searchField: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "magnifyingglass").foregroundStyle(searchFocused ? Color.accentColor : .secondary)
-                .accessibilityHidden(true)
-            TextField("Search filenames, senders or subjects", text: $model.search)
-                .textFieldStyle(.plain).focused($searchFocused)
-                .accessibilityLabel("Search filenames, senders and email subjects")
-                .help("Search filenames, senders and email subjects. Document contents aren't searched.")
-                .accessibilityHint("Searches file and email details. Document contents aren't searched.")
-            if !model.search.isEmpty {
-                Button { model.search = ""; searchFocused = true } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Clear search").accessibilityLabel("Clear search")
+    private var filtersButton: some View {
+        Button { showsFilters.toggle() } label: {
+            HStack(spacing: Tokens.Space.s2) {
+                Image(systemName: "line.3.horizontal.decrease")
+                Text("Filters")
+                if filterCount > 0 {
+                    Text(filterCount.formatted()).font(.caption.weight(.semibold))
+                        .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
+                        .background(Color.accentColor.opacity(Tokens.Opacity.tint), in: Capsule())
+                }
             }
         }
-        .padding(.horizontal, Tokens.Space.s3)
-        .frame(minWidth: Tokens.Layout.searchMinWidth, minHeight: Tokens.Space.s10)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(searchFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
-                              lineWidth: searchFocused ? Tokens.Border.focus : Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var resultsToolbar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Tokens.Space.s3) { resultsTitle; Spacer(minLength: Tokens.Space.s2); displayControls }
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                resultsTitle
-                HStack { Spacer(minLength: 0); displayControls }
-            }
-        }
-        .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
+        .fixedSize()
+        .accessibilityLabel(filterCount == 0 ? "Filters" : "Filters, \(filterCount) active")
+        .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
     }
 
     private var resultsTitle: some View {
@@ -133,23 +88,6 @@ struct AttachmentLibraryView: View {
         .font(.callout).fixedSize()
     }
 
-    private var displayControls: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            Picker("Sort attachments", selection: $model.sort) {
-                ForEach(AttachmentLibrarySort.allCases, id: \.self) { sort in Text(sort.title).tag(sort) }
-            }
-            .labelsHidden().frame(width: Tokens.Layout.sidebarMinWidth)
-            .help("Sort attachments")
-            Picker("View", selection: $viewMode) {
-                Image(systemName: "list.bullet").tag("list").accessibilityLabel("List view")
-                Image(systemName: "square.grid.2x2").tag("grid").accessibilityLabel("Card view")
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: Tokens.Space.s10 * 2)
-            .help("Choose list or card view")
-        }
-        .fixedSize()
-    }
-
     @ViewBuilder private var emptyState: some View {
         if model.isLoading {
             TernEmptyState(title: "Finding your files", systemImage: "doc.text.magnifyingglass",
@@ -161,7 +99,7 @@ struct AttachmentLibraryView: View {
                         ? "Try a different filename, sender or filter."
                         : "Try another category or clear your filters. Categories appear as attachments are indexed and read. You can correct a category from an attachment's menu.",
                     fillsSpace: false)
-                Button("Clear all filters") { model.clearFilters(); searchFocused = true }
+                Button("Clear All Filters") { model.clearFilters(); focusSearch() }
                     .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

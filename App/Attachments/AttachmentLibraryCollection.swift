@@ -6,7 +6,7 @@ import SwiftUI
 /// arrow-key handling; List supplies native range and command selection.
 struct AttachmentLibraryCollection: View {
     @Bindable var model: AttachmentLibraryModel
-    let viewMode: String
+    let viewMode: AttachmentLibraryViewMode
     let availableWidth: CGFloat
     let onOpenSource: () -> Void
     @State private var anchorID: String?
@@ -21,7 +21,7 @@ struct AttachmentLibraryCollection: View {
 
     var body: some View {
         Group {
-            if viewMode == "grid" { cards }
+            if viewMode == .grid { cards }
             else {
                 VStack(spacing: 0) {
                     if availableWidth >= Tokens.Layout.readableWidth { columnHeadings }
@@ -52,7 +52,7 @@ struct AttachmentLibraryCollection: View {
             anchorID = currentID
         }
         .onChange(of: model.selection) { _, selection in
-            if viewMode == "list", !selection.isEmpty { listFocused = true }
+            if viewMode == .list, !selection.isEmpty { listFocused = true }
         }
     }
 
