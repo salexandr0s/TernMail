@@ -55,11 +55,8 @@ import Testing
         try await expectMailVisible(in: controller.view, window: window, searchFolds: false)
         // Beside the assistant the list and reader can need more than the mail area.
         // The split then runs under the assistant or off the trailing edge, never off
-        // the leading edge. Narrower windows can move the assistant button into the
-        // toolbar overflow, so it is clicked at 1,280 points.
-        try await toggleAssistant(in: window)
-        try await settle()
-        #expect(try mailSplit(in: controller.view).frame.width <= 1_280 - Tokens.Assistant.sidebarMinWidth)
+        // the leading edge.
+        try await toggleAssistant(in: window, rootView: controller.view, opens: true)
         for width in [CGFloat(960), Tokens.Layout.windowMinWidth] {
             window.setContentSize(NSSize(width: width, height: 760))
             try await settle()
@@ -68,9 +65,7 @@ import Testing
         }
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await settle()
-        try await toggleAssistant(in: window)
-        try await settle()
-        #expect(try mailSplit(in: controller.view).frame.width > 1_280 - Tokens.Assistant.sidebarMinWidth)
+        try await toggleAssistant(in: window, rootView: controller.view, opens: false)
         app.destination = .calendar
         try await settle()
         app.destination = .mail
@@ -183,20 +178,40 @@ import Testing
         }
     }
 
-    private func toggleAssistant(in window: NSWindow) async throws {
-        let item = try #require(window.toolbar?.items.first { $0.itemIdentifier.rawValue.hasSuffix("workspace.assistant") })
+    /// Clicks the assistant button and waits for the mail split to make room
+    /// for the assistant or take the room back. Under load a click can land
+    /// while the toolbar still replaces its items after a resize and do
+    /// nothing, so a click that changes nothing within three seconds is sent
+    /// once more.
+    private func toggleAssistant(in window: NSWindow, rootView: NSView, opens: Bool) async throws {
+        let openWidth = window.frame.width - Tokens.Assistant.sidebarMinWidth
+        var splitWidth = try mailSplit(in: rootView).frame.width
+        for _ in 0..<2 where (splitWidth <= openWidth) != opens {
+            try await clickAssistantButton(in: window)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            repeat {
+                try await settle()
+                splitWidth = try mailSplit(in: rootView).frame.width
+            } while (splitWidth <= openWidth) != opens && ContinuousClock.now < deadline
+        }
+        #expect((splitWidth <= openWidth) == opens,
+            "The mail split is \(splitWidth) points wide after the assistant \(opens ? "opened" : "closed")")
+    }
+
+    private func clickAssistantButton(in window: NSWindow) async throws {
         // After a resize the toolbar lays its items out a little later.
         var target: NSPoint?
         var seen = ""
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while target == nil, ContinuousClock.now < deadline {
-            if let view = item.view, view.window === window {
+            let item = window.toolbar?.items.first { $0.itemIdentifier.rawValue.hasSuffix("workspace.assistant") }
+            if let item, let view = item.view, view.window === window {
                 let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
                 let hit = window.contentView?.superview?.hitTest(point)
                 if hit?.isDescendant(of: view) == true { target = point }
                 seen = "visible \(item.isVisible) point \(point) hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")"
             } else {
-                seen = "visible \(item.isVisible) view in window \(item.view?.window === window)"
+                seen = "visible \(item?.isVisible ?? false) view in window \(item?.view?.window === window)"
             }
             if target == nil { try await settle() }
         }
