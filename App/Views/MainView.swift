@@ -299,7 +299,6 @@ struct MainView: View {
     private func updateNavigationVisibility(isNarrow: Bool) {
         guard showsAssistant, let previousColumnVisibility else { return }
         columnVisibility = isNarrow && previousColumnVisibility != .detailOnly ? .doubleColumn : previousColumnVisibility
-        paneSizing.requestApply()
     }
 
     private func resizeAssistant(_ width: CGFloat) {

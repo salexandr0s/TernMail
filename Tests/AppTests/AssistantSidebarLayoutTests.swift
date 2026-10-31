@@ -15,6 +15,9 @@ import Testing
         fixture.sizing.beginPresentation()
         let open = AssistantSidebarLayout(availableWidth: width, preferredWidth: 380, isPresented: true)
         fixture.show(open)
+        fixture.compressAsColumnWidthsDo()
+        // The column widths own compression; the sizing leaves them alone.
+        fixture.sizing.requestApply()
         fixture.sizing.apply()
 
         #expect(fixture.window.frame == originalWindow)
@@ -30,8 +33,6 @@ import Testing
             #expect(abs(fixture.navigation.frame.width - AssistantSidebarLayout.navigationMinimum) < 1)
             #expect(fixture.sidebar.frame.width == Tokens.Assistant.sidebarWidth)
             fixture.show(AssistantSidebarLayout(availableWidth: width, preferredWidth: 480, isPresented: true))
-            fixture.sizing.requestApply()
-            fixture.sizing.apply()
             #expect(fixture.reader.frame.width >= Tokens.Assistant.readerMinWidth - 1)
             #expect(fixture.sidebar.frame.width <= Tokens.Assistant.sidebarMaxWidth)
             #expect(fixture.sidebar.frame.maxX <= fixture.container.bounds.maxX)
@@ -46,6 +47,23 @@ import Testing
         #expect(!fixture.controller.splitViewItems[0].isCollapsed)
         #expect(fixture.window.frame == originalWindow)
         #expect(fixture.split.frame == fixture.container.bounds)
+    }
+
+    @Test func restoreWaitsForTheSplitToWiden() {
+        let fixture = Fixture(width: 1280)
+        defer { fixture.window.close() }
+        fixture.setPaneWidths(navigation: 232, list: 372)
+        let originalList = fixture.list.frame.width
+        fixture.sizing.beginPresentation()
+        fixture.show(AssistantSidebarLayout(availableWidth: 1280, preferredWidth: 380, isPresented: true))
+        fixture.compressAsColumnWidthsDo()
+
+        // Attempts can run before the split takes back the assistant's width.
+        fixture.sizing.endPresentation()
+        for _ in 0..<3 { fixture.sizing.apply() }
+        fixture.hide()
+        fixture.sizing.apply()
+        #expect(abs(fixture.list.frame.width - originalList) < 1)
     }
 
     @Test func delayedColumnUncollapseDoesNotDiscardRestoration() {
@@ -108,6 +126,17 @@ import Testing
         func setPaneWidths(navigation: CGFloat, list: CGFloat) {
             split.setPosition(navigation, ofDividerAt: 0)
             split.setPosition(navigation + split.dividerThickness + list, ofDividerAt: 1)
+            split.layoutSubtreeIfNeeded()
+        }
+
+        /// MainView sets each column's minimum, ideal and maximum width equal
+        /// while the assistant shows; the bare controller needs the positions.
+        func compressAsColumnWidthsDo() {
+            if controller.splitViewItems[0].isCollapsed {
+                split.setPosition(list.frame.minX + AssistantSidebarLayout.listMinimum, ofDividerAt: 1)
+            } else {
+                setPaneWidths(navigation: AssistantSidebarLayout.navigationMinimum, list: AssistantSidebarLayout.listMinimum)
+            }
             split.layoutSubtreeIfNeeded()
         }
 
