@@ -68,7 +68,8 @@ struct AssistantSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                if model.connection.account == nil, !model.connection.isConnecting, !model.connection.isDisconnecting {
+                if model.connection.account == nil, !model.connection.isConnecting, !model.connection.isDisconnecting,
+                   !model.connection.isRestoring, !model.connection.needsStorageRetry {
                     ChatGPTSignInButton(action: connect)
                 }
                 if model.connection.account != nil, !model.connection.isConnecting, !model.connection.isDisconnecting {
@@ -100,7 +101,14 @@ struct AssistantSettingsView: View {
                 .textSelection(.enabled)
             }
 
-            if model.connection.isConnecting {
+            if model.connection.isRestoring {
+                HStack(spacing: Tokens.Space.s2) {
+                    ProgressView().controlSize(.small)
+                    Text("Opening saved connection…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else if model.connection.isConnecting {
                 HStack(spacing: Tokens.Space.s3) {
                     ProgressView().controlSize(.small)
                     Text("Finish signing in in your browser.")
@@ -124,6 +132,16 @@ struct AssistantSettingsView: View {
 
             if let error = model.connection.errorMessage {
                 errorMessage(error)
+            }
+            if model.connection.needsStorageRetry {
+                Button("Retry Keychain access") {
+                    Task {
+                        await model.connection.retryStoredConnection()
+                        await model.refreshConnection()
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.connection.isRestoring || model.connection.isConnecting || model.connection.isDisconnecting)
             }
         }
         .padding(Tokens.Space.s3)

@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import TernAI
 import Testing
 @testable import Tern
@@ -6,6 +7,165 @@ import Testing
 @MainActor
 @Suite struct ChatGPTConnectionTests {
     private let now = Date(timeIntervalSinceReferenceDate: 10_000)
+
+    @Test func initializationDoesNotReadAndConcurrentRestorationSharesOneLoad() async throws {
+        let saved = try credentials(token: "saved", expires: now.addingTimeInterval(3600))
+        let store = try ConnectionMemoryStore(record: record(saved))
+        let gate = ConnectionGate()
+        store.loadGate = gate
+        let connection = ChatGPTConnection(store: store, auth: stubAuth(), now: { self.now })
+        #expect(store.loads == 0)
+        #expect(connection.account == nil)
+        let change = ConnectionChangeFlag()
+        withObservationTracking {
+            #expect(!connection.canUsePlan)
+        } onChange: {
+            MainActor.assumeIsolated { change.didChange = true }
+        }
+        let first = Task { await connection.recoverPendingConnection() }
+        await gate.waitUntilPaused()
+        #expect(connection.isRestoring)
+        let second = Task { await connection.recoverPendingConnection() }
+        first.cancel()
+        gate.open()
+        await first.value
+        await second.value
+        #expect(store.loads == 1)
+        #expect(!connection.isRestoring)
+        #expect(connection.canUsePlan)
+        #expect(connection.account?.subject == "subject")
+        #expect(change.didChange)
+    }
+
+    @Test func cancellingAnOlderCallerDoesNotCancelTheNewConnection() async throws {
+        let store = try ConnectionMemoryStore(record: ChatGPTStoredConnection())
+        let gate = ConnectionGate()
+        store.loadGate = gate
+        var browsers = 0
+        let connection = ChatGPTConnection(store: store, auth: stubAuth(),
+            makeListener: { ConnectionFakeListener() },
+            openBrowser: { _ in browsers += 1; return true }, now: { self.now })
+        let first = Task { await connection.connect() }
+        await gate.waitUntilPaused()
+        connection.cancelSignIn()
+        let second = Task { await connection.connect() }
+        try await waitUntil { connection.isConnecting }
+        first.cancel()
+        for _ in 0..<10 { await Task.yield() }
+        #expect(connection.isConnecting)
+        gate.open()
+        await first.value
+        await second.value
+        #expect(browsers == 1)
+    }
+
+    @Test func deniedReadRequiresRetryWithoutOverwritingSavedConnection() async throws {
+        let saved = try credentials(token: "saved", expires: now.addingTimeInterval(3600))
+        let store = try ConnectionMemoryStore(record: record(saved))
+        store.failLoads = true
+        var browsers = 0
+        let connection = ChatGPTConnection(store: store, auth: stubAuth(),
+            openBrowser: { _ in browsers += 1; return true }, now: { self.now })
+        await connection.recoverPendingConnection()
+        await connection.recoverPendingConnection()
+        await connection.connect()
+        #expect(store.loads == 1)
+        #expect(store.saves == 0)
+        #expect(browsers == 0)
+        #expect(connection.needsStorageRetry)
+        #expect(try store.record().credentials?.accessToken == "saved")
+        store.failLoads = false
+        await connection.retryStoredConnection()
+        #expect(store.loads == 2)
+        #expect(store.saves == 0)
+        #expect(!connection.needsStorageRetry)
+        #expect(connection.errorMessage == nil)
+        #expect(connection.canUsePlan)
+    }
+
+    @Test func disconnectDuringRestorationDoesNotPublishOrLoseTheStoredRegistration() async throws {
+        let saved = try credentials(token: "saved", expires: now.addingTimeInterval(3600))
+        let store = try ConnectionMemoryStore(record: record(saved))
+        let gate = ConnectionGate()
+        store.loadGate = gate
+        var revoked: String?
+        let connection = ChatGPTConnection(store: store,
+            auth: stubAuth(revoke: { _, token in revoked = token }), now: { self.now })
+        let request = Task { try await connection.accessToken() }
+        await gate.waitUntilPaused()
+        let disconnect = Task { await connection.disconnect() }
+        try await waitUntil { connection.isDisconnecting }
+        #expect(store.isDisconnected)
+        gate.open()
+        await disconnect.value
+        await #expect(throws: ChatGPTConnectionError.self) { try await request.value }
+        #expect(connection.account == nil)
+        #expect(!connection.canUsePlan)
+        #expect(revoked == "refresh-saved")
+        #expect(try store.record().credentials == nil)
+        #expect(try store.record().registration == saved.registration)
+    }
+
+    @Test func disconnectWithUnreadStorageOnlySetsTheTombstone() async throws {
+        let saved = try credentials(token: "saved", expires: now.addingTimeInterval(3600))
+        let store = try ConnectionMemoryStore(record: record(saved))
+        store.failLoads = true
+        let connection = ChatGPTConnection(store: store, auth: stubAuth(), now: { self.now })
+        await connection.disconnect()
+        #expect(store.isDisconnected)
+        #expect(store.saves == 0)
+        #expect(try store.record().registration == saved.registration)
+        #expect(try store.record().credentials?.accessToken == "saved")
+        #expect(connection.account == nil)
+        #expect(connection.errorMessage?.contains("Keychain") == true)
+    }
+
+    @Test func concurrentConnectCallsDoNotDuplicateAuthorizationWhileSaving() async throws {
+        let store = try ConnectionMemoryStore(record: ChatGPTStoredConnection())
+        let gate = ConnectionGate()
+        store.beforeSave = { record in if record.registration == nil { await gate.pause() } }
+        var browsers = 0
+        let connection = ChatGPTConnection(store: store, auth: stubAuth(),
+            makeListener: { ConnectionFakeListener() },
+            openBrowser: { _ in browsers += 1; return true }, now: { self.now })
+        let first = Task { await connection.connect() }
+        await gate.waitUntilPaused()
+        await connection.connect()
+        gate.open()
+        await first.value
+        #expect(browsers == 1)
+        #expect(!connection.isConnecting)
+    }
+
+    @Test func disconnectDuringCredentialInstallationClearsTheLateWrite() async throws {
+        let saved = try credentials(token: "new", expires: now.addingTimeInterval(3600))
+        let pending = try pending(saved)
+        var initial = ChatGPTStoredConnection()
+        initial.hostID = saved.registration.hostID
+        let store = try ConnectionMemoryStore(record: initial)
+        let gate = ConnectionGate()
+        store.beforeSave = { value in
+            if value.credentials?.accessToken == "new", value.pending == nil { await gate.pause() }
+        }
+        var revoked: [String] = []
+        let connection = ChatGPTConnection(store: store,
+            auth: stubAuth(exchange: { _, _ in pending }, verify: { _ in saved },
+                revoke: { _, token in revoked.append(token) }),
+            makeListener: { ConnectionFakeListener() }, openBrowser: { _ in true }, now: { self.now })
+        let login = Task { await connection.connect() }
+        await gate.waitUntilPaused()
+        let disconnect = Task { await connection.disconnect() }
+        try await waitUntil { connection.isDisconnecting }
+        #expect(store.isDisconnected)
+        gate.open()
+        await login.value
+        await disconnect.value
+        #expect(connection.account == nil)
+        #expect(!connection.canUsePlan)
+        #expect(try store.record().credentials == nil)
+        #expect(try store.record().pending == nil)
+        #expect(revoked == ["refresh-new"])
+    }
 
     @Test func concurrentRequestsShareRotationAndCancelledCallerDoesNotLoseIt() async throws {
         let old = try credentials(token: "old", expires: now.addingTimeInterval(10))
@@ -209,6 +369,7 @@ import Testing
         let identity = try credentials(token: "identity", expires: now.addingTimeInterval(3600), scopes: ["openid", "email"])
         let store = try ConnectionMemoryStore(record: record(identity))
         let connection = ChatGPTConnection(store: store, auth: stubAuth(), now: { self.now })
+        await connection.recoverPendingConnection()
         #expect(connection.account?.subject == "subject")
         #expect(!connection.canUsePlan)
         await #expect(throws: ChatGPTConnectionError.self) { try await connection.accessToken() }
@@ -242,6 +403,7 @@ import Testing
         await #expect(throws: ChatGPTConnectionError.self) { try await restarted.accessToken() }
         store.failSaves = false
         let cleaned = ChatGPTConnection(store: store, auth: stubAuth(), now: { self.now })
+        await cleaned.recoverPendingConnection()
         #expect(try store.record().credentials == nil)
         #expect(try store.record().registration?.clientID == "oaiapp_tern_test")
         #expect(cleaned.account == nil)
@@ -331,14 +493,31 @@ import Testing
 }
 
 @MainActor
+private final class ConnectionChangeFlag {
+    var didChange = false
+}
+
+@MainActor
 private final class ConnectionMemoryStore: AIConnectionStore {
     private var data: Data
     private(set) var isDisconnected = false
     var failSaves = false
+    var failLoads = false
+    private(set) var loads = 0
+    private(set) var saves = 0
+    var loadGate: ConnectionGate?
+    var beforeSave: ((ChatGPTStoredConnection) async -> Void)?
     init(record: ChatGPTStoredConnection) throws { data = try JSONEncoder().encode(record) }
-    func load() throws -> Data? { data }
-    func save(_ data: Data) throws {
+    func load() async throws -> Data? {
+        loads += 1
+        if failLoads { throw AIKeychainFailure() }
+        if let loadGate { await loadGate.pause() }
+        return data
+    }
+    func save(_ data: Data) async throws {
+        saves += 1
         if failSaves { throw AIKeychainFailure() }
+        if let beforeSave { await beforeSave(try JSONDecoder().decode(ChatGPTStoredConnection.self, from: data)) }
         self.data = data
     }
     func setDisconnected(_ disconnected: Bool) { isDisconnected = disconnected }

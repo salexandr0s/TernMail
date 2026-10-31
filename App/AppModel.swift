@@ -309,6 +309,10 @@ final class AppModel {
     private var accountChange: Task<Void, Never>?
 
     func start() async {
+        await changeAccounts { [self] in await restoreAccounts() }
+    }
+
+    private func restoreAccounts() async {
         guard phase == .loading else { return }
         do {
 #if DEBUG
@@ -365,7 +369,8 @@ final class AppModel {
             let stored = try await accounts.accounts()
             try await removeLeftovers(keeping: Set(stored.map(\.id)))
             for account in stored {
-                adopt(AccountSession.restore(accountID: account.id) ?? AccountSession(accountID: account.id))
+                let session = await AccountSession.restore(accountID: account.id)
+                adopt(session ?? AccountSession(accountID: account.id))
             }
             let signedIn = try await correctGrants(of: stored, in: accounts)
             guard let first = signedIn.first else {
@@ -451,11 +456,12 @@ final class AppModel {
             let session: AccountSession
             if let existing = sessions[user.id] {
                 // Clients holding the session pick up the new tokens.
-                try existing.replace(with: user.state)
+                try await existing.replace(with: user.state)
+                guard sessions[user.id] === existing, existing.isSignedIn else { return }
                 session = existing
             } else {
                 session = AccountSession(accountID: user.id, state: user.state)
-                try session.save()
+                try await session.save()
                 adopt(session)
             }
             let (email, displayName, granted, hostedDomain) = (user.email, user.displayName, user.grantedScopes, user.hostedDomain)
@@ -504,6 +510,8 @@ final class AppModel {
             await inboxWatchers.removeValue(forKey: account.id)?.stop()
             await refreshInboxUpdates()
             await accountPreferences?.refresh()
+        } catch is CancellationError {
+            return
         } catch {
             reportSignInError(error.localizedDescription)
         }
@@ -583,7 +591,8 @@ final class AppModel {
         return try await changeAccounts(returning: { [self] in
             // A sign-out, or a new sign-in that replaced the session, wins.
             guard sessions[accountID] === session, session.isSignedIn else { return nil }
-            try session.replace(with: user.state)
+            try await session.replace(with: user.state)
+            guard sessions[accountID] === session, session.isSignedIn else { return nil }
             let (granted, hostedDomain) = (user.grantedScopes, user.hostedDomain)
             try await accounts.updateAccount(id: accountID) { account in
                 // Features turned off while Google's page was open stay off.
@@ -757,7 +766,10 @@ final class AppModel {
 
     private func adopt(_ session: AccountSession) {
         let accountID = session.accountID
-        session.onSignInRequired = { [weak self] in self?.sessionExpired(accountID) }
+        session.onSignInRequired = { [weak self, weak session] in
+            guard let self, let session, sessions[accountID] === session else { return }
+            sessionExpired(accountID)
+        }
         sessions[accountID] = session
     }
 
@@ -923,9 +935,9 @@ final class AppModel {
         await mailNotifications?.removeAccount(account.id)
         try await accounts.deleteAccount(id: account.id)
         await calendarModel?.removeAccount(account.id)
-        session?.signOut()
+        await session?.signOut()
         // A session that failed to restore at launch can leave its item behind.
-        try? KeychainStore.delete(account: account.id)
+        try? await KeychainStore.delete(account: account.id)
         do { try AssistantWritingStyleCleanup.remove(accountID: account.id) }
         catch { reportSignInError("Some saved writing-style data could not be deleted.") }
         try await removeCachedData(accountIDs: [account.id])

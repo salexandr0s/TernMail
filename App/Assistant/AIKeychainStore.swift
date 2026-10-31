@@ -4,8 +4,8 @@ import Security
 /// One atomic record keeps registration and pending token rotations together.
 @MainActor
 protocol AIConnectionStore {
-    func load() throws -> Data?
-    func save(_ data: Data) throws
+    func load() async throws -> Data?
+    func save(_ data: Data) async throws
     var isDisconnected: Bool { get }
     func setDisconnected(_ disconnected: Bool)
 }
@@ -36,33 +36,37 @@ struct AIKeychainStore: AIConnectionStore {
         UserDefaults.standard.set(disconnected, forKey: "chatGPTLocallyDisconnected")
     }
 
-    private var query: [CFString: Any] {
+    nonisolated private static var query: [CFString: Any] {
         [kSecClass: kSecClassGenericPassword,
          kSecAttrService: "dev.tern.mail.chatgpt",
          kSecAttrAccount: "connection"]
     }
 
-    func load() throws -> Data? {
-        var request = query
-        request[kSecReturnData] = true
-        request[kSecMatchLimit] = kSecMatchLimitOne
-        var value: CFTypeRef?
-        let status = SecItemCopyMatching(request as CFDictionary, &value)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = value as? Data else { throw AIKeychainFailure() }
-        return data
+    func load() async throws -> Data? {
+        try await KeychainIO.perform {
+            var request = Self.query
+            request[kSecReturnData] = true
+            request[kSecMatchLimit] = kSecMatchLimitOne
+            var value: CFTypeRef?
+            let status = SecItemCopyMatching(request as CFDictionary, &value)
+            if status == errSecItemNotFound { return nil }
+            guard status == errSecSuccess, let data = value as? Data else { throw AIKeychainFailure() }
+            return data
+        }
     }
 
-    func save(_ data: Data) throws {
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var request = query
-            request[kSecValueData] = data
-            // Match the existing Google credential store: the login keychain
-            // also works with Tern's locally signed development builds.
-            guard SecItemAdd(request as CFDictionary, nil) == errSecSuccess else { throw AIKeychainFailure() }
-        } else if status != errSecSuccess {
-            throw AIKeychainFailure()
+    func save(_ data: Data) async throws {
+        try await KeychainIO.perform {
+            let query = Self.query
+            let status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
+            if status == errSecItemNotFound {
+                var request = query
+                request[kSecValueData] = data
+                // Keep the existing login-keychain record and its access controls.
+                guard SecItemAdd(request as CFDictionary, nil) == errSecSuccess else { throw AIKeychainFailure() }
+            } else if status != errSecSuccess {
+                throw AIKeychainFailure()
+            }
         }
     }
 }

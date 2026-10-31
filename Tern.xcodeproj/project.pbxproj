@@ -76,6 +76,7 @@
 		4086720480558625A887B0CC /* CalendarModel+Management.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30E1A233E53C89D1BE438800 /* CalendarModel+Management.swift */; };
 		41BF834483C5F430BB978DD6 /* SidebarLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C3CD5D6DA0EF678721D5E20 /* SidebarLayoutTests.swift */; };
 		41D036D50024B307653605F4 /* AssistantSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15569EF35E74AFD2FC46ED3C /* AssistantSettingsView.swift */; };
+		42302766EB81A855E3886352 /* KeychainIOTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504DF8DA5F20BC02B117F0BD /* KeychainIOTests.swift */; };
 		44C15A8C7042454C99FD8246 /* MessageContent in Frameworks */ = {isa = PBXBuildFile; productRef = 1D2F537B3CC39297117479CF /* MessageContent */; };
 		44D6C088B74A80805716D832 /* ComposeIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75826CDD812745C14BA03F63 /* ComposeIdentityTests.swift */; };
 		4554127B29699A6BB1EF9D95 /* MailNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9679918B03DAB67FE3C24F48 /* MailNotificationCoordinator.swift */; };
@@ -352,6 +353,7 @@
 		4E6D21BDB509E55DA8AAE960 /* SplitDividerHandleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitDividerHandleTests.swift; sourceTree = "<group>"; };
 		4F78C5270B0AE64BD13220AD /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		500300EE2CDD995601FCC4F9 /* LabelAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelAppearance.swift; sourceTree = "<group>"; };
+		504DF8DA5F20BC02B117F0BD /* KeychainIOTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainIOTests.swift; sourceTree = "<group>"; };
 		506646ADB4EFE00F9A7BCBCF /* AssistantConversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantConversation.swift; sourceTree = "<group>"; };
 		50845FEB4887030FFA81D657 /* MailAssistantTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailAssistantTools.swift; sourceTree = "<group>"; };
 		50BC5CC58387671AC6A5DD09 /* MailCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailCommands.swift; sourceTree = "<group>"; };
@@ -757,6 +759,7 @@
 				3B1C246205C901405B0F5BFC /* EmailCalendarTests.swift */,
 				C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */,
 				5864A21670390DACDCCD90AA /* InvitationBannerTests.swift */,
+				504DF8DA5F20BC02B117F0BD /* KeychainIOTests.swift */,
 				A9EEDB8790E068A6F2E388A7 /* LabelAppearanceTests.swift */,
 				4CBCB6C2893A66D630A93636 /* LabelNodeTests.swift */,
 				07898683B01BE7A2DBB2E477 /* LabelSelectionTests.swift */,
@@ -1125,6 +1128,7 @@
 				764CF8F05D3F2EE8619C9AEA /* EmailCalendarTests.swift in Sources */,
 				29CA8194A885564D66501125 /* InboxWatcherTests.swift in Sources */,
 				0E2637F672272FCBF7E17B6A /* InvitationBannerTests.swift in Sources */,
+				42302766EB81A855E3886352 /* KeychainIOTests.swift in Sources */,
 				92B0E8BF0444B82243348870 /* LabelAppearanceTests.swift in Sources */,
 				AB23A5C1FBDAB6AA9E34EBB0 /* LabelNodeTests.swift in Sources */,
 				C0D7959AB5FBA76225CF3B65 /* LabelSelectionTests.swift in Sources */,

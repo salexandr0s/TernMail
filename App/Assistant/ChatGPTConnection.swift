@@ -49,11 +49,13 @@ final class ChatGPTConnection {
     private(set) var registration: ChatGPTRegistration?
     private(set) var isConnecting = false
     private(set) var isDisconnecting = false
+    private(set) var isRestoring = false
+    private(set) var needsStorageRetry = false
     private(set) var errorMessage: String?
     private(set) var connectionRevision = 0
 
     var canUsePlan: Bool {
-        !locallyDisconnected && !isConnecting && !isDisconnecting && (!record.refreshDispatched || refreshTask != nil)
+        storageLoaded && !locallyDisconnected && !isConnecting && !isDisconnecting && (!record.refreshDispatched || refreshTask != nil)
             && record.credentials?.canUsePlan == true
     }
 
@@ -64,7 +66,9 @@ final class ChatGPTConnection {
     @ObservationIgnored private let now: () -> Date
     private var record = ChatGPTStoredConnection()
     private var locallyDisconnected = false
-    @ObservationIgnored private var storageLoaded = false
+    private var storageLoaded = false
+    @ObservationIgnored private var storageFailure: (any Error)?
+    @ObservationIgnored private var restorationTask: Task<Void, any Error>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var listener: (any ChatGPTCallbackListener)?
     @ObservationIgnored private var signInTask: Task<Void, Never>?
@@ -72,6 +76,7 @@ final class ChatGPTConnection {
     @ObservationIgnored private var refreshTask: Task<ChatGPTCredentials, any Error>?
     @ObservationIgnored private var signInHasCheckpoint = false
     @ObservationIgnored private var cancellationRevocation: Task<Bool, Never>?
+    @ObservationIgnored private var cancellationCleanup: Task<Void, Never>?
 
     init(store: (any AIConnectionStore)? = nil, auth: ChatGPTConnectionAuth = .live,
          makeListener: @escaping () -> any ChatGPTCallbackListener = { LoopbackAuthListener() },
@@ -79,8 +84,8 @@ final class ChatGPTConnection {
          now: @escaping () -> Date = { .now }) {
         self.store = store ?? Self.defaultStore()
         self.auth = auth; self.makeListener = makeListener; self.openBrowser = openBrowser; self.now = now
-        do { try load() }
-        catch { errorMessage = safeMessage(error) }
+        // Constructing a scene must never wait for a Keychain authorization dialog.
+        locallyDisconnected = self.store.isDisconnected
     }
 
     private static func defaultStore() -> any AIConnectionStore {
@@ -97,18 +102,13 @@ final class ChatGPTConnection {
 
     func connect() async {
         guard !isConnecting, !isDisconnecting else { return }
-        // A late token exchange must finish its cleanup before a new login can
-        // reuse the registration.
-        if let cancelledSignInTask { await cancelledSignInTask.value }
-        if let cancellationRevocation { _ = await cancellationRevocation.value }
-        guard !Task.isCancelled, !isConnecting, !isDisconnecting else { return }
+        let previousSignIn = cancelledSignInTask
+        let previousCleanup = cancellationCleanup
+        let previousRevocation = cancellationRevocation
         cancelledSignInTask = nil
+        cancellationCleanup = nil
         cancellationRevocation = nil
-        do {
-            if !storageLoaded { try load() }
-            // Persist the installation ID before opening a browser.
-            try save()
-        } catch { errorMessage = safeMessage(error); return }
+        // Claim the operation before its first suspension, including storage access.
         generation += 1
         let expected = generation
         connectionRevision += 1
@@ -117,20 +117,50 @@ final class ChatGPTConnection {
         errorMessage = nil
         let task = Task<Void, Never> { [weak self] in
             guard let self else { return }
-            if let refreshTask = self.refreshTask { _ = try? await refreshTask.value }
-            guard generation == expected else { return }
-            await self.performSignIn(generation: expected)
+            defer {
+                if generation == expected { signInTask = nil; isConnecting = false }
+            }
+            if let previousSignIn { await previousSignIn.value }
+            if let previousCleanup { await previousCleanup.value }
+            if let previousRevocation { _ = await previousRevocation.value }
+            do {
+                try ensureCurrent(expected)
+                try await ensureStorageLoaded()
+                try ensureCurrent(expected)
+                if let refreshTask { _ = try? await refreshTask.value }
+                try ensureCurrent(expected)
+                // Persist the installation ID before opening a browser.
+                try await save()
+                try ensureCurrent(expected)
+                await performSignIn(generation: expected)
+            } catch {
+                if generation == expected, !(error is CancellationError) { errorMessage = safeMessage(error) }
+            }
         }
         signInTask = task
         await withTaskCancellationHandler { await task.value } onCancel: {
-            Task { @MainActor [weak self] in self?.cancelSignIn() }
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == expected else { return }
+                self.cancelSignIn()
+            }
         }
     }
 
     /// Finish a stored token checkpoint without starting a new browser authorization.
     func recoverPendingConnection() async {
-        guard record.pending != nil, !locallyDisconnected, !isConnecting, !isDisconnecting else { return }
-        do { _ = try await refreshedToken() }
+        guard !isConnecting, !isDisconnecting else { return }
+        do {
+            try await ensureStorageLoaded()
+            guard record.pending != nil, !locallyDisconnected, !isConnecting, !isDisconnecting else { return }
+            _ = try await refreshedToken()
+        }
+        catch { errorMessage = safeMessage(error) }
+    }
+
+    /// Retry only storage access; this never opens a browser or replaces a registration.
+    func retryStoredConnection() async {
+        guard !isConnecting, !isDisconnecting else { return }
+        do { try await ensureStorageLoaded(retry: true) }
         catch { errorMessage = safeMessage(error) }
     }
 
@@ -148,7 +178,15 @@ final class ChatGPTConnection {
             record.credentials = nil
             locallyDisconnected = true
             store.setDisconnected(true)
-            do { try save() } catch { errorMessage = safeMessage(error) }
+            let cleared = record
+            let cancelled = cancelledSignInTask
+            let expected = generation
+            cancellationCleanup = Task { [self] in
+                // An in-flight credential write must finish before its clear.
+                if let cancelled { await cancelled.value }
+                do { try await store.save(JSONEncoder().encode(cleared)) }
+                catch { if generation == expected { errorMessage = safeMessage(error) } }
+            }
             publish()
             _ = revokeCancelledAuthorization(pending)
         }
@@ -168,13 +206,20 @@ final class ChatGPTConnection {
             await cancelledSignInTask.value
             self.cancelledSignInTask = nil
         }
+        if let cancellationCleanup {
+            await cancellationCleanup.value
+            self.cancellationCleanup = nil
+        }
+        // A failed read is not an empty record. Never overwrite an unread registration.
+        do { try await ensureStorageLoaded(retry: true) }
+        catch { errorMessage = "Disconnected. Tern still needs Keychain access to clear the stored ChatGPT credentials." }
         // Complete any dispatched rotation before choosing which token to revoke.
         if let refreshTask { _ = try? await refreshTask.value }
         generation += 1
         let pending = record.pending
         let credentials = record.credentials
         record.pending = nil; record.credentials = nil; record.refreshDispatched = false
-        do { try save() }
+        do { if storageLoaded { try await save() } }
         catch { errorMessage = "Disconnected. Tern still needs Keychain access to clear the stored ChatGPT credentials." }
         if let cancellationRevocation {
             if !(await cancellationRevocation.value), errorMessage == nil {
@@ -198,7 +243,10 @@ final class ChatGPTConnection {
 
     func accessToken() async throws -> String {
         try Task.checkCancellation()
-        guard storageLoaded, !locallyDisconnected, !isConnecting, !isDisconnecting else { throw ChatGPTConnectionError.notConnected }
+        guard !locallyDisconnected, !isConnecting, !isDisconnecting else { throw ChatGPTConnectionError.notConnected }
+        try await ensureStorageLoaded()
+        try Task.checkCancellation()
+        guard !locallyDisconnected, !isConnecting, !isDisconnecting else { throw ChatGPTConnectionError.notConnected }
         if record.refreshDispatched, refreshTask == nil {
             throw ChatGPTAuthError.renewalUncertain
         }
@@ -244,31 +292,38 @@ final class ChatGPTConnection {
     }
 
     private func renew() async throws -> ChatGPTCredentials {
+        let expected = generation
         do {
             let pending: ChatGPTPendingTokens
             if let saved = record.pending {
                 pending = saved
                 // Retry a failed Keychain checkpoint before exposing its replacement.
-                try save()
+                try await save()
             } else {
                 guard let credentials = record.credentials else { throw ChatGPTConnectionError.notConnected }
                 record.refreshDispatched = true
-                do { try save() }
+                do { try await save() }
                 catch { record.refreshDispatched = false; throw error }
+                guard generation == expected, !isDisconnecting else {
+                    record.refreshDispatched = false
+                    try? await save()
+                    throw ChatGPTConnectionError.invalidated
+                }
                 do { pending = try await auth.refresh(credentials) }
                 catch {
                     if error as? ChatGPTAuthError != .renewalUncertain {
                         record.refreshDispatched = false
-                        try? save()
+                        try? await save()
                     }
                     throw error
                 }
                 record.pending = pending
                 record.refreshDispatched = false
-                try save()
+                try await save()
             }
+            guard generation == expected, !isDisconnecting else { throw ChatGPTConnectionError.invalidated }
             let credentials = try await auth.verify(pending)
-            try install(credentials)
+            try await install(credentials, generation: expected)
             return credentials
         } catch {
             if let failure = error as? ChatGPTAuthError,
@@ -276,7 +331,7 @@ final class ChatGPTConnection {
                 record.credentials = nil
                 // Keep an unverified replacement only for recovery or revocation.
                 if failure == .invalidGrant || failure == .renewalUncertain { record.pending = nil }
-                try? save()
+                try? await save()
                 connectionRevision += 1
                 publish()
             }
@@ -305,7 +360,8 @@ final class ChatGPTConnection {
             try ensureCurrent(expected)
             let code = try attempt.validateCallback(callback, now: now())
             record.registration = code.registration
-            try save()
+            try await save()
+            try ensureCurrent(expected)
             registration = code.registration
             let pending = try await auth.exchange(code, attempt)
             do { try ensureCurrent(expected) }
@@ -318,7 +374,8 @@ final class ChatGPTConnection {
             }
             record.pending = pending; record.credentials = nil; record.refreshDispatched = false
             signInHasCheckpoint = true
-            try save()
+            try await save()
+            try ensureCurrent(expected)
             // This durable checkpoint belongs to a newly authorized login. It
             // may recover after a transient identity-verification failure, even
             // if the previous connection was explicitly disconnected.
@@ -327,7 +384,8 @@ final class ChatGPTConnection {
             publish()
             let credentials = try await auth.verify(pending)
             try ensureCurrent(expected)
-            try install(credentials)
+            try await install(credentials, generation: expected)
+            try ensureCurrent(expected)
             locallyDisconnected = false
             store.setDisconnected(false)
             signInHasCheckpoint = false
@@ -360,8 +418,31 @@ final class ChatGPTConnection {
         return task
     }
 
-    private func load() throws {
-        if let data = try store.load() {
+    private func ensureStorageLoaded(retry: Bool = false) async throws {
+        if storageLoaded { return }
+        if let restorationTask { return try await restorationTask.value }
+        if let storageFailure, !retry { throw storageFailure }
+        isRestoring = true
+        let task = Task<Void, any Error> { [self] in
+            defer { restorationTask = nil; isRestoring = false }
+            do {
+                if needsStorageRetry { errorMessage = nil }
+                try await load()
+                storageFailure = nil
+                needsStorageRetry = false
+            } catch {
+                storageFailure = error
+                needsStorageRetry = true
+                errorMessage = safeMessage(error)
+                throw error
+            }
+        }
+        restorationTask = task
+        try await task.value
+    }
+
+    private func load() async throws {
+        if let data = try await store.load() {
             guard data.count <= 1_048_576,
                   let restored = try? JSONDecoder().decode(ChatGPTStoredConnection.self, from: data),
                   restored.version == 1,
@@ -372,33 +453,30 @@ final class ChatGPTConnection {
             }
             record = restored
         }
-        storageLoaded = true
         locallyDisconnected = store.isDisconnected
         publish()
-        if locallyDisconnected, record.credentials != nil || record.pending != nil {
+        if locallyDisconnected, !isDisconnecting, record.credentials != nil || record.pending != nil {
             var cleared = record
             cleared.credentials = nil; cleared.pending = nil; cleared.refreshDispatched = false
-            do {
-                try store.save(JSONEncoder().encode(cleared))
-                record = cleared
-            } catch {
-                errorMessage = "Disconnected. Tern still needs Keychain access to clear the stored ChatGPT credentials."
-            }
+            try await store.save(JSONEncoder().encode(cleared))
+            record = cleared
         } else if record.refreshDispatched {
             errorMessage = ChatGPTAuthError.renewalUncertain.localizedDescription
         }
+        storageLoaded = true
     }
 
-    private func save() throws { try store.save(JSONEncoder().encode(record)) }
+    private func save() async throws { try await store.save(JSONEncoder().encode(record)) }
 
-    private func install(_ credentials: ChatGPTCredentials) throws {
+    private func install(_ credentials: ChatGPTCredentials, generation expected: Int) async throws {
         var next = record
         next.registration = credentials.registration
         next.credentials = credentials
         next.pending = nil
         next.refreshDispatched = false
         // Keep the pending checkpoint until the verified replacement is durable.
-        try store.save(JSONEncoder().encode(next))
+        try await store.save(JSONEncoder().encode(next))
+        guard generation == expected, !isDisconnecting else { throw ChatGPTConnectionError.invalidated }
         let changedIdentity = record.credentials?.account != credentials.account
             || record.credentials?.canUsePlan != credentials.canUsePlan
         record = next

@@ -386,6 +386,7 @@ final class AssistantModel {
     }
 
     func summaryAvailability(for thread: ThreadKey) -> ThreadSummaryAvailability {
+        if connection.isRestoring { return .loading }
         let current = context()
         guard current.canUsePlan else { return .unavailable(reason: "Connect ChatGPT for a summary.", action: "Connect") }
         guard current.accountInstances[thread.accountID] != nil else {

@@ -16,6 +16,8 @@ final class AccountSession: AccessTokenProvider {
 
     private var authState: OIDAuthState?
     private var persistedAccessToken: String?
+    private var credentialWrite: Task<Void, any Error>?
+    private var credentialWriteRevision = 0
 
     /// A session from a sign-in, which `save()` stores. Without a state it
     /// waits for `replace(with:)`, and its client's requests ask for sign-in.
@@ -25,8 +27,8 @@ final class AccountSession: AccessTokenProvider {
     }
 
     /// The saved session for `accountID`, or nil if there is none.
-    static func restore(accountID: String) -> AccountSession? {
-        guard let data = try? KeychainStore.load(account: accountID),
+    static func restore(accountID: String) async -> AccountSession? {
+        guard let data = try? await KeychainStore.load(account: accountID),
               let state = try? NSKeyedUnarchiver.unarchivedObject(ofClass: OIDAuthState.self, from: data),
               state.isAuthorized
         else { return nil }
@@ -52,21 +54,23 @@ final class AccountSession: AccessTokenProvider {
     /// Swaps in the state from a new authorization of this account, then
     /// stores it. Clients holding this session use it from their next token
     /// request, and a request already waiting retries with it.
-    func replace(with state: OIDAuthState) throws {
+    func replace(with state: OIDAuthState) async throws {
         authState = state
-        try persist(state)
+        persistedAccessToken = nil
+        try await persist(state)
     }
 
-    func save() throws {
+    func save() async throws {
         guard let authState else { return }
-        try persist(authState)
+        try await persist(authState)
     }
 
     /// Forgets the session and deletes its Keychain item.
-    func signOut() {
-        try? KeychainStore.delete(account: accountID)
+    func signOut() async {
         authState = nil
         persistedAccessToken = nil
+        let write = enqueueCredentialWrite(nil)
+        try? await write.task.value
     }
 
     // MARK: AccessTokenProvider
@@ -79,7 +83,12 @@ final class AccountSession: AccessTokenProvider {
             if forceRefresh { state.setNeedsTokenRefresh() }
             let result: Result<String, any Error>
             do {
-                result = .success(try await freshToken(from: state))
+                let token = try await freshToken(from: state)
+                try Task.checkCancellation()
+                if authState === state, token != persistedAccessToken {
+                    try? await persist(state)
+                }
+                result = .success(token)
             } catch {
                 result = .failure(error)
             }
@@ -96,14 +105,19 @@ final class AccountSession: AccessTokenProvider {
             }
             switch result {
             case .success(let token):
-                if token != persistedAccessToken {
-                    try? persist(state)
-                }
                 return token
             case .failure(let error):
                 let nsError = error as NSError
                 if nsError.domain == OIDOAuthTokenErrorDomain, nsError.code == OIDErrorCodeOAuth.invalidGrant.rawValue {
-                    signOut()
+                    await signOut()
+                    // Reauthorization may have completed while deletion waited.
+                    // Its write follows the deletion and its state stays active.
+                    if authState != nil {
+                        guard !retried else { throw GoogleAuth.AuthError.signInRequired }
+                        retried = true
+                        forceRefresh = false
+                        continue
+                    }
                     onSignInRequired?()
                     throw GoogleAuth.AuthError.signInRequired
                 }
@@ -126,9 +140,36 @@ final class AccountSession: AccessTokenProvider {
         }
     }
 
-    private func persist(_ state: OIDAuthState) throws {
+    private func persist(_ state: OIDAuthState) async throws {
+        guard authState === state else { throw CancellationError() }
         let data = try NSKeyedArchiver.archivedData(withRootObject: state, requiringSecureCoding: true)
-        try KeychainStore.save(data, account: accountID)
-        persistedAccessToken = state.lastTokenResponse?.accessToken
+        let token = state.lastTokenResponse?.accessToken
+        let write = enqueueCredentialWrite(data)
+        do {
+            try await write.task.value
+        } catch {
+            guard authState === state else { throw CancellationError() }
+            throw error
+        }
+        guard authState === state else { throw CancellationError() }
+        if credentialWriteRevision == write.revision { persistedAccessToken = token }
+    }
+
+    /// Record ordering on the main actor before awaiting any I/O. A refresh
+    /// queued before sign-out must finish before the deletion, even if the
+    /// executor schedules their continuations in a different order.
+    private func enqueueCredentialWrite(_ data: Data?) -> (task: Task<Void, any Error>, revision: Int) {
+        let previous = credentialWrite
+        credentialWriteRevision += 1
+        let task = Task { [accountID] in
+            _ = try? await previous?.value
+            if let data {
+                try await KeychainStore.save(data, account: accountID)
+            } else {
+                try await KeychainStore.delete(account: accountID)
+            }
+        }
+        credentialWrite = task
+        return (task, credentialWriteRevision)
     }
 }

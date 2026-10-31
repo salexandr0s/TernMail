@@ -65,6 +65,7 @@ Ordinary dated emails can offer Add event with AI disabled. Optional AI interpre
 
 ## Troubleshooting
 
+- **Keychain access unavailable:** Tern opens while saved connections load in the background. If access fails, open Settings → Assistant and choose **Retry Keychain access**. This retries the saved connection without starting a new browser sign-in.
 - **Plan usage not enabled:** reconnect and grant plan usage. Availability depends on the ChatGPT account and the current Sign in with ChatGPT preview.
 - **No models or usage limit:** refresh the model list or open **Manage usage**. Tern does not substitute an API-key connection.
 - **Sign-in interrupted or expired:** start sign-in again. Keep Tern open while the browser returns to the temporary local callback.
