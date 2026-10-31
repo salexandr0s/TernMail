@@ -7,12 +7,20 @@ struct SidebarView: View {
     static let expandedKey = "sidebarExpandedMailboxes"
 
     @Bindable var mailbox: MailboxModel
+    @Environment(AppModel.self) private var app
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @AppStorage(Self.expandedKey) private var expandedIDs = SystemLabel.inbox
 
     var body: some View {
         List(selection: $mailbox.selectedMailbox) {
             Section("Library") {
+                Button { app.destination = .calendar } label: {
+                    Label("Calendar", systemImage: "calendar")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open Calendar")
                 Label("Attachments", systemImage: "paperclip")
                     .tag(MailboxID.combined(AttachmentLibraryModel.mailboxID))
             }

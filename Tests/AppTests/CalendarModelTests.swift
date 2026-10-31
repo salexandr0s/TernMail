@@ -6,6 +6,35 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func calendarErrorsSeparateConsentFromCloudSetupAndHideProviderDetails() {
+        let disabled = CalendarConnectionIssue(error: GmailError.http(status: 403, reason: "SERVICE_DISABLED"))
+        let permission = CalendarConnectionIssue(error: GmailError.http(status: 403, reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+        #expect(disabled == .apiDisabled)
+        #expect(permission == .permissionDenied)
+        #expect(!CalendarConnectionState(isEnabled: true, issue: disabled).needsAuthorization)
+        #expect(CalendarConnectionState(isEnabled: true, issue: permission).needsAuthorization)
+        let privateReason = "unexpected-private-provider-detail"
+        let unknown = CalendarConnectionIssue(error: GmailError.http(status: 403, reason: privateReason))
+        #expect(unknown == .unavailable)
+        #expect(!unknown.message.contains(privateReason))
+    }
+
+    @Test func emptyCalendarCacheDoesNotLoseConnectionAndRemovalClearsIt() async throws {
+        try await withFixture { fixture in
+            fixture.model.calendars = []
+            fixture.model.connectionStates[fixture.accountID] = CalendarConnectionState(isEnabled: true, issue: .network)
+            #expect(!fixture.model.connectionState(for: fixture.accountID).needsAuthorization)
+
+            fixture.model.accessExpired(fixture.accountID)
+            #expect(fixture.model.connectionState(for: fixture.accountID).needsAuthorization)
+            #expect(fixture.model.connectionState(for: fixture.accountID).issue == .signInRequired)
+
+            await fixture.model.removeAccount(fixture.accountID)
+            #expect(!fixture.model.connectionState(for: fixture.accountID).isEnabled)
+            #expect(fixture.model.connectionState(for: fixture.accountID).issue == nil)
+        }
+    }
+
     @Test func duplicateOfflineSavesCloseTheEditorAndRetryOneDurableOperation() async throws {
         try await withFixture { fixture in
             await fixture.service.setOffline(true)

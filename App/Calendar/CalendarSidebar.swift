@@ -33,8 +33,8 @@ struct CalendarSidebar: View {
                     Text(account.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
                         .lineLimit(1).help(account.title)
                     let calendars = model.calendars.filter { $0.accountID == account.id }
-                    if calendars.isEmpty {
-                        Button("Connect Google Calendar") { connect(account.id) }.font(.callout)
+                    if calendars.isEmpty || model.connectionState(for: account.id).issue != nil {
+                        CalendarConnectionControl(model: model, account: account, connect: connect)
                     }
                     ForEach(calendars) { calendar in
                         Toggle(isOn: Binding(get: { calendar.isVisible }, set: { model.setVisible(id: calendar.id, visible: $0) })) {
@@ -109,5 +109,35 @@ struct CalendarSidebar: View {
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         return formatter.string(from: event.start, to: event.end)
+    }
+}
+
+struct CalendarConnectionControl: View {
+    let model: CalendarModel
+    let account: CalendarAccountOption
+    let connect: (String) -> Void
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let state = model.connectionState(for: account.id)
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            if let issue = state.issue {
+                Text(issue.message).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if state.isEnabled {
+                Text("Connected. Google returned no calendars for this account.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if state.needsAuthorization {
+                Button(state.issue == nil ? "Connect Google Calendar" : "Reconnect Google Calendar") { connect(account.id) }
+                    .buttonStyle(.bordered)
+            } else {
+                Button("Retry", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .font(.callout)
+        .disabled(model.isLoading || app.isSigningIn)
     }
 }

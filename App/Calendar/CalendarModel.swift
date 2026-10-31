@@ -17,6 +17,7 @@ final class CalendarModel {
     var calendars: [CalendarDisplayCalendar] = []
     var events: [CalendarDisplayEvent] = []
     var accounts: [CalendarAccountOption] = []
+    var connectionStates: [String: CalendarConnectionState] = [:]
     var isLoading = false
     var statusText = "Connect Google Calendar to see your events."
     var errorMessage: String?
@@ -46,6 +47,10 @@ final class CalendarModel {
         )
     }
     var isUndoing = false
+
+    func connectionState(for accountID: String) -> CalendarConnectionState {
+        connectionStates[accountID] ?? CalendarConnectionState(isEnabled: calendars.contains { $0.accountID == accountID })
+    }
 
     @ObservationIgnored weak var app: AppModel?
     var store: CalendarStore?
@@ -137,6 +142,9 @@ final class CalendarModel {
 
     func accessExpired(_ accountID: String) {
         lifecycleRevision += 1; rangeRevision += 1; editRevision += 1; searchRevision += 1
+        if connectionState(for: accountID).isEnabled || engines[accountID] != nil {
+            connectionStates[accountID] = CalendarConnectionState(isEnabled: true, issue: .signInRequired)
+        }
         invalidateAssistantAccess()
         services[accountID] = nil
         let engine = engines.removeValue(forKey: accountID)
@@ -156,6 +164,7 @@ final class CalendarModel {
 
     func removeAccount(_ accountID: String) async {
         accessExpired(accountID)
+        connectionStates[accountID] = nil
         await stoppingEngines[accountID]?.value
         stoppingEngines[accountID] = nil
         do { try await store?.deleteAccountData(accountID: accountID) }
@@ -196,6 +205,9 @@ final class CalendarModel {
             }
             let enabled = records.filter { $0.enabledFeatures.contains(AccountFeature.calendar.rawValue) }
             let enabledIDs = Set(enabled.map(\.id))
+            var connections = Dictionary(uniqueKeysWithValues: records.map {
+                ($0.id, CalendarConnectionState(isEnabled: enabledIDs.contains($0.id)))
+            })
             let disabled = Set(engines.keys).subtracting(enabledIDs)
             if !disabled.isEmpty {
                 for removed in disabled { await removeAccount(removed) }
@@ -207,6 +219,7 @@ final class CalendarModel {
                 guard revision == lifecycleRevision else { return }
                 guard let service = app.calendarService(for: record.id) else {
                     if engines[record.id] != nil { accessExpired(record.id) }
+                    connections[record.id]?.issue = .signInRequired
                     issues.append("Reconnect an account to refresh its calendars."); continue
                 }
                 await stoppingEngines[record.id]?.value
@@ -220,7 +233,12 @@ final class CalendarModel {
                 }
                 let entries: [GoogleCalendarEntry]
                 do { entries = try await engine.syncCalendars() }
-                catch { entries = try await store.calendars(accountID: record.id); issues.append("Some calendars could not refresh.") }
+                catch {
+                    let issue = CalendarConnectionIssue(error: error)
+                    entries = try await store.calendars(accountID: record.id)
+                    connections[record.id]?.issue = issue
+                    issues.append(issue.message)
+                }
                 guard revision == lifecycleRevision else { return }
                 let storedPreferences = try await app.calendarPreferences(accountID: record.id)
                 for entry in entries where entry.deleted != true {
@@ -245,6 +263,7 @@ final class CalendarModel {
             }
             guard revision == lifecycleRevision else { return }
             calendars = display
+            connectionStates = connections
             if didLoadCalendars, oldAccess != newAccess { invalidateAssistantAccess() }
             if !didLoadCalendars {
                 // The first snapshot restores durable proposals. Only calendars
@@ -299,7 +318,9 @@ final class CalendarModel {
         guard revision == rangeRevision, lifecycle == lifecycleRevision else { return }
         events = CalendarPendingEvents.project(found, operations: operations, calendars: calendars, interval: interval,
                                                calendar: calendar)
-        statusText = calendars.isEmpty ? "Connect Google Calendar to see your events."
+        statusText = calendars.isEmpty ? (connectionStates.values.contains(where: \.isEnabled)
+            ? "No calendars are available. Refresh or check the account connection."
+            : "Connect Google Calendar to see your events.")
             : operations.contains(where: { $0.status == .failed || $0.status == .conflicted })
                 ? "Some calendar changes need review in Calendar activity."
                 : operations.contains(where: { $0.status == .queued || $0.status == .running })
@@ -395,6 +416,42 @@ final class CalendarModel {
             for (accountID, operationID) in prepared { _ = try? await store?.cancelOperation(accountID: accountID, id: operationID) }
             await reloadOperations()
             proposalTasks[taskID] = nil
+        }
+    }
+}
+
+struct CalendarConnectionState: Equatable {
+    var isEnabled: Bool
+    var issue: CalendarConnectionIssue?
+
+    var needsAuthorization: Bool { !isEnabled || issue == .signInRequired || issue == .permissionDenied }
+}
+
+/// Only known error categories reach the UI; provider response text stays private.
+enum CalendarConnectionIssue: Equatable {
+    case signInRequired, permissionDenied, apiDisabled, network, rateLimited, unavailable
+
+    init(error: any Error) {
+        guard let error = error as? GmailError else { self = .unavailable; return }
+        switch error {
+        case .unauthorized: self = .signInRequired
+        case .http(status: 403, reason: "SERVICE_DISABLED"), .http(status: 403, reason: "accessNotConfigured"):
+            self = .apiDisabled
+        case .http where error.isMissingScope: self = .permissionDenied
+        case .transport: self = .network
+        case .rateLimited: self = .rateLimited
+        default: self = .unavailable
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .signInRequired: "Sign in again to refresh this account's calendars."
+        case .permissionDenied: "Google didn't grant calendar access. Reconnect and allow the requested calendar permissions."
+        case .apiDisabled: "Google Calendar is unavailable for this app. Its Google Cloud project needs the Calendar API enabled."
+        case .network: "Can't reach Google Calendar. Check your connection and retry."
+        case .rateLimited: "Google Calendar is temporarily limiting requests. Try again shortly."
+        case .unavailable: "Couldn't load calendars from Google. Try again."
         }
     }
 }

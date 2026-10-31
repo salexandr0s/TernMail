@@ -241,12 +241,7 @@ struct CalendarView: View {
 
     @ViewBuilder private var calendarContent: some View {
         if model.calendars.isEmpty, !model.isLoading {
-            VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "Your calendars in Tern", systemImage: "calendar", message: "Connect Google Calendar to see your schedule and add events.", fillsSpace: false)
-                ForEach(model.accounts) { account in
-                    Button("Connect \(account.title)") { connect(account.id) }.buttonStyle(.borderedProminent)
-                }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            emptyCalendars
         } else if !model.calendars.isEmpty, !model.calendars.contains(where: \.isVisible) {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No calendars selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
@@ -278,6 +273,30 @@ struct CalendarView: View {
                 .onKeyPress(.leftArrow) { guard isActive else { return .ignored }; navigate(-1); return .handled }
                 .onKeyPress(.rightArrow) { guard isActive else { return .ignored }; navigate(1); return .handled }
                 .onKeyPress(characters: CharacterSet(charactersIn: "cdwmyatg/e12345"), phases: .down, action: calendarShortcut)
+        }
+    }
+
+    private var emptyCalendars: some View {
+        let hasConnection = model.accounts.contains { model.connectionState(for: $0.id).isEnabled }
+        return ScrollView {
+            VStack(spacing: Tokens.Space.s4) {
+                TernEmptyState(title: hasConnection ? "No calendars to show" : "Your calendars in Tern",
+                              systemImage: "calendar",
+                              message: hasConnection ? "Check the account status below to load your calendars."
+                                : "Connect Google Calendar to see your schedule and add events.", fillsSpace: false)
+                ForEach(model.accounts) { account in
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Text(account.title).font(.headline)
+                        CalendarConnectionControl(model: model, account: account, connect: connect)
+                    }
+                    .padding(Tokens.Space.s4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                }
+            }
+            .padding(Tokens.Space.s4)
+            .frame(maxWidth: Tokens.Sheet.smallWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -330,7 +349,22 @@ struct CalendarView: View {
         Task { do { try await operation() } catch { model.errorMessage = error.localizedDescription } }
     }
     private func connect(_ accountID: String) {
-        perform { _ = try await app.enableFeature(.calendar, for: accountID); await model.refresh() }
+        perform {
+            let state = model.connectionState(for: accountID)
+            if state.issue == .signInRequired || (state.isEnabled && state.issue == .permissionDenied) {
+                await app.signInAgain(to: accountID)
+                await model.refresh()
+                return
+            }
+            guard let grant = try await app.enableFeature(.calendar, for: accountID) else { return }
+            guard grant.features.contains(.calendar) else {
+                model.errorMessage = CalendarConnectionIssue.permissionDenied.message
+                model.connectionStates[accountID] = CalendarConnectionState(isEnabled: false, issue: .permissionDenied)
+                return
+            }
+            model.errorMessage = nil
+            await model.refresh()
+        }
     }
     private func exportEvents() {
         do { try CalendarImportExport.save(model.events.map { CalendarImportExport.standaloneOccurrence($0.event) }) } catch { model.errorMessage = error.localizedDescription }
