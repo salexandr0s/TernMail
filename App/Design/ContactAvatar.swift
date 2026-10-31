@@ -29,7 +29,7 @@ struct ContactAvatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .overlay { Circle().strokeBorder(color, lineWidth: Tokens.Border.hairline) }
+        .ternOutline(radius: size / 2)
         .accessibilityHidden(true)
     }
 
