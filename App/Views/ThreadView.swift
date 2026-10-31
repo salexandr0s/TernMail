@@ -274,9 +274,9 @@ struct ThreadView: View {
             do {
                 for try await detail in mailbox.threadDetail(key) {
                     guard !Task.isCancelled else { return }
-                    if !initializedExpansion, let last = detail?.messages.last {
-                        // Older messages start collapsed; unread ones stay open.
-                        expanded = Set(detail?.messages.filter(\.isUnread).map(\.id) ?? []).union([last.id])
+                    if !initializedExpansion, let messages = detail?.messages, !messages.isEmpty {
+                        expanded = ReadingPreferences.initiallyExpanded(ids: messages.map(\.id),
+                            unread: Set(messages.filter(\.isUnread).map(\.id)), selected: selectedMessageID)
                         initializedExpansion = true
                     }
                     self.detail = detail

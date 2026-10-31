@@ -24,4 +24,12 @@ import Testing
         #expect(ReadingPreferences.readDelay(.infinity) == .seconds(3))
         #expect(ReadingPreferences.readDelay(10_000) == .seconds(30))
     }
+
+    @Test func aConversationOpensItsNewestUnreadAndChosenMessages() {
+        let ids = ["a", "b", "c", "d"]
+        #expect(ReadingPreferences.initiallyExpanded(ids: ids, unread: [], selected: nil) == ["d"])
+        #expect(ReadingPreferences.initiallyExpanded(ids: ids, unread: ["b"], selected: nil) == ["b", "d"])
+        // A message list opens an older, read message on its own.
+        #expect(ReadingPreferences.initiallyExpanded(ids: ids, unread: [], selected: "a") == ["a", "d"])
+    }
 }
