@@ -45,6 +45,10 @@ targets:
             CFBundleURLSchemes:
               - mailto
               - tern
+          - CFBundleURLName: dev.tern.mail.google
+            CFBundleTypeRole: Editor
+            CFBundleURLSchemes:
+              - $(GOOGLE_REDIRECT_SCHEME)
     entitlements:
       path: App/Tern.entitlements
       properties:
