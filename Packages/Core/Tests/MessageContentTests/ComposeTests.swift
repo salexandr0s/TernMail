@@ -16,6 +16,7 @@ import Testing
             Block(.numbered(level: 0), runs: [Run("first")]),
             Block(.numbered(level: 0), runs: [Run("second")]),
             Block(runs: [Run("<script>not markup</script>")]),
+            Block(runs: [Run("    four  two   three  "), Run(" three", bold: true)]),
         ])
 
         let html = document.html()
@@ -24,6 +25,7 @@ import Testing
         #expect(imported.document == document)
         #expect(!imported.droppedFormatting)
         #expect(html.contains("&lt;script&gt;"))
+        #expect(!html.contains("&nbsp;&nbsp;"))
         #expect(document.plainText() == """
             Hi there & you
 
@@ -32,7 +34,10 @@ import Testing
             1. first
             2. second
             <script>not markup</script>
+                four  two   three   three
             """)
+        let tabs = ComposeDocument(blocks: [Block(runs: [Run("\tone\t\ttwo")])])
+        #expect(tabs.html() == "<div><span style=\"white-space:pre\">\t</span>one<span style=\"white-space:pre\">\t\t</span>two</div>")
     }
 
     @Test func importDropsActiveContentAndRemoteImagesAndKeepsTheQuote() {
