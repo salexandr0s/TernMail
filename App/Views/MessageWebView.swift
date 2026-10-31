@@ -33,6 +33,7 @@ struct MessageWebView: NSViewRepresentable {
             configuration.userContentController.add(blocker)
         }
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
+        MessageWebViewWarmup.messageViewCreated()
         if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
         view.navigationDelegate = context.coordinator
         view.allowsMagnification = false
@@ -71,7 +72,37 @@ struct MessageWebView: NSViewRepresentable {
         }
         controller.addUserScript(WKUserScript(source: Self.readingScript(revision: revision),
             injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        controller.addUserScript(WKUserScript(source: Self.sizingScript(revision: revision),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
     }
+
+    /// Reports text layout as soon as the document exists, before images finish loading.
+    static func sizingScript(revision: Int) -> String { """
+        (() => {
+          if (!document.body) return;
+          const measure = () => {
+            const body = document.body;
+            const range = document.createRange();
+            range.selectNodeContents(body);
+            const style = getComputedStyle(body);
+            const px = value => parseFloat(value) || 0;
+            // Content bounds can shrink; the document viewport cannot.
+            return Math.ceil(Math.max(px(style.paddingTop),
+              range.getBoundingClientRect().bottom - body.getBoundingClientRect().top)
+              + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
+          };
+          const report = () => {
+            webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
+          };
+          const observer = new ResizeObserver(report);
+          observer.observe(document.body);
+          document.querySelectorAll('img').forEach(image => observer.observe(image));
+          document.addEventListener('load', report, true);
+          document.fonts.ready.then(report);
+          globalThis.__ternSizing = {measure, observer, revision: \(revision)};
+          report();
+        })()
+        """ }
 
     private static func readingScript(revision: Int) -> String { """
         (() => {
@@ -135,32 +166,7 @@ struct MessageWebView: NSViewRepresentable {
             // Runs in Tern's own script world, which page JavaScript settings don't affect.
             let revision = revision
             let script = """
-                (() => {
-                  if (!document.body) return 0;
-                  if (typeof globalThis.__ternSizing?.measure !== 'function') {
-                    const measure = () => {
-                      const body = document.body;
-                      const range = document.createRange();
-                      range.selectNodeContents(body);
-                      const style = getComputedStyle(body);
-                      const px = value => parseFloat(value) || 0;
-                      // Content bounds can shrink; the document viewport cannot.
-                      return Math.ceil(Math.max(px(style.paddingTop),
-                        range.getBoundingClientRect().bottom - body.getBoundingClientRect().top)
-                        + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
-                    };
-                    const report = () => {
-                      webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
-                    };
-                    const observer = new ResizeObserver(report);
-                    observer.observe(document.body);
-                    document.querySelectorAll('img').forEach(image => observer.observe(image));
-                    document.addEventListener('load', report, true);
-                    document.fonts.ready.then(report);
-                    globalThis.__ternSizing = {measure, observer};
-                  }
-                  return globalThis.__ternSizing.measure();
-                })()
+                globalThis.__ternSizing?.revision === \(revision) ? globalThis.__ternSizing.measure() : 0
                 """
             Task { [weak self] in
                 guard let value = try? await webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient),
@@ -178,7 +184,8 @@ struct MessageWebView: NSViewRepresentable {
                 if let selection = value["selection"] as? String { onSelectionChange(String(selection.prefix(100_000))) }
                 return
             }
-            guard let value = message.body as? [String: Any],
+            guard message.name == "ternHeight", message.frameInfo.isMainFrame,
+                  let value = message.body as? [String: Any],
                   (value["revision"] as? NSNumber)?.intValue == revision,
                   let measured = (value["height"] as? NSNumber)?.doubleValue else { return }
             acceptHeight(measured)
@@ -188,6 +195,35 @@ struct MessageWebView: NSViewRepresentable {
             guard measured.isFinite, measured > 0 else { return }
             if abs(height.wrappedValue - measured) >= 1 { height.wrappedValue = measured }
         }
+    }
+}
+
+/// Starts WebKit before the first message opens, using an empty private page.
+@MainActor
+enum MessageWebViewWarmup {
+    private static var hasStarted = false
+    private static var view: WKWebView?
+
+    static func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        let warming = WKWebView(frame: .zero, configuration: configuration)
+        view = warming
+        warming.loadHTMLString("""
+            <!doctype html><html><head>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+            </head><body></body></html>
+            """, baseURL: nil)
+    }
+
+    static func messageViewCreated() {
+        // Message views keep their own data stores; only WebKit startup is shared.
+        hasStarted = true
+        view?.stopLoading()
+        view = nil
     }
 }
 
@@ -235,10 +271,21 @@ struct ScrollDirection {
 @MainActor
 enum RemoteContentBlocker {
     private static var cached: [Bool: WKContentRuleList] = [:]
+    private static var compiling: [Bool: Task<RuleListBox, Never>] = [:]
 
     static func ruleList(allowsRemoteImages: Bool = false) async -> WKContentRuleList? {
         if let cached = cached[allowsRemoteImages] { return cached }
-        guard let store = WKContentRuleListStore.default() else { return nil }
+        if let pending = compiling[allowsRemoteImages] { return await pending.value.list }
+        let pending = Task { await compile(allowsRemoteImages: allowsRemoteImages) }
+        compiling[allowsRemoteImages] = pending
+        let box = await pending.value
+        cached[allowsRemoteImages] = box.list
+        compiling[allowsRemoteImages] = nil
+        return box.list
+    }
+
+    private static func compile(allowsRemoteImages: Bool) async -> RuleListBox {
+        guard let store = WKContentRuleListStore.default() else { return RuleListBox(list: nil) }
         var rules: [[String: Any]] = [
             ["trigger": ["url-filter": ".*"], "action": ["type": "block"]],
             ["trigger": ["url-filter": "^about:"], "action": ["type": "ignore-previous-rules"]],
@@ -251,14 +298,12 @@ enum RemoteContentBlocker {
                 rules.append(["trigger": ["url-filter": pattern], "action": ["type": "block"]])
             }
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: rules), let encoded = String(data: data, encoding: .utf8) else { return nil }
-        let box = await withCheckedContinuation { (continuation: CheckedContinuation<RuleListBox, Never>) in
+        guard let data = try? JSONSerialization.data(withJSONObject: rules), let encoded = String(data: data, encoding: .utf8) else { return RuleListBox(list: nil) }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<RuleListBox, Never>) in
             store.compileContentRuleList(forIdentifier: "TernReadingImages-\(allowsRemoteImages)-v1", encodedContentRuleList: encoded) { list, _ in
                 continuation.resume(returning: RuleListBox(list: list))
             }
         }
-        cached[allowsRemoteImages] = box.list
-        return box.list
     }
 }
 

@@ -196,7 +196,7 @@ public struct GmailClient: Sendable {
         var units = 0
         for index in pending {
             let cost = endpoints[index].quotaUnits
-            if !chunk.isEmpty, chunk.count == batchSize || units + cost > GmailRequestBudget.maximumRequestUnits {
+            if !chunk.isEmpty, chunk.count == batchSize || units + cost > GmailRequestBudget.maximumBatchUnits {
                 chunks.append(chunk)
                 chunk = []
                 units = 0

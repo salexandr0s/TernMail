@@ -91,6 +91,13 @@ public actor SyncEngine {
     /// When each source's last full contact sync began, failed ones included.
     /// Kept for the engine's lifetime only.
     var fullContactSyncStarts: [ContactSource: Date] = [:]
+    var readingLoads: [String: ReadingLoad] = [:]
+    var retiredReadingLoads: [UUID: Task<Void, any Error>] = [:]
+    var prefetchTask: Task<Void, Never>?
+    var prefetchTargets: [String] = []
+    var prefetchGeneration = UUID()
+    var completedReadingVersions: [String: Int64] = [:]
+    var completedReadingOrder: [String] = []
     private var hasStarted = false
     private var writesInFlight = 0
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -219,7 +226,11 @@ public actor SyncEngine {
         isStopped = true
         pollTask?.cancel()
         pollTask = nil
-        let background = [peopleTask, requestedPasses, attachmentIndexTask].compactMap { $0 }
+        let background = [peopleTask, requestedPasses, attachmentIndexTask, prefetchTask].compactMap { $0 }
+        prefetchTask = nil
+        prefetchTargets = []
+        let reading = Array(readingLoads.values.map(\.task)) + Array(retiredReadingLoads.values)
+        reading.forEach { $0.cancel() }
         peopleTask = nil
         attachmentIndexTask = nil
         background.forEach { $0.cancel() }
@@ -239,6 +250,7 @@ public actor SyncEngine {
         _ = try? await contacts?.value
         _ = try? await running?.value
         _ = try? await attachmentPass?.value
+        for task in reading { _ = try? await task.value }
         _ = try? await classificationPass?.value
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
@@ -586,92 +598,18 @@ public actor SyncEngine {
     public func openThread(_ threadID: String, markRead: Bool = true) async throws {
         if isStopped || Task.isCancelled { throw CancellationError() }
         let accountID = accountID
-        let deleted = deletedMessageIDs
         let openedAt = now()
-        let opened = try await write { tx in
-            let missing = try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)
-            let versions = Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) })
+        try await write { tx in
             try tx.markThreadOpened(threadID: threadID, accountID: accountID, at: openedAt)
             if markRead, try tx.thread(id: threadID, accountID: accountID)?.isUnread == true {
-                // Reading state and recording mark-read are one transaction, so
-                // a user command cannot land between them and be overwritten.
                 _ = try tx.enqueue(
                     .modifyThreads, accountID: accountID, threadIDs: [threadID],
                     remove: [SystemLabel.unread], now: openedAt, notBefore: openedAt
                 )
             }
-            return (missing: missing, versions: versions)
         }
         scheduleSending()
-        guard !opened.missing.isEmpty else { return }
-        if isStopped || Task.isCancelled { throw CancellationError() }
-
-        let thread: GmailThread
-        do {
-            thread = try await gmail.thread(id: threadID, format: .full)
-        } catch GmailError.notFound {
-            try await write { tx in
-                // A slow 404 describes the request's starting state. Preserve
-                // messages that a newer sync or thread response has since stored.
-                let ids = try tx.messages(threadID: threadID, accountID: accountID)
-                    .filter { opened.versions[$0.id] == $0.historyID }.map(\.id)
-                deleted.withLock { $0.formUnion(ids) }
-                try tx.rebuildThreads(try tx.deleteMessages(ids: ids, accountID: accountID), accountID: accountID)
-            }
-            return
-        }
-        let fetchedAt = now()
-        var updates: [CacheTransaction.MessageUpdate] = []
-        var bodies: [MessageBodyRecord] = []
-        var calendars: [MessageCalendarRecord] = []
-        var resources: [String: [MIMEInlineResourceRecord]] = [:]
-        var attachments: [String: [AttachmentRecord]] = [:]
-        guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
-        for message in messages {
-            guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
-            let update = try Mapping.message(message, accountID: accountID)
-            updates.append(update)
-            var bodyParts: [String: Data] = [:]
-            for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
-                if isStopped || Task.isCancelled { throw CancellationError() }
-                bodyParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
-            }
-            var calendarDownloads = Set<String>()
-            while let id = CalendarParts.requiredAttachmentID(
-                of: message, attachments: bodyParts, attemptedAttachmentIDs: calendarDownloads
-            ) {
-                if isStopped || Task.isCancelled { throw CancellationError() }
-                calendarDownloads.insert(id)
-                bodyParts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
-            }
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: bodyParts))
-            do { resources[message.id] = try await inlineResources(in: message) }
-            catch is CancellationError { throw CancellationError() }
-            catch {
-                // A missing optional picture must not hide the readable body.
-                // Clear stale bytes; the next explicit calendar/body refresh retries.
-                resources[message.id] = []
-            }
-            if let invitation = CalendarParts.invitation(in: message, attachments: bodyParts) {
-                calendars.append(MessageCalendarRecord(accountID: accountID, messageID: message.id, invitation: invitation))
-            }
-            attachments[message.id] = Mapping.attachments(message, accountID: accountID)
-        }
-        try await write { [updates, bodies, calendars, attachments, resources] tx in
-            // Decide inside the same serialized write as ingestion, so a delete
-            // committed while this request was awaiting cannot be overwritten.
-            let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
-            let liveIDs = Set(live.map(\.record.id))
-            let threads = try tx.upsertMessages(live)
-            try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) }, calendars: calendars)
-            for (messageID, records) in resources where liveIDs.contains(messageID) {
-                try tx.replaceMIMEResources(records, messageID: messageID, accountID: accountID)
-            }
-            for (messageID, records) in attachments where liveIDs.contains(messageID) {
-                try tx.replaceAttachments(records, messageID: messageID, accountID: accountID)
-            }
-            try tx.rebuildThreads(threads, accountID: accountID)
-        }
+        try await loadReadingThread(threadID, enrichCached: false, foreground: true)
     }
 
     // MARK: Messages

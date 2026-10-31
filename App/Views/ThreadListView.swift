@@ -9,6 +9,7 @@ struct ThreadListView: View {
 
     var body: some View {
         list
+            .modifier(MessagePrefetchModifier(mailbox: mailbox))
             .overlay {
                 if mailbox.listItems.isEmpty {
                     if mailbox.search.isActive {

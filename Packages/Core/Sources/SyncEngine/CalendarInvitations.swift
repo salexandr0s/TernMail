@@ -44,20 +44,20 @@ extension SyncEngine {
         }
     }
 
-    /// Refreshes calendar metadata even when an older Tern version already cached the body.
-    /// The caller runs this once on opening a conversation. Existing metadata survives a failed fetch.
+    /// Older cached bodies need one invitation and inline-image enrichment.
+    /// A completed current-version hydration is reused on later opens.
     public func refreshCalendarInvitations(threadID: String) async throws {
+        try await loadReadingThread(threadID, enrichCached: true, foreground: true)
+    }
+
+    func refreshReadingEnrichment(threadID: String, versions: [String: Int64]) async throws {
         let accountID = accountID
-        let versions = try await cache.read { tx in
-            Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) })
-        }
-        guard !versions.isEmpty else { return }
         let remote = try await gmail.thread(id: threadID, format: .full)
         guard remote.id == threadID, let messages = remote.messages else { throw GmailError.decoding("Calendar invitation thread") }
         var found: [String: Invitation] = [:]
-        var resources: [String: [MIMEInlineResourceRecord]] = [:]
         var checked = Set<String>()
         for message in messages where versions[message.id] != nil {
+            try Task.checkCancellation()
             guard message.threadId == threadID else { throw GmailError.decoding("Calendar invitation message") }
             var parts: [String: Data] = [:]
             var attempted = Set<String>()
@@ -67,25 +67,22 @@ extension SyncEngine {
                 parts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
             found[message.id] = CalendarParts.invitation(in: message, attachments: parts)
-            do { resources[message.id] = try await inlineResources(in: message) }
-            catch is CancellationError { throw CancellationError() }
-            catch { /* Keep earlier pictures after a transient optional-resource failure. */ }
             checked.insert(message.id)
         }
-        try Task.checkCancellation()
-        try await write { [found, checked, resources] tx in
+        let liveVersions = try await write { [found, checked] tx -> [String: Int64] in
+            var liveVersions: [String: Int64] = [:]
             for id in checked {
                 guard let live = try tx.message(id: id, accountID: accountID), live.threadID == threadID,
                       versions[id] == live.historyID else { continue }
-                if let pictures = resources[id] {
-                    try tx.replaceMIMEResources(pictures, messageID: id, accountID: accountID)
-                }
                 if let invitation = found[id] {
                     let record = MessageCalendarRecord(accountID: accountID, messageID: id, invitation: invitation)
                     if try tx.messageCalendar(messageID: id, accountID: accountID) != record { try tx.saveMessageCalendar(record) }
                 } else { try tx.deleteMessageCalendar(messageID: id, accountID: accountID) }
+                liveVersions[id] = live.historyID
             }
+            return liveVersions
         }
+        try await hydrateReadingImages(messages, versions: liveVersions)
     }
 
     /// This is the fallback for an invitation absent from Google Calendar. The caller first

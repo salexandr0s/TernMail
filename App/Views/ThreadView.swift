@@ -14,7 +14,6 @@ struct ThreadView: View {
     @State private var expanded: Set<String> = []
     @State private var initializedExpansion = false
     @State private var blocker: WKContentRuleList?
-    @State private var blockerReady = false
     @State private var hasLoaded = false
     @State private var loadFailed = false
     @State private var bodyLoadFailed = false
@@ -73,7 +72,7 @@ struct ThreadView: View {
 
     var body: some View {
         Group {
-            if let detail = readingDetail, blockerReady {
+            if let detail = readingDetail {
                 ScrollViewReader { scroll in
                     ScrollView {
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
@@ -195,7 +194,6 @@ struct ThreadView: View {
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
         .task {
             blocker = await RemoteContentBlocker.ruleList()
-            blockerReady = true
         }
         .task(id: LoadIdentity(key: key, attempt: loadAttempt, messageID: selectedMessageID)) {
             loadFailed = false

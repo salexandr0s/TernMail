@@ -1127,6 +1127,10 @@ actor FakeGmail: GmailService {
     private var threadsByID: [String: GmailThread] = [:]
     private var attachments: [String: Data] = [:]
     private(set) var attachmentRequests: [String] = []
+    private(set) var fullThreadRequests: [String] = []
+    private(set) var fullThreadPriorities: [GmailRequestBudget.Priority] = []
+    private var holdsAttachment = false
+    private var heldAttachment: CheckedContinuation<Void, Never>?
     private var nextChangeError: GmailError?
     private var changeErrors: [String: GmailError] = [:]
     private var holdsNextChange = false
@@ -1151,8 +1155,16 @@ actor FakeGmail: GmailService {
     func expireHistory() { historyExpired = true }
     func setThread(_ thread: GmailThread) { threadsByID[thread.id] = thread }
     func setAttachment(_ id: String, data: Data) { attachments[id] = data }
-    func attachment(messageID: String, attachmentID: String) throws -> Data {
+    func holdNextAttachment() { holdsAttachment = true }
+    var isHoldingAttachment: Bool { heldAttachment != nil }
+    func releaseAttachment() { heldAttachment?.resume(); heldAttachment = nil }
+    func attachment(messageID: String, attachmentID: String) async throws -> Data {
         attachmentRequests.append(attachmentID)
+        if holdsAttachment {
+            holdsAttachment = false
+            await withCheckedContinuation { heldAttachment = $0 }
+        }
+        try Task.checkCancellation()
         guard let data = attachments[attachmentID] else { throw GmailError.notFound }
         return data
     }
@@ -1222,6 +1234,8 @@ actor FakeGmail: GmailService {
     }
 
     func thread(id: String, format: MessageFormat) async throws -> GmailThread {
+        fullThreadRequests.append(id)
+        fullThreadPriorities.append(GmailRequestBudget.priority)
         let response = threadsByID[id]
         if holdsThread {
             holdsThread = false

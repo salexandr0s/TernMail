@@ -363,7 +363,7 @@ import Testing
     @Test func fullMessageBatchesAndDirectCallsShareOneQuotaBudget() async throws {
         let clock = BudgetTestClock()
         let budget = clock.budget()
-        let chunks = [0..<8, 8..<16, 16..<24, 24..<25]
+        let chunks = [0..<6, 6..<12, 12..<18, 18..<24, 24..<25]
         let responses = chunks.map { chunk in
             batchResponse(chunk.enumerated().map { index, id in (index, 200, #"{"id":"m\#(id)","threadId":"t1"}"#) })
         }
@@ -376,18 +376,20 @@ import Testing
         #expect(try ids.allSatisfy { try messages[$0]?.get().id == $0 })
         #expect(try await second.thread(id: "t1").id == "t1")
         let requests = await transport.requests
-        #expect(requests.count == 5)
-        #expect(requests.prefix(4).map { String(decoding: $0.httpBody ?? Data(), as: UTF8.self).components(separatedBy: "GET /gmail").count - 1 } == [8, 8, 8, 1])
+        #expect(requests.count == 6)
+        #expect(requests.prefix(5).map { String(decoding: $0.httpBody ?? Data(), as: UTF8.self).components(separatedBy: "GET /gmail").count - 1 } == [6, 6, 6, 6, 1])
         // 25 full messages and one full thread cost 1,620 units. After the
-        // initial 500 units, the shared 4,000/minute refill takes 16.8 seconds.
-        #expect(clock.instant >= 16.8 && clock.instant < 16.81)
+        // initial 380 background units, the shared refill takes 18.6 seconds.
+        #expect(abs(clock.instant - 18.6) < 0.001)
     }
 
     @Test func concurrentDirectRequestsShareTheBatchBudget() async throws {
         let clock = BudgetTestClock()
         let budget = clock.budget()
-        let metadata = batchResponse((0..<25).map { ($0, 200, #"{"id":"m\#($0)","threadId":"t1"}"#) })
-        let transport = RecordingTransport([metadata] + Array(repeating: .init(status: 200, body: profile), count: 20))
+        let metadata = [0..<19, 19..<25].map { chunk in
+            batchResponse(chunk.enumerated().map { index, id in (index, 200, #"{"id":"m\#(id)","threadId":"t1"}"#) })
+        }
+        let transport = RecordingTransport(metadata + Array(repeating: .init(status: 200, body: profile), count: 20))
         let first = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
         let second = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
         _ = try await first.messages(ids: (0..<25).map { "m\($0)" }, format: .metadata)
@@ -397,8 +399,8 @@ import Testing
             }
             try await group.waitForAll()
         }
-        #expect(await transport.requests.count == 21)
-        #expect(clock.instant >= 0.3 && clock.instant < 0.31)
+        #expect(await transport.requests.count == 22)
+        #expect(abs(clock.instant - 2.1) < 0.001)
     }
 
     @Test func outerBatchRetryAfterIsHonoredForReads() async throws {
@@ -497,15 +499,15 @@ import Testing
                 try await Task.sleep(for: .seconds(30))
             } else { try await clock.sleep(duration) }
         })
-        try await budget.perform(units: 500) {}
+        try await budget.perform(units: 380) {}
         let pending = Task { try await budget.perform(units: 100) { Issue.record("Cancelled request was dispatched") } }
         var iterator = sleeping.stream.makeAsyncIterator()
         _ = await iterator.next()
         suspend.withLock { $0 = false }
         pending.cancel()
         await #expect(throws: CancellationError.self) { try await pending.value }
-        try await budget.perform(units: 500) {}
-        #expect(abs(clock.instant - 7.5) < 0.01)
+        try await budget.perform(units: 380) {}
+        #expect(abs(clock.instant - 5.7) < 0.01)
         sleeping.continuation.finish()
     }
 

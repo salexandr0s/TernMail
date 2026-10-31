@@ -24,6 +24,8 @@ import WebKit
         configuration.websiteDataStore = .nonPersistent()
         configuration.setURLSchemeHandler(InlineResourceHandler(resources: resources), forURLScheme: InlineResourceMap.scheme)
         configuration.userContentController.add(coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        configuration.userContentController.addUserScript(WKUserScript(source: MessageWebView.sizingScript(revision: 1),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         configuration.userContentController.add(try #require(await RemoteContentBlocker.ruleList()))
         let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 100), configuration: configuration)
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
@@ -58,6 +60,36 @@ import WebKit
         #expect(directions == [false, true, true, false, false, true, false])
     }
 
+    @Test func textHeightIsReportedWhileAnImageIsStillLoading() async throws {
+        let height = HeightValue()
+        let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.add(coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        configuration.userContentController.addUserScript(WKUserScript(source: MessageWebView.sizingScript(revision: 1),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        configuration.userContentController.add(try #require(await RemoteContentBlocker.ruleList()))
+        let images = HeldImageHandler()
+        configuration.setURLSchemeHandler(images, forURLScheme: InlineResourceMap.scheme)
+        let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 20), configuration: configuration)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderFront(nil)
+        defer { view.stopLoading(); window.close() }
+        view.navigationDelegate = coordinator
+        let text = String(repeating: "The message text can be read while its image loads. ", count: 15)
+        let html = MessageDocument.render(plainText: text).html.replacingOccurrences(of: "</body>",
+            with: "<img src='tern-message://held/image.png'></body>")
+        coordinator.load(html, in: view)
+        try await waitFor { images.hasPendingImage && height.value > 100 }
+        #expect(view.isLoading)
+        #expect(height.value > 100)
+        images.finish()
+        try await waitFor { !view.isLoading }
+    }
+
     @Test func heightShrinksWhenTextReflowsIntoAWiderPane() async throws {
         let height = HeightValue()
         let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
@@ -65,6 +97,8 @@ import WebKit
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        configuration.userContentController.addUserScript(WKUserScript(source: MessageWebView.sizingScript(revision: 1),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 220, height: 32), configuration: configuration)
         // WebKit suspends layout observers for views outside a window.
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
@@ -88,6 +122,24 @@ import WebKit
 }
 
 @MainActor private final class HeightValue { var value: CGFloat = 0 }
+
+@MainActor private final class HeldImageHandler: NSObject, WKURLSchemeHandler {
+    private var pending: (any WKURLSchemeTask)?
+    var hasPendingImage: Bool { pending != nil }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        pending = urlSchemeTask
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+        pending = nil
+    }
+
+    func finish() {
+        pending?.didFailWithError(URLError(.resourceUnavailable))
+        pending = nil
+    }
+}
 
 @MainActor private func waitFor(_ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
