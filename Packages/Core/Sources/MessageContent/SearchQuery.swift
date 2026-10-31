@@ -61,13 +61,26 @@ public struct SearchQuery: Sendable, Equatable {
     /// Spam and Trash are searched only when the query names them, as in Gmail.
     public let includesSpamAndTrash: Bool
     private let days: [DayOperand]
+    /// An operator that every result must also match, kept apart from `text`.
+    private let scope: String?
 
-    public init(_ text: String) {
+    /// `scope`, an operator such as `in:inbox`, limits the results of the whole
+    /// of `text`. Written into the text, it would join an `OR` at its edge:
+    /// `in:inbox OR trail` means either one.
+    public init(_ text: String, scope: String? = nil) {
         var parser = Parser(text: text, tokens: Self.tokens(in: text))
+        let root = parser.parse()
         self.text = text
-        root = parser.parse()
-        includesSpamAndTrash = parser.includesSpamAndTrash
+        self.scope = scope
         days = parser.days
+        guard let scope else {
+            self.root = root
+            includesSpamAndTrash = parser.includesSpamAndTrash
+            return
+        }
+        let limit = SearchQuery(scope)
+        self.root = root.map { root in limit.root.map { .all([$0, root]) } ?? root }
+        includesSpamAndTrash = parser.includesSpamAndTrash || limit.includesSpamAndTrash
     }
 
     /// Whether the local index can answer the whole query exactly. False when a
@@ -87,7 +100,9 @@ public struct SearchQuery: Sendable, Equatable {
                 .date(in: timeZone, now: .distantPast) else { continue }
             result.replaceSubrange(day.range, with: String(Int64(start.timeIntervalSince1970)))
         }
-        return result
+        guard let scope else { return result }
+        // Gmail groups with parentheses, which keep the text's OR off the scope.
+        return result.allSatisfy(\.isWhitespace) ? scope : "\(scope) (\(result))"
     }
 
     private static func isLocal(_ node: Node, negated: Bool) -> Bool {

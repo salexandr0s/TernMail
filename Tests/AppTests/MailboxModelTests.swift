@@ -104,8 +104,14 @@ import Testing
 
         // Local matches come from every mailbox, and the selection stays inside the list.
         mailbox.search.update("plans")
+        // Nothing has answered yet, so nothing can be called missing.
+        #expect(mailbox.search.status == .searching)
         try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t2", "t3"] }
         #expect(mailbox.selectedThreadIDs.isEmpty)
+        // The Window menu, Mission Control and saved window state show the
+        // window's title and subtitle, so they leave the query out.
+        #expect(!mailbox.selectedLabelTitle.contains("plans"))
+        #expect(!mailbox.selectedMailboxSubtitle.contains("plans"))
 
         // Gmail alone answers this query, so its conversations make up the list.
         mailbox.search.update("has:attachment")
@@ -113,6 +119,7 @@ import Testing
         mailbox.search.submit()
         try await waitUntil { mailbox.search.gmail?.state == .finished }
         try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t1", "t2", "t3", "t5"] }
+        #expect(mailbox.search.status == .searchedEverywhere)
 
         mailbox.search.cancel()
         #expect(!mailbox.search.isActive)
@@ -300,6 +307,7 @@ import Testing
         // Two letters stay on this Mac, so Gmail can't add mail from outside the scope.
         mailbox.search.update("pl")
         try await waitUntil { mailbox.listedThreads.count == 4 }
+        #expect(mailbox.search.status == .searchedThisMac)
         #expect(mailbox.sidebarSelection == nil)
         let scope = try #require(mailbox.searchMailboxScope)
         #expect(scope == MailboxSearchScope(title: "Inbox", restriction: "in:inbox"))

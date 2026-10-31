@@ -430,9 +430,11 @@ final class MailboxModel {
         return sources
     }
 
-    /// The account under the list's title when there are several.
+    /// How a search is going, or else the account under the list's title
+    /// when there are several.
     var selectedMailboxSubtitle: String {
-        guard hasSeveralAccounts, !search.isActive, let selectedMailbox else { return "" }
+        if search.isActive { return searchResultsSubtitle }
+        guard hasSeveralAccounts, let selectedMailbox else { return "" }
         if case .account(let accountID, _) = selectedMailbox { return account(id: accountID)?.account.email ?? "" }
         return "All Accounts"
     }
@@ -466,7 +468,7 @@ final class MailboxModel {
 
     var selectedLabelTitle: String {
         if let saved = selectedSavedSearch { return saved.name }
-        if search.isActive { return searchResultsTitle }
+        if search.isActive { return "Search Results" }
         return selectedMailboxTitle
     }
 

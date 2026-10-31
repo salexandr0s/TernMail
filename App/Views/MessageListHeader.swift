@@ -98,6 +98,8 @@ private struct SearchScopeBar: View {
             Button("Save") { isSaving = true }
                 .help("New Saved Search")
                 .accessibilityLabel("New Saved Search")
+                // Voice Control users say the name they see.
+                .accessibilityInputLabels([Text("Save"), Text("New Saved Search")])
                 .fixedSize()
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }

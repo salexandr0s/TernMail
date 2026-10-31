@@ -15,7 +15,7 @@ struct MailboxSearchScope: Equatable {
 extension MailboxModel {
     /// The selected mailbox as a search scope. Nil for mailboxes that hold
     /// all mail or that Gmail's query syntax can't name: All Mail, Snoozed,
-    /// the Outbox and saved searches.
+    /// the Outbox, saved searches and labels with a quote in their name.
     var searchMailboxScope: MailboxSearchScope? {
         guard selectedSavedSearch == nil, let id = selectedLabelID,
               let restriction = searchRestriction(forLabel: id) else { return nil }
@@ -30,15 +30,23 @@ extension MailboxModel {
         return accounts.count > 1 ? accounts : []
     }
 
-    /// The query and how many results the list shows: "12 results for “trail”".
-    var searchResultsTitle: String {
-        let query = "“\(search.text.trimmingCharacters(in: .whitespacesAndNewlines))”"
+    /// How many results the list shows, "12 results", or where the search
+    /// stands while it shows none. The query stays out of the window's title
+    /// and subtitle, which the Window menu and Mission Control show and saved
+    /// window state can keep. The field shows it.
+    var searchResultsSubtitle: String {
         let count = listItems.count
-        guard count > 0 else {
-            return search.gmail?.state == .loading ? "Searching for \(query)…" : "No results for \(query)"
+        // Until this Mac answers, the rows belong to the previous query.
+        if count > 0, search.hasLocalAnswer {
+            if search.hasMoreResults { return "\(count.formatted())+ results" }
+            return count == 1 ? "1 result" : "\(count.formatted()) results"
         }
-        if search.hasMoreResults { return "\(count.formatted())+ results for \(query)" }
-        return count == 1 ? "1 result for \(query)" : "\(count.formatted()) results for \(query)"
+        switch search.status {
+        case .searching: return "Searching…"
+        case .unreadable: return "Can't search"
+        case .searchedThisMac: return "No matches on this Mac"
+        case .searchedEverywhere: return "No results"
+        }
     }
 
     /// The sidebar's selection. Empty during a search, except for a saved
@@ -71,8 +79,8 @@ extension MailboxModel {
         if let category = InboxCategory.allCases.first(where: { $0.labelID == id }) {
             return "category:" + category.rawValue
         }
-        guard let label = label(id: id), !label.isSystem else { return nil }
-        let escaped = label.name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        return "label:\"\(escaped)\""
+        // Gmail's syntax has no escapes, so a quote would end the quoted name.
+        guard let label = label(id: id), !label.isSystem, !label.name.contains("\"") else { return nil }
+        return "label:\"\(label.name)\""
     }
 }
