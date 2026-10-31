@@ -43,7 +43,7 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
         switch section {
         case .mail: "Search mail (\(ShortcutCatalog.searchMail.label)). Return searches Gmail."
         case .calendar: "Search events (\(ShortcutCatalog.find.label))"
-        case .attachments: "Search attachments (\(ShortcutCatalog.find.label))"
+        case .attachments: "Search filenames, senders and subjects (\(ShortcutCatalog.find.label)). Document contents aren't searched."
         }
     }
 
