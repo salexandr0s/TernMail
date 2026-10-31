@@ -61,7 +61,7 @@ struct CalendarEventEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             CalendarSheetHeading(
-                title: editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details",
+                title: editable ? draft.isDeletion ? "Delete Event" : draft.isNew ? "New Event" : "Edit Event" : "Event Details",
                 subtitle: draft.isImport ? "Review your personal copy before adding it." : selectedCalendar.map { "\($0.accountName) · \($0.title)" } ?? "",
                 systemImage: draft.isDeletion ? "calendar.badge.minus" : "calendar",
                 color: selectedCalendar?.color ?? .accentColor
@@ -78,7 +78,7 @@ struct CalendarEventEditor: View {
                     }
                     TextField("Location", text: $location, prompt: Text("Add a place or address"))
                 }.disabled(draft.isDeletion)
-                Section("Date & time") {
+                Section("Date & Time") {
                     Toggle("All-day", isOn: $allDay)
                         .onChange(of: allDay) { _, value in
                             if value { start = eventCalendar.startOfDay(for: start); end = max(start, eventCalendar.startOfDay(for: end)) }
@@ -90,13 +90,12 @@ struct CalendarEventEditor: View {
                     DatePicker(allDay ? "Last day" : "Ends", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
                         .disabled(preservesImportedDates)
                     if !allDay {
-                        TextField("Time zone", text: $zoneID)
-                            .help("Use an IANA time zone, such as Europe/Vienna.")
+                        CalendarTimeZonePicker(title: "Time Zone", identifier: $zoneID)
                             .disabled(preservesImportedDates)
                     }
                 }.disabled(draft.isDeletion)
                 if isRecurring {
-                    Section("Apply changes to") {
+                    Section("Apply Changes To") {
                         Picker("Events", selection: $draft.editScope) {
                             ForEach(CalendarEditScope.allCases) { scope in
                                 Text(scope.title).tag(scope).disabled(scope != .occurrence && draft.seriesMaster == nil)
@@ -118,7 +117,7 @@ struct CalendarEventEditor: View {
                     CalendarRecurrenceControl(rules: $recurrence, allDay: allDay, timeZone: eventZone)
                         .disabled(preservesImportedDates || (isRecurring && draft.editScope == .occurrence))
                     if !draft.importedExceptions.isEmpty {
-                        Text("This import includes \(draft.importedExceptions.count) changed or cancelled occurrences.")
+                        Text("This import includes ^[\(draft.importedExceptions.count) changed or cancelled occurrence](inflect: true).")
                             .font(.caption).foregroundStyle(.secondary)
                         Text("Dates and repeat rules are preserved with those occurrences. You can edit them after import.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -154,10 +153,10 @@ struct CalendarEventEditor: View {
                         Toggle(draft.isDeletion ? "Send cancellations to these guests" : "Send invitations or updates to these guests", isOn: $confirmedNotifications)
                     }
                 }
-                Section("Video call") {
+                Section("Video Call") {
                     if let link = draft.event.hangoutLink ?? draft.event.conferenceData?.entryPoints?.first(where: { $0.entryPointType == "video" })?.uri,
                        let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                        Link(destination: url) { Label("Join meeting", systemImage: "video") }
+                        Link(destination: url) { Label("Join Meeting", systemImage: "video") }
                             .buttonStyle(.bordered)
                     } else {
                         Toggle("Add Google Meet", isOn: $draft.createMeet).disabled(selectedCalendar?.entry.supportsGoogleMeet != true)
@@ -167,7 +166,7 @@ struct CalendarEventEditor: View {
                     }
                 }.disabled(draft.isDeletion)
                 Section("Alerts") {
-                    Toggle("Use calendar defaults", isOn: $useDefaultAlerts)
+                    Toggle("Use Calendar Defaults", isOn: $useDefaultAlerts)
                     if !useDefaultAlerts {
                         ForEach(Array(reminders.enumerated()), id: \.offset) { index, reminder in
                             HStack {
@@ -180,7 +179,7 @@ struct CalendarEventEditor: View {
                                     .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
                             }.id("\(index)-\(reminder.method)")
                         }
-                        Button("Add alert") { reminders.append(CalendarReminder(minutes: 10)) }.disabled(reminders.count >= 5)
+                        Button("Add Alert") { reminders.append(CalendarReminder(minutes: 10)) }.disabled(reminders.count >= 5)
                     }
                 }.disabled(draft.isDeletion)
                 Section {
@@ -188,7 +187,7 @@ struct CalendarEventEditor: View {
                         Text("Busy").tag("opaque"); Text("Free").tag("transparent")
                     }
                     Picker("Visibility", selection: Binding(get: { draft.event.visibility ?? "default" }, set: { draft.event.visibility = $0 })) {
-                        Text("Calendar default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
+                        Text("Calendar Default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
                     }
                     TextField("URL", text: $eventURL)
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -218,14 +217,15 @@ struct CalendarEventEditor: View {
                     Spacer()
                     Button(editable ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
                     if editable {
-                        Button(saveTitle ?? (draft.isDeletion ? "Delete event" : draft.isImport ? "Add to calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
+                        Button(saveTitle ?? (draft.isDeletion ? "Delete Event" : draft.isImport ? "Add to Calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
                             .keyboardShortcut(.defaultAction).disabled(isSaving || !canSave)
                     }
                 }
             }.padding(Tokens.Space.s4)
                 .background(Tokens.Surface.muted)
         }
-        .frame(width: Tokens.Calendar.editorWidth, height: CalendarSheetLayout.height(Tokens.Calendar.editorHeight))
+        .frame(minWidth: Tokens.Calendar.editorWidth, idealWidth: Tokens.Calendar.editorWidth, maxWidth: .infinity,
+               minHeight: Tokens.Calendar.sheetMinHeight, idealHeight: CalendarSheetLayout.height(Tokens.Calendar.editorHeight), maxHeight: .infinity)
         .interactiveDismissDisabled(isSaving)
         .onChange(of: notificationRecipients) { _, _ in confirmedNotifications = false }
         .onChange(of: draft.editScope) { _, _ in confirmedNotifications = false }
@@ -307,7 +307,7 @@ struct CalendarInlineError: View {
 
     var body: some View {
         Label(message, systemImage: "exclamationmark.circle.fill")
-            .font(.callout).foregroundStyle(.red)
+            .font(.callout).foregroundStyle(Tokens.Status.error)
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)

@@ -7,7 +7,7 @@ struct CalendarActivityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CalendarSheetHeading(title: "Calendar activity", subtitle: "Review proposals and follow saved changes.", systemImage: "clock.arrow.circlepath")
+            CalendarSheetHeading(title: "Calendar Activity", subtitle: "Review proposals and follow saved changes.", systemImage: "clock.arrow.circlepath")
             Divider()
             if model.operations.isEmpty {
                 TernEmptyState(title: "No calendar changes", systemImage: "checkmark.circle", message: "Proposals and saved changes appear here.")
@@ -21,13 +21,14 @@ struct CalendarActivityView: View {
             VStack(spacing: Tokens.Space.s3) {
                 if let error = model.errorMessage { CalendarInlineError(message: error) }
                 HStack {
-                    Text("\(model.operations.count) changes").font(.caption).foregroundStyle(.secondary)
+                    Text("^[\(model.operations.count) change](inflect: true)").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
                 }
             }.padding(Tokens.Space.s4).background(Tokens.Surface.muted)
         }
-        .frame(width: Tokens.Calendar.activityWidth, height: CalendarSheetLayout.height(Tokens.Calendar.activityHeight))
+        .frame(minWidth: Tokens.Calendar.activityWidth, idealWidth: Tokens.Calendar.activityWidth, maxWidth: .infinity,
+               minHeight: Tokens.Calendar.sheetMinHeight, idealHeight: CalendarSheetLayout.height(Tokens.Calendar.activityHeight), maxHeight: .infinity)
     }
 
     private func activityRow(_ operation: CalendarOperation) -> some View {
@@ -51,13 +52,13 @@ struct CalendarActivityView: View {
                 HStack(spacing: Tokens.Space.s3) {
                     switch operation.status {
                     case .proposed:
-                        Button("Review proposal") { model.reviewOperation(operation); dismiss() }
+                        Button("Review Proposal") { model.reviewOperation(operation); dismiss() }
                         if operation.attempts == 0 { Button("Dismiss") { Task { await model.cancelOperation(operation) } } }
                     case .queued:
                         Text("Waiting to synchronize").font(.caption).foregroundStyle(.secondary)
                         if operation.attempts == 0 { Button("Cancel") { Task { await model.cancelOperation(operation) } } }
                     case .failed, .conflicted:
-                        Button("Review and retry") {
+                        Button("Review and Retry") {
                             if operation.status == .conflicted { dismiss() }
                             Task { await model.retryOperation(operation) }
                         }
@@ -108,8 +109,8 @@ struct CalendarActivityView: View {
     }
     private func color(_ status: CalendarOperation.Status) -> Color {
         switch status {
-        case .completed: .green
-        case .failed, .conflicted: .orange
+        case .completed: Tokens.Status.success
+        case .failed, .conflicted: Tokens.Status.warning
         default: .secondary
         }
     }

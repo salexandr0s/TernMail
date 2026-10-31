@@ -177,9 +177,9 @@ private struct EmailCalendarSuggestionRow: View {
 
     private var badgeColor: Color {
         switch presentation.badge.tone {
-        case .positive: .green
-        case .caution: .orange
-        case .negative: .red
+        case .positive: Tokens.Status.success
+        case .caution: Tokens.Status.warning
+        case .negative: Tokens.Status.error
         case .neutral: .secondary
         }
     }

@@ -14,7 +14,8 @@ struct CalendarRecurrenceControl: View {
     @State private var custom = ""
     @State private var loaded = false
     private let dayCodes = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
-    private let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    /// `Calendar` weekday numbers for MO through SU: Sunday is 1.
+    private let dayNumbers = [2, 3, 4, 5, 6, 7, 1]
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
@@ -24,7 +25,7 @@ struct CalendarRecurrenceControl: View {
                 Text("Weekly").tag("WEEKLY")
                 Text("Monthly").tag("MONTHLY")
                 Text("Yearly").tag("YEARLY")
-                Text("Custom rule").tag("CUSTOM")
+                Text("Custom Rule").tag("CUSTOM")
             }
             if frequency == "CUSTOM" {
                 TextEditor(text: publishing($custom)).font(.system(.caption, design: .monospaced))
@@ -37,7 +38,7 @@ struct CalendarRecurrenceControl: View {
                 if frequency == "WEEKLY" {
                     HStack(spacing: Tokens.Space.s1) {
                         ForEach(Array(dayCodes.enumerated()), id: \.element) { index, code in
-                            Toggle(dayNames[index], isOn: Binding(
+                            Toggle(Calendar.autoupdatingCurrent.shortWeekdaySymbols[dayNumbers[index] - 1], isOn: Binding(
                                 get: { weekdays.contains(code) },
                                 set: { included in
                                     if included { weekdays.insert(code) } else { weekdays.remove(code) }
@@ -45,16 +46,16 @@ struct CalendarRecurrenceControl: View {
                                 }
                             ))
                             .toggleStyle(.button)
-                            .accessibilityLabel(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][index])
+                            .accessibilityLabel(Calendar.autoupdatingCurrent.weekdaySymbols[dayNumbers[index] - 1])
                             .frame(maxWidth: .infinity)
                         }
                     }
                 }
                 Picker("Ends", selection: publishing($endMode)) {
-                    Text("Never").tag("never"); Text("After occurrences").tag("count"); Text("On date").tag("until")
+                    Text("Never").tag("never"); Text("After Occurrences").tag("count"); Text("On Date").tag("until")
                 }
-                if endMode == "count" { Stepper("After \(count) events", value: publishing($count), in: 1...9999) }
-                if endMode == "until" { DatePicker("Last date", selection: publishing($until), displayedComponents: .date) }
+                if endMode == "count" { Stepper("After ^[\(count) event](inflect: true)", value: publishing($count), in: 1...9999) }
+                if endMode == "until" { DatePicker("Last Date", selection: publishing($until), displayedComponents: .date) }
             }
         }
         .onAppear(perform: load)

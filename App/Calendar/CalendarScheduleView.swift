@@ -16,32 +16,41 @@ struct CalendarScheduleView: View {
             .filter { !CalendarLayout.events(events, on: $0, calendar: calendar).isEmpty }
     }
 
+    private var selected: CalendarDisplayEvent? { events.first { $0.id == selectedID } }
+
     var body: some View {
         if days.isEmpty {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No events this month", systemImage: "calendar",
                                message: "Add an event or choose another month.", fillsSpace: false)
-                Button("New event") {
+                Button("New Event") {
                     let start = CalendarLayout.date(at: 9 * 60, on: date, calendar: calendar)
                     create(CalendarEventRange(start: start, end: start.addingTimeInterval(3600), isAllDay: false))
                 }.buttonStyle(.borderedProminent)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollViewReader { proxy in
-                List {
+                List(selection: $selectedID) {
                     ForEach(days, id: \.self) { day in
                         Section {
                             ForEach(CalendarLayout.events(events, on: day, calendar: calendar)) { event in
-                                row(event, on: day)
+                                row(event, on: day).tag(event.id)
                             }
                         } header: {
                             Text(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month(.wide).day(), calendar: calendar))
                                 .font(.headline).foregroundStyle(calendar.isDateInToday(day) ? Color.accentColor : Color.primary)
                         }.id(day)
                     }
-                }.listStyle(.inset)
-                    .onChange(of: date, initial: true) { _, _ in scrollToDate(proxy) }
-                    .onChange(of: days) { _, _ in scrollToDate(proxy) }
+                }
+                .listStyle(.inset)
+                .onDeleteCommand { if let selected, selected.canEdit { delete(selected) } }
+                .onKeyPress(.return) {
+                    guard let selected else { return .ignored }
+                    edit(selected)
+                    return .handled
+                }
+                .onChange(of: date, initial: true) { _, _ in scrollToDate(proxy) }
+                .onChange(of: days) { _, _ in scrollToDate(proxy) }
             }
         }
     }
@@ -69,18 +78,18 @@ struct CalendarScheduleView: View {
         }
         .padding(.vertical, Tokens.Space.s2)
         .padding(.horizontal, Tokens.Space.s2)
-        .background(selectedID == event.id ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear,
-                    in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { edit(event) }.onTapGesture { selectedID = event.id }
+        .ternHover()
+        .draggable(CalendarEventTransfer(event))
+        .onTapGesture(count: 2) { edit(event) }
         .contextMenu {
-            Button("Open event") { edit(event) }
+            Button("Open Event") { edit(event) }
             Button("Duplicate") { duplicate(event) }
             Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
         }
-        .accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { edit(event) }
-        .accessibilityValue(selectedID == event.id ? "Selected" : "")
     }
 
     private func timeLabel(_ event: CalendarDisplayEvent, on day: Date) -> String {
