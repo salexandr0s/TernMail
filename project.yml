@@ -44,6 +44,23 @@ targets:
             UTTypeDescription: Tern Conversation
             UTTypeConformsTo:
               - public.data
+        # Services menu items, handled by MailServices. An empty
+        # NSRequiredContext turns them on without a trip to Keyboard Settings.
+        NSServices:
+          - NSMenuItem:
+              default: New Tern Message with Selection
+            NSMessage: newMessageWithSelection
+            NSPortName: Tern
+            NSRequiredContext: {}
+            NSSendTypes:
+              - public.plain-text
+          - NSMenuItem:
+              default: New Tern Message to Address
+            NSMessage: newMessageToAddress
+            NSPortName: Tern
+            NSRequiredContext: {}
+            NSSendTypes:
+              - public.plain-text
         CFBundleURLTypes:
           - CFBundleURLName: dev.tern.mail.links
             CFBundleTypeRole: Editor

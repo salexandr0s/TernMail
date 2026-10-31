@@ -95,6 +95,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MailNotificationRouter.shared.install()
         MailScriptingBridge.shared.bind(model)
+        // The Info.plist NSServices entries call these handlers. NSApp keeps the provider.
+        NSApp.servicesProvider = MailServices(app: model)
+        NSUpdateDynamicServices()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
