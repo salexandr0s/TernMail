@@ -9,6 +9,7 @@ import Testing
         let html = """
         <style>.x{background:url(https://images.example.com/background.png)}</style>
         <img src="https://images.example.com/photo.png" width="200" height="100">
+        <img src=" https://images.example.com/padded.png">
         <img src="http://images.example.com/insecure.png">
         <img src="https://www.google-analytics.com/collect">
         <img src="https://other.example.com/open.png" style="width:1px;height:1px!important">
@@ -17,15 +18,19 @@ import Testing
         let blocked = MessageDocument.render(html: html)
         #expect(try SwiftSoup.parse(blocked.html).select("img[src]").isEmpty())
         #expect(!blocked.html.contains("img-src data: tern-message: https:"))
+        // Only the HTTPS images would load: not the background, the HTTP image or the trackers.
+        #expect(blocked.blockedRemoteImages == 2)
         let allowed = MessageDocument.render(html: html, policy: .init(allowsRemoteImages: true))
         #expect(allowed.html.contains("src=\"https://images.example.com/photo.png\""))
-        #expect(try SwiftSoup.parse(allowed.html).select("img[src]").array().map { try $0.attr("src") } == ["https://images.example.com/photo.png"])
+        #expect(try SwiftSoup.parse(allowed.html).select("img[src]").array().map { try $0.attr("src").trimmingCharacters(in: .whitespaces) }
+            == ["https://images.example.com/photo.png", "https://images.example.com/padded.png"])
         #expect(!allowed.html.contains("google-analytics.com"))
         #expect(!allowed.html.contains("open.png"))
         #expect(!allowed.html.contains("srcset"))
         #expect(!allowed.html.contains("background.png"))
         #expect(!allowed.html.contains("<script"))
         #expect(allowed.blockedTrackers == 2)
+        #expect(allowed.blockedRemoteImages == 0)
         #expect(allowed.html.contains("img-src data: tern-message: https:"))
         #expect(!TrackerMatcher.matches(URL(string: "https://google-analytics.com.attacker.example/photo.png")!))
     }

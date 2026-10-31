@@ -33,9 +33,6 @@ struct ThreadView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var paging = ReaderPaging()
     @State private var finder = ReaderFindModel()
-    /// Blocked content and trackers that the open messages report, by message ID.
-    @State private var privacy: [String: MessagePrivacy] = [:]
-    @State private var loadsImages = false
     @FocusState private var readerFocused: Bool
     @AppStorage(ReadingPreferences.orderKey) private var messageOrder = ReadingPreferences.Order.oldestFirst.rawValue
     @AppStorage(ReadingPreferences.markReadKey) private var markReadPolicy = ReadingPreferences.MarkRead.immediately.rawValue
@@ -169,10 +166,6 @@ struct ThreadView: View {
                                 }
                             }
                             }
-                            ThreadPrivacyNotice(reports: messages.compactMap { privacy[$0.id] },
-                                onLoadImages: { loadsImages = true }) { address, allowed in
-                                mailbox.setImageSenderAllowed(allowed, address: address, accountID: key.accountID)
-                            }
                             VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                                 ForEach(messages) { message in
                                     MessageView(
@@ -182,7 +175,6 @@ struct ThreadView: View {
                                         isFocused: readerFocused && focusedMessageID == message.id,
                                         resourceRevision: resourceRevision,
                                         bodyLoadFailed: bodyLoadFailed,
-                                        loadsImages: loadsImages,
                                         mailbox: mailbox,
                                         finder: finder,
                                         compose: compose,
@@ -204,8 +196,7 @@ struct ThreadView: View {
                                             // This message and every later one, whichever way the list reads.
                                             mailbox.markUnread(messageIDs: detail.messages.drop { $0.id != message.id }.map(\.id),
                                                                accountID: key.accountID)
-                                        },
-                                        onPrivacyChange: { privacy[message.id] = $0 }
+                                        }
                                     ) {
                                         if expanded.contains(message.id) {
                                             expanded.remove(message.id)
@@ -293,12 +284,6 @@ struct ThreadView: View {
         }
         .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
-        // Blocking a sender's images ends Load Images for the conversation too.
-        .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
-            if change.userInfo?["account"] as? String == key.accountID, change.userInfo?["allowed"] as? Bool == false {
-                loadsImages = false
-            }
-        }
         .task {
             blocker = await RemoteContentBlocker.ruleList()
         }
@@ -612,8 +597,6 @@ private struct MessageView: View {
     let isFocused: Bool
     let resourceRevision: Int
     let bodyLoadFailed: Bool
-    /// Load Images was chosen for the whole conversation.
-    let loadsImages: Bool
     let mailbox: MailboxModel
     let finder: ReaderFindModel
     let compose: (MailboxModel.ComposeStart) -> Void
@@ -621,13 +604,14 @@ private struct MessageView: View {
     let reportSelection: (String) -> Void
     let onHoverLink: (String?) -> Void
     let onMarkUnreadFromHere: () -> Void
-    let onPrivacyChange: (MessagePrivacy?) -> Void
     let onToggle: () -> Void
 
     @State private var rendered: RenderedMessage?
     @State private var hasNoText = false
     @State private var height: CGFloat = 0
     @State private var inlineResources = InlineResourceMap()
+    /// Load Images was chosen for this message.
+    @State private var loadsImages = false
     @State private var allowsSenderImages = false
     @State private var selectedText = ""
     @State private var activeBlocker: WKContentRuleList?
@@ -694,14 +678,15 @@ private struct MessageView: View {
         }
         .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; onHoverLink(nil) } }
         .onChange(of: selectedText) { _, text in reportSelection(text) }
-        .onChange(of: privacyReport, initial: true) { _, report in onPrivacyChange(report) }
-        .onDisappear { reportSelection(""); onHoverLink(nil); onPrivacyChange(nil) }
+        .onDisappear { reportSelection(""); onHoverLink(nil) }
         .onChange(of: allowsImages) { _, _ in rendered = nil; selectedText = ""; onHoverLink(nil) }
         .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
             guard change.userInfo?["account"] as? String == message.record.accountID,
                   change.userInfo?["sender"] as? String == senderAddress.lowercased(),
                   let allowed = change.userInfo?["allowed"] as? Bool else { return }
             allowsSenderImages = allowed
+            // Blocking the sender's images ends Load Images too.
+            if !allowed { loadsImages = false }
         }
     }
 
@@ -797,9 +782,13 @@ private struct MessageView: View {
             .font(.callout).foregroundStyle(.secondary).lineLimit(1)
     }
 
-    /// The time, then the actions while open or the star while collapsed.
+    /// The time, then the actions while open or the star while collapsed. An
+    /// open message shows blocked trackers and, if chosen, its size first.
     private var messageMetadata: some View {
         HStack(spacing: Tokens.Space.s2) {
+            if isExpanded, let trackers = rendered?.blockedTrackers, trackers > 0 {
+                TrackerIndicator(count: trackers)
+            }
             if isExpanded, showsSize {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(message.record.sizeEstimate), countStyle: .file))
                     .font(.caption2).foregroundStyle(.secondary)
@@ -847,16 +836,23 @@ private struct MessageView: View {
     @ViewBuilder
     private var content: some View {
         if let rendered {
-            MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
-                adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
-                forcesLightAppearance: showsLightBackground,
-                onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
-                onOpenMailLink: { app.mailURLs.receive($0) },
-                onCreate: { finder.register($0, for: message.id) }, onDismantle: { finder.unregister($0) })
-                .id(inlineResources.scope + ":\(showsLightBackground):\(adaptsDark)")
-                .frame(height: max(height, Tokens.Space.s5))
-                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .accessibilityLabel("Message from \(senderName)")
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                if rendered.blockedRemoteImages > 0 {
+                    RemoteImagesBar(sender: message.parsedSenderAddress, onLoad: { loadsImages = true }) {
+                        mailbox.setImageSenderAllowed(true, address: senderAddress, accountID: message.record.accountID)
+                    }
+                }
+                MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
+                    adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
+                    forcesLightAppearance: showsLightBackground,
+                    onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
+                    onOpenMailLink: { app.mailURLs.receive($0) },
+                    onCreate: { finder.register($0, for: message.id) }, onDismantle: { finder.unregister($0) })
+                    .id(inlineResources.scope + ":\(showsLightBackground):\(adaptsDark)")
+                    .frame(height: max(height, Tokens.Space.s5))
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .accessibilityLabel("Message from \(senderName)")
+            }
         } else if hasNoText {
             Text("This message has no text.")
                 .foregroundStyle(.secondary)
@@ -891,14 +887,6 @@ private struct MessageView: View {
         offersLightBackground && LightBackgroundSenders(storage: lightBackgroundSenders).contains(senderAddress)
     }
 
-    /// What the conversation's privacy line counts for this message while it's open.
-    private var privacyReport: MessagePrivacy? {
-        rendered.map {
-            MessagePrivacy(blockedRemoteContent: $0.blockedRemoteContent, blockedTrackers: $0.blockedTrackers,
-                sender: senderAddress, allowsImages: allowsImages, allowsSenderImages: allowsSenderImages)
-        }
-    }
-
     /// The sender's reading choices, after the message commands.
     @ViewBuilder private var senderMenuItems: some View {
         if offersLightBackground || allowsSenderImages { Divider() }
@@ -910,7 +898,7 @@ private struct MessageView: View {
             })
         }
         if allowsSenderImages {
-            Button("Block Images for Sender") {
+            Button("Block Images from Sender") {
                 mailbox.setImageSenderAllowed(false, address: senderAddress, accountID: message.record.accountID)
             }
         }
@@ -959,94 +947,81 @@ private extension MessageDetail {
     var parsedSenderAddress: String? { EmailAddress.parseList(record.sender).first?.address }
 }
 
-/// What an open message tells the conversation's privacy line.
-private struct MessagePrivacy: Equatable {
-    let blockedRemoteContent: Int
-    let blockedTrackers: Int
-    let sender: String
-    let allowsImages: Bool
-    let allowsSenderImages: Bool
-}
-
-/// One line for the whole conversation: the remote content and tracking
-/// images its open messages blocked, Load Images for all of them, and the
-/// sender image choices.
-private struct ThreadPrivacyNotice: View {
-    let reports: [MessagePrivacy]
-    let onLoadImages: () -> Void
-    let onSetSenderImages: (_ address: String, _ allowed: Bool) -> Void
-
-    private var blocked: Int { reports.reduce(0) { $0 + $1.blockedRemoteContent } }
-    private var trackers: Int { reports.reduce(0) { $0 + $1.blockedTrackers } }
-    /// Senders with blocked content that Load Images or Always Load would show.
-    private var blockedSenders: [String] { senders(where: { $0.blockedRemoteContent > 0 && !$0.allowsImages }) }
-    private var allowedSenders: [String] { senders(where: \.allowsSenderImages) }
+/// Sits above a message body while the message has remote images blocked.
+/// Load Images shows them in this message; Always Load keeps them on for the
+/// sender.
+private struct RemoteImagesBar: View {
+    /// The sender's address, when the From header has one.
+    let sender: String?
+    let onLoad: () -> Void
+    let onAlwaysLoad: () -> Void
 
     var body: some View {
-        if blocked > 0 || trackers > 0 {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s3) {
-                    summary
-                    Spacer(minLength: 0)
-                    actions
-                }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    summary
-                    HStack(spacing: Tokens.Space.s3) { actions }
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s3) {
+                summary
+                Spacer(minLength: 0)
+                actions
             }
-            .buttonStyle(.borderless)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, Tokens.Space.s3)
-            .padding(.vertical, Tokens.Space.s2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .padding(.vertical, Tokens.Space.s1_5)
+            .padding(.leading, Tokens.Space.s3)
+            .padding(.trailing, Tokens.Space.s1_5)
+            // A narrow reader puts the buttons under the summary.
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                summary
+                HStack(spacing: Tokens.Space.s2) { actions }
+            }
+            .padding(Tokens.Space.s3)
         }
+        .controlSize(.small)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
     }
 
     private var summary: some View {
-        Label {
-            if blocked > 0, trackers > 0 {
-                Text("Remote content and ^[\(trackers) tracking image](inflect: true) blocked for privacy")
-            } else if blocked > 0 {
-                Text("Remote content blocked for privacy")
-            } else {
-                Text("^[\(trackers) tracking image](inflect: true) blocked")
-            }
-        } icon: {
-            Image(systemName: blocked > 0 ? "eye.slash" : "hand.raised")
-        }
+        Label("Remote images blocked", systemImage: "eye.slash")
+            .font(.callout)
+            .foregroundStyle(.secondary)
     }
 
     @ViewBuilder private var actions: some View {
-        if !blockedSenders.isEmpty {
-            Button("Load Images", action: onLoadImages)
-            senderButton("Always Load for Sender", senders: blockedSenders, allowed: true)
+        Button("Load Images", action: onLoad)
+        if let sender {
+            Button("Always Load from Sender", action: onAlwaysLoad)
+                .help("Always load images from \(sender)")
         }
-        senderButton("Block Images for Sender", senders: allowedSenders, allowed: false)
     }
+}
 
-    /// A button for one sender, or a menu of their addresses for several.
-    @ViewBuilder
-    private func senderButton(_ title: String, senders: [String], allowed: Bool) -> some View {
-        if senders.count == 1, let sender = senders.first {
-            Button(title) { onSetSenderImages(sender, allowed) }
-                .help(sender)
-        } else if senders.count > 1 {
-            Menu(title) {
-                ForEach(senders, id: \.self) { sender in
-                    Button(sender) { onSetSenderImages(sender, allowed) }
-                }
+/// Beside an open message's time when tracking images were blocked. They
+/// stay blocked after Load Images, so it explains rather than offers an action.
+private struct TrackerIndicator: View {
+    let count: Int
+    @State private var showsDetails = false
+
+    var body: some View {
+        Button { showsDetails.toggle() } label: {
+            Label { summary } icon: { Image(systemName: "hand.raised") }
+                .labelStyle(.iconOnly)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+        }
+        .buttonStyle(.borderless)
+        // Smaller than the action buttons beside it, since it reports rather than acts.
+        .imageScale(.small)
+        .foregroundStyle(.secondary)
+        .help(summary)
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                summary.font(.headline)
+                Text("Tracking images can tell the sender when you open a message. Tern blocks them even when you load images.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .padding(Tokens.Space.s4)
+            .frame(width: Tokens.Popover.width, alignment: .leading)
         }
     }
 
-    /// Each sender once, in the order their messages appear.
-    private func senders(where include: (MessagePrivacy) -> Bool) -> [String] {
-        var seen = Set<String>()
-        return reports.filter(include).map(\.sender).filter { seen.insert($0.lowercased()).inserted }
-    }
+    private var summary: Text { Text("^[\(count) tracking image](inflect: true) blocked") }
 }

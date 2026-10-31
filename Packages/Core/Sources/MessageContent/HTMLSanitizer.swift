@@ -5,8 +5,7 @@ import SwiftSoup
 ///
 /// For display this is the first of three layers. The page also carries a
 /// strict CSP and the web view applies a content rule list, so anything this
-/// misses (CSS escapes, for example) still cannot run or load. The returned
-/// count drives the "remote content blocked" notice.
+/// misses (CSS escapes, for example) still cannot run or load.
 ///
 /// Quoting a message in a reply keeps its remote images, so the recipient
 /// sees the original as it was sent, and removes only active content.
@@ -22,6 +21,12 @@ enum HTMLSanitizer {
     /// Attributes that navigate when used, checked for script URLs.
     private static let linkAttributes: Set<String> = ["href", "xlink:href", "action", "formaction", "cite", "longdesc"]
     private static let svgReferenceElements: Set<String> = ["image", "use", "feimage"]
+
+    /// With `allowsRemoteImages`, an image that isn't a tracker loads only over
+    /// HTTPS from a named host.
+    static func isConsentLoadable(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && url.host != nil
+    }
 
     /// Cleans `document` in place and returns how many remote loads it removed.
     static func clean(_ document: Document, keepingRemoteLoads: Bool = false, policy: MessageRenderPolicy? = nil) throws -> Int {
@@ -82,9 +87,10 @@ enum HTMLSanitizer {
                 }
             } else if loadingAttributes.contains(name)
                 || (svgReferenceElements.contains(tag) && (name == "href" || name == "xlink:href")) {
-                if tag == "img", name == "src", let policy, let url = URL(string: value) {
+                // Browsers ignore whitespace around a URL.
+                if tag == "img", name == "src", let policy, let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) {
                     if policy.inlineResources.resource(for: url) != nil { continue }
-                    if policy.allowsRemoteImages, url.scheme?.lowercased() == "https", url.host != nil,
+                    if policy.allowsRemoteImages, isConsentLoadable(url),
                        !TrackerMatcher.isTrackingImage(url: url, width: try? element.attr("width"), height: try? element.attr("height"), style: try? element.attr("style")) { continue }
                 }
                 if name != "srcset", isInline(value) { continue }
