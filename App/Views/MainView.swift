@@ -11,6 +11,12 @@ struct MainView: View {
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var isCompactWindow = false
+    @State private var mailWidth: CGFloat = 0
+    /// The sidebar hid because the window got narrower than the three
+    /// columns' minimum widths, and comes back once the window is wide again.
+    @State private var sidebarHiddenForWidth = false
+    /// The sidebar column's last width while visible, gutter included.
+    @State private var sidebarColumnWidth = Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter
     @State private var showsAssistant = false
     @State private var preferredAssistantWidth = Tokens.Assistant.sidebarWidth
     @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -43,7 +49,29 @@ struct MainView: View {
     }
 
     private func toggleSidebar() {
+        sidebarHiddenForWidth = false
         columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
+    }
+
+    /// Below the three columns' minimum widths the split view clips the
+    /// sidebar and the reader, so the sidebar steps aside until there's room.
+    private func fitColumns(to width: CGFloat) {
+        guard width > 0, !showsAssistant, !hidesReader else { return }
+        if width < AssistantSidebarLayout.threeColumnMinimum {
+            guard columnVisibility == .all else { return }
+            sidebarHiddenForWidth = true
+            columnVisibility = .doubleColumn
+        } else if sidebarHiddenForWidth, width >= widthToRestoreSidebar {
+            sidebarHiddenForWidth = false
+            if columnVisibility == .doubleColumn { columnVisibility = .all }
+        }
+    }
+
+    /// AppKit widens the window to show the sidebar unless the window keeps
+    /// its minimum width beside it, so a sidebar hidden for width waits for
+    /// that much room rather than making the window jump.
+    private var widthToRestoreSidebar: CGFloat {
+        sidebarColumnWidth + Tokens.Border.hairline + Tokens.Layout.windowMinWidth
     }
 
     private var section: WorkspaceSection {
@@ -100,6 +128,8 @@ struct MainView: View {
             }
             .onChange(of: layout.mailWidth, initial: true) { _, width in
                 isCompactWindow = width < Tokens.Layout.compactToolbarWidth
+                mailWidth = width
+                fitColumns(to: width)
                 paneSizing.requestApply()
             }
             .onChange(of: geometry.size.height, initial: true) { _, _ in
@@ -116,11 +146,13 @@ struct MainView: View {
         .onAppear {
             mailbox.undoManager = undoManager
             if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) { columnVisibility = stored }
+            fitColumns(to: mailWidth)
         }
         .onChange(of: columnVisibility) { _, visibility in
-            // The assistant narrows the columns for a while; keep the user's own choice.
-            if !showsAssistant { storedColumnVisibility = visibility.storageValue }
+            // The assistant and a narrow window hide columns for a while; keep the user's own choice.
+            if !showsAssistant && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
         }
+        .onChange(of: hidesReader) { _, _ in fitColumns(to: mailWidth) }
         .modifier(AssistantAccessRefresh(mailbox: mailbox))
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()
@@ -148,6 +180,7 @@ struct MainView: View {
                     SplitDividerHandle()
                         .frame(width: Tokens.Layout.columnGutter)
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if $0 > 0 { sidebarColumnWidth = $0 } }
                 .navigationSplitViewColumnWidth(
                     min: Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter,
                     ideal: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter,
