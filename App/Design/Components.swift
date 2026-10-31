@@ -59,18 +59,7 @@ struct TernAvatar: View {
         .accessibilityHidden(true)
     }
 
-    private var initials: String {
-        let displayName = String(name.prefix { $0 != "<" })
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        let localName = displayName.split(separator: "@", maxSplits: 1).first.map(String.init) ?? ""
-        let words = localName.split { $0.isWhitespace || $0 == "." || $0 == "_" || $0 == "-" }
-        guard let first = words.first else { return "" }
-        if words.count > 1, let last = words.last {
-            return (String(first.prefix(1)) + String(last.prefix(1))).uppercased()
-        }
-        return String(first.prefix(2)).uppercased()
-    }
+    private var initials: String { AvatarInitials.from(name: name) }
 }
 
 struct TernEmptyState: View {
