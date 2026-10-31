@@ -17,7 +17,7 @@ import Testing
         defer { coordinator.cancelRequests() }
         let objects = try #require(field.objectValue as? [RecipientField.Token])
         #expect(objects.map(\.address) == [valid, invalid])
-        #expect(RecipientTokenField.avatarAttachmentRanges(in: field.attributedStringValue).count == 1)
+        #expect(RecipientTokenField.avatarTokens(in: field.attributedStringValue).count == 1)
         #expect(coordinator.tokenField(field, editingStringForRepresentedObject: objects[0]) == #""Doe, Jane" <jane@company.invalid>"#)
         #expect(coordinator.tokenField(field, styleForRepresentedObject: objects[1]) == .none)
         let pasteboard = NSPasteboard(name: .init("tern.recipient-avatar." + UUID().uuidString))
