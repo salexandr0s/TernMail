@@ -10,10 +10,20 @@ struct TernApp: App {
     var body: some Scene {
         // One mailbox window: selection and undo live in the shared mailbox model.
         Window("Tern", id: "main") {
-            RootView()
+            Group {
+#if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--ui-audit-avatars"),
+                   ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+                    AvatarAuditFixtures()
+                } else { RootView() }
+#else
+                RootView()
+#endif
+            }
                 .focusedSceneValue(\.isMainWindow, true)
                 .modifier(MailURLHandling())
                 .environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
                 .task { await model.start() }
         }
         .defaultSize(width: Tokens.Layout.windowWidth, height: Tokens.Layout.windowHeight)
@@ -21,6 +31,7 @@ struct TernApp: App {
 
         WindowGroup("Conversation", id: ConversationWindow.sceneID, for: MailLink.self) { $link in
             ConversationWindow(link: link).environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .commandsRemoved()
@@ -29,6 +40,7 @@ struct TernApp: App {
         WindowGroup("New Message", id: ComposeWindow.sceneID, for: String.self) { $localDraftID in
             ComposeWindow(localDraftID: $localDraftID)
                 .environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: 720, height: 600)
         .windowToolbarStyle(.unifiedCompact)
@@ -39,12 +51,14 @@ struct TernApp: App {
         Settings {
             SettingsView()
                 .environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Settings.width, height: Tokens.Settings.height)
         .windowResizability(.contentMinSize)
 
         Window("Assistant", id: AssistantWindow.sceneID) {
             AssistantWindow(model: model.assistant, onOpenSource: model.openAssistantSource)
+                .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .windowResizability(.contentMinSize)

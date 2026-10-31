@@ -93,7 +93,7 @@ struct AccountsSettings: View {
         let needsSignIn = app.accountsNeedingSignIn.contains(account.id)
         let name = account.displayName.flatMap { $0.isEmpty ? nil : $0 }
         return HStack(spacing: Tokens.Space.s3) {
-            TernAvatar(name: name ?? account.email)
+            AddressAvatar(accountID: account.id, address: account.email, name: name ?? "")
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(name ?? account.email)
                     .font(.body.weight(.medium))

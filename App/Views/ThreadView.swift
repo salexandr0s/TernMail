@@ -77,7 +77,7 @@ struct ThreadView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                             ThreadHeading(detail: detail, key: key, mailbox: mailbox, messageID: selectedMessageID)
-                            EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar,
+                            EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar, accountID: key.accountID,
                                 onReview: { item in
                                     if item.kind == .cancelled { cancellationReview = item }
                                     else { Task { await app.calendar.reviewEmailSuggestion(item, key: key) } }

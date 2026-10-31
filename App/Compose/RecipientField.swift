@@ -8,10 +8,13 @@ import SwiftUI
 struct RecipientField: NSViewRepresentable {
     let label: String
     @AppStorage(ComposePreferences.fullAddressesKey) private var showsFullAddresses = false
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
     @Binding var addresses: [EmailAddress]
     /// Set to move the cursor here. The field clears it once it has the cursor.
     @Binding var requestsFocus: Bool
     var isEditable: Bool
+    let accountID: String?
+    let avatarContext: AddressAvatarContext
     var onFocusChange: @MainActor (Bool) -> Void = { _ in }
     var directorySuggestions: @MainActor (String) async -> [EmailAddress] = { _ in [] }
     var groupSuggestions: @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] }
@@ -19,12 +22,14 @@ struct RecipientField: NSViewRepresentable {
     let suggestions: @MainActor (String) async -> [EmailAddress]
 
     init(label: String, addresses: Binding<[EmailAddress]>, requestsFocus: Binding<Bool>, isEditable: Bool,
+         accountID: String? = nil, avatarContext: AddressAvatarContext = .empty,
          onFocusChange: @escaping @MainActor (Bool) -> Void = { _ in },
          directorySuggestions: @escaping @MainActor (String) async -> [EmailAddress] = { _ in [] },
          groupSuggestions: @escaping @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] },
          expandGroup: @escaping @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil },
          suggestions: @escaping @MainActor (String) async -> [EmailAddress]) {
         self.label = label; self._addresses = addresses; self._requestsFocus = requestsFocus; self.isEditable = isEditable
+        self.accountID = accountID; self.avatarContext = avatarContext
         self.onFocusChange = onFocusChange; self.directorySuggestions = directorySuggestions
         self.groupSuggestions = groupSuggestions; self.expandGroup = expandGroup; self.suggestions = suggestions
     }
@@ -44,8 +49,8 @@ struct RecipientField: NSViewRepresentable {
         return field.firstBaselineOffsetFromTop
     }()
 
-    private static func makeField() -> FocusAwareTokenField {
-        let field = FocusAwareTokenField()
+    static func makeField() -> RecipientTokenField {
+        let field = RecipientTokenField()
         field.isBordered = false
         field.drawsBackground = false
         // ComposeView outlines the whole row, including its label and padding.
@@ -65,8 +70,10 @@ struct RecipientField: NSViewRepresentable {
         field.focusChanged = { [weak coordinator = context.coordinator] in
             coordinator?.reportFocus()
         }
+        field.didLeaveWindow = { [weak coordinator = context.coordinator] in coordinator?.cancelRequests() }
         field.setAccessibilityLabel(label)
         context.coordinator.field = field
+        context.coordinator.configureAvatars()
         context.coordinator.show(addresses)
         return field
     }
@@ -74,6 +81,7 @@ struct RecipientField: NSViewRepresentable {
     func updateNSView(_ field: NSTokenField, context: Context) {
         context.coordinator.parent = self
         field.isEditable = isEditable
+        context.coordinator.configureAvatars()
         if addresses != context.coordinator.shownAddresses || showsFullAddresses != context.coordinator.showsFullAddresses {
             context.coordinator.show(addresses)
         }
@@ -105,24 +113,6 @@ struct RecipientField: NSViewRepresentable {
         guard let name = address.name, !name.isEmpty else { return address.address }
         let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\" <\(address.address)>"
-    }
-
-    /// Keyboard focus can arrive before the field editor begins editing.
-    @MainActor
-    private final class FocusAwareTokenField: NSTokenField {
-        var focusChanged: (() -> Void)?
-
-        override func becomeFirstResponder() -> Bool {
-            let accepted = super.becomeFirstResponder()
-            if accepted { focusChanged?() }
-            return accepted
-        }
-
-        override func resignFirstResponder() -> Bool {
-            let resigned = super.resignFirstResponder()
-            if resigned { focusChanged?() }
-            return resigned
-        }
     }
 
     /// The address in one token. Tokens hold objects, not values.
@@ -162,23 +152,36 @@ struct RecipientField: NSViewRepresentable {
         private var sizedAddresses: [EmailAddress]?
         private var sizedFullAddresses = false
         private var reportedFocus = false
+        private let avatars = RecipientAvatarController()
+        private var requestedQuery: String?
+        private var dismissedQuery: String?
 
         init(_ parent: RecipientField) {
             self.parent = parent
             super.init()
             sizingField.delegate = self
+            avatars.afterAcceptance = { [weak self] in self?.publish() }
+        }
+
+        func configureAvatars() {
+            avatars.configure(field: field as? RecipientTokenField, accountID: parent.accountID,
+                              context: parent.avatarContext, showsLogos: parent.showsLogos)
         }
 
         func show(_ addresses: [EmailAddress]) {
             shownAddresses = addresses
             showsFullAddresses = parent.showsFullAddresses
             field?.objectValue = addresses.map(Token.init)
+            avatars.updateChips(addresses)
         }
 
         func cancelRequests() {
             loadTask?.cancel()
+            requestedQuery = nil
+            queryGeneration += 1
             for task in groupTasks.values { task.cancel() }
             groupTasks = [:]
+            avatars.stop()
         }
 
         /// AppKit can change focus during a SwiftUI update. Read the current
@@ -191,6 +194,8 @@ struct RecipientField: NSViewRepresentable {
                 let isFocused = responder === field || ownsEditor
                 guard isFocused != reportedFocus else { return }
                 reportedFocus = isFocused
+                if !isFocused { avatars.hideSuggestions() }
+                (field as? RecipientTokenField)?.refreshAvatars()
                 parent.onFocusChange(isFocused)
             }
         }
@@ -216,12 +221,29 @@ struct RecipientField: NSViewRepresentable {
         }
 
         func controlTextDidChange(_ notification: Notification) {
+            if let editor = field?.currentEditor() as? NSTextView, editor.hasMarkedText() {
+                avatars.hideSuggestions()
+                return
+            }
             publish()
+            dismissedQuery = nil
+            avatars.hideSuggestions()
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
             publish()
+            avatars.hideSuggestions()
             reportFocus()
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            let handled = avatars.handleCommand(commandSelector, editor: textView)
+            if handled, commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                dismissedQuery = loadedQuery
+                loadTask?.cancel()
+                queryGeneration += 1
+            }
+            return handled
         }
 
         func tokenField(
@@ -231,6 +253,7 @@ struct RecipientField: NSViewRepresentable {
             indexOfSelectedItem selectedIndex: UnsafeMutablePointer<Int>?
         ) -> [Any]? {
             let query = substring.trimmingCharacters(in: .whitespaces).lowercased()
+            if query == dismissedQuery { return [] }
             guard !query.isEmpty else {
                 loadTask?.cancel()
                 queryGeneration += 1
@@ -238,13 +261,18 @@ struct RecipientField: NSViewRepresentable {
                 loaded = []
                 loadedGroups = []; loadedDirectory = []; groupCompletions = [:]
                 completions = [:]
+                requestedQuery = nil
+                avatars.hideSuggestions()
                 return []
             }
             if query == loadedQuery {
                 // Return picks the first match for a name, but never replaces an address being typed.
                 selectedIndex?.pointee = query.contains("@") || (loaded.isEmpty && loadedGroups.isEmpty && loadedDirectory.isEmpty) ? -1 : 0
-                return loaded.map(completionString) + loadedGroups.map(groupCompletionString) + loadedDirectory.map(completionString)
+                let strings = loaded.map(completionString) + loadedGroups.map(groupCompletionString) + loadedDirectory.map(completionString)
+                presentSuggestions(query: query, tokenField: tokenField)
+                return tokenField is RecipientTokenField ? [] : strings
             }
+            if query == requestedQuery { return [] }
             loadTask?.cancel()
             // A return to the previous text must start a new request rather
             // than reuse its rows while a different query is still in flight.
@@ -252,6 +280,8 @@ struct RecipientField: NSViewRepresentable {
             loaded = []
             loadedGroups = []; loadedDirectory = []; groupCompletions = [:]
             completions = [:]
+            requestedQuery = query
+            avatars.hideSuggestions()
             queryGeneration += 1
             let generation = queryGeneration
             let suggestions = parent.suggestions
@@ -262,13 +292,11 @@ struct RecipientField: NSViewRepresentable {
                 let groupResults = await groups(query)
                 guard let self, !Task.isCancelled, queryGeneration == generation else { return }
                 loadedQuery = query
+                requestedQuery = nil
                 loaded = results
                 loadedGroups = groupResults
                 completions = [:]
-                // Asks again for completions, which now come from `loaded`.
-                if (!results.isEmpty || !groupResults.isEmpty), let editor = tokenField?.currentEditor() as? NSTextView {
-                    editor.complete(nil)
-                }
+                if let tokenField { presentSuggestions(query: query, tokenField: tokenField) }
                 guard query.count >= 2 else { return }
                 do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
                 let remote = await directory(query)
@@ -277,7 +305,7 @@ struct RecipientField: NSViewRepresentable {
                 let additions = remote.filter { seen.insert($0.normalized).inserted }
                 guard !additions.isEmpty else { return }
                 loadedDirectory = additions
-                if let editor = tokenField?.currentEditor() as? NSTextView { editor.complete(nil) }
+                if let tokenField { presentSuggestions(query: query, tokenField: tokenField) }
             }
             return []
         }
@@ -293,9 +321,11 @@ struct RecipientField: NSViewRepresentable {
         func tokenField(_ tokenField: NSTokenField, displayStringForRepresentedObject object: Any) -> String? {
             if let group = object as? GroupToken { return group.group.name }
             guard let token = object as? Token else { return object as? String }
-            if parent.showsFullAddresses { return token.address.displayString }
-            if let name = token.address.name, !name.isEmpty { return name }
-            return token.address.address
+            let display: String
+            if parent.showsFullAddresses { display = token.address.displayString }
+            else if let name = token.address.name, !name.isEmpty { display = name }
+            else { display = token.address.address }
+            return (tokenField is RecipientTokenField && token.address.isValid ? RecipientTokenField.avatarPrefix : "") + display
         }
 
         func tokenField(_ tokenField: NSTokenField, editingStringForRepresentedObject object: Any) -> String? {
@@ -337,6 +367,28 @@ struct RecipientField: NSViewRepresentable {
 
         // MARK: Private
 
+        private func presentSuggestions(query: String, tokenField: NSTokenField) {
+            guard tokenField is RecipientTokenField else { return }
+            let generation = queryGeneration
+            let addressRows = { (addresses: [EmailAddress]) in
+                addresses.map { address in
+                    let title = address.name ?? address.address
+                    return RecipientSuggestion(completion: self.completionString(address), title: title,
+                                               subtitle: title.caseInsensitiveCompare(address.address) == .orderedSame ? "" : address.address,
+                                               address: address)
+                }
+            }
+            let groups = loadedGroups.map { group in
+                RecipientSuggestion(completion: groupCompletionString(group), title: group.name,
+                                    subtitle: "\(group.memberCount) members" + (group.isComplete ? "" : " · list incomplete"), address: nil)
+            }
+            avatars.present(addressRows(loaded) + groups + addressRows(loadedDirectory), for: tokenField, query: query,
+                            isCurrent: { [weak self, weak tokenField] in
+                                guard let self, let tokenField else { return false }
+                                return field === tokenField && queryGeneration == generation && loadedQuery == query
+                            }, selectFirst: !query.contains("@"))
+        }
+
         private func completionString(_ address: EmailAddress) -> String {
             let name = address.name?.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: ";", with: "")
             let string = name.map { "\($0) <\(address.address)>" } ?? address.address
@@ -359,6 +411,7 @@ struct RecipientField: NSViewRepresentable {
         private func publish() {
             guard let field else { return }
             let objects = field.objectValue as? [Any] ?? []
+            avatars.updateChips(objects.compactMap { ($0 as? Token)?.address })
             let addresses = objects.flatMap { object -> [EmailAddress] in
                 if let token = object as? Token { return [token.address] }
                 guard let text = (object as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {

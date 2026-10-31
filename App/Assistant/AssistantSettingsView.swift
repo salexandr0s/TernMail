@@ -263,7 +263,7 @@ struct AssistantSettingsView: View {
     private func accountRow(_ account: AccountRecord) -> some View {
         let name = account.displayName.flatMap { $0.isEmpty ? nil : $0 }
         return HStack(spacing: Tokens.Space.s3) {
-            TernAvatar(name: name ?? account.email, size: Tokens.Space.s6)
+            AddressAvatar(accountID: account.id, address: account.email, name: name ?? "", size: Tokens.Space.s6)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(name ?? account.email)
                     .font(.body.weight(.medium))

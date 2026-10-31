@@ -131,6 +131,9 @@ struct CalendarEventEditor: View {
                     }
                     ForEach(Array(attendees.enumerated()), id: \.offset) { index, attendee in
                         HStack {
+                            AddressAvatar(accountID: selectedCalendar?.accountID ?? draft.source?.accountID,
+                                          address: attendee.email, name: attendee.displayName ?? "",
+                                          size: Tokens.Space.s6)
                             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                                 Text(attendee.displayName ?? attendee.email).lineLimit(1).help(attendee.email)
                                 if attendee.displayName != nil { Text(attendee.email).font(.caption).foregroundStyle(.secondary).lineLimit(1) }

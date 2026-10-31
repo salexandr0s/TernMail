@@ -48,7 +48,8 @@ struct AssistantWritingStyleSettingsSection: View {
     private func accountRow(_ entry: AssistantWritingStyleEntry) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s3) {
-                TernAvatar(name: entry.displayName ?? entry.email, size: Tokens.Space.s6)
+                AddressAvatar(accountID: entry.id, address: entry.email,
+                              name: entry.displayName ?? "", size: Tokens.Space.s6)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(entry.displayName ?? entry.email)
                         .font(.body.weight(.medium))

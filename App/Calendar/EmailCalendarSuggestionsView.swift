@@ -6,6 +6,7 @@ import SwiftUI
 struct EmailCalendarSuggestionsView: View {
     @Bindable var model: EmailCalendarModel
     var calendar: Calendar = .autoupdatingCurrent
+    var accountID: String? = nil
     let onReview: (EmailCalendarItem) -> Void
     let onOpenExisting: (EmailCalendarItem) -> Void
     let onRespond: (EmailCalendarItem, InvitationReply.Answer) -> Void
@@ -27,7 +28,7 @@ struct EmailCalendarSuggestionsView: View {
                         Divider().padding(.horizontal, Tokens.Space.s3)
                     }
                     EmailCalendarSuggestionRow(
-                        item: item, calendar: calendar,
+                        item: item, calendar: calendar, accountID: accountID,
                         canRespond: !item.isOutdated && item.kind != .cancelled
                             && item.invitation?.method == .request && model.attendee(for: item) != nil,
                         onReview: { onReview(item) }, onOpenExisting: { onOpenExisting(item) },
@@ -94,6 +95,7 @@ struct EmailCalendarSuggestionsView: View {
 private struct EmailCalendarSuggestionRow: View {
     let item: EmailCalendarItem
     let calendar: Calendar
+    let accountID: String?
     let canRespond: Bool
     let onReview: () -> Void
     let onOpenExisting: () -> Void
@@ -277,8 +279,12 @@ private struct EmailCalendarSuggestionRow: View {
                     .textSelection(.enabled)
             }
             if let organizer = presentation.organizer {
-                Label("Organizer: \(organizer)", systemImage: "person")
-                    .textSelection(.enabled)
+                HStack(spacing: Tokens.Space.s2) {
+                    AddressAvatar(accountID: accountID, address: item.invitation?.organizer?.email ?? "",
+                                  name: item.invitation?.organizer?.name ?? organizer, size: Tokens.Space.s5)
+                    Text("Organizer: \(organizer)")
+                        .textSelection(.enabled)
+                }
             }
             if let original = presentation.originalTimeZoneLine {
                 Label(original, systemImage: "globe")

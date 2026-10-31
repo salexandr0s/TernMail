@@ -45,6 +45,9 @@ struct ComposeView: View {
     }
 
     @State private var model: ComposeModel
+    @State private var senderAvatars = SenderAvatarModels()
+    @Environment(\.addressAvatarContext) private var avatarContext
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
     @State private var showsQuote = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
@@ -97,7 +100,9 @@ struct ComposeView: View {
             case .moved(let localDraftID): onMove(localDraftID)
             }
         }
-        .onDisappear { model.windowClosed() }
+        .onAppear(perform: configureSenderAvatars)
+        .onChange(of: senderAvatarIdentity) { _, _ in configureSenderAvatars() }
+        .onDisappear { senderAvatars.stop(); model.windowClosed() }
         .focusedSceneValue(\.composeModel, model)
     }
 
@@ -174,6 +179,14 @@ struct ComposeView: View {
 
     // MARK: Header
 
+    private var senderAvatarIdentity: String {
+        avatarContext.identity + "|\(showsLogos)|" + model.senderChoices.map(\.id).sorted().joined(separator: "|")
+    }
+
+    private func configureSenderAvatars() {
+        senderAvatars.configure(senders: model.senderChoices, context: avatarContext, showsLogos: showsLogos)
+    }
+
     private var header: some View {
         VStack(spacing: Tokens.Space.s1) {
             fieldRow("To:", field: .to) {
@@ -240,7 +253,7 @@ struct ComposeView: View {
                         ForEach(choices) { sender in
                             Button { model.selectSender(sender) } label: {
                                 HStack {
-                                    SenderAccountLabel(account: account, address: sender.label)
+                                    SenderAccountLabel(account: account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
                                     if sender.id == model.selectedSender?.id { Image(systemName: "checkmark") }
                                 }
                             }
@@ -252,7 +265,7 @@ struct ComposeView: View {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                 fieldLabel("From:")
                 if let sender = model.selectedSender {
-                    SenderAccountLabel(account: sender.account, address: sender.label)
+                    SenderAccountLabel(account: sender.account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
@@ -347,6 +360,8 @@ struct ComposeView: View {
                 set: { if !$0, recipientFocus == field { recipientFocus = nil } }
             ),
             isEditable: model.isEditable,
+            accountID: model.draft?.accountID,
+            avatarContext: avatarContext,
             onFocusChange: { isFocused in
                 if isFocused {
                     focusedRecipient = field
