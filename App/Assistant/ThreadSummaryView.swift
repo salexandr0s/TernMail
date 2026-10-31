@@ -33,10 +33,12 @@ struct ThreadSummaryView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            switch assistant.summaryAvailability(for: key) {
-            case .ready:
-                if loadedIdentity == identity, let report = model.report {
+        let availability = assistant.summaryAvailability(for: key)
+        if Self.isOffered(availability, isRestoring: assistant.connection.isRestoring) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                if availability == .loading {
+                    status("Getting summary ready…", isLoading: true)
+                } else if loadedIdentity == identity, let report = model.report {
                     content(report)
                 } else if loadedIdentity == identity, let error = model.errorMessage {
                     status(error, isLoading: false) {
@@ -45,39 +47,44 @@ struct ThreadSummaryView: View {
                 } else {
                     status("Summarizing…", isLoading: true)
                 }
-            case .loading:
-                status("Getting summary ready…", isLoading: true)
-            case .unavailable(let reason, let action):
-                status(reason, isLoading: false) {
-                    Button(action) { showsSettings = true }.buttonStyle(.link)
-                }
+            }
+            .padding(Tokens.Space.s3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
+                in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .overlay {
+                RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                    .strokeBorder(contrast == .increased ? Tokens.Surface.border : Tokens.ConversationHeader.border,
+                        lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
+            }
+            .task(id: identity) {
+                let requested = identity
+                loadedIdentity = nil
+                isExpanded = false
+                guard requested.isActive else { model.clear(); return }
+                let forceRefresh = requested.attempt != handledAttempt
+                handledAttempt = requested.attempt
+                await model.load(key: key, revision: requested.revision, assistant: assistant,
+                    forceRefresh: forceRefresh, expectedMessageIDs: Set(detail.messages.map(\.id)))
+                guard !Task.isCancelled, requested == identity else { return }
+                loadedIdentity = requested
+            }
+            .onDisappear { model.clear(); loadedIdentity = nil }
+            .sheet(isPresented: $showsSettings) {
+                AssistantSettingsView(model: assistant, showsIntroduction: false, isSheet: true, showsMailScope: true)
             }
         }
-        .padding(Tokens.Space.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
-            in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(contrast == .increased ? Tokens.Surface.border : Tokens.ConversationHeader.border,
-                    lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
-        .task(id: identity) {
-            let requested = identity
-            loadedIdentity = nil
-            isExpanded = false
-            guard requested.isActive else { model.clear(); return }
-            let forceRefresh = requested.attempt != handledAttempt
-            handledAttempt = requested.attempt
-            await model.load(key: key, revision: requested.revision, assistant: assistant,
-                forceRefresh: forceRefresh, expectedMessageIDs: Set(detail.messages.map(\.id)))
-            guard !Task.isCancelled, requested == identity else { return }
-            loadedIdentity = requested
-        }
-        .onDisappear { model.clear(); loadedIdentity = nil }
-        .sheet(isPresented: $showsSettings) {
-            AssistantSettingsView(model: assistant, showsIntroduction: false, isSheet: true, showsMailScope: true)
+    }
+
+    /// The card waits until the assistant is set up for this conversation;
+    /// until then the assistant panel shows the one setup prompt. While a
+    /// saved connection is restoring, nobody knows yet.
+    private static func isOffered(_ availability: ThreadSummaryAvailability, isRestoring: Bool) -> Bool {
+        switch availability {
+        case .ready: true
+        case .loading: !isRestoring
+        case .unavailable: false
         }
     }
 

@@ -23,21 +23,26 @@ struct AssistantWelcomeView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let setup { setupCard(setup) }
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                Text("A place to start")
-                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s2)],
-                          alignment: .leading, spacing: Tokens.Space.s2) {
-                    ForEach(model.suggestions) { suggestion in
-                        let requirement = model.requirement(for: suggestion)
-                        AssistantSuggestionRow(
-                            title: model.title(for: suggestion),
-                            detail: setup == nil ? (requirement ?? detail(for: suggestion)) : detail(for: suggestion),
-                            systemImage: suggestion.systemImage,
-                            requirement: requirement,
-                            action: { onSuggestion(suggestion) }
-                        )
+            // Until setup is done, the setup card stands in for the starters,
+            // which couldn't run yet.
+            if let setup {
+                setupCard(setup)
+            } else {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Text("A place to start")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s2)],
+                              alignment: .leading, spacing: Tokens.Space.s2) {
+                        ForEach(model.suggestions) { suggestion in
+                            let requirement = model.requirement(for: suggestion)
+                            AssistantSuggestionRow(
+                                title: model.title(for: suggestion),
+                                detail: requirement ?? detail(for: suggestion),
+                                systemImage: suggestion.systemImage,
+                                requirement: requirement,
+                                action: { onSuggestion(suggestion) }
+                            )
+                        }
                     }
                 }
             }

@@ -39,10 +39,11 @@ struct AssistantView: View {
             guard !hasPlacedInitialFocus else { return }
             // Let the native field join the window before assigning focus.
             await Task.yield()
-            guard !Task.isCancelled, !showsSettings else { return }
-            hasPlacedInitialFocus = true
-            isComposerFocused = true
+            guard !Task.isCancelled else { return }
+            placeInitialFocus()
         }
+        // A restored connection or finished setup turns the composer on later.
+        .onChange(of: setupPrompt == nil) { placeInitialFocus() }
         .task { await model.refreshConnection() }
         .onChange(of: model.connection.connectionRevision) {
             model.refreshAccess()
@@ -150,6 +151,7 @@ struct AssistantView: View {
                     }
                     .accessibilityLabel("Message to assistant")
                     .accessibilityHint("Return to send. Shift-Return for a new line.")
+                    .disabled(setupPrompt != nil)
                 HStack(spacing: Tokens.Space.s2) {
                     composerHint
                         .font(.caption2).foregroundStyle(.secondary)
@@ -176,7 +178,7 @@ struct AssistantView: View {
             }
             .padding(Tokens.Space.s3)
             .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-            .ternOutline(radius: Tokens.Radius.lg, focus: isComposerFocused ? .accentColor : nil)
+            .ternOutline(radius: Tokens.Radius.lg, focus: isComposerFocused && setupPrompt == nil ? .accentColor : nil)
             .padding(Tokens.Space.s3)
             .frame(maxWidth: Tokens.Assistant.contentWidth)
             .frame(maxWidth: .infinity)
@@ -188,7 +190,10 @@ struct AssistantView: View {
         if model.isRunning {
             Label("Working…", systemImage: "ellipsis")
         } else if let setupPrompt {
-            Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
+            // An empty chat shows the welcome setup card, the panel's one setup prompt.
+            if !model.messages.isEmpty {
+                Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
+            }
         } else {
             Text("Return to send · ⇧ Return for a new line")
         }
@@ -213,6 +218,13 @@ struct AssistantView: View {
 
     private var canSubmit: Bool {
         setupPrompt == nil && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The composer takes focus once, as soon as it can be used.
+    private func placeInitialFocus() {
+        guard !hasPlacedInitialFocus, !showsSettings, setupPrompt == nil else { return }
+        hasPlacedInitialFocus = true
+        isComposerFocused = true
     }
 
     private func submit() {
