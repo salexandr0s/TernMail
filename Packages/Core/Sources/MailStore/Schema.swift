@@ -474,6 +474,14 @@ enum Schema {
                 t.add(column: "importPending", .boolean).notNull().defaults(to: false)
             }
         }
+        migrator.registerMigration("date-header-offset-v1") { db in
+            // The sender's UTC offset, which tells calendar suggestions whether
+            // a time without a zone may be in another one. Rows cached earlier
+            // stay nil until Gmail sends their metadata again.
+            try db.alter(table: "message") { t in
+                t.add(column: "dateHeaderOffset", .integer)
+            }
+        }
         return migrator
     }
 

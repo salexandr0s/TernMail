@@ -68,9 +68,38 @@ public struct GmailMessage: Decodable, Sendable, Equatable {
         return Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1000)
     }
 
+    /// Seconds east of UTC in the `Date` header: the zone of the clock the
+    /// message was sent from. Nil without the header, for "-0000", which
+    /// RFC 5322 keeps for an unknown zone, and for zone names it doesn't list.
+    public var dateHeaderOffset: Int? {
+        header("Date").flatMap(Self.utcOffset(inDateHeader:))
+    }
+
     public func header(_ name: String) -> String? {
         payload?.header(name)
     }
+
+    /// The zone follows the time of day, as in "Tue, 1 Jul 2031 10:52:37 +0200 (CEST)".
+    private static func utcOffset(inDateHeader value: String) -> Int? {
+        let tokens = value.split(whereSeparator: \.isWhitespace)
+        guard let time = tokens.firstIndex(where: { $0.contains(":") }), time + 1 < tokens.count else { return nil }
+        let zone = tokens[time + 1]
+        guard let sign = zone.first, sign == "+" || sign == "-" else {
+            return namedZones[zone.uppercased()].map { $0 * 3_600 }
+        }
+        let digits = zone.dropFirst()
+        guard digits.count == 4, digits.allSatisfy({ ("0"..."9").contains($0) }),
+              let hours = Int(digits.prefix(2)), let minutes = Int(digits.suffix(2)),
+              hours <= 18, minutes < 60, zone != "-0000" else { return nil }
+        let seconds = (hours * 60 + minutes) * 60
+        return sign == "-" ? -seconds : seconds
+    }
+
+    /// RFC 5322's obsolete zone names, plus UTC, in hours. The RFC reads the
+    /// military letters as an unknown zone, so they are left out.
+    private static let namedZones = [
+        "UT": 0, "UTC": 0, "GMT": 0, "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "MST": -7, "MDT": -6, "PST": -8, "PDT": -7,
+    ]
 }
 
 public struct MessagePart: Decodable, Sendable, Equatable {

@@ -93,7 +93,8 @@ enum Mapping {
             rfcMessageID: message.header("Message-ID").flatMap { OriginalMessage.messageIDs(in: $0).first },
             inReplyTo: message.header("In-Reply-To").flatMap { OriginalMessage.messageIDs(in: $0).first },
             referencesHeader: message.header("References"),
-            replyTo: message.header("Reply-To")
+            replyTo: message.header("Reply-To"),
+            dateHeaderOffset: message.dateHeaderOffset
         )
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }

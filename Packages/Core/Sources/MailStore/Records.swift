@@ -73,6 +73,9 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
     public var inReplyTo: String?
     public var referencesHeader: String?
     public var replyTo: String?
+    /// Seconds east of UTC in the `Date` header. Nil when the header names no
+    /// zone, and for rows cached before the offset was stored.
+    public var dateHeaderOffset: Int?
     /// Whether To or Cc names one of the account's own addresses. The cache
     /// works it out when it stores the message (`upsertMessages`), so a
     /// value given here is replaced.
@@ -82,7 +85,7 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
         accountID: String, id: String, threadID: String, historyID: Int64, date: Date,
         snippet: String, sender: String, recipients: String, cc: String?, subject: String, sizeEstimate: Int,
         rfcMessageID: String? = nil, inReplyTo: String? = nil, referencesHeader: String? = nil, replyTo: String? = nil,
-        addressedToMe: Bool = false
+        dateHeaderOffset: Int? = nil, addressedToMe: Bool = false
     ) {
         self.accountID = accountID
         self.id = id
@@ -99,6 +102,7 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
         self.inReplyTo = inReplyTo
         self.referencesHeader = referencesHeader
         self.replyTo = replyTo
+        self.dateHeaderOffset = dateHeaderOffset
         self.addressedToMe = addressedToMe
     }
 }

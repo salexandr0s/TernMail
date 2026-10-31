@@ -161,6 +161,27 @@ import Testing
         #expect(page.history?[2].labelsAdded?.first?.message.id == "m2")
         #expect(page.history?[3].messagesDeleted?.first?.message.id == "m3")
     }
+
+    @Test func theDateHeaderGivesTheSendersUTCOffset() throws {
+        let cases: [(header: String, offset: Int?)] = [
+            ("Tue, 1 Jul 2031 10:52:37 +0200 (CEST)", 7_200),
+            ("1 Jul 2031 06:22 -0330", -12_600),
+            ("Tue, 01 Jul 2031 08:52:37 +0000", 0),
+            ("Tue, 1 Jul 2031 01:52:37 pdt", -25_200),
+            // RFC 5322 keeps -0000 for an unknown zone and reads military letters the same way.
+            ("Tue, 1 Jul 2031 08:52:37 -0000", nil),
+            ("Tue, 1 Jul 2031 08:52:37 Z", nil),
+            ("Tue, 1 Jul 2031 08:52:37 +2500", nil),
+            ("Tue, 1 Jul 2031 08:52:37", nil),
+        ]
+        for (header, offset) in cases {
+            let json = #"{"id":"m1","threadId":"t1","payload":{"headers":[{"name":"Date","value":"\#(header)"}]}}"#
+            let message = try JSONDecoder().decode(GmailMessage.self, from: Data(json.utf8))
+            #expect(message.dateHeaderOffset == offset, "\(header)")
+        }
+        let undated = try JSONDecoder().decode(GmailMessage.self, from: Data(#"{"id":"m1","threadId":"t1"}"#.utf8))
+        #expect(undated.dateHeaderOffset == nil)
+    }
 }
 
 @Suite struct DraftUploadTests {
