@@ -17,16 +17,22 @@ struct CalendarManagementView: View {
     @State private var subscriptionID = ""
     @State private var title = ""
     @State private var colorHex = "#4285f4"
-    @State private var shares: [CalendarShare] = []
+    @State private var shareList = CalendarShareList()
     @State private var shareEmail = ""
     @State private var shareRole = "reader"
     @State private var isBusy = false
     @State private var error: String?
     @State private var removingCalendar = false
-    @State private var removingShare: CalendarShare?
+    @State private var removingShare: PendingShareRemoval?
     @State private var showAddCalendar = false
     @State private var selectedTab: SettingsTab = .calendars
     private var selected: CalendarDisplayCalendar? { model.calendars.first { $0.id == selectedID } }
+
+    /// A person picked for removal, with the calendar they were listed under.
+    private struct PendingShareRemoval {
+        var share: CalendarShare
+        var calendar: CalendarDisplayCalendar
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
@@ -63,11 +69,14 @@ struct CalendarManagementView: View {
             guard let selected else { return }
             perform { try await model.removeCalendar(selected); selectedID = model.calendars.first?.id }
         }
-        .ternConfirm("Remove access for \(removingShare.map(Self.shareName) ?? "")?", item: $removingShare,
+        .ternConfirm("Remove access for \(removingShare.map { Self.shareName($0.share) } ?? "")?", item: $removingShare,
                      actionTitle: "Remove Access",
-                     message: "They lose access to this calendar's events. Google does not notify them.") { share in
-            guard let selected else { return }
-            perform { try await model.deleteShare(share, calendar: selected); shares = try await model.shares(selected) }
+                     message: "They lose access to this calendar's events. Google does not notify them.") { removal in
+            // The calendar the person was listed under, even if the selection changed since.
+            perform {
+                try await model.deleteShare(removal.share, calendar: removal.calendar)
+                try await shareList.reload(removal.calendar, using: model.shares)
+            }
         }
     }
 
@@ -141,7 +150,7 @@ struct CalendarManagementView: View {
         sectionTitle("Sharing")
         if calendar.entry.isOwner {
             if calendar.canShare {
-                ForEach(shares) { share in shareRow(share, calendar: calendar) }
+                ForEach(shareList.shares(for: calendar)) { share in shareRow(share, calendar: calendar) }
                 fieldRow("Email") {
                     TextField("Email address", text: $shareEmail)
                         .textFieldStyle(.roundedBorder)
@@ -157,7 +166,7 @@ struct CalendarManagementView: View {
                             guard email.contains("@"), !email.contains(where: \.isWhitespace) else { error = "Enter a complete email address."; return }
                             perform {
                                 try await model.saveShare(CalendarShare(id: "", email: email, role: shareRole), calendar: calendar)
-                                shareEmail = ""; shares = try await model.shares(calendar)
+                                shareEmail = ""; try await shareList.reload(calendar, using: model.shares)
                             }
                         }
                         .disabled(shareEmail.isEmpty)
@@ -194,10 +203,15 @@ struct CalendarManagementView: View {
                     ForEach(["freeBusyReader", "reader", "writer"], id: \.self) { role in
                         Button(Self.roleTitle(role)) {
                             var edited = share; edited.role = role
-                            perform { try await model.saveShare(edited, calendar: calendar); shares = try await model.shares(calendar) }
+                            perform {
+                                try await model.saveShare(edited, calendar: calendar)
+                                try await shareList.reload(calendar, using: model.shares)
+                            }
                         }
                     }
-                    Button("Remove Access…", role: .destructive) { removingShare = share }
+                    Button("Remove Access…", role: .destructive) {
+                        removingShare = PendingShareRemoval(share: share, calendar: calendar)
+                    }
                 } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("Sharing options for \(Self.shareName(share))")
@@ -341,10 +355,11 @@ struct CalendarManagementView: View {
     }
 
     private func loadSelected() async {
+        shareList.select(selected?.id)
         guard let selected else { return }
-        title = selected.title; colorHex = selected.colorHex; shares = []
+        title = selected.title; colorHex = selected.colorHex
         if selected.canShare && selected.entry.isOwner {
-            do { shares = try await model.shares(selected) } catch { self.error = error.localizedDescription }
+            do { try await shareList.reload(selected, using: model.shares) } catch { self.error = error.localizedDescription }
         }
     }
     private func enable(_ feature: AccountFeature, accountID: String) {

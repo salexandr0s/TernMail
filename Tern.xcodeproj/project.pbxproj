@@ -114,6 +114,7 @@
 		46E09BB0CBBD18BAFC3BADA1 /* FormatBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 641A0B2F44E8DD6F7521F0FE /* FormatBar.swift */; };
 		472F55A7C6973F61690CF807 /* SidebarSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D8838A1076B284CD96E711 /* SidebarSettingsView.swift */; };
 		474FD6A4A87C0A3D8385C97A /* AttachmentLibraryModel+Filters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FB381BC636B07BD46E0F25C /* AttachmentLibraryModel+Filters.swift */; };
+		47E2541E90732372C5E808AC /* CalendarShareList.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CCACB4E202DBA913F46E36 /* CalendarShareList.swift */; };
 		480527705CC08EA70DCDB6CC /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDEC532495FD2A3C794B4C77 /* NotificationSettingsView.swift */; };
 		48446080182EB3A594BED422 /* MailNotificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53BD95A3A45D8F7A4CDB2A35 /* MailNotificationTests.swift */; };
 		48956C9E3668B62CA72DE574 /* SenderAccountLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B2A60E7704812D2193EEA4 /* SenderAccountLabel.swift */; };
@@ -204,6 +205,7 @@
 		8C8AEE3BAA03A97BD75E53A9 /* CalendarActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B8CA086C6AB732F94A346D3 /* CalendarActivityView.swift */; };
 		8CAFA56EDF8661042094300E /* GmailAPI in Frameworks */ = {isa = PBXBuildFile; productRef = DADFA2A14CD8FDA35DA120E3 /* GmailAPI */; };
 		8CF9A7E0F5ED03F526B48EB4 /* SettingsEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18DCA04146B9F48B87CF1D44 /* SettingsEditorTests.swift */; };
+		8DBD9DD078DE9B6660D1FB38 /* CalendarTimeAxis.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFF820052928534F90024685 /* CalendarTimeAxis.swift */; };
 		8E41B8A5AB31DE91CA146965 /* CalendarModel+Interaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60F9A1756F95C8B7841401F /* CalendarModel+Interaction.swift */; };
 		9094EE96735D683EBBC5FD4E /* MessageListPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 515D3834D8AB6EECC1CA1C7E /* MessageListPreferences.swift */; };
 		90E051D6B61CF4614A336DC3 /* OriginalMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D6C73B88219FEA3708EA95 /* OriginalMessageView.swift */; };
@@ -620,6 +622,7 @@
 		BC7311C0C3BAF5B0A8A043ED /* CalendarModel+EmailResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CalendarModel+EmailResponses.swift"; sourceTree = "<group>"; };
 		BCCE3B70E5FA0CF8A2FD63BB /* RecipientSuggestionsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientSuggestionsPanel.swift; sourceTree = "<group>"; };
 		BE892D00A83688026D463D87 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BFF820052928534F90024685 /* CalendarTimeAxis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimeAxis.swift; sourceTree = "<group>"; };
 		C2841241EFB888F8B83D1DAA /* MailColumnProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailColumnProbe.swift; sourceTree = "<group>"; };
 		C2B39647756D7FB364DAB72C /* OutgoingAttachmentFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingAttachmentFiles.swift; sourceTree = "<group>"; };
 		C37A5E839E58DC90380E2C4B /* MailWorkspaceColumns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWorkspaceColumns.swift; sourceTree = "<group>"; };
@@ -628,6 +631,7 @@
 		C3FD5B3BF5EE8A73A8F5F011 /* AttachmentLibraryCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibraryCollection.swift; sourceTree = "<group>"; };
 		C51C4E9E1F07880ED023AA2C /* AccountPreferencesModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountPreferencesModel.swift; sourceTree = "<group>"; };
 		C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWatcherTests.swift; sourceTree = "<group>"; };
+		C5CCACB4E202DBA913F46E36 /* CalendarShareList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarShareList.swift; sourceTree = "<group>"; };
 		C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModelTests.swift; sourceTree = "<group>"; };
 		C6B1962F97D1AE340138E9E8 /* Tern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tern.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7933280D38A1A0D09A09D81 /* AssistantLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantLauncher.swift; sourceTree = "<group>"; };
@@ -1115,7 +1119,9 @@
 				AEF87EC4ED6C530488EF4225 /* CalendarRecurrenceControl.swift */,
 				71B61F7661A34A6EB39E6A3E /* CalendarScheduleView.swift */,
 				558BC298EF99BF1AE09BEC08 /* CalendarSearchResults.swift */,
+				C5CCACB4E202DBA913F46E36 /* CalendarShareList.swift */,
 				E369609B58005DA935BBD452 /* CalendarSidebar.swift */,
+				BFF820052928534F90024685 /* CalendarTimeAxis.swift */,
 				79DAD2C1B0EF8F5161349C1D /* CalendarTimeGrid.swift */,
 				E47D7CA9AF8FF3339190A56B /* CalendarTimelineEvent.swift */,
 				43E34E2A10414C1BCFF3620D /* CalendarTimelineGesture.swift */,
@@ -1501,7 +1507,9 @@
 				9D5F4A849C2383F3D9D792B0 /* CalendarRecurrenceControl.swift in Sources */,
 				820BEE067D5DBA31CA676359 /* CalendarScheduleView.swift in Sources */,
 				1FDD93965A0E764BF1F48377 /* CalendarSearchResults.swift in Sources */,
+				47E2541E90732372C5E808AC /* CalendarShareList.swift in Sources */,
 				88B80DF79331FCA7A77B6976 /* CalendarSidebar.swift in Sources */,
+				8DBD9DD078DE9B6660D1FB38 /* CalendarTimeAxis.swift in Sources */,
 				B57308E8538A858404E02EE4 /* CalendarTimeGrid.swift in Sources */,
 				C5D6BAD0354BD7A33152179F /* CalendarTimeZonePicker.swift in Sources */,
 				C982739DD9153827225BA800 /* CalendarTimelineEvent.swift in Sources */,
