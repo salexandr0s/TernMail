@@ -82,7 +82,7 @@ extension SyncEngine {
             quotedPlainText: reply.quotedPlainText,
             now: now()
         )
-        let references = HTMLImporter.inlineImageContentIDs(in: reply.quotedHTML ?? "")
+        let references = HTMLImporter.inlineImageContentIDs(in: reply.quotedHTML)
         var copies: [OutgoingAttachment] = []
         if message == nil, !references.isEmpty {
             let cached = try await cache.mimeResources(messageID: messageID, accountID: accountID)
