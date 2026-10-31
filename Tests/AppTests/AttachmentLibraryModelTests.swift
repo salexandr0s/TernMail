@@ -157,6 +157,16 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func dragIdentityMatchesTheLibraryItem() {
+        // Drag containers name each file by `libraryID`, so it has to match the
+        // library's own ID, including IDs that contain the separator.
+        let attachment = AttachmentRecord(accountID: "a:1", messageID: "m4", partID: "0.1", attachmentID: nil,
+            filename: "plan.pdf", mimeType: "application/pdf", size: 20, isInline: false)
+        let item = AttachmentLibraryItem(attachment: attachment, threadID: "t3", sender: "Mira", subject: "Plan", date: .distantPast)
+        #expect(attachment.libraryID == item.id)
+        #expect(item.attachment.libraryID == item.id)
+    }
+
     @Test func fileExportPreservesDuplicatesAndExistingDestinationOnReadFailure() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

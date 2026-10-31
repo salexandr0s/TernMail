@@ -35,7 +35,7 @@ struct AttachmentLibraryView: View {
         }
         .background(Tokens.Surface.canvas)
         .navigationTitle(app.destination == .mail ? "Attachments" : "Calendar")
-        .quickLookPreview($model.previewURL)
+        .quickLookPreview($model.previewURL, in: model.previewURLs)
         .protectAttachmentPreview(model.previewURL)
         .task(id: model.coverageKey) { await model.start() }
         .task(id: model.observationKey) { await model.reload() }
@@ -200,8 +200,10 @@ struct AttachmentSelectionActions: View {
 
     private var actions: some View {
         HStack(spacing: Tokens.Space.s2) {
+            if let first = model.items.first(where: { model.selection.contains($0.id) }) {
+                Button("Quick Look", systemImage: "eye") { Task { await model.preview(first) } }.help("Quick Look (Space)")
+            }
             if let item = selected {
-                Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }.help("Preview (Space)")
                 Button("Open Conversation", systemImage: "macwindow.badge.plus") {
                     Task { await model.openSource(item) }
                 }
@@ -221,14 +223,23 @@ struct AttachmentItemMenu: View {
     let model: AttachmentLibraryModel
 
     var body: some View {
-        Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }
-        Button("Open with Default App", systemImage: "arrow.up.forward.app") { Task { await model.openFile(item) } }
+        // Commands on a file in a multiple selection act on the selection, as in Finder.
+        let files = model.selectedItems(with: item)
+        let saved = files.compactMap { model.savedFile(for: $0) }
+        Button("Open", systemImage: "arrow.up.forward.app") { Task { await model.openFiles(files) } }
         Button("Open With…") { Task { await model.openWith(item) } }
-        Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFile(item) } }
+        Button("Quick Look", systemImage: "eye") { Task { await model.preview(item) } }
+        Divider()
         Button("Save…", systemImage: "arrow.down.to.line") { Task { await model.save(item) } }
-        if model.selection.count > 1, model.selection.contains(item.id) {
+        if files.count > 1 {
             Button("Save Selected Files…") { Task { await model.saveSelection() } }
         }
+        if !saved.isEmpty {
+            Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(saved) }
+        }
+        Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFile(item) } }
+        ShareLink(items: files.map { AttachmentFileItem(attachment: $0.attachment, mailbox: model.mailbox) },
+                  preview: { SharePreview($0.attachment.filename) })
         Divider()
         Button("Open Conversation in New Window", systemImage: "macwindow.badge.plus") {
             Task { await model.openSource(item) }

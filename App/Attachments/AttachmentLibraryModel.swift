@@ -33,6 +33,8 @@ final class AttachmentLibraryModel {
     var label: AttachmentLibraryLabel?
     var sort: AttachmentLibrarySort = .newest
     var previewURL: URL?
+    /// The files Quick Look pages through, in list order.
+    private(set) var previewURLs: [URL] = []
     /// The conversation Open Conversation in New Window loaded. The library
     /// opens its window and clears this.
     var sourceLink: MailLink?
@@ -59,6 +61,8 @@ final class AttachmentLibraryModel {
     @ObservationIgnored private var presentationRevision = UUID()
     @ObservationIgnored private var lastFilter: AttachmentLibraryQuery?
     @ObservationIgnored private var lastAction: Action?
+    /// Copies this window saved, or opened in Downloads, for Show in Finder.
+    private var savedFiles: [AttachmentLibraryItem.ID: URL] = [:]
     private enum Action {
         case preview(AttachmentLibraryItem), open(AttachmentLibraryItem), source(AttachmentLibraryItem), save(AttachmentLibraryItem), saveSelection
         case category(AttachmentCategory, AttachmentLibraryItem), indexing
@@ -221,13 +225,34 @@ final class AttachmentLibraryModel {
         } catch { errorMessage = "Couldn't save the document category. Try again." }
     }
 
+    /// The files a command on `item` acts on, in list order: the whole
+    /// selection when the item is part of a multiple selection, else the item.
+    func selectedItems(with item: AttachmentLibraryItem) -> [AttachmentLibraryItem] {
+        guard selection.count > 1, selection.contains(item.id) else { return [item] }
+        return items.filter { selection.contains($0.id) }
+    }
+
+    /// Quick Look opens on `item` and pages through the rest of the selection,
+    /// so those files download first. One that fails to download is left out.
     func preview(_ item: AttachmentLibraryItem) async {
         let revision = presentationRevision
         lastAction = .preview(item)
+        let group = selectedItems(with: item)
         await perform {
-            let url = try await file(for: item)
-            guard presentationRevision == revision else { return }
-            previewURL = url
+            var urls: [URL] = []
+            var shown: URL?
+            for candidate in group {
+                if candidate.id == item.id {
+                    let url = try await file(for: candidate)
+                    urls.append(url)
+                    shown = url
+                } else if let url = try? await file(for: candidate) {
+                    urls.append(url)
+                }
+            }
+            guard presentationRevision == revision, let shown else { return }
+            previewURLs = urls
+            previewURL = shown
         }
     }
 
@@ -235,8 +260,25 @@ final class AttachmentLibraryModel {
         lastAction = .open(item)
         await perform {
             let url = try await file(for: item)
-            try await AttachmentActions.open(url)
+            let opened = try await AttachmentActions.open(url)
+            if opened != url { savedFiles[item.id] = opened }
         }
+    }
+
+    /// Opens each file in turn and stops at the first one that fails.
+    func openFiles(_ items: [AttachmentLibraryItem]) async {
+        for item in items {
+            await openFile(item)
+            if errorMessage != nil { return }
+        }
+    }
+
+    /// Where Save or Open put a copy of the file, while that copy still exists.
+    func savedFile(for item: AttachmentLibraryItem) -> URL? {
+        guard let url = savedFiles[item.id], FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
+            return nil
+        }
+        return url
     }
 
     func openWith(_ item: AttachmentLibraryItem) async {
@@ -271,6 +313,7 @@ final class AttachmentLibraryModel {
     func dismissPresentation() {
         presentationRevision = UUID()
         previewURL = nil
+        previewURLs = []
         sourceLink = nil
     }
 
@@ -285,6 +328,7 @@ final class AttachmentLibraryModel {
         await perform {
             let source = try await file(for: item)
             try await AttachmentFileExport.save(source, to: destination)
+            savedFiles[item.id] = destination
         }
     }
 
@@ -306,7 +350,7 @@ final class AttachmentLibraryModel {
         for item in selected {
             do {
                 let source = try await file(for: item)
-                _ = try await AttachmentFileExport.copyWithoutReplacing(source, to: directory)
+                savedFiles[item.id] = try await AttachmentFileExport.copyWithoutReplacing(source, to: directory)
             } catch { failedIDs.insert(item.id) }
         }
         let failures = failedIDs.count
