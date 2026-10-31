@@ -1,9 +1,11 @@
 import AppKit
+import MessageContent
 import SwiftUI
 
 struct AssistantEmailCard: View {
     let email: AssistantEmailResult
     let onOpen: (AssistantSource) -> Void
+    let onOpenInNewWindow: (AssistantSource) -> Void
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
@@ -85,6 +87,15 @@ struct AssistantEmailCard: View {
         .focused($isFocused)
         .onHover { isHovered = $0 }
         .ternAnimation(value: isHovered)
+        .contextMenu {
+            Group {
+                Button("Open", systemImage: "envelope.open") { onOpen(email.source) }
+                Button("Open in New Window", systemImage: "macwindow.badge.plus") { onOpenInNewWindow(email.source) }
+                Divider()
+                Button("Copy Link", systemImage: "link") { copyLink() }
+            }
+            .labelStyle(.titleAndIcon)
+        }
         .help("Open \(subject)")
         .accessibilityElement(children: .combine)
         .accessibilityHint("Open this conversation in Tern")
@@ -98,6 +109,13 @@ struct AssistantEmailCard: View {
         } else {
             DomainLogoAvatar(address: email.senderEmail) { TernAvatar(name: sender) }
         }
+    }
+
+    /// The same tern: link the message list's Copy Link writes.
+    private func copyLink() {
+        guard let url = MailLink(accountID: email.source.accountID, threadID: email.source.threadID).ternURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
     }
 
     private var sender: String {

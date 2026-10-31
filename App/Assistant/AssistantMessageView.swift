@@ -8,6 +8,7 @@ struct AssistantMessageView: View {
     let canRetry: Bool
     let onRetry: () -> Void
     let onOpenSource: (AssistantSource) -> Void
+    let onOpenSourceInNewWindow: (AssistantSource) -> Void
     let onOpenDraft: (String) -> Void
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var showsAllEmails = false
@@ -71,7 +72,7 @@ struct AssistantMessageView: View {
                     }
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     ForEach(showsAllEmails ? emails : Array(emails.prefix(3))) { email in
-                        AssistantEmailCard(email: email, onOpen: onOpenSource)
+                        AssistantEmailCard(email: email, onOpen: onOpenSource, onOpenInNewWindow: onOpenSourceInNewWindow)
                     }
                     if emails.count > 3 {
                         Button(showsAllEmails ? "Show fewer emails" : "Show \(emails.count - 3) more emails") {
