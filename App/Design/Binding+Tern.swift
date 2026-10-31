@@ -18,6 +18,18 @@ extension Binding {
         Binding<Bool>(get: { wrappedValue != nil }, set: { if !$0 { wrappedValue = nil } })
     }
 
+    /// `true` while the optional holds a value. Setting `true` stores `initial`
+    /// when it's empty; setting `false` clears it.
+    func isPresent<Wrapped>(default initial: @autoclosure @escaping () -> Wrapped) -> Binding<Bool> where Value == Wrapped? {
+        Binding<Bool>(get: { wrappedValue != nil }, set: { isOn in
+            if !isOn {
+                wrappedValue = nil
+            } else if wrappedValue == nil {
+                wrappedValue = initial()
+            }
+        })
+    }
+
     /// `true` while the optional holds `value`. Setting `true` stores `value`.
     /// Setting `false` clears the optional only while it still holds `value`, so
     /// one row's popover closing leaves another row's request alone.

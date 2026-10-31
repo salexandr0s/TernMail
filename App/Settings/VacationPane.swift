@@ -24,7 +24,7 @@ struct VacationPane: View {
             header
             Section("Automatic reply") {
                 SettingsToggleRow("Vacation Responder", detail: "Reply automatically while you're away.", isOn: $settings.enableAutoReply)
-                TextField("Subject", text: Binding(get: { settings.responseSubject ?? "" }, set: { settings.responseSubject = $0 }))
+                TextField("Subject", text: $settings.responseSubject.or(""))
                 SettingsMessageEditor(draft: draft, isEditable: model.canEdit)
             }
             Section("Recipients") {
@@ -81,10 +81,10 @@ struct VacationPane: View {
     }
 
     @ViewBuilder private func dateRows(toggle: String, picker: String, date: Binding<Date?>) -> some View {
-        Toggle(toggle, isOn: Binding(get: { date.wrappedValue != nil }, set: { date.wrappedValue = $0 ? .now : nil }))
+        Toggle(toggle, isOn: date.isPresent(default: .now))
             .toggleStyle(.switch)
         if date.wrappedValue != nil {
-            DatePicker(picker, selection: Binding(get: { date.wrappedValue ?? .now }, set: { date.wrappedValue = $0 }))
+            DatePicker(picker, selection: date.or(.now))
         }
     }
 
