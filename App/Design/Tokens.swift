@@ -53,6 +53,10 @@ enum Tokens {
         static let pressed = 0.10
         static let tint = 0.14
         static let disabled = 0.5
+        /// A colored wash behind an icon, chip or banner, quieter than a selection.
+        static let wash = 0.08
+        /// Accent outlines, and outline symbols such as an unselected checkmark circle.
+        static let outline = 0.5
     }
 
     /// Generated reading aids sit more quietly than the original message cards.

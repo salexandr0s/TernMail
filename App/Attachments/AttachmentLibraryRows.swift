@@ -14,7 +14,7 @@ struct AttachmentLibraryRow: View {
         HStack(spacing: Tokens.Space.s3) {
             AttachmentFileIcon(item: item, size: Tokens.Space.s8)
                 .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
-                .background(AttachmentPresentation.tint(item).opacity(0.10),
+                .background(AttachmentPresentation.tint(item).opacity(Tokens.Opacity.wash),
                             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(item.filename).font(.body.weight(.semibold)).lineLimit(1)
@@ -111,7 +111,7 @@ struct AttachmentLibraryCard: View {
             .font(.caption).foregroundStyle(.secondary)
         }
         .padding(Tokens.Space.s3)
-        .background(selected ? Color.accentColor.opacity(0.07) : Color.clear,
+        .background(selected ? Color.accentColor.opacity(Tokens.Opacity.tint) : Color.clear,
                     in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternSurface()
         .overlay {
@@ -129,13 +129,13 @@ struct AttachmentLibraryCard: View {
     }
 
     private var hoverBorder: Color {
-        contrast == .increased ? .primary : Color.accentColor.opacity(0.5)
+        contrast == .increased ? .primary : Color.accentColor.opacity(Tokens.Opacity.outline)
     }
 
     private var fileTile: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .fill(AttachmentPresentation.tint(item).opacity(0.08))
+                .fill(AttachmentPresentation.tint(item).opacity(Tokens.Opacity.wash))
             AttachmentFileIcon(item: item, size: Tokens.Space.s16)
                 .padding(.top, Tokens.Space.s2)
             VStack(alignment: .leading) {
@@ -150,7 +150,7 @@ struct AttachmentLibraryCard: View {
                         .foregroundStyle(selected ? Color.accentColor : Color.secondary,
                                          Tokens.Surface.primary)
                         .font(.title3)
-                        .opacity(selected || hovered || contrast == .increased ? 1 : 0.5)
+                        .opacity(selected || hovered || contrast == .increased ? 1 : Tokens.Opacity.outline)
                         .accessibilityHidden(true)
                 }
                 Spacer(minLength: 0)

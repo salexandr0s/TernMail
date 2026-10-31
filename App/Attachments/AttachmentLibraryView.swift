@@ -110,14 +110,14 @@ struct AttachmentLibraryView: View {
 
     private func errorBanner(_ error: String) -> some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tokens.Status.warning).accessibilityHidden(true)
             Text(error).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
             Button("Try Again") { Task { await model.retryLastAction() } }.disabled(model.isWorking)
             Button { model.errorMessage = nil } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain).help("Dismiss error").accessibilityLabel("Dismiss error")
         }
         .padding(Tokens.Space.s3)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .padding(.horizontal, Tokens.Space.s5).padding(.bottom, Tokens.Space.s3)
     }
 
