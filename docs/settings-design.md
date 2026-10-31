@@ -2,7 +2,7 @@
 
 Settings uses native macOS controls in a searchable sidebar window. Its default size is 800×620 points, with a 208-point sidebar and a 740×500 minimum. Shared rows use 8-point vertical padding; switches and buttons keep their natural widths. Groups fit their controls, and longer pages scroll.
 
-Editors use the shared `SettingsEditorSheet`: 480 points wide for profiles and 560 for filters, Calendar settings and Assistant settings. Short forms fit their contents. Longer forms cap the scrolling area at 440 points, with validation and actions outside it. Profile schedules retain their existing modes and validation.
+Editors use the shared `SettingsEditorSheet`: 480 points wide for profiles and 560 for filters and Assistant settings. Calendar settings became a Settings pane in the [macOS HIG alignment](plans/macos-hig-alignment.md), which also turned the sub-tabs into sidebar rows. Short forms fit their contents. Longer forms cap the scrolling area at 440 points, with validation and actions outside it. Profile schedules retain their existing modes and validation.
 
 ## Coverage
 
