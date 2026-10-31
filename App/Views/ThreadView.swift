@@ -187,7 +187,6 @@ struct ThreadView: View {
                                             expanded.insert(message.id)
                                         }
                                     }
-                                    .id(message.record.accountID + ":" + message.id)
                                     .id(message.id)
                                 }
                             }
