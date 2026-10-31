@@ -24,13 +24,9 @@ struct MessageListHeader: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: Tokens.Space.s1) {
                         ForEach(MailQuickFilter.allCases) { filter in
-                            Toggle(isOn: Binding(
-                                get: { mailbox.listPreferences.filters.contains(filter) },
-                                set: { value in
-                                    if value { mailbox.listPreferences.filters.insert(filter) }
-                                    else { mailbox.listPreferences.filters.remove(filter) }
-                                }
-                            )) { Label(filter.title, systemImage: filter.symbol) }
+                            Toggle(isOn: Bindable(mailbox.listPreferences).filters.contains(filter)) {
+                                Label(filter.title, systemImage: filter.symbol)
+                            }
                                 .toggleStyle(.button).controlSize(.small).help(filter.title)
                         }
                         if !mailbox.listPreferences.filters.isEmpty {

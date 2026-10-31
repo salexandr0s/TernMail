@@ -355,10 +355,7 @@ struct ComposeView: View {
         return RecipientField(
             label: label,
             addresses: addresses,
-            requestsFocus: Binding(
-                get: { recipientFocus == field },
-                set: { if !$0, recipientFocus == field { recipientFocus = nil } }
-            ),
+            requestsFocus: $recipientFocus.equals(field),
             isEditable: model.isEditable,
             accountID: model.draft?.accountID,
             avatarContext: avatarContext,

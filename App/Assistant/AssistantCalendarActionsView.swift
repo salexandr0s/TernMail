@@ -22,9 +22,7 @@ struct AssistantCalendarActionsView: View {
             if !message.availabilityChoices.isEmpty {
                 Text("Choose times to suggest").font(.callout.weight(.medium))
                 ForEach(message.availabilityChoices) { choice in
-                    Toggle(isOn: Binding(get: { selected.contains(choice.id) }, set: { isOn in
-                        if isOn { selected.insert(choice.id) } else { selected.remove(choice.id) }
-                    })) {
+                    Toggle(isOn: $selected.contains(choice.id)) {
                         Text(choice.displayTitle).font(.callout)
                     }
                     .toggleStyle(.checkbox)
