@@ -31,7 +31,6 @@ struct ChatGPTBrand: View {
 struct ChatGPTSignInButton: View {
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button(action: action) {
@@ -46,15 +45,7 @@ struct ChatGPTSignInButton: View {
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
         }
         .buttonStyle(ChatGPTSignInStyle())
-        .focused($isFocused)
-        .overlay {
-            if isFocused {
-                RoundedRectangle(cornerRadius: Tokens.Radius.md + Tokens.Space.s1)
-                    .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
-                    .padding(-Tokens.Space.s1)
-                    .allowsHitTesting(false)
-            }
-        }
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .accessibilityLabel("Continue with ChatGPT")
         .accessibilityHint("Opens your browser to sign in to ChatGPT.")
     }
@@ -76,6 +67,6 @@ private struct ChatGPTSignInStyle: ButtonStyle {
                     .padding(Tokens.Space.s1)
                     .allowsHitTesting(false)
             }
-            .opacity(isEnabled ? 1 : 0.5)
+            .opacity(isEnabled ? 1 : Tokens.Opacity.disabled)
     }
 }

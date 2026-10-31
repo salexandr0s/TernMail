@@ -102,7 +102,6 @@ private struct AssistantSuggestionRow: View {
     let action: () -> Void
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button(action: action) {
@@ -135,11 +134,11 @@ private struct AssistantSuggestionRow: View {
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         }
         .buttonStyle(.plain).disabled(requirement != nil)
-        .focused($isFocused)
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .overlay {
             RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                .strokeBorder(isFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
-                              lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
+                              lineWidth: Tokens.Border.hairline)
                 .allowsHitTesting(false)
         }
         .onHover { isHovered = $0 }

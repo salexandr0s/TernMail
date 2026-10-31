@@ -8,7 +8,6 @@ struct AssistantEmailCard: View {
     let onOpenInNewWindow: (AssistantSource) -> Void
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button { onOpen(email.source) } label: {
@@ -36,7 +35,9 @@ struct AssistantEmailCard: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                     Text(subject).font(.callout.weight(.semibold)).lineLimit(2)
-                    if email.isStarred { Image(systemName: "star.fill").foregroundStyle(.yellow).accessibilityLabel("Starred") }
+                    if email.isStarred {
+                        Image(systemName: "star.fill").foregroundStyle(Tokens.Status.star).accessibilityLabel("Starred")
+                    }
                 }
                 if let reason = email.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(reason).font(.callout).lineLimit(3)
@@ -77,14 +78,14 @@ struct AssistantEmailCard: View {
             .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
             .overlay {
                 RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                    .strokeBorder(contrast == .increased ? Color.primary : (isHovered || isFocused ? Color.accentColor : Tokens.Surface.border),
-                                  lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                    .strokeBorder(contrast == .increased ? Color.primary : (isHovered ? Color.accentColor : Tokens.Surface.border),
+                                  lineWidth: Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         }
         .buttonStyle(.plain)
-        .focused($isFocused)
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .onHover { isHovered = $0 }
         .ternAnimation(value: isHovered)
         .contextMenu {

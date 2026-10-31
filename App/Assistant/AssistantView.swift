@@ -14,7 +14,6 @@ struct AssistantView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorSchemeContrast) private var contrast
     @FocusState private var isComposerFocused: Bool
-    @FocusState private var focusedToolbarButton: String?
     @State private var hasPlacedInitialFocus = false
     @State private var showsSettings = false
     @State private var scrollRequest = UUID()
@@ -76,12 +75,12 @@ struct AssistantView: View {
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s0_5) {
-                iconButton("New chat", symbol: "plus", action: startNewChat)
+                iconButton("New Chat", symbol: "plus", action: startNewChat)
                 Menu {
-                    Button("Assistant settings", systemImage: "gearshape") { showsSettings = true }
-                    if let onDetach { Button("Open in a window", systemImage: "macwindow", action: onDetach) }
+                    Button("Assistant Settings", systemImage: "gearshape") { showsSettings = true }
+                    if let onDetach { Button("Open in a Window", systemImage: "macwindow", action: onDetach) }
                     if let onExpand {
-                        Button("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
+                        Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -89,8 +88,8 @@ struct AssistantView: View {
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
                 .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
-                .help("Assistant options").accessibilityLabel("Assistant options")
-                if let onClose { iconButton("Close assistant", symbol: "xmark", action: onClose) }
+                .help("Assistant Options").accessibilityLabel("Assistant Options")
+                if let onClose { iconButton("Close Assistant", symbol: "xmark", action: onClose) }
             }
             .foregroundStyle(.secondary)
         }
@@ -186,8 +185,7 @@ struct AssistantView: View {
             .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
             .overlay {
                 RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                    .strokeBorder(isComposerFocused ? Color.accentColor : outlineColor,
-                                  lineWidth: isComposerFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                    .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
             .padding(Tokens.Space.s3)
@@ -266,26 +264,26 @@ struct AssistantView: View {
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
-        .buttonStyle(AssistantToolbarButtonStyle(isFocused: focusedToolbarButton == title))
-        .focused($focusedToolbarButton, equals: title)
+        .buttonStyle(AssistantToolbarButtonStyle())
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .help(title).accessibilityLabel(title)
     }
 }
 
+/// Hover and press feedback for the header's icon buttons. Keyboard focus
+/// shows the system focus ring.
 private struct AssistantToolbarButtonStyle: ButtonStyle {
-    let isFocused: Bool
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(isFocused || isHovered || configuration.isPressed ? Tokens.Surface.primary : .clear,
+            .background(isHovered || configuration.isPressed ? Tokens.Surface.primary : .clear,
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .overlay {
-                if isFocused || (contrast == .increased && (isHovered || configuration.isPressed)) {
+                if contrast == .increased && (isHovered || configuration.isPressed) {
                     RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(isFocused ? Color.accentColor : .primary,
-                                      lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                        .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
                         .allowsHitTesting(false)
                 }
             }
