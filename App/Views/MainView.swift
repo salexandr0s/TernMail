@@ -10,15 +10,17 @@ struct MainView: View {
     @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
-    @State private var isCompactWindow = false
+    @State private var mailWidth: CGFloat = 0
+    /// The sidebar hid because the window got narrower than the three
+    /// columns' minimum widths, and comes back once the window is wide again.
+    @State private var sidebarHiddenForWidth = false
+    /// The sidebar column's last width while visible, gutter included.
+    @State private var sidebarColumnWidth = Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter
     @State private var showsAssistant = false
     /// `Double`, because `@AppStorage` cannot store `CGFloat`.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @AppStorage("mailColumnVisibility") private var storedColumnVisibility = ""
-    /// Set while the sidebar is hidden only because three columns don't fit.
-    @State private var collapsedForWidth = false
-    @State private var columnFit: ColumnFit?
     /// Kept with the window, so it follows the system setting for reopening
     /// windows after a quit.
     @SceneStorage("selectedMailbox") private var storedMailbox = ""
@@ -38,6 +40,26 @@ struct MainView: View {
 
     private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
 
+    /// Room for the toolbar's actions, search and assistant. Items start after
+    /// the sidebar column, or after the window controls while the sidebar is
+    /// hidden.
+    private var toolbarWidth: CGFloat {
+        mailWidth - (showsSidebar ? sidebarColumnWidth : Tokens.Layout.windowControlsWidth)
+            - (showsProfilePicker ? Tokens.Layout.toolbarMenuWidth : 0)
+    }
+
+    /// The section switcher shows its segments, and the profile picker its name.
+    private var isWideToolbar: Bool {
+        toolbarWidth - (showsProfilePicker ? Tokens.Layout.profileNameWidth : 0) >= Tokens.Layout.wideToolbarWidth
+    }
+
+    private var isCompactWindow: Bool { toolbarWidth < Tokens.Layout.compactToolbarWidth }
+
+    // With no profiles the picker would offer All Accounts alone.
+    private var showsProfilePicker: Bool {
+        isActive && !showsLibrary && app.accountPreferences?.profiles.isEmpty == false
+    }
+
     private var showsLibrary: Bool { mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID }
     /// Mail menu items act on this window while it shows mail, not the attachment library.
     private var focusedMailbox: MailboxModel? { isActive && !showsLibrary ? mailbox : nil }
@@ -51,38 +73,29 @@ struct MainView: View {
     }
 
     private func toggleSidebar() {
-        collapsedForWidth = false
+        sidebarHiddenForWidth = false
         columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
     }
 
-    /// Whether the window is too narrow for the sidebar, list and reader
-    /// minimums, and whether that matters: the assistant manages the sidebar
-    /// itself, and the sidebar and list alone always fit.
-    private struct ColumnFit: Equatable {
-        let isNarrow: Bool
-        let isManaged: Bool
-    }
-
-    /// Below the three column minimums the reader would run past the window's
-    /// edge, so the sidebar steps aside until the window is wide enough again.
-    /// A sidebar the user showed or hid stays as they left it.
-    private func fitSidebar(_ fit: ColumnFit) {
-        guard fit.isManaged else {
-            // Without the reader, the sidebar and list always fit.
-            if hidesReader, collapsedForWidth {
-                collapsedForWidth = false
-                columnVisibility = .all
-            }
-            return
-        }
-        if fit.isNarrow {
+    /// Below the three columns' minimum widths the split view clips the
+    /// sidebar and the reader, so the sidebar steps aside until there's room.
+    private func fitColumns(to width: CGFloat) {
+        guard width > 0, !showsAssistant, !hidesReader else { return }
+        if width < AssistantSidebarLayout.threeColumnMinimum {
             guard columnVisibility == .all else { return }
-            collapsedForWidth = true
+            sidebarHiddenForWidth = true
             columnVisibility = .doubleColumn
-        } else if collapsedForWidth {
-            collapsedForWidth = false
+        } else if sidebarHiddenForWidth, width >= widthToRestoreSidebar {
+            sidebarHiddenForWidth = false
             if columnVisibility == .doubleColumn { columnVisibility = .all }
         }
+    }
+
+    /// AppKit widens the window to show the sidebar unless the window keeps
+    /// its minimum width beside it, so a sidebar hidden for width waits for
+    /// that much room rather than making the window jump.
+    private var widthToRestoreSidebar: CGFloat {
+        sidebarColumnWidth + Tokens.Border.hairline + Tokens.Layout.windowMinWidth
     }
 
     private var section: WorkspaceSection {
@@ -140,13 +153,9 @@ struct MainView: View {
                 updateNavigationVisibility(isNarrow: narrow && !hidesReader)
             }
             .onChange(of: layout.mailWidth, initial: true) { _, width in
-                isCompactWindow = width < Tokens.Layout.compactToolbarWidth
+                mailWidth = width
+                fitColumns(to: width)
                 paneSizing.requestApply()
-            }
-            .onChange(of: ColumnFit(isNarrow: layout.mailWidth < AssistantSidebarLayout.threeColumnMinimum,
-                                    isManaged: !showsAssistant && !hidesReader), initial: true) { _, fit in
-                columnFit = fit
-                fitSidebar(fit)
             }
             .onChange(of: geometry.size.height, initial: true) { _, _ in
                 toolbarInset.refresh()
@@ -162,18 +171,19 @@ struct MainView: View {
         .onAppear {
             mailbox.undoManager = undoManager
             if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) {
-                collapsedForWidth = false
+                sidebarHiddenForWidth = false
                 columnVisibility = stored
             }
             // The first layout may have run before the stored choice came back.
-            if let columnFit { fitSidebar(columnFit) }
+            fitColumns(to: mailWidth)
             if let stored = MailboxID(restorationValue: storedMailbox) { mailbox.restoreMailbox(stored) }
         }
         .onChange(of: mailbox.selectedMailbox) { _, box in storedMailbox = box?.restorationValue ?? "" }
         .onChange(of: columnVisibility) { _, visibility in
             // The assistant and a narrow window hide columns for a while; keep the user's own choice.
-            if !showsAssistant, !collapsedForWidth { storedColumnVisibility = visibility.storageValue }
+            if !showsAssistant && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
         }
+        .onChange(of: hidesReader) { _, _ in fitColumns(to: mailWidth) }
         .modifier(AssistantAccessRefresh(mailbox: mailbox))
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()
@@ -201,6 +211,7 @@ struct MainView: View {
                     SplitDividerHandle()
                         .frame(width: Tokens.Layout.columnGutter)
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if $0 > 0 { sidebarColumnWidth = $0 } }
                 .navigationSplitViewColumnWidth(
                     min: Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter,
                     ideal: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter,
@@ -244,27 +255,27 @@ struct MainView: View {
             }
             .customizationBehavior(.disabled)
             .mailToolbarVisible(sidebarToggle != nil)
-            // Mail and Attachments switch sections from the sidebar's Library rows;
-            // Calendar has no mail sidebar, so its toolbar offers the way back.
-            WorkspaceSectionToolbar(section: section, onSelect: show)
+            WorkspaceSectionToolbar(section: section, isCompact: !isWideToolbar, onSelect: show)
+                .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
+            CalendarToolbar(model: app.calendar)
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
-                    .help("New Message")
+                    .help("New Message (\(ShortcutCatalog.newMessage.label))")
             }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            .mailToolbarVisible(isActive)
             ToolbarItem(id: "mail.profile", placement: .navigation) {
-                if let preferences = app.accountPreferences { ProfilePicker(model: preferences) }
+                if let preferences = app.accountPreferences { ProfilePicker(model: preferences, isCompact: !isWideToolbar) }
             }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && app.accountPreferences != nil)
+            .mailToolbarVisible(showsProfilePicker)
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
-            // After the mail items, so the mail toolbar's space stays out of these groups.
-            CalendarToolbar(model: app.calendar)
-                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
+            // After the mail items: toolbar spaces ignore hidden(_:), and this
+            // keeps the mail spaces out of the library's group.
             AttachmentLibraryToolbar(state: libraryToolbar).mailToolbarVisible(isActive && showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
-                section: section, isCompact: isCompactWindow
+                section: section, isCompact: isCompactWindow,
+                isFolded: toolbarWidth < Tokens.Layout.searchFoldWidth
             )
             WorkspaceAssistantToolbar(
                 isAssistantPresented: isActive ? showsAssistant : isCalendarAssistantPresented,
@@ -463,9 +474,8 @@ private struct DetailView: View {
             )
         } else {
             TernEmptyState(
-                title: "No Conversation Selected",
-                systemImage: "envelope.open",
-                message: "Start a new message with ⌘N."
+                title: mailbox.listPreferences.conversations ? "No Conversation Selected" : "No Message Selected",
+                systemImage: "envelope.open"
             )
         }
     }

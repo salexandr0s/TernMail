@@ -399,22 +399,17 @@ final class AssistantModel {
     func summaryAvailability(for thread: ThreadKey) -> ThreadSummaryAvailability {
         if connection.isRestoring { return .loading }
         let current = context()
-        guard current.canUsePlan else { return .unavailable(reason: "Connect ChatGPT for a summary.", action: "Connect") }
-        guard current.accountInstances[thread.accountID] != nil else {
-            return .unavailable(reason: "This mail account is unavailable.", action: "Settings")
-        }
-        guard enabledAccountIDs.contains(thread.accountID) else {
-            return .unavailable(reason: "Enable AI access for this account.", action: "AI Settings")
-        }
+        guard current.canUsePlan, current.accountInstances[thread.accountID] != nil,
+              enabledAccountIDs.contains(thread.accountID) else { return .unavailable }
         let snapshot = scope(in: current)
         guard snapshot.accountIDs.contains(thread.accountID), snapshot.threadIDs?.contains(thread) ?? true else {
-            return .unavailable(reason: "This conversation is outside the assistant’s scope.", action: "Choose scope")
+            return .unavailable
         }
         if catalogueRevision == current.connectionRevision, !summaryModelID.isEmpty {
             return .ready
         }
         if isLoadingModels { return .loading }
-        return .unavailable(reason: "Choose an available ChatGPT model.", action: "AI Settings")
+        return .unavailable
     }
 
     func readerSummary(thread: ThreadKey, revision: String, forceRefresh: Bool = false,

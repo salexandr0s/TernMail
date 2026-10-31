@@ -232,23 +232,35 @@ struct CalendarView: View {
 
     private var emptyCalendars: some View {
         let hasConnection = model.accounts.contains { model.connectionState(for: $0.id).isEnabled }
+        // A reload can help only accounts that are already connected.
+        let canRetry = model.accounts.contains { !model.connectionState(for: $0.id).needsAuthorization }
         return ScrollView {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: hasConnection ? "No calendars to show" : "Your calendars in Tern",
                                systemImage: "calendar",
                                message: hasConnection ? "Check the account status below to load your calendars."
                                 : "Connect Google Calendar to see your schedule and add events.", fillsSpace: false)
-                ForEach(model.accounts) { account in
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        Text(account.title).font(.headline)
-                        CalendarConnectionControl(model: model, account: account, connect: connect)
+                // The only place that asks to connect: the sidebar shows just the month until a calendar loads.
+                VStack(spacing: 0) {
+                    ForEach(model.accounts) { account in
+                        if account.id != model.accounts.first?.id { Divider().padding(.horizontal, Tokens.Space.s3) }
+                        CalendarConnectionControl(model: model, account: account, connect: connect, showsAccount: true)
+                            .padding(Tokens.Space.s3)
                     }
-                    .padding(Tokens.Space.s4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 }
-                if hasConnection {
-                    Button("Manage Calendars…", action: manageCalendars).buttonStyle(.bordered)
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .ternOutline(radius: Tokens.Radius.md)
+                if app.isSigningIn || canRetry || hasConnection {
+                    HStack(spacing: Tokens.Space.s3) {
+                        if app.isSigningIn {
+                            Button("Cancel Sign-In") { app.auth.cancelSignIn() }
+                        } else if canRetry {
+                            Button("Retry", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                                .disabled(model.isLoading)
+                        }
+                        if hasConnection { Button("Manage Calendars…", action: manageCalendars) }
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
             .padding(Tokens.Space.s4)

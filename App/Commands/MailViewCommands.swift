@@ -5,11 +5,21 @@ import SwiftUI
 
 extension FocusedValues {
     @Entry var conversationLink: MailLink?
+    @Entry var readerAppearance: ReaderAppearance?
+}
+
+/// View ▸ Show with Light Background for the conversation in front. The
+/// reader offers it while Dark Mode adapts mail; the choice is kept for each
+/// of the conversation's senders.
+struct ReaderAppearance {
+    let showsLightBackground: Bool
+    let toggle: @MainActor () -> Void
 }
 
 /// The View menu.
 struct MailViewCommands: Commands {
     @FocusedValue(\.readerActions) private var reader
+    @FocusedValue(\.readerAppearance) private var appearance
     @FocusedValue(\.sidebarToggle) private var sidebar
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @AppStorage("showMessageSize") private var showsMessageSize = false
@@ -35,6 +45,8 @@ struct MailViewCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.collapseAll.shortcut)
                 .disabled(!(reader?.canCollapse ?? false))
+            Toggle("Show with Light Background", isOn: Binding(appearance?.showsLightBackground ?? false) { _ in appearance?.toggle() })
+                .disabled(appearance == nil)
         }
     }
 }

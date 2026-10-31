@@ -58,6 +58,20 @@ final class ComposeModel {
         var message: String
     }
 
+    /// A sender the window picked by itself for the first recipient. The
+    /// copy the move makes shows it, and Undo moves the message back.
+    struct SenderChange: Equatable {
+        let accountName: String
+        let recipient: EmailAddress
+        let previousAccountID: String
+        let previousAccountName: String
+        let previousAddress: String
+
+        var note: String {
+            "Sending from \(accountName) because your last email with \(recipient.name ?? recipient.address) is there."
+        }
+    }
+
     static let storeDelay: Duration = .milliseconds(500)
     static let autosaveDelay: Duration = .seconds(3)
     /// Typing that never pauses still saves to Gmail this often.
@@ -103,6 +117,10 @@ final class ComposeModel {
     private(set) var linkAnchor: CGRect?
     private(set) var storeError: String?
     private(set) var hasPendingEdits = false
+    /// Shown until it's undone, another sender is picked or the first recipient changes.
+    private(set) var senderChange: SenderChange?
+    /// What the copy made by an automatic move shows about it.
+    @ObservationIgnored private(set) var copySenderChange: SenderChange?
     /// Changed in this window, so closing it keeps the draft. The stored
     /// revision can trail a store that just finished, so it can't tell.
     private var isTouched = false
@@ -131,10 +149,11 @@ final class ComposeModel {
     @ObservationIgnored private var recipientAccountTask: Task<Void, Never>?
     @ObservationIgnored private var lastAutomaticRecipient: String?
 
-    init(localDraftID: String, mailbox: MailboxModel) {
+    init(localDraftID: String, mailbox: MailboxModel, senderChange: SenderChange? = nil) {
         self.localDraftID = localDraftID
         self.mailbox = mailbox
         attachmentFiles = OutgoingAttachmentFiles(localDraftID: localDraftID)
+        self.senderChange = senderChange
         switch mailbox.selectedMailbox {
         case .combined?, .scoped?: automaticAccountIDs = mailbox.selectedAccounts.map { $0.account.id }
         default: automaticAccountIDs = []
@@ -174,7 +193,9 @@ final class ComposeModel {
     }
 
     var canFormat: Bool { isEditable && isEditingMessage }
-    var canSendAndArchive: Bool { draft?.threadID != nil && isEditable }
+    /// A new message gets a thread ID once Gmail saves it, but there is no
+    /// earlier conversation to archive, and Send shouldn't change mid-draft.
+    var canSendAndArchive: Bool { draft?.kind != .new && draft?.threadID != nil && isEditable }
 
     var progressText: String? {
         if expandingGroups > 0 { return "Loading contact group…" }
@@ -270,6 +291,7 @@ final class ComposeModel {
         choseRecipientAccount = true
         recipientAccountGeneration += 1
         recipientAccountTask?.cancel()
+        senderChange = nil
         guard sender.account.id == draft.accountID else {
             move(to: sender.account.id, sender: sender)
             return
@@ -348,12 +370,13 @@ final class ComposeModel {
     }
 
     /// Moves a new message to another account, after any edits and files
-    /// still on their way. The window then shows the copy.
-    func move(to accountID: String, sender: ComposeSender? = nil, isAutomatic: Bool = false) {
+    /// still on their way. The window then shows the copy. A move the window
+    /// makes by itself passes what the copy should say about it.
+    func move(to accountID: String, sender: ComposeSender? = nil, automaticChange: SenderChange? = nil) {
         guard isEditable, canChangeAccount, accountID != draft?.accountID,
               let engine = owner?.engine, let destination = mailbox.account(id: accountID)
         else { return }
-        if !isAutomatic {
+        if automaticChange == nil {
             choseRecipientAccount = true
             recipientAccountGeneration += 1
             recipientAccountTask?.cancel()
@@ -379,6 +402,7 @@ final class ComposeModel {
                 guard phase == .moving, let moved = try await engine.moveDraft(id, content: movedContent, to: destination.engine) else { return }
                 cancelTimers()
                 observation?.cancel()
+                copySenderChange = automaticChange
                 phase = .moved(to: moved.id)
             } catch let error as ComposeError {
                 alert = Problem(title: "Can't Change Account", message: error.errorDescription ?? "")
@@ -387,6 +411,20 @@ final class ComposeModel {
                                 message: "Tern couldn't move this message to \(destination.account.email).")
             }
         }
+    }
+
+    /// Moves the message back to the sender it had before the window picked one.
+    func undoSenderChange() {
+        guard let change = senderChange else { return }
+        let previous = senderChoices.first {
+            $0.account.id == change.previousAccountID && $0.identity.lowercasedAddress == change.previousAddress.lowercased()
+        }
+        move(to: change.previousAccountID, sender: previous)
+    }
+
+    /// The previous account may have signed out since the window moved the message.
+    var canUndoSenderChange: Bool {
+        senderChange.map { mailbox.account(id: $0.previousAccountID) != nil } ?? false
     }
 
     /// Copies the files into the draft, one at a time, in order.
@@ -665,6 +703,7 @@ final class ComposeModel {
         guard isEditable else { return }
         markChanged()
         hasPendingEdits = true
+        if let senderChange, content.to.first?.normalized != senderChange.recipient.normalized { self.senderChange = nil }
         if storeTask == nil {
             storeTask = Task { [weak self] in
                 try? await Task.sleep(for: Self.storeDelay)
@@ -754,8 +793,13 @@ final class ComposeModel {
             guard let self,
                   let target = try? await mailbox.cache.lastCorrespondenceAccount(with: recipient.address, accountIDs: ids),
                   !Task.isCancelled, generation == recipientAccountGeneration, !choseRecipientAccount,
-                  content.to.first?.normalized == recipient.normalized, isEditable, canChangeAccount else { return }
-            if target != draft?.accountID { move(to: target, isAutomatic: true) }
+                  content.to.first?.normalized == recipient.normalized, isEditable, canChangeAccount,
+                  target != draft?.accountID, let owner, let destination = mailbox.account(id: target) else { return }
+            move(to: target, automaticChange: SenderChange(
+                accountName: destination.account.displayName ?? destination.account.email, recipient: recipient,
+                previousAccountID: owner.account.id, previousAccountName: owner.account.displayName ?? owner.account.email,
+                previousAddress: fromEmail
+            ))
         }
     }
 

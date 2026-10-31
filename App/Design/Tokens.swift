@@ -111,7 +111,7 @@ enum Tokens {
         static let editorWideWidth: CGFloat = 560
         static let editorMaxContentHeight: CGFloat = 440
         static let editorLabelWidth: CGFloat = 80
-        /// Account rows in Preferences show an avatar beside two lines of text.
+        /// Account rows in Account Settings show an avatar beside two lines of text.
         static let accountRowHeight = Space.s12
         /// Typing pauses this long before a live-applied field writes.
         static let liveApplyDelay: Duration = .milliseconds(750)
@@ -144,7 +144,20 @@ enum Tokens {
         // Two windows fit side by side on a 13-inch display.
         static let windowMinWidth: CGFloat = 720
         static let windowMinHeight: CGFloat = 480
-        static let compactToolbarWidth: CGFloat = 1120
+        // Toolbar room after the sidebar, or after the window controls while
+        // it's hidden. The toolbar gives up width in steps as it narrows.
+        /// The section switcher shows its segments, and the profile picker its name.
+        static let wideToolbarWidth: CGFloat = 1080
+        /// Below this, mail actions fold into menus.
+        static let compactToolbarWidth: CGFloat = 1020
+        /// Below this, an idle search field folds into a button.
+        static let searchFoldWidth: CGFloat = 760
+        /// The close, minimize and zoom buttons while the sidebar is hidden.
+        static let windowControlsWidth: CGFloat = 84
+        /// An icon-only menu in the toolbar, with the gap after it.
+        static let toolbarMenuWidth: CGFloat = 58
+        /// Kept for the active profile's name beside its icon.
+        static let profileNameWidth: CGFloat = 100
         static let sidebarMinWidth: CGFloat = 180
         static let sidebarWidth: CGFloat = 220
         static let sidebarMaxWidth: CGFloat = 320

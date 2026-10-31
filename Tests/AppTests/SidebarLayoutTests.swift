@@ -29,22 +29,21 @@ import Testing
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        let toolbar = NSToolbar(identifier: MailWindowPreferences.toolbarID)
-        toolbar.autosavesConfiguration = true
-        window.toolbar = toolbar
+        window.toolbar = workspaceToolbar()
         window.toolbarStyle = .unified
         window.contentViewController = controller
         window.orderFront(nil)
         defer { window.close() }
 
-        let configurations: [(CGFloat, NSWindow.ToolbarStyle)] = [
-            (1_280, .unified), (960, .unified), (960, .unifiedCompact), (1_280, .unified)
+        // At 960 points the room after the sidebar is below the search fold width.
+        let configurations: [(CGFloat, NSWindow.ToolbarStyle, Bool)] = [
+            (1_280, .unified, false), (960, .unified, true), (960, .unifiedCompact, true), (1_280, .unified, false)
         ]
-        for (width, toolbarStyle) in configurations {
+        for (width, toolbarStyle, searchFolds) in configurations {
             window.toolbarStyle = toolbarStyle
             window.setContentSize(NSSize(width: width, height: 760))
             try await settleMail(in: controller.view, window: window)
-            try await expectMailVisible(in: controller.view, window: window)
+            try await expectMailVisible(in: controller.view, window: window, searchFolds: searchFolds)
         }
         // Below the three column minimums the sidebar steps aside, and it comes back with the room.
         window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
@@ -53,7 +52,7 @@ import Testing
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: false)
         try await settleMail(in: controller.view, window: window)
-        try await expectMailVisible(in: controller.view, window: window)
+        try await expectMailVisible(in: controller.view, window: window, searchFolds: false)
         // Beside the assistant the list and reader can need more than the mail area.
         // The split then runs under the assistant or off the trailing edge, never off
         // the leading edge. Narrower windows can move the assistant button into the
@@ -76,11 +75,11 @@ import Testing
         try await settle()
         app.destination = .mail
         try await settleMail(in: controller.view, window: window)
-        try await expectMailVisible(in: controller.view, window: window)
+        try await expectMailVisible(in: controller.view, window: window, searchFolds: false)
         await app.signOut()
     }
 
-    private func expectMailVisible(in rootView: NSView, window: NSWindow) async throws {
+    private func expectMailVisible(in rootView: NSView, window: NSWindow, searchFolds: Bool) async throws {
         let width = window.frame.width
         let probes = descendants(in: rootView).compactMap { $0 as? MailColumnProbe.ProbeView }
         let mailTables = probes.flatMap { probe -> [NSTableView] in
@@ -111,8 +110,11 @@ import Testing
         }
         let frameView = try #require(window.contentView?.superview)
         let fields = descendants(in: frameView).compactMap { $0 as? NSSearchField }
-            .filter { $0.placeholderString == "Search mail" }
-        #expect(fields.count == 1, "Mail search must remain in the visible toolbar at width \(width)")
+            .filter { $0.placeholderString == "Search mail" && !$0.isHiddenOrHasHiddenAncestor }
+        let searchItems = window.toolbar?.visibleItems?.filter { $0.itemIdentifier.rawValue.contains("workspace.search") } ?? []
+        #expect(searchItems.count == 1, "Mail search must remain in the visible toolbar at width \(width)")
+        // An idle search folds into a button that opens the field.
+        #expect(fields.count == (searchFolds ? 0 : 1), "Search field at width \(width)")
         for field in fields {
             let bounds = field.convert(field.bounds, to: nil)
             #expect(!field.isHiddenOrHasHiddenAncestor)
@@ -212,6 +214,12 @@ import Testing
         [view] + view.subviews.flatMap { descendants(in: $0) }
     }
 
+    /// AppKit mirrors item changes across toolbars that share an identifier,
+    /// and the test host's own mail window already uses the workspace one.
+    private func workspaceToolbar() -> NSToolbar {
+        NSToolbar(identifier: "\(MailWindowPreferences.toolbarID).\(UUID().uuidString)")
+    }
+
     @Test func mailboxExpansionKeepsSidebarViewportAndInboxInPlace() async throws {
         let app = AppModel()
         await app.start()
@@ -232,12 +240,11 @@ import Testing
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        let toolbar = NSToolbar(identifier: MailWindowPreferences.toolbarID)
-        toolbar.autosavesConfiguration = true
-        window.toolbar = toolbar
+        window.toolbar = workspaceToolbar()
         window.toolbarStyle = .unified
         window.contentViewController = controller
-        // The controller sizes the window to the view's minimum; three columns need more.
+        // The hosting controller shrinks the window to its minimum, where the
+        // sidebar steps aside for the list and reader.
         window.setContentSize(NSSize(width: 1_200, height: 760))
         window.orderFront(nil)
         defer { window.close() }

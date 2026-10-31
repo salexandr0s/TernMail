@@ -23,10 +23,22 @@ final class SearchModel {
     static let pageSize = 200
 
     private(set) var text = ""
+    /// An operator such as `in:inbox` that every result must also match, from
+    /// the scope bar. Nil searches all mail.
+    private(set) var restriction: String?
+    /// The one account the scope bar picked, or nil for every account searched.
+    private(set) var accountID: String?
     /// Local matches plus Gmail's conversations, newest first.
     private(set) var results: [ThreadRecord] = []
+    /// The query's words, for the rows to show in bold.
+    private(set) var highlights = SearchHighlights()
     /// Gmail's side of the current query. Nil while the field is empty.
     private(set) var gmail: GmailPager?
+    /// Whether every account searched has answered the current query from
+    /// this Mac.
+    private(set) var hasLocalAnswer = false
+    /// Set while Gmail waits for typing to pause before it's asked.
+    private var isGmailScheduled = false
     /// Reading the cache failed for an account being searched.
     var readFailed: Bool { !failedAccountIDs.isEmpty }
     /// Changes when ⌥⌘F or / asks the toolbar field for focus.
@@ -37,7 +49,47 @@ final class SearchModel {
 
     var matchingMessageIDs: [String: Set<String>] {
         _ = gmail?.revision
-        return Dictionary(sources.map { ($0.accountID, gmail?.messageIDs(in: $0.accountID) ?? []) }, uniquingKeysWith: { first, _ in first })
+        return Dictionary(activeSources.map { ($0.accountID, gmail?.messageIDs(in: $0.accountID) ?? []) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The search as one query, the scope bar's restriction included, for
+    /// saving it. Parentheses keep the restriction on the whole text.
+    var queryText: String {
+        guard let restriction else { return text }
+        return "\(restriction) (\(text))"
+    }
+
+    /// Whether more results wait past the listed ones: another local page,
+    /// or another page from Gmail.
+    var hasMoreResults: Bool {
+        results.count >= limit || gmail?.state == .more
+    }
+
+    /// Where the current query stands. The empty list and the window
+    /// subtitle both go by it, so they agree.
+    enum Status: Equatable {
+        /// An account hasn't answered from this Mac yet, or Gmail is due to
+        /// answer.
+        case searching
+        /// The mail saved on this Mac couldn't be read.
+        case unreadable
+        /// This Mac has answered. Gmail wasn't asked, has more pages or
+        /// couldn't answer.
+        case searchedThisMac
+        /// This Mac and Gmail have both answered in full.
+        case searchedEverywhere
+    }
+
+    var status: Status {
+        if readFailed { return .unreadable }
+        if !hasLocalAnswer || gmailState == .loading { return .searching }
+        return gmailState == .finished ? .searchedEverywhere : .searchedThisMac
+    }
+
+    /// Gmail's side as the list shows it: loading from the moment it's due
+    /// to be asked.
+    var gmailState: GmailPager.State {
+        isGmailScheduled ? .loading : gmail?.state ?? .ready
     }
 
     func setMessageMode(_ enabled: Bool) {
@@ -53,7 +105,9 @@ final class SearchModel {
 
     @ObservationIgnored private let cache: MailCache
     @ObservationIgnored private var sources: [Source]
-    @ObservationIgnored private var query = SearchQuery("")
+    /// The query the cache and Gmail answer: the field's text, limited by the
+    /// scope bar's restriction.
+    @ObservationIgnored private(set) var query = SearchQuery("")
     @ObservationIgnored private var limit = pageSize
     /// Each account's latest results for the current query.
     @ObservationIgnored private var found: [String: [ThreadRecord]] = [:]
@@ -69,6 +123,7 @@ final class SearchModel {
     /// Searches these accounts from now on, running the current query again.
     func setSources(_ sources: [Source]) {
         self.sources = sources
+        if let accountID, !sources.contains(where: { $0.accountID == accountID }) { self.accountID = nil }
         restart()
     }
 
@@ -76,6 +131,26 @@ final class SearchModel {
     func update(_ newText: String) {
         guard newText != text else { return }
         text = newText
+        // The next search starts from all mail in every account again.
+        if !isActive {
+            restriction = nil
+            accountID = nil
+        }
+        restart()
+    }
+
+    /// Limits results to mail that also matches `restriction`, or searches
+    /// all mail again for nil.
+    func restrict(to restriction: String?) {
+        guard restriction != self.restriction else { return }
+        self.restriction = restriction
+        restart()
+    }
+
+    /// Searches one of the sources, or all of them again for nil.
+    func restrict(toAccount accountID: String?) {
+        guard accountID != self.accountID else { return }
+        self.accountID = accountID
         restart()
     }
 
@@ -88,6 +163,7 @@ final class SearchModel {
     /// Asks Gmail for its next page, or again after a failure.
     func askGmail() {
         delayTask?.cancel()
+        isGmailScheduled = false
         gmail?.next { [weak self] _ in self?.observeResults() }
     }
 
@@ -115,6 +191,7 @@ final class SearchModel {
 
     func stop() {
         delayTask?.cancel()
+        isGmailScheduled = false
         resultsTasks.forEach { $0.cancel() }
         gmail?.cancel()
     }
@@ -123,15 +200,24 @@ final class SearchModel {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The sources the scope bar leaves in.
+    private var activeSources: [Source] {
+        guard let accountID else { return sources }
+        return sources.filter { $0.accountID == accountID }
+    }
+
     private func restart() {
-        query = SearchQuery(text)
+        query = SearchQuery(text, scope: restriction)
+        highlights = SearchHighlights(query)
         limit = Self.pageSize
         delayTask?.cancel()
+        isGmailScheduled = false
         gmail?.cancel()
         gmail = nil
         // Results for another query or other accounts no longer count.
         found = [:]
         failedAccountIDs = []
+        hasLocalAnswer = false
         results = []
         onResultsChange?()
         guard isActive else {
@@ -143,7 +229,7 @@ final class SearchModel {
         }
         let query = query
         let messageMode = usesMessageMode
-        gmail = GmailPager(sources: Dictionary(uniqueKeysWithValues: sources.map { source in
+        gmail = GmailPager(sources: Dictionary(uniqueKeysWithValues: activeSources.map { source in
             let engine = source.engine
             return (source.accountID, { token in
                 if messageMode { return try await engine.searchGmailMessages(query, timeZone: .current, pageToken: token) }
@@ -152,6 +238,7 @@ final class SearchModel {
         }))
         observeResults()
         guard trimmedText.count >= Self.gmailMinimumLength else { return }
+        isGmailScheduled = true
         delayTask = Task { [weak self] in
             try? await Task.sleep(for: Self.gmailDelay)
             guard !Task.isCancelled else { return }
@@ -165,7 +252,7 @@ final class SearchModel {
     private func observeResults() {
         resultsTasks.forEach { $0.cancel() }
         let query = query
-        resultsTasks = sources.map { source in
+        resultsTasks = activeSources.map { source in
             let accountID = source.accountID
             let stream = cache.searchResults(
                 query, including: gmail?.threadIDs(in: accountID) ?? [], accountID: accountID,
@@ -187,18 +274,21 @@ final class SearchModel {
                 }
             }
         }
+        // With no account to search, there's nothing to wait for.
+        if resultsTasks.isEmpty { publish() }
     }
 
     /// Merges the accounts' results in the order each account's list uses,
     /// once every account has answered the query, so the list never shows
     /// one account's matches alone while another's are on the way.
     private func publish() {
-        guard sources.allSatisfy({ found[$0.accountID] != nil || failedAccountIDs.contains($0.accountID) }) else {
+        guard activeSources.allSatisfy({ found[$0.accountID] != nil || failedAccountIDs.contains($0.accountID) }) else {
             return
         }
         let merged = found.values.joined().sorted { lhs, rhs in
             lhs.lastDate != rhs.lastDate ? lhs.lastDate > rhs.lastDate : lhs.key < rhs.key
         }
+        hasLocalAnswer = true
         results = Array(merged.prefix(limit))
         onResultsChange?()
     }

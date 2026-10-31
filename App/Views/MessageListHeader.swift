@@ -5,6 +5,10 @@ struct MessageListHeader: View {
     let mailbox: MailboxModel
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if mailbox.search.isActive, mailbox.selectedSavedSearch == nil {
+                SearchScopeBar(mailbox: mailbox)
+                    .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
+            }
             if mailbox.listPreferences.showsQuickFilters || showsDestructiveHeader {
                 actionHeader
                     .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
@@ -45,6 +49,59 @@ struct MessageListHeader: View {
                     .controlSize(.small).disabled(mailbox.triage.isPreparing)
                 }
             }
+        }
+    }
+}
+
+/// Where the results come from: all mail or the selected mailbox, and every
+/// account in view or one of them. The search can be saved from here too.
+private struct SearchScopeBar: View {
+    let mailbox: MailboxModel
+    @State private var isSaving = false
+
+    var body: some View {
+        // In a narrow list the account menu truncates its title.
+        ViewThatFits(in: .horizontal) {
+            controls(narrow: false)
+            controls(narrow: true)
+        }
+        .labelsHidden()
+        .controlSize(.small)
+        .popover(isPresented: $isSaving, attachmentAnchor: .point(.bottomTrailing), arrowEdge: .bottom) {
+            SavedSearchEditor(mailbox: mailbox, existing: nil)
+        }
+    }
+
+    private func controls(narrow: Bool) -> some View {
+        let search = mailbox.search
+        let accounts = mailbox.searchAccountChoices
+        return HStack(spacing: Tokens.Space.s1) {
+            if let scope = mailbox.searchMailboxScope {
+                Picker("Mailbox", selection: Binding(get: { search.restriction }, set: { search.restrict(to: $0) })) {
+                    Text("All Mail").tag(String?.none)
+                    Text(scope.title).tag(String?.some(scope.restriction))
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            } else {
+                Text("All Mail").font(.callout).foregroundStyle(.secondary)
+            }
+            if !accounts.isEmpty {
+                Picker("Account", selection: Binding(get: { search.accountID }, set: { search.restrict(toAccount: $0) })) {
+                    Text("All Accounts").tag(String?.none)
+                    ForEach(accounts, id: \.id) { Text(mailbox.accountTitle($0)).tag(String?.some($0.id)) }
+                }
+                .pickerStyle(.menu)
+                .fixedSize(horizontal: !narrow, vertical: false)
+                .layoutPriority(1)
+            }
+            Button("Save") { isSaving = true }
+                .help("New Saved Search")
+                .accessibilityLabel("New Saved Search")
+                // Voice Control users say the name they see.
+                .accessibilityInputLabels([Text("Save"), Text("New Saved Search")])
+                .fixedSize()
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 }

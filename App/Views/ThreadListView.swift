@@ -97,7 +97,7 @@ struct ThreadListView: View {
     }
 
     private var observationID: MessageListObservationID {
-        .init(keys: displayedThreads.map(\.key), query: mailbox.search.text,
+        .init(keys: displayedThreads.map(\.key), query: mailbox.search.queryText,
               remoteRevision: mailbox.search.gmail?.revision ?? 0, conversations: mailbox.listPreferences.conversations)
     }
 
@@ -108,7 +108,7 @@ struct ThreadListView: View {
         guard !keys.isEmpty else { mailbox.listEntries = []; return }
         let threadsByAccount = Dictionary(grouping: keys, by: \.accountID).mapValues { $0.map(\.threadID) }
         do {
-            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? SearchQuery(mailbox.search.text) : nil
+            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? mailbox.search.query : nil
             for try await entries in mailbox.cache.messageListEntries(threadsByAccount: threadsByAccount, matching: query,
                                                                       includingMessageIDs: mailbox.search.matchingMessageIDs, snoozedOnly: mailbox.showsSnoozed) {
                 guard !Task.isCancelled else { return }
@@ -168,31 +168,31 @@ struct ThreadListView: View {
     @ViewBuilder
     private var emptySearch: some View {
         let search = mailbox.search
-        let gmail = search.gmail?.state ?? .ready
-        if search.readFailed {
+        switch search.status {
+        case .unreadable:
             TernEmptyState(
                 title: "Can't Search",
                 systemImage: "exclamationmark.magnifyingglass",
                 message: "Tern couldn't read the mail saved on this Mac."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if gmail == .loading {
+        case .searching:
             ProgressView {
-                Text("Searching Gmail…")
+                Text(search.gmailState == .loading ? "Searching Gmail…" : "Searching…")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
+        case .searchedThisMac, .searchedEverywhere:
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(
                     title: "No Results",
                     systemImage: "magnifyingglass",
-                    message: gmail == .finished
+                    message: search.status == .searchedEverywhere
                         ? "No matches on this Mac or in Gmail."
                         : "No matches on this Mac.",
                     fillsSpace: false
                 )
-                if gmail != .finished {
-                    GmailRow(kind: .search, state: gmail, action: search.askGmail)
+                if search.status == .searchedThisMac {
+                    GmailRow(kind: .search, state: search.gmailState, action: search.askGmail)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -241,7 +241,7 @@ struct ThreadListView: View {
             .id(isSearching)
             if !rows.isEmpty {
                 if isSearching {
-                    let gmail = mailbox.search.gmail?.state ?? .ready
+                    let gmail = mailbox.search.gmailState
                     if gmail != .finished {
                         GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
                     }

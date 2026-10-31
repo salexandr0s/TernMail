@@ -338,6 +338,7 @@ Done in 24 commits, `2b6fbab` to `88def6b`. `c02569c` in that range is the separ
 - `AvatarInitials.from(name:address:)` serves `TernAvatar` and `ContactAvatar`, and `AvatarInitialsTests` covers the input forms both pass (`4d55064`).
 - `SearchQuery.quoted(_:)` sits in `MessageContent` beside the parser that reads it back, in place of the planned `GmailQuery`, and a Core test checks the round trip (`40d6cf9`). `RecipientField.editingString` quotes a display name for an address header, not a search operand, so it keeps its own code.
   - Open issue: the parser does not read backslash escapes, so a label name containing `"` does not survive the round trip. Gmail's own handling of escapes is unverified. Addresses can't contain quotes.
+    - Closed by `38a946f`: `quoted` adds no escapes and returns nil for a value containing `"`, and label suggestions, address searches and the search scope skip such values.
 - `RootView.sceneID` names the mailbox window's scene (`88def6b`).
 - Decisions for Phase 5:
   - Weights: no weight tokens and no `.bold()`. `design_tokens.json` defines regular (400), medium (500) and semibold (600), and those are `Font.Weight.regular`, `.medium` and `.semibold`, so the sites already name the token values. `.bold()` would draw at 700. Phase 5 checks that text uses only those three weights and moves the two `fontWeight(_:)` sites into `.font(_:)`. Bold stays on the small glyphs drawn on a fill (`SwatchPicker`, `LabelAppearancePicker`, the `EmailCalendarSuggestionsView` badge), and the empty-state symbol keeps `.light`.

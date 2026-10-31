@@ -27,4 +27,20 @@ extension MailboxModel {
         guard let owner = account(id: accountID) else { return }
         queueUndoable("Remove Label", in: owner) { try await $0.editLabels(target: .messages([messageID]), add: [], remove: [labelID]) }
     }
+
+    /// Saves whether mail from `address` loads remote images in `accountID`,
+    /// then tells the open messages from that sender.
+    func setImageSenderAllowed(_ allowed: Bool, address: String, accountID: String) {
+        Task {
+            do {
+                guard let store = accountStore else {
+                    notice = .init(message: "This sender's image preference could not be saved.", isError: true)
+                    return
+                }
+                try await store.setImageSenderAllowed(allowed, address: address, accountID: accountID)
+                NotificationCenter.default.post(name: ReadingPreferences.imagePermissionChanged, object: nil,
+                    userInfo: ["account": accountID, "sender": address.lowercased(), "allowed": allowed])
+            } catch { notice = .init(message: "This sender's image preference could not be saved.", isError: true) }
+        }
+    }
 }

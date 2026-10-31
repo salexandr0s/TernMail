@@ -33,7 +33,6 @@ enum MailQuickFilter: String, CaseIterable, Identifiable {
 enum MailNextSelection: String, CaseIterable, Identifiable {
     case below, above, none
     var id: String { rawValue }
-    var title: String { switch self { case .below: "Below"; case .above: "Above"; case .none: "None" } }
 }
 
 enum MailSwipeAction: String, CaseIterable, Identifiable {

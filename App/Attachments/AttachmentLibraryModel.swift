@@ -55,7 +55,11 @@ final class AttachmentLibraryModel {
     var coverageKey: CoverageKey { .init(accountIDs: availableAccounts.map(\.id), revision: reloadRevision) }
     var pageEnd: Int { min(pageOffset + items.count, totalCount) }
     var hasPreviousPage: Bool { pageOffset > 0 }
-    var rangeSummary: String { totalCount == 0 ? "0 attachments" : "\(pageOffset + 1)–\(pageEnd) of \(totalCount.formatted())" }
+    /// The library's only count, shown in the status bar.
+    var rangeSummary: String {
+        if hasPreviousPage || hasMore { return "\(pageOffset + 1)–\(pageEnd) of \(totalCount.formatted()) attachments" }
+        return totalCount == 1 ? "1 attachment" : "\(totalCount.formatted()) attachments"
+    }
     @ObservationIgnored private var observationRevision = UUID()
     @ObservationIgnored private var coverageRevision = UUID()
     @ObservationIgnored private var presentationRevision = UUID()
@@ -83,16 +87,11 @@ final class AttachmentLibraryModel {
         )
     }
 
+    /// The main area shows the same words while the first pass runs.
     var coverageSummary: String {
-        let states = scopedStates
-        if states.isEmpty { return "Preparing attachment index…" }
-        if states.contains(where: { $0.lastError != nil }) { return "Some attachments may be missing" }
-        if states.count < scopedAccountIDs.count || states.contains(where: { !$0.isComplete }) {
-            return "Finding older attachments…"
-        }
-        if states.contains(where: { $0.historyPageToken != nil || !$0.pendingMessageIDs.isEmpty }) {
-            return "Updating attachments…"
-        }
+        if isBuildingIndex { return "Finding attachments in your mail…" }
+        if hasCoverageGap { return "Some attachments may be missing" }
+        if isUpdatingIndex { return "Updating attachments…" }
         return "Historical mail indexed"
     }
 
@@ -101,12 +100,15 @@ final class AttachmentLibraryModel {
         let checked = states.reduce(0) { $0 + $1.indexedMessageCount }
         var detail = "\(checked.formatted()) attachment-bearing emails checked. Includes archived mail, Spam, and Trash."
         detail += " Categories are detected on this Mac from filenames, email subjects, and readable documents. Document checks can continue after indexing finishes. Your corrections take priority."
-        if states.count < scopedAccountIDs.count || states.contains(where: { !$0.isComplete || $0.historyPageToken != nil || !$0.pendingMessageIDs.isEmpty }) {
+        if isBuildingIndex || isUpdatingIndex {
             detail += " Results are partial while indexing continues. You can leave this view."
         }
         if let error = states.compactMap(\.lastError).first { detail += " " + error }
         if !unavailableAccountIDs.intersection(scopedAccountIDs).isEmpty {
             detail += " Sign in again to update affected accounts or retrieve their files."
+        }
+        if mailbox.accounts.contains(where: { !$0.syncEnabled && scopedAccountIDs.contains($0.account.id) }) {
+            detail += " Indexing is paused for accounts with Sync Mail off. Turn it on again in Settings."
         }
         if let updated = states.compactMap(\.updatedAt).min() {
             detail += " Last checked \(updated.formatted(date: .abbreviated, time: .shortened))."
@@ -114,8 +116,43 @@ final class AttachmentLibraryModel {
         return detail
     }
 
-    var indexingNeedsRetry: Bool { scopedStates.contains { $0.lastError != nil } }
+    /// Only accounts that index can retry a failed pass.
+    var indexingNeedsRetry: Bool {
+        let indexing = indexingAccountIDs
+        return scopedStates.contains { $0.lastError != nil && indexing.contains($0.accountID) }
+    }
+    /// True while an account in scope that indexes hasn't finished its first
+    /// pass over mail history. Accounts with Sync Mail off or waiting for sign-in
+    /// don't index, and a failed pass waits for a retry, so neither counts.
+    var isBuildingIndex: Bool {
+        indexingAccountIDs.contains { id in
+            guard let state = indexStates.first(where: { $0.accountID == id }) else { return true }
+            return !state.isComplete && state.lastError == nil
+        }
+    }
+    /// True when a failed pass, or an account that doesn't index, leaves part of
+    /// mail history out.
+    private var hasCoverageGap: Bool {
+        let indexing = indexingAccountIDs
+        return scopedAccountIDs.contains { id in
+            guard let state = indexStates.first(where: { $0.accountID == id }) else { return !indexing.contains(id) }
+            return state.lastError != nil || (!state.isComplete && !indexing.contains(id))
+        }
+    }
+    /// True while an account that indexes has newer history or messages left to check.
+    private var isUpdatingIndex: Bool {
+        let indexing = indexingAccountIDs
+        return scopedStates.contains {
+            indexing.contains($0.accountID) && ($0.historyPageToken != nil || !$0.pendingMessageIDs.isEmpty)
+        }
+    }
     private var scopedAccountIDs: Set<String> { Set(query.accountIDs) }
+    /// Accounts in scope whose index runs on its own: Sync Mail is on and the
+    /// account is signed in.
+    private var indexingAccountIDs: Set<String> {
+        Set(mailbox.accounts.filter(\.syncEnabled).map(\.account.id))
+            .intersection(scopedAccountIDs).subtracting(unavailableAccountIDs)
+    }
     private var scopedStates: [AttachmentIndexState] { indexStates.filter { scopedAccountIDs.contains($0.accountID) } }
 
     func start() async {
@@ -190,7 +227,7 @@ final class AttachmentLibraryModel {
     func retryIndexing() async {
         errorMessage = nil
         lastAction = .indexing
-        for owner in mailbox.accounts where !unavailableAccountIDs.contains(owner.account.id) {
+        for owner in mailbox.accounts where owner.syncEnabled && !unavailableAccountIDs.contains(owner.account.id) {
             do { _ = try await owner.engine.indexAttachments(retryNow: true) }
             catch { errorMessage = Self.message(for: error) }
         }

@@ -13,16 +13,19 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     let libraryToolbar: AttachmentLibraryToolbarState
     let section: WorkspaceSection
     var isCompact = false
+    /// The toolbar is short of room, so an idle field folds into a button
+    /// rather than pushing the assistant into the overflow menu.
+    var isFolded = false
 
     var body: some CustomizableToolbarContent {
-        // Keeps search out of the capsule of the section's last controls.
+        // Keeps the field out of the capsule of the actions before it.
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(id: "workspace.search", placement: .primaryAction) {
-            WorkspaceSearchField(
+            WorkspaceSearchItem(
                 placeholder: placeholder, text: text, focusRequest: focusRequest,
+                width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth, canFold: isFolded,
                 onChange: update, onSubmit: submit, onCancel: cancel
             )
-            .frame(width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth)
             .help(help)
         }
         .customizationBehavior(.disabled)
@@ -40,7 +43,7 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
         switch section {
         case .mail: "Search mail (\(ShortcutCatalog.searchMail.label)). Return searches Gmail."
         case .calendar: "Search events (\(ShortcutCatalog.find.label))"
-        case .attachments: "Search attachments (\(ShortcutCatalog.find.label))"
+        case .attachments: "Search filenames, senders and subjects (\(ShortcutCatalog.find.label)). Document contents aren't searched."
         }
     }
 
@@ -81,16 +84,49 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     }
 }
 
+/// The field, or while it's folded, a button that opens it. An opened field
+/// takes focus and folds again once it's left empty.
+private struct WorkspaceSearchItem: View {
+    let placeholder: String
+    let text: String
+    let focusRequest: Int
+    let width: CGFloat
+    let canFold: Bool
+    let onChange: (String) -> Void
+    let onSubmit: () -> Void
+    let onCancel: () -> Void
+    @State private var isOpen = false
+
+    var body: some View {
+        if canFold && text.isEmpty && !isOpen {
+            Button(placeholder, systemImage: "magnifyingglass") { isOpen = true }
+                .labelStyle(.iconOnly)
+                // ⌥⌘F and Find open the field when it's folded.
+                .onChange(of: focusRequest) { _, _ in isOpen = true }
+        } else {
+            WorkspaceSearchField(
+                placeholder: placeholder, text: text, focusRequest: focusRequest, focusesOnAppear: isOpen,
+                onChange: onChange, onSubmit: onSubmit, onCancel: onCancel,
+                onEndEditing: { isOpen = false }
+            )
+            .frame(width: width)
+        }
+    }
+}
+
 private struct WorkspaceSearchField: NSViewRepresentable {
     let placeholder: String
     let text: String
     let focusRequest: Int
+    var focusesOnAppear = false
     let onChange: (String) -> Void
     let onSubmit: () -> Void
     let onCancel: () -> Void
+    var onEndEditing: () -> Void = {}
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
+        let field = FocusingSearchField()
+        field.focusesOnAppear = focusesOnAppear
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
         field.delegate = context.coordinator
@@ -104,6 +140,7 @@ private struct WorkspaceSearchField: NSViewRepresentable {
         coordinator.onChange = onChange
         coordinator.onSubmit = onSubmit
         coordinator.onCancel = onCancel
+        coordinator.onEndEditing = onEndEditing
         if field.placeholderString != placeholder {
             field.placeholderString = placeholder
             field.setAccessibilityLabel(placeholder)
@@ -125,6 +162,7 @@ private struct WorkspaceSearchField: NSViewRepresentable {
         var onChange: (String) -> Void
         var onSubmit: () -> Void
         var onCancel: () -> Void
+        var onEndEditing: () -> Void = {}
 
         init(focusRequest: Int, onChange: @escaping (String) -> Void,
              onSubmit: @escaping () -> Void, onCancel: @escaping () -> Void) {
@@ -136,6 +174,10 @@ private struct WorkspaceSearchField: NSViewRepresentable {
 
         @objc func textChanged(_ sender: NSSearchField) {
             onChange(sender.stringValue)
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            onEndEditing()
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -150,5 +192,17 @@ private struct WorkspaceSearchField: NSViewRepresentable {
                 return false
             }
         }
+    }
+}
+
+/// A field opened from its folded button takes focus once it's in a window.
+private final class FocusingSearchField: NSSearchField {
+    var focusesOnAppear = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard focusesOnAppear, let window else { return }
+        focusesOnAppear = false
+        window.makeFirstResponder(self)
     }
 }

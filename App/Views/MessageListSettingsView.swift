@@ -23,12 +23,11 @@ struct MessageListSettingsView: View {
             Section("Selection") {
                 SettingsToggleRow("Group messages into conversations", isOn: $preferences.conversations)
                 SettingsControlRow("After archiving or moving to Trash") {
-                    Picker("Select next message", selection: $preferences.nextSelection) {
-                        ForEach(MailNextSelection.allCases) { Text($0.title).tag($0) }
+                    Picker("After archiving or moving to Trash", selection: $preferences.nextSelection) {
+                        ForEach(MailNextSelection.allCases) { Text(nextSelectionTitle($0)).tag($0) }
                     }
                     .labelsHidden()
                     .fixedSize()
-                    .help("Choose the next message to select after an action.")
                 }
             }
 
@@ -51,7 +50,6 @@ struct MessageListSettingsView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Tokens.Space.s4)
                 .padding(.vertical, Tokens.Space.s2)
             }
 
@@ -65,12 +63,24 @@ struct MessageListSettingsView: View {
         }
     }
 
+    /// The rule in full, in the list's own unit: conversations or messages.
+    private func nextSelectionTitle(_ selection: MailNextSelection) -> String {
+        let item = preferences.conversations ? "conversation" : "message"
+        return switch selection {
+        case .below: "Select the \(item) below"
+        case .above: "Select the \(item) above"
+        case .none: "Don't select another \(item)"
+        }
+    }
+
+    /// Popups start at their column's leading edge, under its header.
     private func swipePicker(_ title: String, selection: Binding<MailSwipeAction>) -> some View {
         Picker(title, selection: selection) {
             ForEach(MailSwipeAction.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
         }
         .labelsHidden()
-        .frame(maxWidth: .infinity)
+        .fixedSize()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(title)
     }
 }

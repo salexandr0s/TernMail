@@ -4,11 +4,13 @@ import MessageContent
 import SwiftUI
 
 /// The row of controls in an expanded message's header.
-struct MessageActions: View {
+struct MessageActions<SenderItems: View>: View {
     let message: MessageDetail
     let mailbox: MailboxModel
     let selectedText: String
     let compose: (MailboxModel.ComposeStart) -> Void
+    /// The sender's reading choices, after the message commands in More.
+    @ViewBuilder let senderItems: SenderItems
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -29,6 +31,7 @@ struct MessageActions: View {
                 }.help(primary == .replyAll ? "Reply All" : "Reply")
                 Menu {
                     MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText)
+                    senderItems
                 } label: { Label("More", systemImage: "ellipsis.circle").frame(width: Tokens.Space.s6, height: Tokens.Space.s6) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
                 .accessibilityLabel("More actions for this message")

@@ -7,9 +7,15 @@ import Testing
 
     private func word(_ text: String, prefix: Bool = false) -> Node { .term(.word(text, isPrefix: prefix)) }
 
-    @Test func quotedOperandsParseBackWhole() {
-        #expect(SearchQuery("label:" + SearchQuery.quoted("Project notes")).root == .term(.labelName("Project notes")))
-        #expect(SearchQuery("from:" + SearchQuery.quoted("ann@example.com")).root == .term(.field(.from, "ann@example.com")))
+    @Test func quotedOperandsParseBackWhole() throws {
+        let label = try #require(SearchQuery.quoted("Project notes"))
+        #expect(SearchQuery("label:" + label).root == .term(.labelName("Project notes")))
+        let address = try #require(SearchQuery.quoted("ann@example.com"))
+        #expect(SearchQuery("from:" + address).root == .term(.field(.from, "ann@example.com")))
+        // Quotes take no escapes, so a backslash stays as it is.
+        let backslash = try #require(SearchQuery.quoted(#"Q3\Q4"#))
+        #expect(SearchQuery("label:" + backslash).root == .term(.labelName(#"Q3\Q4"#)))
+        #expect(SearchQuery.quoted(#"The "big" project"#) == nil)
     }
 
     @Test func orBindsTighterThanTheImpliedAnd() {
@@ -20,6 +26,19 @@ import Testing
         #expect(SearchQuery("hike AND map ").root == .all([word("hike"), word("map")]))
         // Lowercase "or" is a word.
         #expect(SearchQuery("a or b ").root == .all([word("a"), word("or"), word("b")]))
+    }
+
+    @Test func aScopeLimitsTheWholeQuery() {
+        // Written into the text, the scope would join the OR: either Inbox or "lake".
+        #expect(SearchQuery("in:inbox OR lake tra").root == .all([
+            .any([.term(.labelID("INBOX")), word("lake")]), word("tra", prefix: true),
+        ]))
+        let scoped = SearchQuery("OR lake tra", scope: "in:inbox")
+        #expect(scoped.root == .all([.term(.labelID("INBOX")), .all([word("lake"), word("tra", prefix: true)])]))
+        #expect(scoped.gmailQuery(timeZone: .gmt) == "in:inbox (OR lake tra)")
+        #expect(SearchQuery("lake", scope: "in:trash").includesSpamAndTrash)
+        // Text with nothing to search locally stays that way.
+        #expect(SearchQuery("!!", scope: "in:inbox").root == nil)
     }
 
     @Test func negationBracesAndGroups() {

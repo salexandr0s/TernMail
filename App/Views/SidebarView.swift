@@ -4,33 +4,28 @@ import SwiftUI
 
 struct SidebarView: View {
     @Bindable var mailbox: MailboxModel
-    @Environment(AppModel.self) private var app
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
 
     var body: some View {
-        List(selection: $mailbox.selectedMailbox) {
-            Section("Library") {
-                Button { app.destination = .calendar } label: {
-                    Label("Calendar", systemImage: "calendar")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Open Calendar")
-                Label("Attachments", systemImage: "paperclip")
-                    .tag(MailboxID.combined(AttachmentLibraryModel.mailboxID))
-            }
+        // Calendar and Attachments live in the toolbar's section switcher, so
+        // the sidebar starts with Favorites. During a search it shows no
+        // selection, since results can come from outside the selected mailbox.
+        List(selection: $mailbox.sidebarSelection) {
             FavoritesView(mailbox: mailbox)
             SavedSearchRows(mailbox: mailbox)
             if mailbox.presentedAccounts.count > 1 {
                 let colors = accountColors
-                let names = sidebarNames
-                Section("Mailboxes") {
-                    ForEach(boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))) { box in
-                        CombinedMailboxRows(
-                            mailbox: mailbox, box: box, colors: colors, names: names, isExpanded: expansion(of: box.id)
-                        )
+                let names = mailbox.sidebarAccountNames
+                let combined = boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))
+                // Favorites can hold every system mailbox, which leaves no rows here.
+                if !combined.isEmpty {
+                    Section("Mailboxes") {
+                        ForEach(combined) { box in
+                            CombinedMailboxRows(
+                                mailbox: mailbox, box: box, colors: colors, names: names, isExpanded: expansion(of: box.id)
+                            )
+                        }
                     }
                 }
                 ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
@@ -41,16 +36,18 @@ struct SidebarView: View {
                         AccountHeader(mailbox: mailbox, owner: owner, color: colors[owner.account.id] ?? .secondary)
                     }
                 }
-            } else {
-                if let owner = mailbox.presentedAccounts.first {
-                Section("Mailboxes") {
-                    let outboxID = MailboxID.account(owner.account.id, MailboxModel.outboxID)
-                    ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
-                        let boxID = MailboxID.account(owner.account.id, box.id)
-                        MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
-                            .conversationDropTarget(boxID, mailbox: mailbox)
-                            .tag(boxID)
-                        if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
+            } else if let owner = mailbox.presentedAccounts.first {
+                let outboxID = MailboxID.account(owner.account.id, MailboxModel.outboxID)
+                let accountBoxes = boxes(showingOutbox: mailbox.showsOutbox(outboxID))
+                if !accountBoxes.isEmpty {
+                    Section("Mailboxes") {
+                        ForEach(accountBoxes) { box in
+                            let boxID = MailboxID.account(owner.account.id, box.id)
+                            MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
+                                .conversationDropTarget(boxID, mailbox: mailbox)
+                                .tag(boxID)
+                            if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
+                        }
                     }
                 }
                 Section {
@@ -72,19 +69,24 @@ struct SidebarView: View {
                         .accessibilityLabel("New Label")
                     }
                 }
-                }
             }
         }
         .listStyle(.sidebar)
         .sheet(isPresented: Bindable(mailbox.navigation).isShowingSwitcher) {
             MailboxSwitcher(mailbox: mailbox)
         }
+        // The File menu, the Favorites menu and the Saved Searches header
+        // open this. Search results pop the same editor over their Save button.
+        .sheet(isPresented: Bindable(mailbox.navigation).isCreatingSearch) {
+            SavedSearchEditor(mailbox: mailbox, existing: nil)
+        }
         .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
-        // A bar, not a plain inset, so rows scrolling under the status fade
-        // behind the scroll edge effect instead of showing through its text.
+        // Rows scroll under the status line; the bar's hard edge effect keeps
+        // the status readable over them.
         .safeAreaBar(edge: .bottom) {
             SyncStatusView(mailbox: mailbox)
         }
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
         .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
             expandOrCollapse(press.key)
         }
@@ -144,13 +146,13 @@ struct SidebarView: View {
     /// Right Arrow shows a mailbox's account rows and Left Arrow hides them,
     /// or moves from an account row up to its mailbox, as in an outline.
     private func expandOrCollapse(_ key: KeyEquivalent) -> KeyPress.Result {
-        guard mailbox.presentedAccounts.count > 1, let selected = mailbox.selectedMailbox,
+        guard mailbox.presentedAccounts.count > 1, let selected = mailbox.sidebarSelection,
               (SystemMailbox.all + [.outbox]).contains(where: { $0.id == selected.id })
         else { return .ignored }
         switch (selected, key) {
         case (.combined(let id), .rightArrow): expansion(of: id).wrappedValue = true
         case (.combined(let id), .leftArrow): expansion(of: id).wrappedValue = false
-        case (.account(_, let id), .leftArrow): mailbox.selectedMailbox = .combined(id)
+        case (.account(_, let id), .leftArrow): mailbox.sidebarSelection = .combined(id)
         default: return .ignored
         }
         return .handled
@@ -184,14 +186,6 @@ struct SidebarView: View {
         }
     }
 
-    private var sidebarNames: [String: String] {
-        var names = AccountAppearance.shortNames(mailbox.accounts.map(\.account))
-        for owner in mailbox.accounts {
-            if let nickname = mailbox.accountPresentation[owner.account.id]?.nickname, !nickname.isEmpty { names[owner.account.id] = nickname }
-        }
-        return names
-    }
-
     private static func editedLabel(_ request: MailboxModel.LabelEditorRequest) -> LabelRecord? {
         if case .edit(let label) = request.kind { return label }
         return nil
@@ -206,9 +200,66 @@ struct SidebarView: View {
     }
 }
 
+/// Names for account rows in the sidebar: the nickname the user set, then
+/// the account's own name while no other row would show it, then the part of
+/// its address before the @ (the whole address when that part repeats).
+enum SidebarAccountNames {
+    static func names(for accounts: [AccountRecord], nicknames: [String: String] = [:]) -> [String: String] {
+        let addressNames = AccountAppearance.shortNames(accounts)
+        let setNames = accounts.reduce(into: [String: String]()) { names, account in
+            if let nickname = trimmed(nicknames[account.id]) { names[account.id] = nickname }
+        }
+        // One person's accounts often share a name, so a shared name falls back to the address.
+        let ownNames = accounts.reduce(into: [String: String]()) { names, account in
+            if setNames[account.id] == nil, let name = trimmed(account.displayName) { names[account.id] = name }
+        }
+        let uses = Dictionary(ownNames.values.map { ($0.lowercased(), 1) }, uniquingKeysWith: +)
+        return accounts.reduce(into: [:]) { names, account in
+            names[account.id] = setNames[account.id]
+                ?? ownNames[account.id].flatMap { uses[$0.lowercased()] == 1 ? $0 : nil }
+                ?? addressNames[account.id] ?? account.email
+        }
+    }
+
+    private static func trimmed(_ text: String?) -> String? {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        return text
+    }
+}
+
+extension MailboxModel {
+    /// Account row names for the sidebar, keyed by account ID.
+    var sidebarAccountNames: [String: String] {
+        let records = accounts.map(\.account)
+        let nicknames = records.reduce(into: [String: String]()) { names, account in
+            names[account.id] = accountPresentation[account.id]?.nickname
+        }
+        return SidebarAccountNames.names(for: records, nicknames: nicknames)
+    }
+}
+
+/// The disclosure chevron of a row that lists every account. As in Finder,
+/// it shows while the row is expanded or under the pointer, and keeps its
+/// width otherwise so titles stay aligned.
+struct SidebarDisclosureChevron: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isExpanded: Bool
+    let isHovered: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
+            .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
+            .opacity(isExpanded || isHovered ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.sidebarRowSize) private var sidebarRowSize
     let box: SystemMailbox
     let title: String
@@ -218,17 +269,12 @@ private struct MailboxRow: View {
     /// Set on a row listing every account to show its disclosure state.
     var isExpanded: Bool?
     var isAccount = false
+    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: Tokens.Space.s1) {
             if let isExpanded {
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
-                    .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
-                    .accessibilityHidden(true)
+                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: isHovered)
             }
             Label {
                 Text(title)
@@ -245,6 +291,7 @@ private struct MailboxRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
         .badge(count)
     }
 }
@@ -299,7 +346,7 @@ private struct CombinedMailboxRows: View {
     }
 
     private func selectAndToggle() {
-        mailbox.selectedMailbox = .combined(box.id)
+        mailbox.sidebarSelection = .combined(box.id)
         // Keep the disclosure animation local to the chevron, outside List layout.
         isExpanded.toggle()
     }
@@ -323,10 +370,11 @@ private struct AccountHeader: View {
                     .imageScale(.small)
                     .foregroundStyle(color)
                     .accessibilityHidden(true)
+                // The start of an address tells accounts apart, so a narrow sidebar cuts the end.
                 Text(mailbox.accountTitle(owner.account))
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                     .help(email)
                 if !needsSignIn, case .failed(let message) = owner.syncStatus {
                     Image(systemName: "exclamationmark.triangle")

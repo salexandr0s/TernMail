@@ -102,6 +102,26 @@ import Testing
         #expect(draft.savedPlainText == "Back Monday")
     }
 
+    @Test func panesSavedBeforeTheSignatureMergeMoveOnce() throws {
+        // The pane saved by an older version, then the pane and source it becomes.
+        let cases = [("localSignatures", "signatures", "local"),
+                     ("signatures", "signatures", "gmail"),
+                     ("connections", "connections", "local")]
+        for (saved, pane, source) in cases {
+            let suite = "SettingsEditorTests.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set(saved, forKey: SettingsDestination.storageKey)
+            SettingsDestination.migrateSavedPane(in: defaults)
+            #expect(defaults.string(forKey: SettingsDestination.storageKey) == pane)
+            #expect(defaults.string(forKey: SignatureSource.storageKey) == source)
+            // From then on "signatures" is the merged pane, which keeps its source.
+            defaults.set("signatures", forKey: SettingsDestination.storageKey)
+            SettingsDestination.migrateSavedPane(in: defaults)
+            #expect(defaults.string(forKey: SignatureSource.storageKey) == source)
+        }
+    }
+
     private func eventually(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }

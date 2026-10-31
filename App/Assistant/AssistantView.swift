@@ -14,6 +14,9 @@ struct AssistantView: View {
     @Environment(\.openWindow) private var openWindow
     @FocusState private var isComposerFocused: Bool
     @State private var hasPlacedInitialFocus = false
+    /// Where focus was as the panel appeared, so a composer that turns on
+    /// later leaves alone focus the user has moved since.
+    @State private var responderAtAppear: ObjectIdentifier?
     @State private var showsSettings = false
     @State private var scrollRequest = UUID()
 
@@ -40,12 +43,16 @@ struct AssistantView: View {
         .onKeyPress(.escape) { closeOnEscape() }
         .task {
             guard !hasPlacedInitialFocus else { return }
+            responderAtAppear = NSApp.keyWindow?.firstResponder.map(ObjectIdentifier.init)
             // Let the native field join the window before assigning focus.
             await Task.yield()
-            guard !Task.isCancelled, !showsSettings else { return }
-            hasPlacedInitialFocus = true
-            isComposerFocused = true
+            guard !Task.isCancelled else { return }
+            placeInitialFocus()
         }
+        // A restored connection turns the composer on later.
+        .onChange(of: setupPrompt == nil) { if isFocusUnmoved { placeInitialFocus() } }
+        // Setup finished in the settings sheet hands focus to the composer.
+        .onChange(of: showsSettings) { if !showsSettings { placeInitialFocus() } }
         .task { await model.refreshConnection() }
         .onChange(of: model.connection.connectionRevision) {
             model.refreshAccess()
@@ -151,6 +158,7 @@ struct AssistantView: View {
                     }
                     .accessibilityLabel("Message to assistant")
                     .accessibilityHint("Return to send. Shift-Return for a new line.")
+                    .disabled(setupPrompt != nil)
                 HStack(spacing: Tokens.Space.s2) {
                     composerHint
                         .font(.caption2).foregroundStyle(.secondary)
@@ -189,7 +197,10 @@ struct AssistantView: View {
         if model.isRunning {
             Label("Working…", systemImage: "ellipsis")
         } else if let setupPrompt {
-            Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
+            // An empty chat shows the welcome setup card, the panel's one setup prompt.
+            if !model.messages.isEmpty {
+                Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
+            }
         } else {
             Text("Return to send · ⇧ Return for a new line")
         }
@@ -214,6 +225,19 @@ struct AssistantView: View {
 
     private var canSubmit: Bool {
         setupPrompt == nil && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The composer takes focus once, as soon as it can be used.
+    private func placeInitialFocus() {
+        guard !hasPlacedInitialFocus, !showsSettings, setupPrompt == nil else { return }
+        hasPlacedInitialFocus = true
+        isComposerFocused = true
+    }
+
+    /// Nothing has focus, or what had it as the panel appeared still does.
+    private var isFocusUnmoved: Bool {
+        guard let window = NSApp.keyWindow, let responder = window.firstResponder else { return true }
+        return responder === window || ObjectIdentifier(responder) == responderAtAppear
     }
 
     private func submit() {

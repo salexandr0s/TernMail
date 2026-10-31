@@ -104,8 +104,14 @@ import Testing
 
         // Local matches come from every mailbox, and the selection stays inside the list.
         mailbox.search.update("plans")
+        // Nothing has answered yet, so nothing can be called missing.
+        #expect(mailbox.search.status == .searching)
         try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t2", "t3"] }
         #expect(mailbox.selectedThreadIDs.isEmpty)
+        // The Window menu, Mission Control and saved window state show the
+        // window's title and subtitle, so they leave the query out.
+        #expect(!mailbox.selectedLabelTitle.contains("plans"))
+        #expect(!mailbox.selectedMailboxSubtitle.contains("plans"))
 
         // Gmail alone answers this query, so its conversations make up the list.
         mailbox.search.update("has:attachment")
@@ -113,6 +119,7 @@ import Testing
         mailbox.search.submit()
         try await waitUntil { mailbox.search.gmail?.state == .finished }
         try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t1", "t2", "t3", "t5"] }
+        #expect(mailbox.search.status == .searchedEverywhere)
 
         mailbox.search.cancel()
         #expect(!mailbox.search.isActive)
@@ -284,6 +291,39 @@ import Testing
         try await waitUntil { mailbox.listedThreads.count == 2 }
         #expect(Set(mailbox.listedThreads.map(\.accountID)) == ["second"])
         #expect(!mailbox.listMixesAccounts)
+        await mailbox.stop()
+    }
+
+    @Test func searchScopeNarrowsToTheMailboxOrOneAccountUntilTheSearchEnds() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.addAccount(second, gmail: AuditGmail())
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 4 }
+
+        // Two letters stay on this Mac, so Gmail can't add mail from outside the scope.
+        mailbox.search.update("pl")
+        try await waitUntil { mailbox.listedThreads.count == 4 }
+        #expect(mailbox.search.status == .searchedThisMac)
+        #expect(mailbox.sidebarSelection == nil)
+        let scope = try #require(mailbox.searchMailboxScope)
+        #expect(scope == MailboxSearchScope(title: "Inbox", restriction: "in:inbox"))
+        mailbox.search.restrict(to: scope.restriction)
+        try await waitUntil { mailbox.listedThreads.count == 2 }
+        #expect(Set(mailbox.listedThreads.map(\.key.threadID)) == ["t2"])
+        mailbox.search.restrict(toAccount: "second")
+        try await waitUntil { mailbox.listedThreads.count == 1 }
+        #expect(mailbox.listedThreads.first?.accountID == "second")
+        #expect(!mailbox.listMixesAccounts)
+
+        // Choosing the selected mailbox again ends the search, and the next search starts from all mail.
+        mailbox.sidebarSelection = .combined(SystemLabel.inbox)
+        #expect(!mailbox.search.isActive)
+        #expect(mailbox.search.restriction == nil && mailbox.search.accountID == nil)
+        #expect(mailbox.sidebarSelection == .combined(SystemLabel.inbox))
         await mailbox.stop()
     }
 

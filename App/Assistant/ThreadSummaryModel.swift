@@ -31,7 +31,7 @@ enum ThreadSummaryError: Error { case sourceChanged }
 enum ThreadSummaryAvailability: Equatable {
     case ready
     case loading
-    case unavailable(reason: String, action: String)
+    case unavailable
 }
 
 @MainActor

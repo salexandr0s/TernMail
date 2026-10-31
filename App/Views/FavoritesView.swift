@@ -5,6 +5,7 @@ struct FavoritesView: View {
     let mailbox: MailboxModel
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
+    @State private var hoveredBox: MailboxID?
 
     var body: some View {
         Section {
@@ -26,8 +27,11 @@ struct FavoritesView: View {
                     Button("New Saved Search…") { mailbox.navigation.isCreatingSearch = true }
                     Divider()
                     Button("Reset Favorites") { Task { await mailbox.navigation.resetFavorites() } }
-                } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).fixedSize().help("Edit Favorites")
+                } label: {
+                    Label("Edit Favorites", systemImage: "ellipsis.circle").labelStyle(.iconOnly)
+                }
+                // One control: the indicator beside the icon read as a second one.
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Edit Favorites")
             }
         }
     }
@@ -36,14 +40,22 @@ struct FavoritesView: View {
         let isExpanded = expanded.ids.contains(box.id)
         let canExpand = accounts(for: box).count > 1
         HStack(spacing: Tokens.Space.s1) {
-            if canExpand { Image(systemName: isExpanded ? "chevron.down" : "chevron.right").font(.caption2).foregroundStyle(.secondary) }
+            // With several accounts, every favorite keeps the chevron's width so titles line up.
+            if mailbox.presentedAccounts.count > 1 {
+                SidebarDisclosureChevron(isExpanded: canExpand && isExpanded, isHovered: canExpand && hoveredBox == box)
+            }
             Label(title(favorite), systemImage: symbol(favorite)).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onHover { isHovering in
+            if isHovering { hoveredBox = box } else if hoveredBox == box { hoveredBox = nil }
         }
         .badge(canExpand && isExpanded ? 0 : mailbox.sidebarBadgeCount(box))
         .conversationDropTarget(box, mailbox: mailbox)
         .tag(box)
         .onTapGesture {
-            mailbox.selectedMailbox = box
+            mailbox.sidebarSelection = box
             if canExpand {
                 if isExpanded { expanded.ids.remove(box.id) } else { expanded.ids.insert(box.id) }
             }
@@ -60,18 +72,21 @@ struct FavoritesView: View {
             Button("Remove from Favorites", systemImage: "star.slash") { Task { await mailbox.navigation.removeFavorite(favorite.id) } }
         }
         if canExpand && isExpanded {
+            let names = mailbox.sidebarAccountNames
             ForEach(accounts(for: box), id: \.account.id) { owner in
                 let accountBox = MailboxID.account(owner.account.id, box.id)
+                let name = names[owner.account.id] ?? owner.account.email
                 Label {
-                    Text(shortName(owner.account))
+                    Text(name)
                 } icon: {
                     Image(systemName: symbol(favorite)).foregroundStyle(accountColor(owner.account.id))
                 }
                     .lineLimit(1).padding(.leading, Tokens.Space.s8)
+                    .help(owner.account.email)
                     .badge(mailbox.sidebarBadgeCount(accountBox))
                     .conversationDropTarget(accountBox, mailbox: mailbox)
                     .tag(accountBox)
-                    .accessibilityLabel("\(title(favorite)), \(shortName(owner.account))")
+                    .accessibilityLabel("\(title(favorite)), \(name)")
                 if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
             }
         } else if box.id == SystemLabel.inbox, accounts(for: box).count == 1, let owner = accounts(for: box).first {
@@ -85,11 +100,6 @@ struct FavoritesView: View {
         case .account(let id, _): mailbox.presentedAccounts.filter { $0.account.id == id }
         case .scoped(_, let ids): mailbox.presentedAccounts.filter { ids.contains($0.account.id) }
         }
-    }
-
-    private func shortName(_ account: AccountRecord) -> String {
-        if let nickname = mailbox.accountPresentation[account.id]?.nickname, !nickname.isEmpty { return nickname }
-        return AccountAppearance.shortNames(mailbox.accounts.map(\.account))[account.id] ?? account.email
     }
 
     private func accountColor(_ id: String) -> Color {

@@ -128,9 +128,10 @@ extension MailboxModel {
     func searchToAddress(_ address: String, accountID: String) { searchAddress(address, accountID: accountID, field: "to") }
 
     private func searchAddress(_ address: String, accountID: String, field: String) {
-        guard let address = EmailAddress.parseList(address).first, address.isValid else { return }
+        guard let address = EmailAddress.parseList(address).first, address.isValid,
+              let operand = SearchQuery.quoted(address.address) else { return }
         selectedMailbox = .account(accountID, SystemLabel.allMail)
-        search.update("\(field):" + SearchQuery.quoted(address.address))
+        search.update("\(field):" + operand)
         search.submit()
     }
 

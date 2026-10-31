@@ -14,14 +14,16 @@ struct AttachmentLibraryView: View {
 
     private var filterCount: Int { AttachmentFilterChip.values(for: model).filter { $0.id != "search" }.count }
     private var hasFilters: Bool { !AttachmentFilterChip.values(for: model).isEmpty }
+    /// An empty library shows the first pass's progress in place of the list,
+    /// and the status bar leaves out its count until results arrive.
+    private var showsIndexProgress: Bool {
+        model.items.isEmpty && !model.isLoading && !hasFilters && model.isBuildingIndex
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             filterBar
             Divider()
-            resultsTitle
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
             if let error = model.errorMessage { errorBanner(error) }
             GeometryReader { geometry in
                 if model.items.isEmpty { emptyState }
@@ -73,20 +75,6 @@ struct AttachmentLibraryView: View {
         .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
     }
 
-    private var resultsTitle: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            if model.isLoading {
-                ProgressView().controlSize(.mini)
-                Text("Finding attachments…").foregroundStyle(.secondary)
-            } else {
-                Text(model.totalCount == 1 ? "1 attachment" : "\(model.totalCount.formatted()) attachments")
-                    .fontWeight(.semibold).monospacedDigit()
-                if hasFilters { Text("found").foregroundStyle(.secondary) }
-            }
-        }
-        .font(.callout).fixedSize()
-    }
-
     @ViewBuilder private var emptyState: some View {
         if model.isLoading {
             TernEmptyState(title: "Finding Your Files", systemImage: "doc.text.magnifyingglass",
@@ -100,6 +88,11 @@ struct AttachmentLibraryView: View {
                     fillsSpace: false)
                 Button("Clear All Filters") { model.clearFilters(); focusSearch() }
                     .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if showsIndexProgress {
+            ProgressView {
+                Text(model.coverageSummary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -118,7 +111,7 @@ struct AttachmentLibraryView: View {
         }
         .padding(Tokens.Space.s3)
         .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .padding(.horizontal, Tokens.Space.s5).padding(.bottom, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
     }
 
     private var footer: some View {
@@ -140,7 +133,7 @@ struct AttachmentLibraryView: View {
     private var pageControls: some View {
         HStack(spacing: Tokens.Space.s2) {
             if model.isWorking { ProgressView().controlSize(.mini); Text("Preparing files…") }
-            else { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
+            else if !showsIndexProgress { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
             if model.hasPreviousPage || model.hasMore {
                 Button { model.previousPage() } label: { Image(systemName: "chevron.left") }
                     .disabled(!model.hasPreviousPage || model.isLoading)

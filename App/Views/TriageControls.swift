@@ -23,8 +23,10 @@ struct TriageControls: View {
         } label: {
             Label("Mail Actions", systemImage: "ellipsis.circle")
         }
+        .menuIndicator(.hidden)
         .disabled(mailbox.triage.isPreparing || mailbox.triage.isDeleting)
         .help("Spam, importance and mailbox actions")
+        .accessibilityLabel("Mail Actions")
     }
 }
 

@@ -78,6 +78,9 @@ struct MailCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.newLabel.shortcut)
                 .disabled(focusedMailbox == nil)
+            Button("New Saved Search…", systemImage: "magnifyingglass") { focusedMailbox?.navigation.isCreatingSearch = true }
+                .labelStyle(.titleAndIcon)
+                .disabled(focusedMailbox == nil)
             Divider()
             Button("Open Conversation", systemImage: "envelope.open") { openConversationWindow() }
                 .labelStyle(.titleAndIcon)

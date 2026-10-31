@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The assistant button at the trailing end of the toolbar, spaced apart so
-/// it doesn't read as part of the search field.
+/// The assistant button at the trailing end of the toolbar, in a capsule of
+/// its own so it doesn't read as part of search.
 struct WorkspaceAssistantToolbar: CustomizableToolbarContent {
     let isAssistantPresented: Bool
     let onToggleAssistant: () -> Void
@@ -9,6 +9,7 @@ struct WorkspaceAssistantToolbar: CustomizableToolbarContent {
 
     var body: some CustomizableToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
+            .mailToolbarVisible(isAssistantAvailable)
         ToolbarItem(id: "workspace.assistant", placement: .primaryAction) {
             AssistantLauncher(isPresented: isAssistantPresented, onToggle: onToggleAssistant)
         }
