@@ -4,6 +4,76 @@ Date: 2026-10-31. The audit build came from `ab7f2c7`, and file references were 
 
 This is a list of suggested design changes, not an approved plan. Each item gives what the screen showed, where the code lives, the suggested change, and how sure I am. Items are grouped by area and ranked within each group. The first section collects the defects, which are worth fixing before any restyling.
 
+## Implementation status
+
+Implemented on `feat/ui-design-review` on 2026-10-31. Item 4 did not reproduce in an active window and has no change. Every other item shipped. "Differs" in the table means the change departs from the suggestion, and the next section says how.
+
+| Item | Status | Commits |
+|---|---|---|
+| 1. Sync status draws over the sidebar | Done, differs | `3f1538e` |
+| 2. Columns overflow narrow windows | Done, differs | `0b1477e` |
+| 3. Tab skips Subject after the From account switches | Done, differs | `09b8af7` |
+| 4. A message body clipped after the reader narrowed | Not reproduced | |
+| 5. Toolbar items merge into one capsule | Done | `7103144` |
+| 6. The Assistant button lands in the overflow menu | Done, differs | `1346d8d` |
+| 7. Moving between sections | Done, differs | `1346d8d`, `e84f73e` |
+| 8. Unlabeled toolbar menus | Done, differs | `8d6f9b6` |
+| 9. Inbox sits below Calendar and Attachments | Done | `e84f73e` |
+| 10. Empty section headers | Done | `e84f73e` |
+| 11. Chevrons and account names in the sidebar | Done | `784d095` |
+| 12. Account badges draw too much attention | Done | `e5718ef`, `fbf3512` |
+| 13. Search results lack scope and highlighting | Done, differs | `8a6f75f`, `85333df`, `9ff57e3`, `326c561`, `32d39b2`, `b4cd75f`, `49fdd0f`, `93c0853`, `2454b13`, `38a946f` |
+| 14. The empty reader text gives odd advice | Done | `709e632` |
+| 15. Every message stays expanded | Done | `5483c97` |
+| 16. AI summary and Connect prompts before setup | Done, differs | `84da4ae`, `4486d1d`, `ea8b5ab` |
+| 17. Per-message controls stack up | Done | `f87678c`, `8e1b631`, `1c6756c` |
+| 18. The Inbox chip's X archives the thread | Done | `137fe46` |
+| 19. Header fields look like a web form | Done | `b164338` |
+| 20. Discard sits next to Send | Done, differs | `68d6133` |
+| 21. Recipient tokens and sender changes | Done, differs | `3067d8f`, `bd42025`, `09b8af7`, `cce5621`, `873314a` |
+| 22. Labels repeat their headers | Done | `db4e796` |
+| 23. 21 panes, with two for signatures | Done | `cc4ef36`, `03f6da0`, `1cbd46f` |
+| 24. Smaller Settings fixes | Done | `76ac275`, `1477a0c`, `5ce756d`, `08c36f2`, `fd5c9df` |
+| 25. Attachments repeats itself | Done | `211f1da`, `39c279a`, `45f20f5` |
+| 26. Calendar asks four times to connect | Done, differs | `21ed874`, `49fc37d` |
+
+### How the changes differ from the suggestions
+
+- Item 1: the footer sits in a safe-area bar with a hard scroll edge effect, in place of `.background(.bar)` and a `Divider()`. The edge effect separates it from the rows that scroll under it.
+- Item 2: below the three-column minimum the sidebar hides on its own. It returns once the window fits the sidebar beside the 720-point window minimum (949 points with the default sidebar), because AppKit widens the window when a sidebar opens with less room. The sidebar button clears the automatic state.
+- Item 3: when the sender switches by itself, the cursor goes back to where it was instead of moving to Subject.
+- Item 6: the tiers follow the room the toolbar has after the sidebar, or after the window controls while the sidebar is hidden, instead of the window width. Below 1080 points of room the section switcher becomes a pop-up menu and the profile picker drops its name. Below 1020 the mail actions fold into menus. Below 760 an idle search field folds into a button that opens it. With the sidebar shown, search folds in windows narrower than about 988 points, where the review suggested about 900. Search and the assistant stay in the toolbar down to the 720-point minimum.
+- Item 7: the switcher shows segments when the toolbar has room and a pop-up menu when it doesn't. With the sidebar shown, the segments appear from a window about 1308 points wide.
+- Item 8: done here rather than in Phase 5 of `docs/plans/swiftui-improvements.md`. The profile picker shows the profile name only in the widest tier and stays hidden when there are no profiles.
+- Item 13: the window title reads "Search Results" and the subtitle gives the count, as in "12 results". AppKit shows window titles in the Window menu and Mission Control and can keep them in saved window state, and search terms are meant to stay unstored. The scope bar sits under the list header, not under the search field. It offers All Mail or the selected mailbox, an account menu when search covers several accounts, and Save. The scope wraps the whole query, as in `in:inbox (trail OR lake)`. Gmail's search syntax has no escapes, so a label whose name contains a double quote gets no scope and no search suggestion.
+- Item 16: after setup, the summary card also stays hidden in threads from accounts without AI access or outside the assistant's scope, instead of showing a prompt there.
+- Item 20: Discard Draft moved to the leading side of the toolbar, before the title. Send and Archive sits in its own arrow item after Send and shows only for replies and forwards. A toolbar menu with a primary action renders without the prominent style, so Send stays a separate prominent button.
+- Item 21: a new compose window steps away from the open ones through a small view that moves it as it opens, not `defaultWindowPlacement`. Windows that open as tabs or in full screen don't step. The sender note's Undo button hides when the previous account has signed out.
+- Item 26: the Calendar sidebar keeps its per-account Cancel Sign-In and Retry buttons.
+
+### Verification
+
+- `swift test --package-path Packages/Core`: 517 tests in 87 suites passed.
+- `xcodebuild test` with `-only-testing:TernTests`: 343 tests in 55 suites passed. `e29b2ff` gave the sidebar layout tests their own toolbar identifier. AppKit mirrors item changes across toolbars that share an identifier, and the test host's main window already used the workspace one, which crashed the run.
+- Screenshots of the `--ui-audit` build with synthetic data: Mail in light at 1280, 960 and 720 points and in dark at 1280 and 720; Calendar in light at 1280 and in dark at 960 and 720; Attachments in light at 1280 and 720 and in dark at 960.
+
+### Not verified
+
+- The search results screen after the last list fixes (title, subtitle, status text and scope bar). Tests cover it, but no screenshot does.
+- Compose: the cascade's timing, and the tab and full screen cases.
+- Calendar's Cancel Sign-In and Retry buttons.
+- Areas the second code review did not cover: the VoiceOver labels on Send and More Send Options, the From row highlight timing, the cursor restore, avatars in recipient tokens, the compose header rows, the template menu, `ConversationWindow` re-creation, the privacy line's counts, the welcome setup card, and the narrow header layout.
+- As in the original review, there was no VoiceOver pass and no live Gmail data.
+
+### Found during the checks
+
+These also happen on `main`.
+
+- After a window shrinks from 1280 to 960 points, the Calendar sidebar grows to its 320-point maximum and the week grid cuts off Sunday.
+- The "Calendar" title crosses the sidebar's edge.
+- Audit builds sometimes hold the CPU near 100%: AppKit's animation timer redraws the window and SwiftUI lays out the hosting view on every frame. It showed up with audit windows on another Space.
+- Debug builds only: under plain `--ui-audit`, attachment indexing is off but the index progress still waits on every syncing account, so its spinner never stops. `--ui-audit-attachments` turns indexing on.
+
 ## Method
 
 The app ran in the Debug `--ui-audit` mode, with synthetic mail for two accounts (`audit@example.invalid` and `second@example.invalid`). Flags used: `--ui-audit-list`, `--ui-audit-calendar`, `--ui-audit-dark` and `--ui-audit-light`. Windows were captured at 720, 960 and 1280 points wide, in light and dark appearance.
