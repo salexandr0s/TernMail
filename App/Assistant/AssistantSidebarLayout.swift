@@ -29,8 +29,12 @@ struct AssistantSidebarLayout {
     }
 }
 
-/// Keeps the native split controller and its constraints in charge. Probes find
-/// only their own ancestors, so a detached assistant never affects another window.
+/// Puts the user's divider positions back after the assistant closes. While it
+/// shows, the columns' equal minimum, ideal and maximum widths narrow the panes
+/// and the native split collapses navigation at narrow widths. After a collapse
+/// the split falls back to the list's minimum width, so the dragged widths need
+/// restoring. Probes find only their own ancestors, so a detached assistant
+/// never affects another window.
 @MainActor
 final class AssistantMailPaneSizing {
     enum Pane: CaseIterable { case navigation, list }
@@ -39,28 +43,28 @@ final class AssistantMailPaneSizing {
         weak var pane: NSView?
         let index: Int
     }
-    private enum Mode: Equatable { case normal, compressed, restoring }
     private var dividers: [Pane: SplitDivider] = [:]
-    private var originalWidths: [Pane: CGFloat] = [:]
-    private var mode = Mode.normal
+    /// Divider positions from before the assistant opened, kept until restored.
+    private var savedPositions: [Pane: CGFloat] = [:]
+    private var isPresented = false
     private var remainingAttempts = 0
     private var scheduled = false
 
     func beginPresentation() {
-        guard mode != .compressed else { return }
-        if mode == .normal {
-            originalWidths = dividers.compactMapValues { divider in
-                guard let split = divider.split, let pane = divider.pane, !split.isSubviewCollapsed(pane) else { return nil }
-                return pane.frame.width
-            }
+        guard !isPresented else { return }
+        isPresented = true
+        remainingAttempts = 0
+        // A restore that hasn't finished still holds the user's positions.
+        guard savedPositions.isEmpty else { return }
+        savedPositions = dividers.compactMapValues { divider in
+            guard let split = divider.split, let pane = divider.pane, !split.isSubviewCollapsed(pane) else { return nil }
+            return pane.frame.maxX
         }
-        mode = .compressed
-        requestApply()
     }
 
     func endPresentation() {
-        guard mode != .normal else { return }
-        mode = .restoring
+        guard isPresented else { return }
+        isPresented = false
         requestApply()
     }
 
@@ -73,7 +77,7 @@ final class AssistantMailPaneSizing {
     /// SwiftUI can apply column constraints after updating the representable.
     /// Retry only while layout is settling, with a fixed budget and no animation.
     func requestApply() {
-        guard mode != .normal else { return }
+        guard !isPresented, !savedPositions.isEmpty else { return }
         remainingAttempts = 3
         schedulePendingApply()
     }
@@ -90,33 +94,33 @@ final class AssistantMailPaneSizing {
     }
 
     func apply() {
-        guard mode != .normal, remainingAttempts > 0 else { return }
-        remainingAttempts -= 1
+        guard !isPresented, !savedPositions.isEmpty, remainingAttempts > 0 else { return }
         var settled = true
-        for role in Pane.allCases {
+        var outOfReach = false
+        for (role, position) in savedPositions {
+            // Wait for a column that SwiftUI hasn't brought back yet.
             guard let divider = dividers[role], let split = divider.split, let pane = divider.pane,
                   divider.index < split.arrangedSubviews.count - 1,
                   split.arrangedSubviews[divider.index] === pane,
                   !split.isSubviewCollapsed(pane) else {
-                if mode == .restoring, originalWidths[role] != nil { settled = false }
+                settled = false
                 continue
             }
-            let target: CGFloat
-            if mode == .compressed {
-                target = role == .navigation ? AssistantSidebarLayout.navigationMinimum : AssistantSidebarLayout.listMinimum
-            } else {
-                guard let width = originalWidths[role] else { continue }
-                target = width
+            if abs(pane.frame.maxX - position) > 0.5 {
+                let lower = split.minPossiblePositionOfDivider(at: divider.index)
+                let upper = split.maxPossiblePositionOfDivider(at: divider.index)
+                // The split can still have its narrower presented width. A clamped
+                // position would stick, so wait for the pass that widens it.
+                if position < lower - 0.5 || position > upper + 0.5 { outOfReach = true }
+                else { split.setPosition(position, ofDividerAt: divider.index) }
             }
-            let lower = split.minPossiblePositionOfDivider(at: divider.index)
-            let upper = split.maxPossiblePositionOfDivider(at: divider.index)
-            let position = min(max(pane.frame.minX + target, lower), upper)
-            if abs(pane.frame.width - target) > 0.5 { split.setPosition(position, ofDividerAt: divider.index) }
-            settled = settled && abs(pane.frame.width - target) <= 0.5
+            settled = settled && abs(pane.frame.maxX - position) <= 0.5
         }
         if settled {
             remainingAttempts = 0
-            if mode == .restoring { mode = .normal; originalWidths = [:] }
+            savedPositions = [:]
+        } else if !outOfReach {
+            remainingAttempts -= 1
         }
     }
 }
