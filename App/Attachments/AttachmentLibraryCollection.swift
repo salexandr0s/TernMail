@@ -93,10 +93,7 @@ struct AttachmentLibraryCollection: View {
             accounts: model.availableAccounts, compact: availableWidth < Tokens.Layout.readableWidth)
             .tag(item.id)
             .draggable(containerItemID: item.id, containerNamespace: dragNamespace)
-            .accessibilityAction(named: "Open") { Task { await model.openFile(item) } }
-            .accessibilityAction(named: "Quick Look") { Task { await model.preview(item) } }
-            .accessibilityAction(named: "Save") { Task { await model.save(item) } }
-            .accessibilityAction(named: "Open Conversation in New Window") { Task { await model.openSource(item) } }
+            .attachmentAccessibilityActions(item, model: model) { Task { await model.openFile(item) } }
     }
 
     private var cards: some View {
@@ -189,10 +186,7 @@ private struct AttachmentCardCell: View {
             .contextMenu { AttachmentItemMenu(item: item, model: model) }
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { onSelect() }
-            .accessibilityAction(named: "Open", onOpen)
-            .accessibilityAction(named: "Quick Look") { Task { await model.preview(item) } }
-            .accessibilityAction(named: "Save") { Task { await model.save(item) } }
-            .accessibilityAction(named: "Open Conversation in New Window") { Task { await model.openSource(item) } }
+            .attachmentAccessibilityActions(item, model: model, open: onOpen)
     }
 }
 
@@ -205,6 +199,23 @@ extension AttachmentRecord {
 }
 
 private extension View {
+    /// The item menu's commands for VoiceOver. Share stays in the context
+    /// menu, which VoiceOver also opens, because its picker needs a place
+    /// on screen.
+    func attachmentAccessibilityActions(
+        _ item: AttachmentLibraryItem, model: AttachmentLibraryModel, open: @escaping () -> Void
+    ) -> some View {
+        accessibilityActions {
+            Button("Open", action: open)
+            Button("Quick Look") { Task { await model.preview(item) } }
+            Button("Save") { Task { await model.save(item) } }
+            if let saved = model.savedFile(for: item) {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([saved]) }
+            }
+            Button("Open Conversation in New Window") { Task { await model.openSource(item) } }
+        }
+    }
+
     /// Dragging a selected file carries the whole selection. Each file
     /// downloads only when the receiver asks for it.
     func attachmentDragContainer(_ model: AttachmentLibraryModel, in namespace: Namespace.ID) -> some View {
