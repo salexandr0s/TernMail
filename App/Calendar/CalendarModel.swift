@@ -92,6 +92,7 @@ final class CalendarModel {
     @ObservationIgnored var activeRangeTask: (key: CalendarRangeIdentity, id: UUID, task: Task<Void, Never>)?
     @ObservationIgnored var completedSearch: CalendarSearchIdentity?
     @ObservationIgnored var searchCompletedAt: Date?
+    @ObservationIgnored private var rangeMemoryPressure: CalendarRangeMemoryPressure?
     @ObservationIgnored private var isStarted = false
     @ObservationIgnored private var didLoadCalendars = false
 
@@ -102,6 +103,9 @@ final class CalendarModel {
         workingHours = defaults.data(forKey: "calendarWorkingHours")
             .flatMap { try? JSONDecoder().decode(CalendarWorkingHours.self, from: $0) } ?? CalendarWorkingHours()
         firstWeekday = defaults.object(forKey: "calendarFirstWeekday") as? Int ?? Calendar.current.firstWeekday
+        rangeMemoryPressure = CalendarRangeMemoryPressure { [weak self] in
+            Task { @MainActor in self?.invalidateRangeSnapshots() }
+        }
     }
 
     func start() async {

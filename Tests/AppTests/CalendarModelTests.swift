@@ -59,6 +59,10 @@ import Testing
             #expect(fixture.model.rangeSnapshots.count == 3)
             #expect(fixture.model.rangeSnapshotOrder.count == 3)
             #expect(fixture.model.rangeSnapshots.values.reduce(0) { $0 + $1.byteCost } <= 12 * 1_024 * 1_024)
+            let visible = fixture.model.presentation?.id
+            fixture.model.invalidateRangeSnapshots()
+            #expect(fixture.model.rangeSnapshots.isEmpty)
+            #expect(fixture.model.presentation?.id == visible)
 
             fixture.model.accessExpired(fixture.accountID)
             #expect(fixture.model.rangeSnapshots.isEmpty)

@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import GmailAPI
 import MailStore
@@ -10,6 +11,20 @@ struct CalendarRangeIdentity: Hashable, Sendable {
     let mode: String
     let lifecycle: Int
     let owners: [String]
+}
+
+/// Owns the dispatch source independently of actor isolation so teardown can
+/// cancel it immediately. The callback only schedules work on the main actor.
+final class CalendarRangeMemoryPressure {
+    private let source: any DispatchSourceMemoryPressure
+
+    init(onPressure: @escaping @Sendable () -> Void) {
+        source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler(handler: onPressure)
+        source.resume()
+    }
+
+    deinit { source.cancel() }
 }
 
 struct CalendarRangeSnapshot: Sendable {
