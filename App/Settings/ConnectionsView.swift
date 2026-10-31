@@ -85,16 +85,18 @@ struct ConnectionsView: View {
 struct PermanentDeletionSection: View {
     let accounts: [AccountRecord]
     let app: AppModel
-    /// Shown below the rows: a grouped form crashes when a `ForEach` element
-    /// adds an optional row of its own.
-    @State private var error: String?
+    /// Each account's last failure, by account ID. They list below the rows,
+    /// each naming its account: a grouped form crashes when a `ForEach`
+    /// element adds an optional row of its own.
+    @State private var errors: [String: String] = [:]
 
     var body: some View {
         Section {
             ForEach(accounts) { account in
-                PermanentDeletionRow(account: account, app: app, error: $error)
+                PermanentDeletionRow(account: account, app: app,
+                                     error: Binding(errors[account.id], set: { errors[account.id] = $0 }))
             }
-            if let error { SettingsErrorLabel(error) }
+            ForEach(failures, id: \.self) { SettingsErrorLabel($0) }
         } header: {
             Text("Permanent deletion")
         } footer: {
@@ -107,6 +109,12 @@ struct PermanentDeletionSection: View {
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    /// A line for each failed account, naming it. The lines get IDs of their
+    /// own: a form shows the view of an earlier row with the same ID instead.
+    private var failures: [String] {
+        accounts.compactMap { account in errors[account.id].map { "\(account.email): \($0)" } }
     }
 }
 
