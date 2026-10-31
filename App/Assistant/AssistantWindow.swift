@@ -14,6 +14,7 @@ struct AssistantWindow: View {
     var body: some View {
         AssistantView(model: model, onOpenSource: onOpenSource)
             .frame(minWidth: Tokens.Layout.composeMinWidth, minHeight: Tokens.Layout.composeMinHeight)
+            .focusedSceneValue(\.assistantModel, model)
             .background {
                 AssistantWindowReader { window in
                     if self.window !== window { appliedPresentationID = nil }

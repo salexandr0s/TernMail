@@ -33,8 +33,8 @@ enum ShortcutCatalog {
         case file = "File"
         case edit = "Edit"
         case view = "View"
-        case message = "Message"
         case mailbox = "Mailbox"
+        case message = "Message"
         case format = "Format"
         case calendar = "Calendar"
         case go = "Go"
@@ -85,15 +85,48 @@ enum ShortcutCatalog {
     /// Opens a compose window. The Assistant window keeps ⌘N for a new chat.
     static let newMessage = Command("file.newMessage", menu: .file, title: "New Message", key: "n",
                                     scopes: Scope.all.subtracting([.assistant]))
+    /// The Assistant window's ⌘N.
+    static let newChat = Command("file.newChat", menu: .file, title: "New Chat", key: "n", scopes: [.assistant])
+    static let newEvent = Command("file.newEvent", menu: .file, title: "New Event", key: "n",
+                                  modifiers: [.option, .command], scopes: [.calendar])
+    /// ⌃⌘N, so the calendar keeps ⌥⌘N for a new event.
+    static let newLabel = Command("file.newLabel", menu: .file, title: "New Label…", key: "n",
+                                  modifiers: [.control, .command], scopes: [.mail])
+    static let openConversation = Command("file.openConversation", menu: .file, title: "Open Conversation", key: "o",
+                                          scopes: [.mail])
     static let attachFiles = Command("file.attachFiles", menu: .file, title: "Attach Files…", key: "a",
                                      modifiers: [.shift, .command], scopes: [.compose])
+    static let print = Command("file.print", menu: .file, title: "Print…", key: "p",
+                               scopes: [.mail, .conversation, .calendar])
 
     // MARK: Edit
 
+    /// Finds in the destination that has a search field. Mail keeps ⌥⌘F for its Gmail search.
+    static let find = Command("edit.find", menu: .edit, title: "Find…", key: "f", scopes: [.calendar, .attachments])
     static let searchMail = Command("edit.searchMail", menu: .edit, title: "Search Mail", key: "f",
                                     modifiers: [.option, .command], scopes: [.mail])
-    static let findAttachment = Command("edit.findAttachment", menu: .edit, title: "Find Attachment", key: "f",
-                                        scopes: [.attachments])
+
+    // MARK: View
+
+    /// Provided by `SidebarCommands`; listed so Help shows it and tests guard the keys.
+    static let toggleSidebar = Command("view.toggleSidebar", menu: .view, title: "Show or Hide Sidebar", key: "s",
+                                       modifiers: [.control, .command], scopes: Scope.mainWindow)
+    /// Provided by `ToolbarCommands`.
+    static let toggleToolbar = Command("view.toggleToolbar", menu: .view, title: "Show or Hide Toolbar", key: "t",
+                                       modifiers: [.option, .command], scopes: Scope.all)
+    static let toggleReader = Command("view.toggleReader", menu: .view, title: "Show or Hide Viewing Pane", key: "v",
+                                      modifiers: [.option, .command], scopes: [.mail])
+    static let expandAll = Command("view.expandAll", menu: .view, title: "Expand All Messages", key: "e",
+                                   modifiers: [.shift, .command], scopes: [.mail, .conversation])
+    static let collapseAll = Command("view.collapseAll", menu: .view, title: "Collapse All Messages", key: "e",
+                                     modifiers: [.option, .command], scopes: [.mail, .conversation])
+
+    // MARK: Mailbox
+
+    static let checkForNewMail = Command("mailbox.checkForNewMail", menu: .mailbox, title: "Check for New Mail", key: "n",
+                                         modifiers: [.shift, .command], scopes: Scope.all)
+    static let markAllRead = Command("mailbox.markAllRead", menu: .mailbox, title: "Mark All as Read", key: "u",
+                                     modifiers: [.option, .command], scopes: [.mail])
 
     // MARK: Message
 
@@ -105,28 +138,26 @@ enum ShortcutCatalog {
                                   modifiers: [.shift, .command], scopes: [.mail, .conversation])
     static let forward = Command("message.forward", menu: .message, title: "Forward", key: "f",
                                  modifiers: [.shift, .command], scopes: [.mail, .conversation])
+    static let forwardAsAttachment = Command("message.forwardAsAttachment", menu: .message, title: "Forward as Attachment",
+                                             key: "f", modifiers: [.control, .shift, .command], scopes: [.mail, .conversation])
     static let archive = Command("message.archive", menu: .message, title: "Archive", key: "a",
                                  modifiers: [.control, .command], scopes: [.mail, .conversation])
     static let moveToTrash = Command("message.moveToTrash", menu: .message, title: "Move to Trash", key: .delete,
                                      scopes: [.mail, .conversation])
+    static let toggleSpam = Command("message.toggleSpam", menu: .message, title: "Report Spam or Not Spam", key: "j",
+                                    modifiers: [.shift, .command], scopes: [.mail])
     static let toggleRead = Command("message.toggleRead", menu: .message, title: "Mark as Read or Unread", key: "u",
                                     modifiers: [.shift, .command], scopes: [.mail])
     static let toggleStar = Command("message.toggleStar", menu: .message, title: "Star or Remove Star", key: "l",
                                     modifiers: [.shift, .command], scopes: [.mail])
+    static let markImportant = Command("message.markImportant", menu: .message, title: "Mark as Important", key: "i",
+                                       modifiers: [.shift, .command], scopes: [.mail])
     static let editLabels = Command("message.editLabels", menu: .message, title: "Edit Labels…", key: "l",
                                     modifiers: [.option, .command], scopes: [.mail])
     static let moveTo = Command("message.moveTo", menu: .message, title: "Move to…", key: "m",
                                 modifiers: [.control, .command], scopes: [.mail])
     static let snooze = Command("message.snooze", menu: .message, title: "Snooze…", key: "b",
                                 modifiers: [.control, .command], scopes: [.mail])
-
-    // MARK: Mailbox
-
-    static let checkForNewMail = Command("mailbox.checkForNewMail", menu: .mailbox, title: "Check for New Mail", key: "n",
-                                         modifiers: [.shift, .command], scopes: Scope.all)
-    /// ⌃⌘N, so the calendar keeps ⌥⌘N for a new event.
-    static let newLabel = Command("mailbox.newLabel", menu: .mailbox, title: "New Label…", key: "n",
-                                  modifiers: [.control, .command], scopes: [.mail])
 
     // MARK: Format
 
@@ -139,12 +170,26 @@ enum ShortcutCatalog {
 
     // MARK: Calendar
 
-    static let newEvent = Command("calendar.newEvent", menu: .calendar, title: "New Event", key: "n",
-                                  modifiers: [.option, .command], scopes: [.calendar])
     static let today = Command("calendar.today", menu: .calendar, title: "Today", key: "t", scopes: [.calendar])
+    static let goToDate = Command("calendar.goToDate", menu: .calendar, title: "Go to Date…", key: "t",
+                                  modifiers: [.shift, .command], scopes: [.calendar])
+    /// ⌃⌘1 to ⌃⌘5 in the picker's order: Day, Week, Month, Year, Schedule.
+    static let calendarModes: [Command] = CalendarDisplayMode.allCases.enumerated().map { index, mode in
+        Command("calendar.mode.\(mode.rawValue)", menu: .calendar, title: mode.title,
+                key: KeyEquivalent(Character(String(index + 1))), modifiers: [.control, .command], scopes: [.calendar])
+    }
+    static func calendarMode(_ mode: CalendarDisplayMode) -> Command {
+        calendarModes.first { $0.id == "calendar.mode.\(mode.rawValue)" } ?? today
+    }
 
     // MARK: Go
 
+    static let goMail = Command("go.mail", menu: .go, title: "Mail", key: "1",
+                                modifiers: [.shift, .command], scopes: Scope.mainWindow)
+    static let goCalendar = Command("go.calendar", menu: .go, title: "Calendar", key: "2",
+                                    modifiers: [.shift, .command], scopes: Scope.mainWindow)
+    static let goAttachments = Command("go.attachments", menu: .go, title: "Attachments", key: "3",
+                                       modifiers: [.shift, .command], scopes: Scope.mainWindow)
     static let goToLabel = Command("go.goToLabel", menu: .go, title: "Go to Label…", key: "l",
                                    modifiers: [.control, .option, .command], scopes: [.mail])
     /// ⌘1 to ⌘5, in the sidebar's order, so each number matches a row.
@@ -153,16 +198,34 @@ enum ShortcutCatalog {
                 key: KeyEquivalent(Character(String(index + 1))), scopes: [.mail])
     }
 
+    // MARK: Window
+
+    /// Brings the main window forward, or opens it again after it was closed.
+    static let mainWindow = Command("window.main", menu: .window, title: "Tern", key: "0", scopes: Scope.all)
+    static let assistant = Command("window.assistant", menu: .window, title: "Assistant", key: "a",
+                                   modifiers: [.option, .command], scopes: Scope.all)
+
+    // MARK: Help
+
+    static let keyboardShortcuts = Command("help.keyboardShortcuts", menu: .help, title: "Keyboard Shortcuts", key: "/",
+                                           scopes: Scope.all)
+
     /// Every command, in menu order.
     static let all: [Command] = [
-        newMessage, attachFiles,
-        searchMail, findAttachment,
-        send, reply, replyAll, forward, archive, moveToTrash, toggleRead, toggleStar, editLabels, moveTo, snooze,
-        checkForNewMail, newLabel,
+        newMessage, newChat, newEvent, newLabel, openConversation, attachFiles, print,
+        find, searchMail,
+        toggleSidebar, toggleToolbar, toggleReader, expandAll, collapseAll,
+        checkForNewMail, markAllRead,
+        send, reply, replyAll, forward, forwardAsAttachment, archive, moveToTrash, toggleSpam,
+        toggleRead, toggleStar, markImportant, editLabels, moveTo, snooze,
         bold, italic, underline, link,
-        newEvent, today,
-        goToLabel,
-    ] + mailboxes
+        today, goToDate,
+    ] + calendarModes + [
+        goMail, goCalendar, goAttachments, goToLabel,
+    ] + mailboxes + [
+        mainWindow, assistant,
+        keyboardShortcuts,
+    ]
 
     /// The commands grouped by menu, skipping menus without shortcuts.
     static var sections: [MenuSection] {

@@ -22,15 +22,17 @@ struct DestructiveMailReview: View {
             if model.isDeleting { ProgressView().controlSize(.small) }
             if let error = model.error { Text(error).font(.callout).foregroundStyle(.red) }
             HStack {
-                Button("Cancel") { model.deletionReview = nil }.keyboardShortcut(.cancelAction)
+                // Return keeps the mail. Deleting for good takes a click.
+                Button("Cancel") { model.deletionReview = nil }.keyboardShortcut(.defaultAction)
                     .disabled(model.isDeleting)
                 Spacer()
                 Button("Delete Forever", role: .destructive) { Task { await model.deleteReviewedMessages(using: app) } }
-                    .disabled(model.isDeleting).keyboardShortcut(.defaultAction)
+                    .disabled(model.isDeleting)
             }
         }
         .padding(Tokens.Space.s6)
         .frame(width: Tokens.Sheet.smallWidth)
         .interactiveDismissDisabled(model.isDeleting)
+        .onExitCommand { if !model.isDeleting { model.deletionReview = nil } }
     }
 }

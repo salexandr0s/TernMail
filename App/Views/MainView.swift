@@ -29,6 +29,11 @@ struct MainView: View {
 
     private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
 
+    private var showsLibrary: Bool { mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID }
+    /// Mail menu items act on this window while it shows mail, not the attachment library.
+    private var focusedMailbox: MailboxModel? { isActive && !showsLibrary ? mailbox : nil }
+    private var focusedLibraryToolbar: AttachmentLibraryToolbarState? { isActive && showsLibrary ? libraryToolbar : nil }
+
     var body: some View {
         @Bindable var app = app
         let contentTopInset = paneSizing.contentTopInset
@@ -76,7 +81,8 @@ struct MainView: View {
             ShortcutMonitor(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
         }
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
-        .focusedSceneValue(\.mailboxModel, isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID ? mailbox : nil)
+        .focusedSceneValue(\.mailboxModel, focusedMailbox)
+        .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
         .onAppear { mailbox.undoManager = undoManager }
         .task { await app.assistant.refreshConnection() }
         .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
@@ -170,8 +176,7 @@ struct MainView: View {
                 Button { libraryToolbar.searchFocusRequest += 1 } label: {
                     Label("Find attachment", systemImage: "magnifyingglass")
                 }
-                .keyboardShortcut(ShortcutCatalog.findAttachment.shortcut)
-                .help("Find attachment (\(ShortcutCatalog.findAttachment.label))")
+                .help("Find attachment (\(ShortcutCatalog.find.label))")
             }
             .mailToolbarVisible(isActive && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
             ToolbarItem(id: "mail.sidebar", placement: .navigation) {

@@ -70,6 +70,24 @@ struct ThreadView: View {
         return detail
     }
 
+    /// What the View and File menus can do with the open conversation.
+    private var readerActions: ReaderActions? {
+        guard let detail = readingDetail else { return nil }
+        let ids = Set(detail.messages.map(\.id))
+        return ReaderActions(
+            canExpand: !ids.isSubset(of: expanded),
+            canCollapse: !expanded.isDisjoint(with: ids),
+            canPrint: !detail.messages.contains { $0.body == nil },
+            expandAll: { expanded.formUnion(ids) },
+            collapseAll: { expanded.subtract(ids) },
+            print: { asPDF in
+                ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, exportsPDF: asPDF) { error in
+                    if let error { mailbox.notice = .init(message: error, isError: true) }
+                }
+            }
+        )
+    }
+
     var body: some View {
         Group {
             if let detail = readingDetail {
@@ -190,6 +208,7 @@ struct ThreadView: View {
         }
         .background(Tokens.Surface.canvas)
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
+        .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
         .onChange(of: key) { _, _ in selectedMailQuote = nil }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
         .task {

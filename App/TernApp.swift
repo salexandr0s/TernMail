@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = count == 1
             ? "Review the error in the reopened message. If you quit, it stays unsent in the Outbox."
             : "Review the errors in the reopened messages. If you quit, they stay unsent in the Outbox."
-        alert.addButton(withTitle: "Stay Open")
+        alert.addButton(withTitle: "Stay Open").keyEquivalent = "\u{1b}"
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn
     }
@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = "Tern can't reach Gmail. If you quit, "
             + (count == 1 ? "it will retry this message" : "it will retry these messages")
             + " the next time you open Tern."
-        alert.addButton(withTitle: "Stay Open")
+        alert.addButton(withTitle: "Stay Open").keyEquivalent = "\u{1b}"
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn
     }

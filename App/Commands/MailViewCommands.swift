@@ -7,27 +7,51 @@ extension FocusedValues {
     @Entry var conversationLink: MailLink?
 }
 
+/// The View menu and the app's Window menu additions.
 struct MailViewCommands: Commands {
     @FocusedValue(\.mailboxModel) private var mailbox
+    @FocusedValue(\.readerActions) private var reader
     @Environment(\.openWindow) private var openWindow
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @AppStorage("showMessageSize") private var showsMessageSize = false
 
     var body: some Commands {
+        SidebarCommands()
+        ToolbarCommands()
         CommandGroup(after: .toolbar) {
             Toggle("Show Viewing Pane", isOn: Binding(get: { !hidesReader }, set: { hidesReader = !$0 }))
+                .keyboardShortcut(ShortcutCatalog.toggleReader.shortcut)
+            MessageListDensityPicker()
             MessageListViewOptions()
             Toggle("Message Size", isOn: $showsMessageSize)
             Divider()
-            Button("Customize Toolbar…") { NSApp.keyWindow?.runToolbarCustomizationPalette(nil) }
+            Button("Expand All Messages", systemImage: "rectangle.expand.vertical") { reader?.expandAll() }
+                .labelStyle(.titleAndIcon)
+                .keyboardShortcut(ShortcutCatalog.expandAll.shortcut)
+                .disabled(!(reader?.canExpand ?? false))
+            Button("Collapse All Messages", systemImage: "rectangle.compress.vertical") { reader?.collapseAll() }
+                .labelStyle(.titleAndIcon)
+                .keyboardShortcut(ShortcutCatalog.collapseAll.shortcut)
+                .disabled(!(reader?.canCollapse ?? false))
         }
         CommandGroup(after: .windowArrangement) {
-            Button("Open Conversation in New Window") {
-                guard let key = mailbox?.selectedThreadIDs.first else { return }
-                let messageID = mailbox?.listPreferences.conversations == false ? mailbox?.selectedMessageRows.first?.messageID : nil
-                openWindow(id: ConversationWindow.sceneID, value: MailLink(accountID: key.accountID, threadID: key.threadID, messageID: messageID))
-            }
-            .disabled(mailbox?.selectedThreadIDs.count != 1)
+            Button("Tern", systemImage: "envelope") { openWindow(id: "main") }
+                .labelStyle(.titleAndIcon)
+                .keyboardShortcut(ShortcutCatalog.mainWindow.shortcut)
+            Button("Assistant", systemImage: "sparkles") { AssistantWindow.open(using: openWindow, fullScreen: false) }
+                .labelStyle(.titleAndIcon)
+                .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
+        }
+    }
+}
+
+/// View ▸ Density, as a submenu with a check on the current choice.
+private struct MessageListDensityPicker: View {
+    @Bindable private var preferences = MessageListPreferences.shared
+
+    var body: some View {
+        Picker("Density", selection: $preferences.density) {
+            ForEach(MailListDensity.allCases) { Text($0.title).tag($0) }
         }
     }
 }

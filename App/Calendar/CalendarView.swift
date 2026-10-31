@@ -13,6 +13,7 @@ struct CalendarView: View {
     @State private var showImportReview = false
     @State private var deleteTarget: CalendarDisplayEvent?
     @State private var showDatePicker = false
+    @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @State private var showCalendarList = false
     @FocusState private var searchHasFocus: Bool
     @FocusState private var hasKeyboardFocus: Bool
@@ -85,6 +86,25 @@ struct CalendarView: View {
             Text("Google Calendar will send an update to: " + recipients.joined(separator: ", ") + ".")
         }
         .onExitCommand { if isActive { model.selectedEventID = nil } }
+        .focusedSceneValue(\.calendarModel, isActive ? model : nil)
+        .focusedSceneValue(\.calendarActions, isActive ? calendarActions : nil)
+    }
+
+    /// What the Calendar and File menus can open while this view is active.
+    private var calendarActions: CalendarActions {
+        CalendarActions(
+            showActivity: { showActivity = true },
+            showManagement: { showManagement = true },
+            importEvents: { showImport = true },
+            exportEvents: { exportEvents() },
+            goToDate: { showDatePicker = true },
+            find: { searchHasFocus = true },
+            print: { printEvents() }
+        )
+    }
+
+    private func printEvents() {
+        CalendarImportExport.printEvents(model.events, title: CalendarLayout.format(model.date, style: .dateTime.month(.wide).year(), calendar: model.calendar))
     }
 
     private func calendarPane(compact: Bool) -> some View {
@@ -128,7 +148,6 @@ struct CalendarView: View {
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .help("New event (\(ShortcutCatalog.newEvent.label))").accessibilityLabel("New event")
-                .keyboardShortcut(ShortcutCatalog.newEvent.shortcut)
                 .disabled(!isActive || !model.calendars.contains(where: \.canWrite))
                 actions
             }
@@ -178,7 +197,7 @@ struct CalendarView: View {
             }
             .help("Previous \(model.mode.title.lowercased())").accessibilityLabel("Previous \(model.mode.title.lowercased())")
             Button("Today") { model.date = .now }
-                .keyboardShortcut(ShortcutCatalog.today.shortcut)
+                .help("Today (\(ShortcutCatalog.today.label))")
                 .padding(.horizontal, Tokens.Space.s1)
             Button { navigate(1) } label: {
                 Image(systemName: "chevron.right").frame(width: Tokens.Space.s6, height: Tokens.Space.s8)
@@ -223,7 +242,7 @@ struct CalendarView: View {
                         }
                     }
                 }
-                Button("Print…") { CalendarImportExport.printEvents(model.events, title: CalendarLayout.format(model.date, style: .dateTime.month(.wide).year(), calendar: model.calendar)) }
+                Button("Print…") { printEvents() }
                 Divider()
                 Button("Refresh") { Task { await model.refresh() } }
                 Button("Undo last calendar change") { Task { if isActive { await model.undo() } } }
@@ -374,8 +393,9 @@ struct CalendarView: View {
     private func prepareChange(_ event: CalendarDisplayEvent, range: CalendarEventRange) {
         perform { try await model.change(event, to: range) }
     }
+    /// Single keys follow the same Settings switch as the mail list.
     private func calendarShortcut(_ key: KeyPress) -> KeyPress.Result {
-        guard hasKeyboardFocus, canHandleCalendarUndo,
+        guard usesSingleKeys, hasKeyboardFocus, canHandleCalendarUndo,
               key.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
         switch key.characters.lowercased() {
         case "c": model.beginNew(on: CalendarLayout.date(at: 9 * 60, on: model.date, calendar: model.calendar))
