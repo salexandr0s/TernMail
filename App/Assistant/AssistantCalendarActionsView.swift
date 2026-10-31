@@ -11,7 +11,7 @@ struct AssistantCalendarActionsView: View {
             ForEach(message.calendarProposals) { proposal in
                 Button {
                     model.reviewCalendarProposal(proposal)
-                    openWindow(id: "main")
+                    openWindow(id: RootView.sceneID)
                 } label: {
                     Label("Review \(proposal.title)", systemImage: "calendar.badge.plus")
                         .lineLimit(2)

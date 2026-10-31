@@ -10,7 +10,7 @@ struct TernApp: App {
 
     var body: some Scene {
         // One mailbox window: selection and undo live in the shared mailbox model.
-        Window("Tern", id: "main") {
+        Window("Tern", id: RootView.sceneID) {
             Group {
 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--ui-audit-avatars"),
@@ -207,6 +207,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Picks the screen for the current sign-in phase.
 struct RootView: View {
+    /// The mailbox window's scene.
+    static let sceneID = "main"
+
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
@@ -215,7 +218,7 @@ struct RootView: View {
             .onAppear {
                 model.openMainWindow = {
                     NSApp.activate()
-                    openWindow(id: "main")
+                    openWindow(id: Self.sceneID)
                 }
             }
     }

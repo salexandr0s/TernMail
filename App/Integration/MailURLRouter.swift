@@ -121,7 +121,7 @@ struct MailURLHandling: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task {
-                app.mailURLs.openMainWindow = { openWindow(id: "main") }
+                app.mailURLs.openMainWindow = { openWindow(id: RootView.sceneID) }
                 app.mailURLs.resume()
             }
             .onChange(of: app.phase) { _, _ in app.mailURLs.resume() }
