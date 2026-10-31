@@ -1,4 +1,3 @@
-import AppKit
 import MailStore
 import QuickLook
 import SwiftUI
