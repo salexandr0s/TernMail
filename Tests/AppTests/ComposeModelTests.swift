@@ -11,17 +11,21 @@ import Testing
         let model = ComposeModel(localDraftID: id, mailbox: mailbox)
         model.start()
         try await waitUntil { model.phase == .open }
+        // Choosing the default sender isn't an edit.
+        #expect(!model.isEdited)
 
         model.content.subject = "Plan"
+        #expect(model.isEdited)
         try await waitUntil { !model.hasPendingEdits }
         #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
 
         #expect(await model.send() == false)
-        #expect(model.alert == "Add at least one recipient.")
+        #expect(model.alert == ComposeModel.Problem(title: "Can't Send Message", message: "Add at least one recipient."))
 
         model.content.to = [EmailAddress(address: "pat@example.com")]
         model.save()
         try await waitUntil { model.status?.text == "Saved to Drafts" }
+        #expect(!model.isEdited)
 
         #expect(await model.send())
         #expect(model.phase == .closed)
@@ -64,6 +68,33 @@ import Testing
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await cache.read { try $0.localDraft(id: id) }?.gmailDraftID != nil)
+        await mailbox.stop()
+    }
+
+    @Test func attachmentsOpenAsCopiesUnderTheirOwnNamesThatGoWithTheWindow() async throws {
+        let (mailbox, _) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+
+        model.attach([
+            .data(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain"),
+            .data(Data("notes".utf8), filename: "notes.txt", mimeType: "text/plain"),
+        ])
+        try await waitUntil { model.attachments.count == 2 }
+        let agenda = try #require(model.attachments.first { $0.filename == "agenda.txt" })
+        let notes = try #require(model.attachments.first { $0.filename == "notes.txt" })
+        let agendaCopy = try #require(await model.attachmentFileURL(agenda))
+        let notesCopy = try #require(await model.attachmentFileURL(notes))
+        #expect(agendaCopy.lastPathComponent == "agenda.txt")
+        #expect(try Data(contentsOf: agendaCopy) == Data("agenda".utf8))
+
+        model.removeAttachment(agenda)
+        #expect(!FileManager.default.fileExists(atPath: agendaCopy.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)))
+        model.windowClosed()
+        #expect(!FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)))
         await mailbox.stop()
     }
 

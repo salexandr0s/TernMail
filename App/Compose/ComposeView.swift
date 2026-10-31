@@ -401,9 +401,10 @@ struct ComposeView: View {
         .alignmentGuide(.firstTextBaseline) { _ in baseline }
     }
 
-    /// Where the link popover points: the selected text, or the editor when it isn't ready.
+    /// Where the link popover points: the text it links, or the whole editor
+    /// when the selection isn't known.
     private var linkAnchor: PopoverAttachmentAnchor {
-        model.editor?.selectionRect.map { .rect(.rect($0)) } ?? .rect(.bounds)
+        model.linkAnchor.map { .rect(.rect($0)) } ?? .rect(.bounds)
     }
 
     private func reveal(_ field: Field) {

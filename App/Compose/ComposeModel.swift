@@ -95,7 +95,12 @@ final class ComposeModel {
     var alert: Problem?
     /// Set by the toolbar or the menu bar to show the file picker or the link editor.
     var isChoosingFiles = false
-    var isEditingLink = false
+    var isEditingLink = false {
+        didSet { if isEditingLink, !oldValue { linkAnchor = editor?.selectionRect } }
+    }
+    /// The selection the link editor points at, read as it opens, in the
+    /// message editor's coordinates. Nil points it at the whole editor.
+    private(set) var linkAnchor: CGRect?
     private(set) var storeError: String?
     private(set) var hasPendingEdits = false
     /// Changed in this window, so closing it keeps the draft. The stored
@@ -161,9 +166,11 @@ final class ComposeModel {
 
     var isEditable: Bool { phase == .open && draft?.state == .editing }
 
-    /// Edited here since the last save to Gmail. The window's close button shows a dot.
+    /// Gmail doesn't have the latest changes, so closing the window saves
+    /// them. The window's close button shows a dot meanwhile.
     var isEdited: Bool {
-        isEditable && isTouched && (hasPendingEdits || changedSinceSave || draft?.hasUnsavedChanges == true)
+        guard isEditable, let draft else { return false }
+        return closingAction(for: draft) == .save
     }
 
     var canFormat: Bool { isEditable && isEditingMessage }
@@ -478,18 +485,34 @@ final class ComposeModel {
 
     private func keepOrDiscard() {
         guard let draft else { return }
-        let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
-            && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
-            && attachments.isEmpty && attachmentsInProgress == 0
-        let untouched = draft.revision == uneditedRevision && !isTouched
-        if draft.gmailDraftID == nil, untouched || isBlank {
+        switch closingAction(for: draft) {
+        case .discard:
             cancelTimers()
             guard let engine = owner?.engine else { return }
             let id = localDraftID
             serially { _ = try? await engine.discardDraft(id, hold: 0) }
-        } else if changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges {
+        case .save:
             saveNow()
+        case .keep:
+            break
         }
+    }
+
+    private enum ClosingAction {
+        case discard, save, keep
+    }
+
+    /// A message that never reached Gmail goes away when it's blank or nobody
+    /// changed it. Any other draft is saved when Gmail lacks its latest changes.
+    private func closingAction(for draft: LocalDraft) -> ClosingAction {
+        if draft.gmailDraftID == nil {
+            let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
+                && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
+                && attachments.isEmpty && attachmentsInProgress == 0
+            let untouched = draft.revision == uneditedRevision && !isTouched
+            if untouched || isBlank { return .discard }
+        }
+        return changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges ? .save : .keep
     }
 
     private func saveNow() {

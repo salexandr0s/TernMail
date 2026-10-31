@@ -9,6 +9,7 @@ import MailStore
 final class OutgoingAttachmentFiles {
     private let folder: URL
     private var urls: [Int64: URL] = [:]
+    private var isClosed = false
 
     init(localDraftID: String) {
         folder = FileManager.default.temporaryDirectory
@@ -17,19 +18,26 @@ final class OutgoingAttachmentFiles {
 
     /// The copy of `attachment`, written from `data` the first time it's asked for.
     func url(for attachment: OutgoingAttachment, data: () async throws -> Data) async -> URL? {
-        guard let id = attachment.id else { return nil }
+        guard !isClosed, let id = attachment.id else { return nil }
         if let url = urls[id], FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) { return url }
+        let directory = folder.appending(path: String(id), directoryHint: .isDirectory)
+        let url = directory.appending(path: Self.safeName(attachment.filename))
         do {
             let bytes = try await data()
-            let directory = folder.appending(path: String(id), directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appending(path: Self.safeName(attachment.filename))
-            try bytes.write(to: url, options: .atomic)
-            urls[id] = url
-            return url
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try bytes.write(to: url, options: .atomic)
+            }.value
         } catch {
             return nil
         }
+        // The window closed while the file was copied.
+        guard !isClosed else {
+            try? FileManager.default.removeItem(at: directory)
+            return nil
+        }
+        urls[id] = url
+        return url
     }
 
     func remove(_ attachment: OutgoingAttachment) {
@@ -38,6 +46,7 @@ final class OutgoingAttachmentFiles {
     }
 
     func removeAll() {
+        isClosed = true
         urls = [:]
         try? FileManager.default.removeItem(at: folder)
     }
