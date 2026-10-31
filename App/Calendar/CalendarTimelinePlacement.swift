@@ -2,14 +2,15 @@ import Foundation
 
 struct CalendarTimelinePlacement: Identifiable {
     var event: CalendarDisplayEvent
+    /// Minutes from the top of the grid, as `CalendarTimeAxis` measures them.
     var startMinute: Int
     var endMinute: Int
     var lane: Int
     var lanes: Int
     var id: String { event.id }
 
-    static func layout(_ events: [CalendarDisplayEvent], day: Date, calendar: Calendar) -> [Self] {
-        guard let bounds = calendar.dateInterval(of: .day, for: day) else { return [] }
+    static func layout(_ events: [CalendarDisplayEvent], day: Date, axis: CalendarTimeAxis) -> [Self] {
+        guard let bounds = axis.bounds(of: day) else { return [] }
         var result: [Self] = []
         var group: [Self] = []
         var laneEnds: [Int] = []
@@ -19,10 +20,9 @@ struct CalendarTimelinePlacement: Identifiable {
             group = []; laneEnds = []; groupEnd = 0
         }
         for event in events.sorted(by: { $0.start < $1.start }) {
-            let startParts = calendar.dateComponents([.hour, .minute], from: event.start)
-            let endParts = calendar.dateComponents([.hour, .minute], from: event.end)
-            let start = event.start <= bounds.start ? 0 : (startParts.hour ?? 0) * 60 + (startParts.minute ?? 0)
-            let end = event.end >= bounds.end ? 1440 : max(start + 15, (endParts.hour ?? 0) * 60 + (endParts.minute ?? 0))
+            let start = Int(axis.minute(of: event.start, on: day).rounded(.down))
+            let bottom = Int(axis.minute(of: event.end, on: day).rounded(.down))
+            let end = event.end >= bounds.end ? bottom : max(start + 15, bottom)
             if start >= groupEnd, !group.isEmpty { flush() }
             let lane = laneEnds.firstIndex(where: { $0 <= start }) ?? laneEnds.count
             if lane == laneEnds.count { laneEnds.append(end) } else { laneEnds[lane] = end }
