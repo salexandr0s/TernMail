@@ -248,14 +248,23 @@ public struct GmailClient: Sendable {
     }
 
     /// Inspect parts while the account's request permit is still held, so a
-    /// competing direct request observes the same provider cooldown.
-    private static func batchCooldown(_ data: Data, _ response: HTTPURLResponse) -> TimeInterval? {
+    /// competing direct request observes the same provider cooldown. A
+    /// throttled part cools every lane; a failed part cools only this one.
+    private static func batchCooldown(_ data: Data, _ response: HTTPURLResponse) -> GmailRequestBudget.Cooldown? {
         guard let boundary = BatchCodec.boundary(contentType: response.value(forHTTPHeaderField: "Content-Type")),
               let parts = try? BatchCodec.decode(data, boundary: boundary) else { return nil }
-        return parts.compactMap { part -> TimeInterval? in
-            guard GmailError(status: part.status, body: part.body).isRetryable else { return nil }
-            return max(1, GmailRequestBudget.retryAfter(part.retryAfter) ?? 1)
-        }.max()
+        var shared: TimeInterval?
+        var lane: TimeInterval?
+        for part in parts {
+            let error = GmailError(status: part.status, body: part.body)
+            switch GmailRequestBudget.cooldown(for: error, retryAfter: part.retryAfter, attempt: 0) {
+            case .shared(let seconds)?: shared = max(shared ?? 0, seconds)
+            case .lane(let seconds)?: lane = max(lane ?? 0, seconds)
+            case nil: break
+            }
+        }
+        if let shared { return .shared(shared) }
+        return lane.map { .lane($0) }
     }
 
     func batchDecode<T: Decodable & Sendable>(

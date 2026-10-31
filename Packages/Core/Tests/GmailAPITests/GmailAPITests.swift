@@ -372,15 +372,17 @@ import Testing
         let second = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
         let ids = (0..<25).map { "m\($0)" }
 
-        let messages = try await first.messages(ids: ids, format: .full)
+        // A pass fetches in the sync lane; the reader opens a conversation.
+        let messages = try await GmailRequestBudget.$priority.withValue(.sync) { try await first.messages(ids: ids, format: .full) }
         #expect(try ids.allSatisfy { try messages[$0]?.get().id == $0 })
-        #expect(try await second.thread(id: "t1").id == "t1")
+        #expect(try await GmailRequestBudget.$priority.withValue(.interactive) { try await second.thread(id: "t1") }.id == "t1")
         let requests = await transport.requests
         #expect(requests.count == 6)
         #expect(requests.prefix(5).map { String(decoding: $0.httpBody ?? Data(), as: UTF8.self).components(separatedBy: "GET /gmail").count - 1 } == [6, 6, 6, 6, 1])
-        // 25 full messages and one full thread cost 1,620 units. After the
-        // initial 380 background units, the shared refill takes 18.6 seconds.
-        #expect(abs(clock.instant - 18.6) < 0.001)
+        // 25 full messages cost 1,500 units. After the initial 380 sync
+        // units, their refill takes 16.8 seconds; the thread's 120 units were
+        // held back for the reader all along.
+        #expect(abs(clock.instant - 16.8) < 0.001)
     }
 
     @Test func concurrentDirectRequestsShareTheBatchBudget() async throws {
@@ -392,12 +394,14 @@ import Testing
         let transport = RecordingTransport(metadata + Array(repeating: .init(status: 200, body: profile), count: 20))
         let first = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
         let second = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
-        _ = try await first.messages(ids: (0..<25).map { "m\($0)" }, format: .metadata)
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for index in 0..<20 {
-                group.addTask { _ = try await (index.isMultiple(of: 2) ? first : second).profile() }
+        try await GmailRequestBudget.$priority.withValue(.sync) {
+            _ = try await first.messages(ids: (0..<25).map { "m\($0)" }, format: .metadata)
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for index in 0..<20 {
+                    group.addTask { _ = try await (index.isMultiple(of: 2) ? first : second).profile() }
+                }
+                try await group.waitForAll()
             }
-            try await group.waitForAll()
         }
         #expect(await transport.requests.count == 22)
         #expect(abs(clock.instant - 2.1) < 0.001)
@@ -434,6 +438,24 @@ import Testing
         #expect(try await reader.profile().historyId == "42")
         #expect(clock.instant == 23)
         #expect(await transport.requests.map(\.httpMethod) == ["POST", "GET"])
+    }
+
+    @Test func aServerFailureWithoutRetryAfterCoolsOnlyItsLane() async throws {
+        let clock = BudgetTestClock()
+        let budget = clock.budget()
+        let transport = RecordingTransport([
+            .init(status: 503, body: "{}"),
+            .init(status: 200, body: profile),
+            .init(status: 200, body: profile),
+        ])
+        let writer = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let reader = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        await #expect(throws: GmailError.server(status: 503)) { try await writer.sendDraft(id: "d1") }
+        // The reader's lane is untouched; the writer's waits out a one-second backoff.
+        #expect(try await GmailRequestBudget.$priority.withValue(.interactive) { try await reader.profile() }.historyId == "42")
+        #expect(clock.instant == 0)
+        #expect(try await reader.profile().historyId == "42")
+        #expect(clock.instant == 1)
     }
 
     @Test func innerBatchThrottleDelaysOtherCallsWithoutReplayingCompletedParts() async throws {
@@ -499,14 +521,18 @@ import Testing
                 try await Task.sleep(for: .seconds(30))
             } else { try await clock.sleep(duration) }
         })
-        try await budget.perform(units: 380) {}
-        let pending = Task { try await budget.perform(units: 100) { Issue.record("Cancelled request was dispatched") } }
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
+        let pending = Task {
+            try await GmailRequestBudget.$priority.withValue(.sync) {
+                try await budget.perform(units: 100) { Issue.record("Cancelled request was dispatched") }
+            }
+        }
         var iterator = sleeping.stream.makeAsyncIterator()
         _ = await iterator.next()
         suspend.withLock { $0 = false }
         pending.cancel()
         await #expect(throws: CancellationError.self) { try await pending.value }
-        try await budget.perform(units: 380) {}
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
         #expect(abs(clock.instant - 5.7) < 0.01)
         sleeping.continuation.finish()
     }

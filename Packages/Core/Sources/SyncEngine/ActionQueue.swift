@@ -248,7 +248,10 @@ extension SyncEngine {
             wakeRequests.insert(lane)
             wake(lane)
             if drainTasks[lane] == nil {
-                drainTasks[lane] = Task { await drainQueue(lane) }
+                // The user's own changes go out ahead of sync and background requests.
+                drainTasks[lane] = Task {
+                    await GmailRequestBudget.$priority.withValue(.interactive) { await drainQueue(lane) }
+                }
             }
         }
     }
@@ -480,9 +483,11 @@ extension SyncEngine {
             continuation.yield(.actionFailed("Gmail didn't accept this change. The conversation was restored."))
         }
         // Gmail's own record of the change, and whatever it did alongside
-        // (a filter, a merged conversation), comes in with the next pass.
-        if case .sent = outcome, sendsAutomatically, current.kind.lane == .labels {
-            requestSync()
+        // (a filter, a merged conversation), comes in with the next pass. A
+        // label that was renamed or recolored is listed again in full.
+        if case .sent = outcome {
+            if current.kind.changesLabel { labelsRefreshedAt = nil }
+            if sendsAutomatically, current.kind.lane == .labels { requestSync() }
         }
     }
 

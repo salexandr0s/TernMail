@@ -63,10 +63,38 @@ public struct CacheTransaction {
     /// Replaces the account's labels with `labels`, writing only the rows that
     /// differ, so a refresh whose counts did not move wakes no observer.
     public func replaceLabels(_ labels: [LabelRecord], accountID: String) throws {
-        let stored = Dictionary(
+        let stored = try storedLabels(accountID: accountID)
+        let kept = try saveLabels(labels, stored: stored)
+        for (id, old) in stored where !kept.contains(id) {
+            try old.delete(db)
+        }
+    }
+
+    /// Stores or updates `labels` and leaves the account's other labels as
+    /// they are. A pass uses it for the labels whose counts its history moved.
+    public func saveLabels(_ labels: [LabelRecord], accountID: String) throws {
+        _ = try saveLabels(labels, stored: try storedLabels(accountID: accountID))
+    }
+
+    /// Every label any of `messageIDs` carries.
+    public func labelIDs(ofMessages messageIDs: some Collection<String>, accountID: String) throws -> Set<String> {
+        guard !messageIDs.isEmpty else { return [] }
+        return try String.fetchSet(
+            db,
+            sql: "SELECT DISTINCT labelID FROM messageLabel WHERE accountID = ? AND messageID IN (\(databaseQuestionMarks(count: messageIDs.count)))",
+            arguments: StatementArguments([accountID] + Array(messageIDs))
+        )
+    }
+
+    private func storedLabels(accountID: String) throws -> [String: LabelRecord] {
+        Dictionary(
             try LabelRecord.filter(Column("accountID") == accountID).fetchAll(db).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+    }
+
+    /// Writes the labels that differ from `stored` and returns every ID given.
+    private func saveLabels(_ labels: [LabelRecord], stored: [String: LabelRecord]) throws -> Set<String> {
         var kept = Set<String>()
         for label in labels {
             kept.insert(label.id)
@@ -76,9 +104,7 @@ public struct CacheTransaction {
                 try label.upsert(db)
             }
         }
-        for (id, old) in stored where !kept.contains(id) {
-            try old.delete(db)
-        }
+        return kept
     }
 
     // MARK: Messages

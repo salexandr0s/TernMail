@@ -30,8 +30,9 @@ enum SyncError: Error, Equatable {
 /// refreshes the account's identities and contacts.
 ///
 /// Passes run one at a time. The first download publishes complete chunks so
-/// mail is available while it continues. History and reset passes commit
-/// atomically; no pass advances its cursor until all requests succeed.
+/// mail is available while it continues. A history pass commits each page as
+/// it arrives and moves the cursor only as far as the records it has stored;
+/// a reset pass commits once, at the end.
 /// How long each kind of change waits in the queue before it goes to Gmail.
 /// A change still waiting is undone by deleting its row; one that has gone
 /// out is undone with the inverse change, which costs one more request. The
@@ -67,6 +68,9 @@ public actor SyncEngine {
     static let fullSyncChunk = 25
     /// How long a requested pass that found no history waits to run again.
     static let emptyPassRetryDelay: Duration = .seconds(5)
+    /// How long a complete label listing stays current. Until then a pass
+    /// refreshes only the labels its history touched.
+    static let labelRefreshInterval: TimeInterval = 5 * 60
     /// How often identities and contacts refresh while the engine runs.
     static let peopleRefreshInterval: Duration = .seconds(6 * 60 * 60)
 
@@ -101,7 +105,11 @@ public actor SyncEngine {
 
     /// The running pass. It clears itself, so a caller that resumes after it
     /// ends never joins a finished pass.
-    private var pass: Task<Bool, any Error>?
+    private(set) var pass: Task<Bool, any Error>?
+    /// When the labels were last listed in full. Nil makes the next pass list
+    /// them again: at launch, after a local label change, and after a refresh
+    /// failed.
+    var labelsRefreshedAt: Date?
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
     var attachmentIndexTask: Task<Void, Never>?
@@ -149,8 +157,9 @@ public actor SyncEngine {
     let stopRequested = OSAllocatedUnfairLock(initialState: false)
     /// Accessed only inside the cache's serialized writes. The lock safely
     /// carries deletion knowledge into their Sendable closures. Gmail message
-    /// IDs are never reused; forgetting one could resurrect deleted mail.
-    let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Set<String>())
+    /// IDs are never reused; forgetting one could resurrect deleted mail, so
+    /// `Tombstones` keeps the newest 20,000.
+    let deletedMessageIDs = OSAllocatedUnfairLock(initialState: Tombstones())
     /// Conversations an open search or list shows. A lock, so the write that
     /// releases expired holds reads the set as it is then.
     let visibleThreadIDs = OSAllocatedUnfairLock(initialState: Set<String>())
@@ -334,6 +343,20 @@ public actor SyncEngine {
         requestedPasses = Task { await runRequestedPasses() }
     }
 
+    /// Lists every label on the next pass, and asks for one. The app calls
+    /// this when the window becomes active, so counts that moved elsewhere
+    /// while it was in the background show at once.
+    public func requestLabelRefresh() {
+        labelsRefreshedAt = nil
+        requestSync()
+    }
+
+    /// Returns once no pass is running. Background work waits here so a pass
+    /// never queues behind it.
+    func waitForPassToEnd() async {
+        while let running = pass { _ = try? await running.value }
+    }
+
     private func runRequestedPasses() async {
         defer { requestedPasses = nil }
         var mayRetry = true
@@ -366,7 +389,7 @@ public actor SyncEngine {
         if let pass { return try await pass.value }
         let task = Task {
             defer { pass = nil }
-            return try await runPass()
+            return try await GmailRequestBudget.$priority.withValue(.sync) { try await runPass() }
         }
         pass = task
         return try await task.value
@@ -477,6 +500,7 @@ public actor SyncEngine {
                 return []
             }
             guard !remaining.isEmpty else {
+                labelsRefreshedAt = passStart
                 await publishMailNotification(from: nil, to: historyID)
                 return
             }
@@ -484,11 +508,15 @@ public actor SyncEngine {
         }
     }
 
-    /// Applies `history.list` from `cursor`. Returns nil when Gmail no longer
-    /// has history that old, otherwise whether anything changed.
+    /// Applies `history.list` from `cursor`, committing each page as it
+    /// arrives so a long backlog shows up while it downloads. Returns nil when
+    /// Gmail no longer has history that old, otherwise whether anything changed.
     private func incrementalSync(from cursor: Int64, passStart: Date) async throws -> Bool? {
-        var records: [HistoryRecord] = []
-        var latest = cursor
+        let accountID = accountID
+        let deleted = deletedMessageIDs
+        var committed = cursor
+        var touchedLabels = Set<String>()
+        var sawRecords = false
         var pageToken: String?
         repeat {
             let page: HistoryPage
@@ -497,65 +525,103 @@ public actor SyncEngine {
             } catch GmailError.notFound {
                 return nil
             }
-            records += page.history ?? []
             guard let pageHistoryID = Int64(page.historyId), pageHistoryID > 0, pageHistoryID >= cursor else {
                 throw SyncError.invalidHistoryID
             }
-            latest = max(latest, pageHistoryID)
             pageToken = page.nextPageToken
+            let isLast = pageToken == nil
+            let records = page.history ?? []
+            sawRecords = sawRecords || !records.isEmpty
+            let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
+            let changes = try HistoryChanges(records: records, cachedMessageIDs: cached)
+            // Gmail stamps every page with the mailbox's current history ID,
+            // so only the last page may move the cursor there. An earlier
+            // page moves it to its newest record; one without records has
+            // nothing to commit.
+            let pageCursor: Int64? = isLast ? max(committed, pageHistoryID) : changes.newestHistoryID.map { max(committed, $0) }
+            guard let pageCursor else { continue }
+            let (fetched, missing) = try await fetchMetadata(changes.messagesToFetch)
+            let gone = changes.deletedIDs.union(missing)
+            let affected = gone.union(changes.labelChanges.map(\.messageID))
+
+            let touched = try await write { tx -> Set<String> in
+                // Counts move for every label an affected message carries:
+                // reading a message changes its Inbox count, not just UNREAD's.
+                var touched = try tx.labelIDs(ofMessages: affected, accountID: accountID)
+                touched.formUnion(changes.labelChanges.flatMap { $0.added + $0.removed })
+                touched.formUnion(fetched.flatMap(\.labelIDs))
+                deleted.withLock { $0.formUnion(gone) }
+                var threads = Set<String>()
+                for change in changes.labelChanges {
+                    if let threadID = try tx.applyLabelChange(
+                        messageID: change.messageID, added: change.added, removed: change.removed,
+                        historyID: change.historyID, accountID: accountID
+                    ) {
+                        threads.insert(threadID)
+                    }
+                }
+                threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
+                let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
+                threads.formUnion(try tx.upsertMessages(live))
+                // Store the cursor even when nothing changed, so the next pass starts later.
+                try tx.saveCursor(historyID: pageCursor, accountID: accountID)
+                // A sent change leaves the overlay once Gmail's history has moved
+                // past the cursor, which is when its own record of the change can
+                // be in the cache. `history.list` can lag the write's response by
+                // a moment; a pass that saw nothing new keeps the change in view.
+                if isLast, pageCursor > cursor {
+                    try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+                }
+                try tx.rebuildThreads(threads, accountID: accountID)
+                return touched
+            }
+            touchedLabels.formUnion(touched)
+            await publishMailNotification(from: committed, to: pageCursor, added: MailSyncNotification.addedMessageHistory(records))
+            committed = pageCursor
         } while pageToken != nil
 
-        let accountID = accountID
-        let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
-        let changes = try HistoryChanges(records: records, cachedMessageIDs: cached)
-        let (fetched, missing) = try await fetchMetadata(changes.messagesToFetch)
-        let gone = changes.deletedIDs.union(missing)
-        let deleted = deletedMessageIDs
-        // Labels can change without any message history (for example a rename).
-        let labels = try await fetchLabels()
-
-        try await write { [latest] tx in
-            try tx.replaceLabels(labels, accountID: accountID)
-            deleted.withLock { $0.formUnion(gone) }
-            var threads = Set<String>()
-            for change in changes.labelChanges {
-                if let threadID = try tx.applyLabelChange(
-                    messageID: change.messageID, added: change.added, removed: change.removed,
-                    historyID: change.historyID, accountID: accountID
-                ) {
-                    threads.insert(threadID)
-                }
-            }
-            threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
-            let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
-            threads.formUnion(try tx.upsertMessages(live))
-            // Store the cursor even when nothing changed, so the next pass starts later.
-            try tx.saveCursor(historyID: latest, accountID: accountID)
-            // A sent change leaves the overlay once Gmail's history has moved
-            // past the cursor, which is when its own record of the change can
-            // be in the cache. `history.list` can lag the write's response by
-            // a moment; a pass that saw nothing new keeps the change in view.
-            if latest > cursor {
-                try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
-            }
-            try tx.rebuildThreads(threads, accountID: accountID)
-        }
-        await publishMailNotification(from: cursor, to: latest, added: MailSyncNotification.addedMessageHistory(records))
-        return !records.isEmpty
+        try await refreshLabels(touched: touchedLabels, passStart: passStart)
+        return sawRecords
     }
 
-    /// Fetches a complete label snapshot before the pass commits anything.
-    private func fetchLabels() async throws -> [LabelRecord] {
+    /// Brings the labels up to date once the pass has committed its mail:
+    /// all of them when the listing is older than `labelRefreshInterval`,
+    /// otherwise only the counts of the labels the pass touched. A failure
+    /// leaves the mail committed and makes the next pass list everything.
+    private func refreshLabels(touched: Set<String>, passStart: Date) async throws {
         let accountID = accountID
-        let list = try await gmail.labels()
-        let detailed = try await gmail.labels(ids: list.map(\.id))
-        return try list.compactMap { label in
-            switch detailed[label.id] {
+        do {
+            if let refreshedAt = labelsRefreshedAt, passStart.timeIntervalSince(refreshedAt) < Self.labelRefreshInterval {
+                guard !touched.isEmpty else { return }
+                let labels = try await fetchLabels(ids: touched.sorted())
+                try await write { tx in try tx.saveLabels(labels, accountID: accountID) }
+            } else {
+                let labels = try await fetchLabels()
+                try await write { tx in try tx.replaceLabels(labels, accountID: accountID) }
+                labelsRefreshedAt = passStart
+            }
+        } catch {
+            labelsRefreshedAt = nil
+            throw error
+        }
+    }
+
+    /// A complete label snapshot: `labels.list` names them, `labels.get` adds counts.
+    private func fetchLabels() async throws -> [LabelRecord] {
+        try await fetchLabels(ids: try await gmail.labels().map(\.id))
+    }
+
+    /// `labels.get` for `ids`. A label deleted since is left out.
+    private func fetchLabels(ids: [String]) async throws -> [LabelRecord] {
+        let accountID = accountID
+        let detailed = try await gmail.labels(ids: ids)
+        return try ids.compactMap { id in
+            switch detailed[id] {
             case .success(let full)?:
-                guard full.id == label.id else { throw GmailError.decoding("Label identity") }
+                guard full.id == id else { throw GmailError.decoding("Label identity") }
                 return Mapping.label(full, accountID: accountID)
             case .failure(.notFound)?:
-                return nil // Deleted after labels.list, before labels.get.
+                return nil
             case .failure(let error)?:
                 throw error
             case nil:
@@ -685,6 +751,8 @@ struct HistoryChanges {
     /// Changes to cached messages, in history order. Messages being fetched
     /// are left out, since their fresh metadata already has the final labels.
     let labelChanges: [LabelChange]
+    /// The newest record's ID; nil for a page without records.
+    let newestHistoryID: Int64?
 
     init(records: [HistoryRecord], cachedMessageIDs: Set<String>) throws {
         let deleted = Set(records.flatMap { $0.messagesDeleted ?? [] }.map(\.message.id))
@@ -698,8 +766,10 @@ struct HistoryChanges {
         let skipped = deleted.union(toFetch)
 
         var changes: [LabelChange] = []
+        var newest: Int64?
         for record in records {
             guard let historyID = Int64(record.id), historyID > 0 else { throw SyncError.invalidHistoryID }
+            newest = max(newest ?? 0, historyID)
             for change in record.labelsAdded ?? [] {
                 changes.append(LabelChange(
                     messageID: change.message.id, added: change.labelIds, removed: [], historyID: historyID
@@ -714,5 +784,6 @@ struct HistoryChanges {
         messagesToFetch = toFetch
         deletedIDs = deleted
         labelChanges = changes.filter { cachedMessageIDs.contains($0.messageID) && !skipped.contains($0.messageID) }
+        newestHistoryID = newest
     }
 }
