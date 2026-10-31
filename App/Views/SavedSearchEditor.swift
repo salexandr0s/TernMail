@@ -86,7 +86,9 @@ struct SavedSearchRows: View {
                 if let target = mailbox.favoriteMailboxID(.savedSearch(id: search.id)) {
                     Label(search.name, systemImage: "magnifyingglass")
                         .tag(target)
-                        .popover(item: editing(search), arrowEdge: .trailing) { SavedSearchEditor(mailbox: mailbox, existing: $0) }
+                        .popover(isPresented: Bindable(mailbox.navigation).searchToEdit.equals(search), arrowEdge: .trailing) {
+                            SavedSearchEditor(mailbox: mailbox, existing: search)
+                        }
                         .contextMenu {
                             Button("Add to Favorites") { Task { await mailbox.navigation.addFavorite(.savedSearch(id: search.id)) } }
                             Button("Edit…") { mailbox.navigation.searchToEdit = search }
@@ -100,17 +102,10 @@ struct SavedSearchRows: View {
                 Spacer()
                 Button { mailbox.navigation.isCreatingSearch = true } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless).help("New Saved Search").accessibilityLabel("New Saved Search")
-                    .popover(isPresented: Binding(get: { mailbox.navigation.isCreatingSearch },
-                                                  set: { mailbox.navigation.isCreatingSearch = $0 }), arrowEdge: .trailing) {
+                    .popover(isPresented: Bindable(mailbox.navigation).isCreatingSearch, arrowEdge: .trailing) {
                         SavedSearchEditor(mailbox: mailbox, existing: nil)
                     }
             }
         }
-    }
-
-    /// The row being edited shows the editor; closing it clears the request.
-    private func editing(_ search: SavedMailSearch) -> Binding<SavedMailSearch?> {
-        Binding(get: { mailbox.navigation.searchToEdit?.id == search.id ? mailbox.navigation.searchToEdit : nil },
-                set: { if $0 == nil, mailbox.navigation.searchToEdit?.id == search.id { mailbox.navigation.searchToEdit = nil } })
     }
 }

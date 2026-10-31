@@ -20,7 +20,7 @@ import Testing
         defer { mailbox.listPreferences.showsQuickFilters = quickFilters }
         let suite = "SidebarLayoutTests.\(UUID().uuidString)"
         let settings = try #require(UserDefaults(suiteName: suite))
-        settings.set("", forKey: SidebarView.expandedKey)
+        settings.set("", forKey: SidebarExpansion.storageKey)
         defer { settings.removePersistentDomain(forName: suite) }
 
         let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
@@ -127,7 +127,7 @@ import Testing
         try #require(mailbox.hasSyncedOnce)
         let suite = "SidebarLayoutTests.\(UUID().uuidString)"
         let settings = try #require(UserDefaults(suiteName: suite))
-        settings.set("", forKey: SidebarView.expandedKey)
+        settings.set("", forKey: SidebarExpansion.storageKey)
         defer { settings.removePersistentDomain(forName: suite) }
 
         let controller = NSHostingController(rootView: MainView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
@@ -162,12 +162,12 @@ import Testing
         #expect(mailbox.selectedMailbox == .combined(SystemLabel.starred))
         _ = try await selectRow(in: table, matching: .combined(SystemLabel.inbox), mailbox: mailbox)
         #expect(mailbox.selectedMailbox == .combined(SystemLabel.inbox))
-        settings.set(SystemLabel.inbox, forKey: SidebarView.expandedKey)
+        settings.set(SystemLabel.inbox, forKey: SidebarExpansion.storageKey)
         try await settle()
         let account = try #require(mailbox.accounts.first?.account)
         _ = try await selectRow(in: table, matching: .account(account.id, SystemLabel.inbox), mailbox: mailbox)
         #expect(mailbox.selectedMailbox == .account(account.id, SystemLabel.inbox))
-        settings.set("", forKey: SidebarView.expandedKey)
+        settings.set("", forKey: SidebarExpansion.storageKey)
         try await settle()
 
         // Alternate populated and empty mailboxes, including the Outbox's own List.
@@ -178,7 +178,7 @@ import Testing
                    MailboxModel.outboxID, SystemLabel.inbox] {
             mailbox.selectedMailbox = .combined(id)
             if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
-            settings.set(expanded.sorted().joined(separator: ","), forKey: SidebarView.expandedKey)
+            settings.set(expanded.sorted().joined(separator: ","), forKey: SidebarExpansion.storageKey)
             try await settle()
             #expect(table.window === window)
             #expect(scroll.contentInsets.top == scrollInsets.top)
@@ -212,7 +212,7 @@ import Testing
         await mailbox.setCategory(.promotions, enabled: true, accountID: account.id)
         let suite = "SidebarCategoryTests.\(UUID().uuidString)"
         let settings = try #require(UserDefaults(suiteName: suite))
-        settings.set(SystemLabel.inbox, forKey: SidebarView.expandedKey)
+        settings.set(SystemLabel.inbox, forKey: SidebarExpansion.storageKey)
         defer { settings.removePersistentDomain(forName: suite) }
         let controller = NSHostingController(rootView: SidebarView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Tokens.Layout.sidebarWidth, height: Tokens.Layout.windowHeight),

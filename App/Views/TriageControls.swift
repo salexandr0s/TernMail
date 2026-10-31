@@ -38,7 +38,7 @@ struct TriagePresentationHost: View {
         Color.clear.frame(width: 0, height: 0)
             .sheet(item: $model.deletionReview) { review in DestructiveMailReview(model: model, review: review) }
             .sheet(item: $model.filterRequest) { request in SenderFilterReview(request: request, app: app) }
-            .alert("Couldn't change mail", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+            .alert("Couldn't change mail", isPresented: $model.error.isPresent()) {
                 Button("OK") { model.error = nil }
             } message: { Text(model.error ?? "") }
     }

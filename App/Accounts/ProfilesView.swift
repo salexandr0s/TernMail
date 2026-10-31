@@ -50,12 +50,10 @@ struct ProfilesView: View {
             }
         }
         .sheet(item: $editing) { profile in ProfileEditor(profile: profile, model: model) }
-        .confirmationDialog("Delete this profile?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Delete Profile", role: .destructive) {
-                if let deleting { Task { await model.deleteProfile(deleting) } }
-                deleting = nil
-            }
-        } message: { Text("Its accounts remain in All. Cached mail stays on this Mac.") }
+        .ternConfirm("Delete this profile?", item: $deleting, actionTitle: "Delete Profile",
+                     message: "Its accounts remain in All. Cached mail stays on this Mac.") { profile in
+            Task { await model.deleteProfile(profile) }
+        }
     }
 
     private var emptyProfiles: some View {

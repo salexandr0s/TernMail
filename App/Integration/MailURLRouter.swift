@@ -164,8 +164,7 @@ struct MailURLHandling: ViewModifier {
                 openWindow(id: ConversationWindow.sceneID, value: link)
                 app.mailURLs.conversationWindowLink = nil
             }
-            .alert("Couldn't open mail link", isPresented: Binding(
-                get: { app.mailURLs.error != nil }, set: { if !$0 { app.mailURLs.error = nil } })) {
+            .alert("Couldn't open mail link", isPresented: Bindable(app.mailURLs).error.isPresent()) {
                 Button("OK") { app.mailURLs.error = nil }
             } message: { Text(app.mailURLs.error ?? "") }
     }
