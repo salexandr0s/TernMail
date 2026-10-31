@@ -10,10 +10,10 @@ struct SidebarSettingsView: View {
                 DisclosureGroup("Inbox categories") {
                     VStack(spacing: 0) {
                         ForEach(InboxCategory.allCases, id: \.rawValue) { category in
-                            SettingsToggleRow(category.rawValue.capitalized, isOn: Binding(
-                                get: { mailbox.accountPresentation[owner.account.id]?.inboxCategories.contains(category) == true },
-                                set: { enabled in Task { await mailbox.setCategory(category, enabled: enabled, accountID: owner.account.id) } }
-                            ))
+                            SettingsAsyncToggleRow(category.rawValue.capitalized,
+                                                   isOn: mailbox.accountPresentation[owner.account.id]?.inboxCategories.contains(category) == true) { enabled in
+                                await mailbox.setCategory(category, enabled: enabled, accountID: owner.account.id)
+                            }
                         }
                     }
                 }
@@ -31,10 +31,8 @@ struct SidebarSettingsView: View {
                         }
                         ForEach(labels, id: \.id) { label in
                             SettingsControlRow(label.name) {
-                                Picker(label.name, selection: Binding(
-                                    get: { LabelListVisibility(rawValue: label.labelListVisibility ?? "") ?? .show },
-                                    set: { mailbox.setLabelVisibility(label, to: $0) }
-                                )) {
+                                Picker(label.name, selection: Binding(LabelListVisibility(rawValue: label.labelListVisibility ?? "") ?? .show,
+                                                                      set: { mailbox.setLabelVisibility(label, to: $0) })) {
                                     ForEach(LabelListVisibility.allCases, id: \.rawValue) { Text($0.sidebarTitle).tag($0) }
                                 }
                                 .labelsHidden()

@@ -77,7 +77,7 @@ struct CalendarSidebar: View {
 
     private func calendarRow(_ calendar: CalendarDisplayCalendar) -> some View {
         HStack(spacing: Tokens.Space.s2) {
-            Toggle(calendar.title, isOn: Binding(get: { calendar.isVisible }, set: { model.setVisible(id: calendar.id, visible: $0) }))
+            Toggle(calendar.title, isOn: model.visibility(of: calendar))
                 .toggleStyle(.checkbox).labelsHidden().tint(calendar.color)
             Text(calendar.title).lineLimit(1)
             Spacer(minLength: 0)

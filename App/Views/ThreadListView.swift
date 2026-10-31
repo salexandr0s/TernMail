@@ -208,7 +208,7 @@ struct ThreadListView: View {
             for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
         )
         let snoozeAnchor = snoozeDateAnchor(in: rows)
-        return List(selection: Binding(get: { mailbox.selectedListRowIDs }, set: { mailbox.selectListRows($0) })) {
+        return List(selection: $mailbox.selectedListRowIDs) {
             // Keyed by account too, since thread IDs repeat across accounts.
             ForEach(rows) { row in
                 MessageListRow(
@@ -218,7 +218,8 @@ struct ThreadListView: View {
                     .tag(row.id)
                     .listRowInsets(EdgeInsets())
                     .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
-                    .popover(isPresented: Binding(get: { snoozeAnchor == row.id }, set: { if !$0 { mailbox.snoozeDateTargets = nil } }),
+                    // Only the first targeted row anchors the snooze popover.
+                    .popover(isPresented: snoozeAnchor == row.id ? $mailbox.snoozeDateTargets.isPresent() : .constant(false),
                              arrowEdge: .trailing) { snoozeDatePicker }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row)

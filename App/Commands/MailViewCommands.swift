@@ -23,7 +23,7 @@ struct MailViewCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.toggleSidebar.shortcut)
                 .disabled(sidebar == nil)
-            Toggle("Show Viewing Pane", isOn: Binding(get: { !hidesReader }, set: { hidesReader = !$0 }))
+            Toggle("Show Viewing Pane", isOn: $hidesReader.negated())
                 .keyboardShortcut(ShortcutCatalog.toggleReader.shortcut)
             MessageListDensityPicker()
             MessageListViewOptions()

@@ -18,10 +18,7 @@ struct CalendarCommands: Commands {
                 .disabled(actions == nil)
             Divider()
             ForEach(CalendarDisplayMode.allCases) { mode in
-                Toggle(mode.title, isOn: Binding(
-                    get: { calendar?.mode == mode },
-                    set: { if $0 { calendar?.mode = mode } }
-                ))
+                Toggle(mode.title, isOn: calendar.map { Bindable($0).mode.selecting(mode) } ?? .constant(false))
                 .keyboardShortcut(ShortcutCatalog.calendarMode(mode).shortcut)
                 .disabled(calendar == nil)
             }

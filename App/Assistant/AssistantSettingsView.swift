@@ -241,16 +241,13 @@ struct AssistantSettingsView: View {
 
     private func accountRow(_ account: AccountRecord) -> some View {
         let name = account.displayName.flatMap { $0.isEmpty ? nil : $0 }
-        return Toggle(isOn: Binding(
-            get: { model.enabledAccountIDs.contains(account.id) },
-            set: { enabled in
-                if hasChat {
-                    accessChange = AccessChange(accountID: account.id, email: account.email, enabled: enabled)
-                } else {
-                    model.setAccountEnabled(account.id, enabled: enabled)
-                }
+        return Toggle(isOn: Binding(model.enabledAccountIDs.contains(account.id), set: { enabled in
+            if hasChat {
+                accessChange = AccessChange(accountID: account.id, email: account.email, enabled: enabled)
+            } else {
+                model.setAccountEnabled(account.id, enabled: enabled)
             }
-        )) {
+        })) {
             HStack(spacing: Tokens.Space.s3) {
                 AddressAvatar(accountID: account.id, address: account.email, name: name ?? "", size: Tokens.Space.s6)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {

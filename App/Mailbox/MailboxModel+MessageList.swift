@@ -28,11 +28,15 @@ extension MailboxModel {
             mailboxID: search.isActive ? nil : selectedLabelID, categories: categories, addresses: addresses))
     }
 
+    /// The list's selection. Setting it keeps only rows the list shows.
     var selectedListRowIDs: Set<MailListRowID> {
-        if listPreferences.conversations {
-            return Set(selectedThreadIDs.map { .init(accountID: $0.accountID, threadID: $0.threadID) })
+        get {
+            if listPreferences.conversations {
+                return Set(selectedThreadIDs.map { .init(accountID: $0.accountID, threadID: $0.threadID) })
+            }
+            return selectedMessageRows
         }
-        return selectedMessageRows
+        set { selectListRows(newValue) }
     }
 
     func selectListRows(_ rows: Set<MailListRowID>) {

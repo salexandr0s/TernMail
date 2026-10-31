@@ -38,7 +38,7 @@ struct FormatBar: View {
     private func formatToggle(
         _ title: String, systemImage: String, isOn: Bool, action: @escaping (any RichTextEditing) -> Void
     ) -> some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { _ in editor.map(action) })) {
+        Toggle(isOn: Binding(isOn, set: { _ in editor.map(action) })) {
             Label(title, systemImage: systemImage)
         }
         .toggleStyle(.button)

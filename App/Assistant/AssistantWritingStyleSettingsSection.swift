@@ -28,16 +28,13 @@ struct AssistantWritingStyleSettingsSection: View {
 
     private func accountRow(_ entry: AssistantWritingStyleEntry) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Toggle(isOn: Binding(
-                get: { model.isEnabled(entry.id) },
-                set: { enabled in
-                    if !enabled, entry.learnedAt != nil || entry.isLearning {
-                        confirmTurnOff(entry)
-                    } else {
-                        model.setEnabled(entry.id, enabled: enabled)
-                    }
+            Toggle(isOn: Binding(model.isEnabled(entry.id), set: { enabled in
+                if !enabled, entry.learnedAt != nil || entry.isLearning {
+                    confirmTurnOff(entry)
+                } else {
+                    model.setEnabled(entry.id, enabled: enabled)
                 }
-            )) {
+            })) {
                 HStack(spacing: Tokens.Space.s3) {
                     AddressAvatar(accountID: entry.id, address: entry.email,
                                   name: entry.displayName ?? "", size: Tokens.Space.s6)

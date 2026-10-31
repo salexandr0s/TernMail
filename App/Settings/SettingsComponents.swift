@@ -147,6 +147,36 @@ struct SettingsToggleRow: View {
     }
 }
 
+/// A switch for a setting that saves asynchronously. It shows the new value
+/// while `onToggle` runs, then follows `isOn` again, so a failed save flips back.
+struct SettingsAsyncToggleRow: View {
+    let title: String
+    let detail: String?
+    let isOn: Bool
+    let onToggle: @MainActor (Bool) async -> Void
+    @State private var pending: Bool?
+
+    init(_ title: String, detail: String? = nil, isOn: Bool, onToggle: @escaping @MainActor (Bool) async -> Void) {
+        self.title = title
+        self.detail = detail
+        self.isOn = isOn
+        self.onToggle = onToggle
+    }
+
+    var body: some View {
+        SettingsToggleRow(title, detail: detail, isOn: Binding(pending ?? isOn, set: toggle))
+    }
+
+    private func toggle(_ value: Bool) {
+        pending = value
+        Task {
+            await onToggle(value)
+            // A later toggle may still be saving, so keep showing its value.
+            if pending == value { pending = nil }
+        }
+    }
+}
+
 struct SettingsNote: View {
     let text: String
     var systemImage: String = "info.circle"

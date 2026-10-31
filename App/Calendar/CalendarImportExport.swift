@@ -194,9 +194,7 @@ struct CalendarImportReview: View {
             Divider()
             List(events) { item in
                 HStack {
-                    Toggle(isOn: Binding(get: { selected.contains(item.id) }, set: { included in
-                        if included { selected.insert(item.id) } else { selected.remove(item.id) }
-                    })) {
+                    Toggle(isOn: $selected.contains(item.id)) {
                         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                             Text(item.event.title).font(.headline)
                             if let start = item.event.startDate { Text(start.formatted(date: .abbreviated, time: item.event.isAllDay ? .omitted : .shortened)).font(.caption) }

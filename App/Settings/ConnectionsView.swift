@@ -21,16 +21,13 @@ struct ConnectionsView: View {
 
     var body: some View {
         ForEach(features, id: \.rawValue) { feature in
-            SettingsToggleRow(title(feature), detail: detail(feature), isOn: Binding(
-                get: { connection.isEnabled(feature) },
-                set: { enabled in
-                    if feature == .permanentDeletion, enabled {
-                        confirmsPermanentDeletion = true
-                    } else {
-                        Task { await set(feature, enabled: enabled) }
-                    }
+            SettingsAsyncToggleRow(title(feature), detail: detail(feature), isOn: connection.isEnabled(feature)) { enabled in
+                if feature == .permanentDeletion, enabled {
+                    confirmsPermanentDeletion = true
+                } else {
+                    await set(feature, enabled: enabled)
                 }
-            ))
+            }
             .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(accountID))
         }
         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
