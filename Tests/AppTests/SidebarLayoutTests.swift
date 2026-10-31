@@ -63,7 +63,7 @@ import Testing
 
     private func expectMailVisible(in rootView: NSView, window: NSWindow) async throws {
         let width = window.frame.width
-        let probes = descendants(in: rootView).compactMap { $0 as? AssistantMailPaneProbe.ProbeView }
+        let probes = descendants(in: rootView).compactMap { $0 as? MailColumnProbe.ProbeView }
         let mailTables = probes.flatMap { probe -> [NSTableView] in
             var child: NSView = probe
             while let parent = child.superview {
@@ -108,7 +108,7 @@ import Testing
     private func expectColumnsFit(in rootView: NSView, window: NSWindow, sidebarCollapsed: Bool) async throws {
         let width = window.frame.width
         let probe = try #require(descendants(in: rootView)
-            .compactMap { $0 as? AssistantMailPaneProbe.ProbeView }
+            .compactMap { $0 as? MailColumnProbe.ProbeView }
             .first { $0.pane == .navigation })
         var sidebar: NSView = probe
         var split: NSSplitView?

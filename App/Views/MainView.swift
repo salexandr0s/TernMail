@@ -193,7 +193,7 @@ struct MainView: View {
                 // the content toolbar carries its own sidebar button.
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-                .background { AssistantMailPaneProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation, isPresented: showsAssistant) }
+                .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation, isPresented: showsAssistant) }
                 .padding(.trailing, Tokens.Layout.columnGutter)
                 .overlay(alignment: .trailing) {
                     SplitDividerHandle()
@@ -213,7 +213,7 @@ struct MainView: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-            .background { AssistantMailPaneProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .list, isPresented: showsAssistant) }
+            .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .list, isPresented: showsAssistant) }
             .onChange(of: mailbox.search.listFocusRequest) {
                 outboxFocused = showsOutbox
             }
