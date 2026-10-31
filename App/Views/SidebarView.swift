@@ -27,7 +27,7 @@ struct SidebarView: View {
             SavedSearchRows(mailbox: mailbox)
             if mailbox.presentedAccounts.count > 1 {
                 let colors = accountColors
-                let names = sidebarNames
+                let names = mailbox.sidebarAccountNames
                 Section("Mailboxes") {
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))) { box in
                         CombinedMailboxRows(
@@ -187,14 +187,6 @@ struct SidebarView: View {
         }
     }
 
-    private var sidebarNames: [String: String] {
-        var names = AccountAppearance.shortNames(mailbox.accounts.map(\.account))
-        for owner in mailbox.accounts {
-            if let nickname = mailbox.accountPresentation[owner.account.id]?.nickname, !nickname.isEmpty { names[owner.account.id] = nickname }
-        }
-        return names
-    }
-
     private static func editedLabel(_ request: MailboxModel.LabelEditorRequest) -> LabelRecord? {
         if case .edit(let label) = request.kind { return label }
         return nil
@@ -209,9 +201,66 @@ struct SidebarView: View {
     }
 }
 
+/// Names for account rows in the sidebar: the nickname the user set, then
+/// the account's own name while no other row would show it, then the part of
+/// its address before the @ (the whole address when that part repeats).
+enum SidebarAccountNames {
+    static func names(for accounts: [AccountRecord], nicknames: [String: String] = [:]) -> [String: String] {
+        let addressNames = AccountAppearance.shortNames(accounts)
+        let setNames = accounts.reduce(into: [String: String]()) { names, account in
+            if let nickname = trimmed(nicknames[account.id]) { names[account.id] = nickname }
+        }
+        // One person's accounts often share a name, so a shared name falls back to the address.
+        let ownNames = accounts.reduce(into: [String: String]()) { names, account in
+            if setNames[account.id] == nil, let name = trimmed(account.displayName) { names[account.id] = name }
+        }
+        let uses = Dictionary(ownNames.values.map { ($0.lowercased(), 1) }, uniquingKeysWith: +)
+        return accounts.reduce(into: [:]) { names, account in
+            names[account.id] = setNames[account.id]
+                ?? ownNames[account.id].flatMap { uses[$0.lowercased()] == 1 ? $0 : nil }
+                ?? addressNames[account.id] ?? account.email
+        }
+    }
+
+    private static func trimmed(_ text: String?) -> String? {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        return text
+    }
+}
+
+extension MailboxModel {
+    /// Account row names for the sidebar, keyed by account ID.
+    var sidebarAccountNames: [String: String] {
+        let records = accounts.map(\.account)
+        let nicknames = records.reduce(into: [String: String]()) { names, account in
+            names[account.id] = accountPresentation[account.id]?.nickname
+        }
+        return SidebarAccountNames.names(for: records, nicknames: nicknames)
+    }
+}
+
+/// The disclosure chevron of a row that lists every account. As in Finder,
+/// it shows while the row is expanded or under the pointer, and keeps its
+/// width otherwise so titles stay aligned.
+struct SidebarDisclosureChevron: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isExpanded: Bool
+    let isHovered: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
+            .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
+            .opacity(isExpanded || isHovered ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let box: SystemMailbox
     let title: String
     let color: Color
@@ -220,17 +269,12 @@ private struct MailboxRow: View {
     /// Set on a row listing every account to show its disclosure state.
     var isExpanded: Bool?
     var isAccount = false
+    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: Tokens.Space.s1) {
             if let isExpanded {
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
-                    .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
-                    .accessibilityHidden(true)
+                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: isHovered)
             }
             Label {
                 Text(title)
@@ -246,6 +290,7 @@ private struct MailboxRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
         .badge(count)
     }
 }
@@ -324,10 +369,11 @@ private struct AccountHeader: View {
                     .imageScale(.small)
                     .foregroundStyle(color)
                     .accessibilityHidden(true)
+                // The start of an address tells accounts apart, so a narrow sidebar cuts the end.
                 Text(mailbox.accountTitle(owner.account))
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                     .help(email)
                 if !needsSignIn, case .failed(let message) = owner.syncStatus {
                     Image(systemName: "exclamationmark.triangle")
