@@ -245,9 +245,6 @@ struct MainView: View {
             // Calendar has no mail sidebar, so its toolbar offers the way back.
             WorkspaceSectionToolbar(section: section, onSelect: show)
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
-            CalendarToolbar(model: app.calendar)
-                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
-            AttachmentLibraryToolbar(state: libraryToolbar).mailToolbarVisible(isActive && showsLibrary)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
                     .help("New Message")
@@ -258,6 +255,10 @@ struct MainView: View {
             }
             .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && app.accountPreferences != nil)
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
+            // After the mail items, so the mail toolbar's space stays out of these groups.
+            CalendarToolbar(model: app.calendar)
+                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
+            AttachmentLibraryToolbar(state: libraryToolbar).mailToolbarVisible(isActive && showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
                 section: section, isCompact: isCompactWindow

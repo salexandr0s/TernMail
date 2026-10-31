@@ -4,6 +4,11 @@ import SwiftUI
 /// The main window's toolbar over the conversation: triage actions, then
 /// replies, in the order mail apps on the Mac use. The window's search
 /// field follows them (`WorkspaceSearch`).
+///
+/// The toolbar draws adjacent items as one capsule, so a fixed space splits
+/// triage from replies. Spaces ignore `hidden(_:)` and take room at every
+/// width: this one leads the trailing group in Calendar and the library,
+/// and at 960 points a second mail space would push search into the overflow.
 struct MailToolbar: CustomizableToolbarContent {
     @Bindable var mailbox: MailboxModel
     let reply: (ReplyKind) -> Void
@@ -43,9 +48,11 @@ struct MailToolbar: CustomizableToolbarContent {
                 .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
         }
         .mailToolbarVisible(showsCompact)
-        replies
+        // More holds the rest of the triage actions, so it ends their group.
         ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
             .mailToolbarVisible(showsStandard)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        replies
     }
 
     private var standardTriage: some CustomizableToolbarContent {
