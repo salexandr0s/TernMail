@@ -18,7 +18,7 @@ The fourteen `NSViewRepresentable` wrappers, the `Task.detached` render path in 
 
 ## Status at `58101df`
 
-No phase has started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
+Phase 0 finished after this review, in `035b43c` to `a7801f2`; its entry under Work phases lists the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
 
 - `ThreadRow` and `ThreadMenuItems` were deleted (`c1b7537`).
 - `MessageListRow` reads `ReadingPreferences.textScaleKey` (`2012eb2`) and exposes one accessibility element with a composed summary (`b71eb0e`).
@@ -158,7 +158,7 @@ Streaming hot path, high
 - `AssistantConversationView.swift` L71-80 passes closures and `model.statusText` to each row, and `AssistantMessage` is not `Equatable` (`AssistantConversation.swift` L18), so every visible row re-evaluates per token. Make `AssistantMessage: Equatable`, conform the row views and apply `.equatable()`. L59 and L120-128 build `Array(messages.enumerated())` and call `Calendar.current` per row; precompute `startsGroup` and `beginsDay` in the model.
 - `AssistantMessageView.swift` L210-224: `emails` and `sources` are filtered and deduplicated on every read, nine reads per body (L64-76, L114-130). Dedup once in the tool-result merge at `AssistantModel.swift` L675-686. L45-169 `bubble` is 125 lines; extract `RelatedMailSection`, `DraftButton` and `SourcesDisclosure`.
 - `AssistantEmailCard.swift` L94 decodes `NSImage(data:)` in body.
-- `AssistantDiagramView.swift` L11 builds `AssistantDiagramLayout` per evaluation, and L130-138 measure every label with `boundingRect`; cache the layout per diagram. L35-42 `GeometryReader` only for the viewport width; `containerRelativeFrame`. L116 `Connection.route` is never read.
+- `AssistantDiagramView.swift` L11 builds `AssistantDiagramLayout` per evaluation, and L130-138 measure every label with `boundingRect`; cache the layout per diagram. L35-42 `GeometryReader` only for the viewport width; `containerRelativeFrame`. L116 `Connection.route` is read only by `AssistantMarkdownTests`, which checks that arrows clear other nodes.
 - `ThreadSummaryView.swift` L30-33 computes a SHA-256 over all messages on every `identity` read, and it is read five times (L39, L41, L66, L67, L75). Compute once per `ThreadDetail`. The L66-77 load orchestration belongs in `ThreadSummaryModel.load` (`ThreadSummaryModel.swift` L65).
 - `AssistantView.swift` L140 reads `model.messages.isEmpty`, so the header, scope picker and composer re-run per token and rebuild `AssistantContext` through `availableAccounts` (L52), `setupPrompt` and `canSubmit` (L214-229, read at L30, L178, L201). Expose a stored `hasMessages`.
 
@@ -292,11 +292,27 @@ Order matters. Phases 0 and 1 unblock everything after them. Phase 2 fixes behav
 
 ### Phase 0: cleanup, no behavior change
 
-- Done: `ThreadRow` and `ThreadMenuItems` deleted (`c1b7537`); `MessageListRow` reads `ReadingPreferences.textScaleKey` (`2012eb2`).
-- `TernApp.swift` L52 takes the New Message window size from `Tokens.Layout`.
-- Remove `Connection.route`, the `sidebarCount` wrapper and the unused `Layout.settingsWidth`. Rename the private `Divider` in `AssistantSidebarLayout.swift`. Replace `SettingsGroup` with `Section` at its 22 call sites.
-- Make the six non-private `@State` properties private. Convert the four old-form overlays. Replace the manual `EnvironmentKey` in `AddressAvatar.swift` with `@Entry`. Correct the `RichTextEditor` doc comment.
-- Move `LabelNode`, `Color(gmailHex:)`, `FlowLayout`, `searchSuggestions`, the `AssistantMarkdownView` parser, `AssistantDiagramLayout`, `WorkspaceSection` with the workspace toolbar types, the four non-representable types in `MessageWebView.swift`, `AttachmentChip`, `ProfilePicker` and the shared calendar grid types into their own files. One commit per area.
+Done in seventeen commits, `035b43c` to `a7801f2`.
+
+- Earlier: `ThreadRow` and `ThreadMenuItems` deleted (`c1b7537`); `MessageListRow` reads `ReadingPreferences.textScaleKey` (`2012eb2`).
+- The New Message window takes `Tokens.Layout.composeWidth` and `composeHeight` (`035b43c`).
+- `Layout.settingsWidth` is gone, with six more tokens nothing read: `Assistant.settingsHeight`, `Assistant.chatBackground`, `Calendar.viewPickerWidth`, `Calendar.settingsWidth`, `Calendar.settingsHeight` and `Settings.controlWidth` (`035b43c`). The unused `Opacity.pressed`, `Opacity.disabled` and `Motion.slow` stay because they mirror `design_tokens.json`.
+- The private `Divider` in `AssistantSidebarLayout.swift` is now `SplitDivider` (`035b43c`). The `sidebarCount` wrapper is gone (`00ae2d2`).
+- `Connection.route` stays. `035b43c` removed it, but `AssistantMarkdownTests` reads it, so `a7801f2` restored it with a doc comment.
+- Three of the six non-private `@State` properties are private and set from explicit initializers (`45163b5`). `CalendarTimeGrid`'s `frames`, `drag` and `dragCancelled` stay internal, with a comment, because the gesture extension in `CalendarTimelineGesture.swift` sets them. Making them private means moving the drag state into a type of its own (Phase 4).
+- The four overlays use the closure form, `AddressAvatar.swift` uses `@Entry`, and the `RichTextEditor` comment gives the reasons it stays on `NSTextView` (`e9cd1b0`).
+- `Section` replaces `SettingsGroup` at all 22 call sites, and the type is deleted (`2ce4d00`, `ae1e7d2`, `c3d6aa7`).
+- Moves without code changes:
+  - `LabelNode` to `App/Mailbox`, `Color(gmailHex:)` to `App/Design/Color+GmailHex.swift` (`9462fe9`).
+  - `FlowLayout` to `App/Design` (`c7c36c7`).
+  - `searchSuggestions` and `MailSearchSuggestion` to `MailboxModel+SearchSuggestions.swift`; `currentMailboxMessageCount` and `performSwipe` to `MailboxModel+MessageList.swift` (`cfac40f`).
+  - `AssistantMarkdown` and `AssistantDiagramLayout` (`5c1397c`).
+  - `WorkspaceSection`, `WorkspaceSectionToolbar` and `WorkspaceAssistantToolbar` to `App/Views` (`d821c76`).
+  - `MessageWebViewWarmup`, `ScrollDirection`, and `RemoteContentBlocker` with its private `RuleListBox` (`4f63e7a`).
+  - `AttachmentChip` to `App/Attachments` (`0df6f44`) and `ProfilePicker` (`e947027`).
+  - `CalendarEventChip`, `CalendarWeekdayHeader`, `CalendarMiniMonth` and `CalendarSearchResults` (`5cb13e6`).
+- Moved files dropped imports they no longer use: `GmailAPI` and `MessageContent` in `MessageListHeader.swift`, `AppKit` and `UniformTypeIdentifiers` in `AttachmentStrip.swift`. `SidebarView.swift`, `ThreadView.swift` and `MessageWebView.swift` had no unused imports or private members to clear first.
+- At `a7801f2`, TernTests pass (330 tests in 53 suites) and a clean Debug build reports one app-target warning, `MessageListRow.swift` L54, as at `58101df`.
 
 ### Phase 1: shared helpers
 
