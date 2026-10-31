@@ -2,15 +2,29 @@ import Foundation
 import GmailAPI
 import SyncEngine
 
+struct CalendarSearchIdentity: Hashable {
+    let query: String
+    let day: Date
+    let timeZone: String
+    let owners: [String]
+    let lifecycle: Int
+}
+
 extension CalendarModel {
     /// Search a stated window instead of implying that a partial result covers
     /// every event ever created. Google expands recurring occurrences for us.
     func searchEvents() async {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = CalendarSearchIdentity(query: query, day: calendar.startOfDay(for: date),
+            timeZone: calendar.timeZone.identifier, owners: calendars.filter(\.isVisible).map(\.id).sorted(),
+            lifecycle: lifecycleRevision)
+        if completedSearch == key, let searchCompletedAt, Date.now.timeIntervalSince(searchCompletedAt) < 60 { return }
         searchRevision += 1
         let revision = searchRevision
         let access = lifecycleRevision
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { searchResults = []; searchStatus = ""; return }
+        guard !query.isEmpty else {
+            searchResults = []; searchStatus = ""; completedSearch = nil; searchCompletedAt = nil; return
+        }
         guard query.count <= 500 else { searchStatus = "Use a shorter search."; return }
         do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
         guard revision == searchRevision else { return }
@@ -28,11 +42,17 @@ extension CalendarModel {
                 var matches = try await engine.searchEvents(calendarID: owner.calendarID, query: query, start: start, end: pivot)
                 matches += try await engine.searchEvents(calendarID: owner.calendarID, query: query, start: pivot, end: end)
                 guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
-                found += matches.filter { !$0.isCancelled }.map {
-                    CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
-                        colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
-                        fallbackTimeZoneID: calendar.timeZone.identifier)
-                }
+                let loaded = matches
+                let timeZoneID = calendar.timeZone.identifier
+                let prepared = await Task.detached(priority: .userInitiated) {
+                    loaded.filter { !$0.isCancelled }.map {
+                        CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
+                            colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
+                            fallbackTimeZoneID: timeZoneID)
+                    }
+                }.value
+                guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+                found += prepared
             } catch {
                 if Task.isCancelled { return }
                 failures += 1
@@ -43,7 +63,7 @@ extension CalendarModel {
             }
         }
         guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
-        await reloadOperations()
+        await reloadOperations(reconcileEmailLinks: false)
         guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
         var ids = Set<String>()
         searchResults = found.filter { ids.insert($0.id).inserted }.map { event in
@@ -56,5 +76,7 @@ extension CalendarModel {
         let scope = interval.string(from: start, to: end)
         searchStatus = "\(searchResults.count) results · \(scope) · visible calendars"
             + (failures > 0 ? " · \(failures) calendars could not be searched; cached matches may be incomplete." : "")
+        completedSearch = key
+        searchCompletedAt = .now
     }
 }

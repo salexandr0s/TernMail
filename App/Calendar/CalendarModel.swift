@@ -16,8 +16,14 @@ final class CalendarModel {
     var searchResults: [CalendarDisplayEvent] = []
     var searchStatus = ""
     @ObservationIgnored var searchRevision = 0
-    var calendars: [CalendarDisplayCalendar] = []
-    var events: [CalendarDisplayEvent] = []
+    var calendars: [CalendarDisplayCalendar] = [] {
+        didSet { if calendars != oldValue { invalidateRangeSnapshots() } }
+    }
+    var events: [CalendarDisplayEvent] = [] {
+        didSet { if events != oldValue { presentation = nil; presentationRevision += 1 } }
+    }
+    var presentation: CalendarPresentationSnapshot?
+    var presentationRevision = 0
     var accounts: [CalendarAccountOption] = []
     var connectionStates: [String: CalendarConnectionState] = [:]
     var isLoading = false
@@ -32,7 +38,9 @@ final class CalendarModel {
         didSet { if oldValue != isVisible { schedulePolling() } }
     }
     var accessRevision = 0
-    var operations: [CalendarOperation] = []
+    var operations: [CalendarOperation] = [] {
+        didSet { if operations != oldValue { invalidateRangeSnapshots() } }
+    }
     var workingHours: CalendarWorkingHours {
         didSet { if let data = try? JSONEncoder().encode(workingHours) { defaults.set(data, forKey: "calendarWorkingHours") } }
     }
@@ -78,7 +86,12 @@ final class CalendarModel {
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var monitor: NWPathMonitor?
     @ObservationIgnored private var refreshAgain = false
-    @ObservationIgnored private var rangeRevision = 0
+    @ObservationIgnored var rangeRevision = 0
+    @ObservationIgnored var rangeSnapshots: [CalendarRangeIdentity: CalendarRangeSnapshot] = [:]
+    @ObservationIgnored var rangeSnapshotOrder: [CalendarRangeIdentity] = []
+    @ObservationIgnored var activeRangeTask: (key: CalendarRangeIdentity, id: UUID, task: Task<Void, Never>)?
+    @ObservationIgnored var completedSearch: CalendarSearchIdentity?
+    @ObservationIgnored var searchCompletedAt: Date?
     @ObservationIgnored private var isStarted = false
     @ObservationIgnored private var didLoadCalendars = false
 
@@ -94,7 +107,7 @@ final class CalendarModel {
     func start() async {
         guard !isStarted else { return }
         isStarted = true
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
         if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
             await seedCalendarAudit(); return
         }
@@ -133,6 +146,8 @@ final class CalendarModel {
 
     func stop() async {
         lifecycleRevision += 1
+        activeRangeTask?.task.cancel(); activeRangeTask = nil
+        invalidateRangeSnapshots()
         pollTask?.cancel(); pollTask = nil
         monitor?.cancel(); monitor = nil
         rangeRevision += 1
@@ -144,6 +159,8 @@ final class CalendarModel {
 
     func accessExpired(_ accountID: String) {
         lifecycleRevision += 1; rangeRevision += 1; editRevision += 1; searchRevision += 1
+        activeRangeTask?.task.cancel(); activeRangeTask = nil
+        invalidateRangeSnapshots()
         if connectionState(for: accountID).isEnabled || engines[accountID] != nil {
             connectionStates[accountID] = CalendarConnectionState(isEnabled: true, issue: .signInRequired)
         }
@@ -178,7 +195,7 @@ final class CalendarModel {
     }
 
     func refresh() async {
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
         if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
             await refreshCalendarAudit(); return
         }
@@ -217,6 +234,10 @@ final class CalendarModel {
             }
             var display: [CalendarDisplayCalendar] = []
             var issues: [String] = []
+            // A slow calendar-list request must not hold back saved calendars
+            // or their saved visible range on launch or return to the app.
+            await restoreCachedCalendars(enabled, lifecycle: revision)
+            guard revision == lifecycleRevision else { return }
             for record in enabled {
                 guard revision == lifecycleRevision else { return }
                 guard let service = app.calendarService(for: record.id) else {
@@ -296,54 +317,6 @@ final class CalendarModel {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func reloadOccurrences(refresh: Bool = true, refreshIfIncomplete: Bool = false) async {
-        rangeRevision += 1
-        let revision = rangeRevision
-        let lifecycle = lifecycleRevision
-        let interval = displayInterval
-        let displayCalendar = calendar
-        // Publish the saved range before waiting for Google, including when
-        // navigation changes the date while an earlier request is suspended.
-        var needsRefresh = refresh
-        for shouldRefresh in [false, true] {
-            if shouldRefresh && !needsRefresh { return }
-            var found: [CalendarDisplayEvent] = []
-            var stale = false
-            for owner in calendars where owner.isVisible {
-                guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
-                guard let engine = engines[owner.accountID] else { stale = true; continue }
-                do {
-                    let result = try await engine.occurrences(calendarID: owner.calendarID, start: interval.start,
-                                                              end: interval.end, refresh: shouldRefresh)
-                    guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
-                    stale = stale || result.isStale || !result.isComplete
-                    if !result.isComplete, refreshIfIncomplete { needsRefresh = true }
-                    found += result.events.filter { !$0.isCancelled }.map {
-                        CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
-                            colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
-                            fallbackTimeZoneID: displayCalendar.timeZone.identifier)
-                    }
-                } catch {
-                    stale = true
-                    if refreshIfIncomplete { needsRefresh = true }
-                }
-            }
-            guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
-            await reloadOperations()
-            guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
-            events = CalendarPendingEvents.project(found, operations: operations, calendars: calendars, interval: interval,
-                                                   calendar: displayCalendar)
-            statusText = calendars.isEmpty ? (connectionStates.values.contains(where: \.isEnabled)
-                ? "No calendars are available. Refresh or check the account connection."
-                : "Google Calendar isn't connected.")
-                : operations.contains(where: { $0.status == .failed || $0.status == .conflicted })
-                    ? "Some calendar changes need review in Calendar activity."
-                    : operations.contains(where: { $0.status == .queued || $0.status == .running })
-                    ? "Calendar changes are waiting to sync."
-                    : stale ? "Showing cached events. Some calendars could not be checked." : "Calendars are up to date."
-        }
-    }
-
     var displayInterval: DateInterval {
         if mode == .month {
             let days = CalendarLayout.monthDays(containing: date, calendar: calendar)
@@ -355,14 +328,14 @@ final class CalendarModel {
         return base
     }
 
-    func reloadOperations() async {
+    func reloadOperations(reconcileEmailLinks: Bool = true) async {
         guard let store else { return }
         let revision = lifecycleRevision
         var result: [CalendarOperation] = []
         for id in engines.keys { result += (try? await store.operations(accountID: id)) ?? [] }
         guard revision == lifecycleRevision else { return }
         operations = result.sorted { $0.createdAt < $1.createdAt }
-        await reconcileEmailSourceLinks()
+        if reconcileEmailLinks { await reconcileEmailSourceLinks() }
     }
 
     func setVisible(id: String, visible: Bool) {
@@ -400,7 +373,7 @@ final class CalendarModel {
             defer { proposalTasks[taskID] = nil }
             do {
                 guard revision == lifecycleRevision else { return }
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
                 if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
                     try await store?.savePreferences(preference); return
                 }
