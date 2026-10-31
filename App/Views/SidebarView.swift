@@ -209,6 +209,7 @@ struct SidebarView: View {
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.sidebarRowSize) private var sidebarRowSize
     let box: SystemMailbox
     let title: String
     let color: Color
@@ -233,12 +234,13 @@ private struct MailboxRow: View {
                 Text(title)
                     .lineLimit(1)
             } icon: {
+                let scale = Tokens.Control.sidebarIconScale(sidebarRowSize)
                 Image(systemName: box.systemImage)
-                    .font(.system(size: isAccount ? Tokens.Space.s3 : Tokens.Control.icon))
+                    .font(.system(size: (isAccount ? Tokens.Space.s3 : Tokens.Control.icon) * scale))
                     .imageScale(.medium)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(color)
-                    .frame(width: Tokens.Space.s5)
+                    .frame(width: Tokens.Space.s5 * scale)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -367,6 +369,7 @@ private struct AccountHeader: View {
 /// and outlined when the label has none. A label Gmail hasn't created yet is
 /// marked as pending and can't be selected.
 private struct LabelRow: View {
+    @Environment(\.sidebarRowSize) private var sidebarRowSize
     let mailbox: MailboxModel
     let node: LabelNode
 
@@ -388,11 +391,12 @@ private struct LabelRow: View {
         } icon: {
             let color = Color(gmailHex: label.backgroundColor)
             let icon = LabelAppearance.shared.icon(for: label)
+            let scale = Tokens.Control.sidebarIconScale(sidebarRowSize)
             Image(systemName: icon == "tag" && color != nil ? "tag.fill" : icon)
-                .font(.system(size: Tokens.Control.icon))
+                .font(.system(size: Tokens.Control.icon * scale))
                 .imageScale(.medium)
                 .foregroundStyle(color ?? .secondary)
-                .frame(width: Tokens.Space.s5)
+                .frame(width: Tokens.Space.s5 * scale)
         }
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)

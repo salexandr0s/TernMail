@@ -125,6 +125,17 @@ enum Tokens {
         static let avatarLarge = Space.s10
         /// Message list rows show a smaller disc than headers do.
         static let listAvatar = Space.s5
+
+        /// Sidebar symbols follow the sidebar icon size in System Settings.
+        /// Apple sizes sidebar icons 16, 20 and 24 points for Small, Medium
+        /// and Large, so Medium keeps a symbol's base size.
+        static func sidebarIconScale(_ size: SidebarRowSize) -> CGFloat {
+            switch size {
+            case .small: Space.s4 / Space.s5
+            case .large: Space.s6 / Space.s5
+            default: 1
+            }
+        }
     }
 
     enum Layout {
