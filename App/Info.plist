@@ -60,5 +60,18 @@
 	<string>$(GOOGLE_CLIENT_ID_PREFIX)</string>
 	<key>TernGoogleRedirectScheme</key>
 	<string>$(GOOGLE_REDIRECT_SCHEME)</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Tern Conversation</string>
+			<key>UTTypeIdentifier</key>
+			<string>dev.tern.mail.conversation</string>
+		</dict>
+	</array>
 </dict>
 </plist>

@@ -4,6 +4,9 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     case general, accounts, profiles, notifications, reading, messageList, composing
     case signatures, filters, blocked, vacation, attachments, failedChanges, maintenance, assistant
     var id: String { rawValue }
+    /// The `UserDefaults` key holding the pane the window shows. Other windows
+    /// write a raw value here before opening Settings to land on that pane.
+    static let storageKey = "settingsDestination"
     var title: String {
         switch self {
         case .general: "General"

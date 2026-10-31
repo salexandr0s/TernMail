@@ -39,6 +39,11 @@ targets:
         TernGoogleRedirectScheme: $(GOOGLE_REDIRECT_SCHEME)
         NSAppleScriptEnabled: true
         OSAScriptingDefinition: Tern.sdef
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: dev.tern.mail.conversation
+            UTTypeDescription: Tern Conversation
+            UTTypeConformsTo:
+              - public.data
         CFBundleURLTypes:
           - CFBundleURLName: dev.tern.mail.links
             CFBundleTypeRole: Editor
