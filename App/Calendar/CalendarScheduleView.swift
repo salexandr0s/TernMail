@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CalendarScheduleView: View {
+    @Environment(\.calendarPresentation) private var presentation
     let date: Date
     let calendar: Calendar
     let events: [CalendarDisplayEvent]
@@ -13,7 +14,12 @@ struct CalendarScheduleView: View {
     private var days: [Date] {
         guard let interval = calendar.dateInterval(of: .month, for: date) else { return [] }
         return CalendarLayout.days(in: interval, calendar: calendar)
-            .filter { !CalendarLayout.events(events, on: $0, calendar: calendar).isEmpty }
+            .filter { !events(on: $0).isEmpty }
+    }
+
+    private func events(on day: Date) -> [CalendarDisplayEvent] {
+        if let presentation, presentation.matches(calendar) { return presentation.day(day)?.events ?? [] }
+        return CalendarLayout.events(events, on: day, calendar: calendar)
     }
 
     private var selected: CalendarDisplayEvent? { events.first { $0.id == selectedID } }
@@ -33,7 +39,7 @@ struct CalendarScheduleView: View {
                 List(selection: $selectedID) {
                     ForEach(days, id: \.self) { day in
                         Section {
-                            ForEach(CalendarLayout.events(events, on: day, calendar: calendar)) { event in
+                            ForEach(events(on: day)) { event in
                                 row(event, on: day).tag(event.id)
                             }
                         } header: {

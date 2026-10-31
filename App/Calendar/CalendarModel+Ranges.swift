@@ -62,6 +62,23 @@ extension CalendarModel {
         searchCompletedAt = nil
     }
 
+    /// Synthetic fixtures and externally restored event arrays use the same
+    /// preparation path as a fetched range, without accessing any service.
+    func preparePresentationForCurrentEvents() async {
+        let current = events
+        let key = rangeIdentity
+        let displayCalendar = calendar
+        let interval = displayInterval
+        let buildsTimeAxis = mode == .day || mode == .week
+        let prepared = await Task.detached(priority: .userInitiated) {
+            CalendarPresentationSnapshot(events: current, interval: interval, calendar: displayCalendar,
+                buildsTimeAxis: buildsTimeAxis)
+        }.value
+        guard key == rangeIdentity, events == current, !Task.isCancelled else { return }
+        presentation = prepared
+        presentationRevision += 1
+    }
+
     func reloadOccurrences(refresh: Bool = true, refreshIfIncomplete: Bool = false) async {
         rangeRevision += 1
         let revision = rangeRevision
