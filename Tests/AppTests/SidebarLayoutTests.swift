@@ -410,8 +410,10 @@ import Testing
 
     /// Toolbar spaces ignore hidden(_:), so the mail toolbar's spaces stay in
     /// Calendar and the attachment library, and only the item order keeps them
-    /// ahead of those sections' controls. The library's controls once pushed
-    /// Search into the overflow menu at the minimum window width.
+    /// ahead of those sections' controls. In Mail, More once had a group of
+    /// its own, and its space stayed before Search after narrow windows folded
+    /// it into a menu. The library's controls once pushed Search into the
+    /// overflow menu at the minimum window width.
     @Test func sectionToolbarsKeepTheirSpacingAndSearch() async throws {
         let app = AppModel()
         await app.start()
@@ -451,6 +453,16 @@ import Testing
         )
         app.destination = .calendar
         try await expectToolbar(in: window, width: 1_280, section: "calendar.", spacesAfter: ["calendar.newEvent"])
+        app.destination = .mail
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await expectToolbar(
+            in: window, width: 1_280, section: "mail.", spacesAfter: ["mail.trash", "mail.more", "mail.forward"],
+            hiding: ["mail.compactActions", "mail.compactReplies"]
+        )
+        try await expectToolbar(
+            in: window, width: 960, section: "mail.", spacesAfter: ["mail.trash", "mail.compactActions", "mail.compactReplies"],
+            hiding: ["mail.more"]
+        )
         await app.signOut()
     }
 

@@ -47,11 +47,11 @@ struct MailToolbar: CustomizableToolbarContent {
         .mailToolbarVisible(showsCompact)
         ToolbarSpacer(.fixed, placement: .primaryAction)
         replies
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-        ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
-            .mailToolbarVisible(showsStandard)
     }
 
+    /// More closes this group because compact windows fold the whole group
+    /// into one menu. Both layouts then use the same spaces, which matters
+    /// since `ToolbarSpacer` ignores `hidden(_:)`.
     private var standardTriage: some CustomizableToolbarContent {
         Group {
             ToolbarItem(id: "mail.read", placement: .primaryAction) { readAction }
@@ -62,6 +62,7 @@ struct MailToolbar: CustomizableToolbarContent {
                 editLabelsAction.popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
             }
             ToolbarItem(id: "mail.snooze", placement: .primaryAction) { snoozeMenu }
+            ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
         }
         .mailToolbarVisible(showsStandard)
     }
