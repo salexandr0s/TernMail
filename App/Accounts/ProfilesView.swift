@@ -43,9 +43,7 @@ struct ProfilesView: View {
 
             if let error = model.error {
                 Section {
-                    Label(error, systemImage: "exclamationmark.circle")
-                        .font(.callout)
-                        .foregroundStyle(Tokens.Status.error)
+                    SettingsErrorLabel(error)
                 }
             }
         }

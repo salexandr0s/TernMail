@@ -30,11 +30,7 @@ struct FailedChangesView: View {
                     }
                     if let error {
                         Section {
-                            Label(error, systemImage: "exclamationmark.circle")
-                                .foregroundStyle(Tokens.Status.error)
-                                .font(.callout)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
+                            SettingsErrorLabel(error)
                         }
                     }
                 }

@@ -54,10 +54,7 @@ struct VacationPane: View {
     private var saveBar: some View {
         HStack(spacing: Tokens.Space.s3) {
             if let validationMessage {
-                Label(validationMessage, systemImage: "exclamationmark.circle")
-                    .font(.callout)
-                    .foregroundStyle(Tokens.Status.error)
-                    .fixedSize(horizontal: false, vertical: true)
+                SettingsErrorLabel(validationMessage)
             } else if hasChanges {
                 Text("Unsaved changes")
                     .font(.callout)
