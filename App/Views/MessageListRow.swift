@@ -202,7 +202,7 @@ struct MessageListMenu: View {
                 Button("Open in New Window", systemImage: "macwindow.badge.plus") { mailbox.requestConversationWindow(for: row) }
                 Button("Copy Link", systemImage: "link") {
                     if let url = MailLink(accountID: row.accountID, threadID: row.threadID).ternURL {
-                        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                        NSPasteboard.general.replaceContents(with: url.absoluteString)
                     }
                 }
                 Button("Open in Gmail", systemImage: "arrow.up.right.square") {
@@ -212,7 +212,7 @@ struct MessageListMenu: View {
                 Button("Copy Gmail Link", systemImage: "link") {
                     if let email = mailbox.account(id: row.accountID)?.account.email,
                        let url = MailLink(accountID: row.accountID, threadID: row.threadID).gmailURL(email: email) {
-                        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                        NSPasteboard.general.replaceContents(with: url.absoluteString)
                     }
                 }
             }

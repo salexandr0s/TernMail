@@ -113,7 +113,7 @@ struct MessageMenuItems: View {
         }
     }
 
-    private func copy(_ url: URL) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string) }
+    private func copy(_ url: URL) { NSPasteboard.general.replaceContents(with: url.absoluteString) }
 }
 
 struct MessageAddressMenu: View {
@@ -124,7 +124,7 @@ struct MessageAddressMenu: View {
 
     var body: some View {
         Menu {
-            Button("Copy Address") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(address.address, forType: .string) }
+            Button("Copy Address") { NSPasteboard.general.replaceContents(with: address.address) }
             Button("New Message") {
                 Task {
                     guard let id = await mailbox.startMessage(to: address, accountID: accountID) else { return }
