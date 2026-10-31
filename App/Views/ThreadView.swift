@@ -449,7 +449,8 @@ private final class ReaderPaging {
 }
 
 /// The subject, followed by a chip for the Inbox and each user label the
-/// conversation is in. Removing the Inbox chip archives the conversation.
+/// conversation is in. The Inbox chip has no remove button because Archive
+/// is in the toolbar; its context menu still archives.
 private struct ThreadHeading: View {
     let detail: ThreadDetail
     let key: ThreadKey
@@ -465,7 +466,7 @@ private struct ThreadHeading: View {
             ForEach(chips, id: \.id) { label in
                 if label.id == SystemLabel.inbox {
                     LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive", showTitle: "Show Inbox",
-                              onShow: { show(label.id) }) {
+                              showsRemoveButton: false, onShow: { show(label.id) }) {
                         if let messageID { mailbox.performReadingAction(.archive, name: "Archive", messageID: messageID, accountID: key.accountID) }
                         else { mailbox.perform(.archive, on: [key]) }
                     }
@@ -526,6 +527,7 @@ private struct LabelChip: View {
     let tint: Color
     let removeHelp: String
     let showTitle: String
+    var showsRemoveButton = true
     let onShow: () -> Void
     let onRemove: () -> Void
 
@@ -538,20 +540,23 @@ private struct LabelChip: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .help(name)
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.caption2.weight(.semibold))
-                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                    .contentShape(Rectangle())
+            if showsRemoveButton {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.semibold))
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help(removeHelp)
+                .accessibilityLabel("\(removeHelp): \(name)")
             }
-            .buttonStyle(.borderless)
-            .help(removeHelp)
-            .accessibilityLabel("\(removeHelp): \(name)")
         }
+        .frame(minHeight: Tokens.Space.s6)
         .font(.caption.weight(.medium))
         .foregroundStyle(.primary)
         .padding(.leading, Tokens.Space.s2)
-        .padding(.trailing, Tokens.Space.s0_5)
+        .padding(.trailing, showsRemoveButton ? Tokens.Space.s0_5 : Tokens.Space.s2)
         .background(Tokens.Surface.primary, in: Capsule())
         .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
         .contextMenu {
