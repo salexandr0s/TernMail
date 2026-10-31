@@ -3,40 +3,64 @@ import SwiftUI
 
 struct AccountPreferencesView: View {
     @Bindable var model: AccountPreferencesModel
-    @State private var selectedID = ""
+    @State private var selectedID: String?
 
     var body: some View {
-        SettingsPage {
-            if model.orderedRecords.isEmpty {
-                HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                    Image(systemName: "person.crop.circle.badge.plus")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    SettingsRowLabel("No accounts", detail: "Add a Google account in Connections to set its preferences.")
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Tokens.Space.s4)
-                .padding(.vertical, Tokens.Space.s3)
-                .settingsSurface()
-            } else {
-                SettingsControlRow("Account") {
-                    Picker("Account", selection: $selectedID) {
-                        ForEach(model.orderedRecords) { account in Text(account.email).tag(account.id) }
+        if model.orderedRecords.isEmpty {
+            ContentUnavailableView("No Accounts", systemImage: "person.crop.circle.badge.plus",
+                description: Text("Add a Google account in Connections to set its preferences."))
+        } else {
+            SettingsPage {
+                Section {
+                    List(selection: $selectedID) {
+                        ForEach(model.orderedRecords) { account in
+                            accountRow(account).tag(account.id)
+                        }
+                        .onMove { offsets, destination in
+                            Task { await model.move(fromOffsets: offsets, toOffset: destination) }
+                        }
                     }
-                    .labelsHidden()
+                    .frame(height: CGFloat(model.orderedRecords.count) * Tokens.Settings.accountRowHeight)
+                    .environment(\.defaultMinListRowHeight, Tokens.Settings.accountRowHeight)
+                    .scrollDisabled(true)
+                    .scrollContentBackground(.hidden)
+                    .accessibilityLabel("Accounts")
+                } header: {
+                    Text("Accounts")
+                } footer: {
+                    Text("Drag accounts to change their order in the sidebar.")
                 }
-                .settingsSurface()
                 if let account = model.records.first(where: { $0.id == selectedID }) {
                     AccountPreferenceEditor(account: account, model: model).id(account.id)
                 }
+                if let error = model.error {
+                    Section {
+                        Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(Tokens.Status.error)
+                    }
+                }
             }
-            if let error = model.error {
-                Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red)
+            .onChange(of: model.orderedRecords.map(\.id), initial: true) { _, ids in
+                if let selectedID, ids.contains(selectedID) { return }
+                selectedID = ids.first
             }
         }
-        .onChange(of: model.orderedRecords.map(\.id), initial: true) { _, ids in
-            if !ids.contains(selectedID) { selectedID = ids.first ?? "" }
+    }
+
+    private func accountRow(_ account: AccountRecord) -> some View {
+        HStack(spacing: Tokens.Space.s3) {
+            AddressAvatar(accountID: account.id, address: account.email, name: account.displayName ?? "")
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(model.displayName(for: account))
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(account.email)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
+        .padding(.vertical, Tokens.Space.s1)
     }
 }
 
@@ -44,24 +68,29 @@ private struct AccountPreferenceEditor: View {
     let account: AccountRecord
     @Bindable var model: AccountPreferencesModel
     @State private var nickname = ""
+    @State private var nicknameWrite = LiveApplyScheduler()
     @AppStorage(AccountAppearance.storageKey) private var accountColors = Data()
     private let colors = ["Blue", "Pink", "Orange", "Green", "Purple", "Teal", "Indigo", "Brown"]
 
     var body: some View {
-        SettingsGroup("Appearance", systemImage: "paintpalette") {
-            SettingsControlRow("Nickname", detail: "How this account appears in Tern.") {
+        Section("Appearance") {
+            SettingsControlRow("Nickname", detail: "How this account appears in Tern. Saves as you type.") {
                 HStack(spacing: Tokens.Space.s2) {
-                    TextField("Nickname", text: $nickname)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(minWidth: Tokens.Settings.editorLabelWidth, maxWidth: .infinity)
-                    Button("Save") {
-                        let value = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Task { await model.update(account.id) { $0.nickname = value.isEmpty ? nil : value } }
+                    if nicknameWrite.isWaiting {
+                        ProgressView().controlSize(.small).accessibilityLabel("Saving")
                     }
-                    .disabled(nickname.trimmingCharacters(in: .whitespacesAndNewlines) == (preferences.nickname ?? ""))
+                    TextField("Nickname", text: $nickname, prompt: Text("Optional"))
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
+                        .onAppear { nickname = preferences.nickname ?? "" }
+                        .onChange(of: nickname) { _, _ in
+                            nicknameWrite.schedule { await commitNickname() }
+                        }
+                        .onDisappear {
+                            let write = nicknameWrite
+                            Task { await write.flush() }
+                        }
                 }
             }
-            Divider().padding(.horizontal, Tokens.Space.s4)
             SettingsControlRow("Account color") {
                 HStack(spacing: Tokens.Space.s1) {
                     ForEach(AccountAppearance.palette.indices, id: \.self) { index in
@@ -87,13 +116,11 @@ private struct AccountPreferenceEditor: View {
                 }
             }
         }
-        .onAppear { nickname = preferences.nickname ?? "" }
 
-        SettingsGroup("Mail and profiles", systemImage: "tray.2") {
-            SettingsToggleRow("Sync mail", detail: "Keeps cached mail and drafts. New mail, sending and snoozes wait while paused.", isOn: Binding(get: { preferences.syncEnabled }, set: { enabled in
+        Section("Mail and profiles") {
+            SettingsToggleRow("Sync Mail", detail: "Keeps cached mail and drafts. New mail, sending and snoozes wait while paused.", isOn: Binding(get: { preferences.syncEnabled }, set: { enabled in
                 Task { await model.update(account.id) { $0.syncEnabled = enabled } }
             }))
-            Divider().padding(.horizontal, Tokens.Space.s4)
             SettingsControlRow("Profile", detail: "This account also stays in All accounts.") {
                 Picker("Profile", selection: Binding(get: { preferences.profileID ?? "" }, set: { id in
                     Task { await model.update(account.id) { $0.profileID = id.isEmpty ? nil : id } }
@@ -101,22 +128,19 @@ private struct AccountPreferenceEditor: View {
                     Text("All accounts only").tag("")
                     ForEach(model.profiles) { profile in Text(profile.name).tag(profile.id) }
                 }
-                .labelsHidden()
-            }
-            Divider().padding(.horizontal, Tokens.Space.s4)
-            SettingsControlRow("Account order", detail: "Position in the sidebar.") {
-                HStack(spacing: Tokens.Space.s2) {
-                    Button("Move Up", systemImage: "arrow.up") { Task { await model.move(account.id, by: -1) } }
-                        .disabled(model.orderedRecords.first?.id == account.id)
-                    Button("Move Down", systemImage: "arrow.down") { Task { await model.move(account.id, by: 1) } }
-                        .disabled(model.orderedRecords.last?.id == account.id)
-                }
+                .fixedSize()
             }
         }
     }
 
     private var preferences: AccountMailPreferences { model.preferences(for: account.id) }
     private var colorIndex: Int? { AccountAppearance.decode(accountColors)[account.id] }
+
+    private func commitNickname() async {
+        let value = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value != (preferences.nickname ?? "") else { return }
+        await model.update(account.id) { $0.nickname = value.isEmpty ? nil : value }
+    }
 }
 
 struct ProfilePicker: View {

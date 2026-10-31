@@ -2,12 +2,14 @@ import GmailAPI
 import MailStore
 import SwiftUI
 
+/// Rows for one account's Google connections, placed inside the account's section.
 struct ConnectionsView: View {
     let app: AppModel
     let accountID: String
     @State private var connection: SettingsAccountState
     @State private var busy = false
     @State private var error: String?
+    @State private var confirmsPermanentDeletion = false
 
     private let features: [AccountFeature] = [.calendar, .gmailSettings, .contacts, .inboxUpdates, .permanentDeletion]
 
@@ -18,37 +20,43 @@ struct ConnectionsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(features, id: \.rawValue) { feature in
-                if feature != features.first {
-                    Divider().padding(.horizontal, Tokens.Space.s4)
-                }
-                SettingsToggleRow(title(feature), detail: detail(feature), isOn: Binding(
-                    get: { connection.isEnabled(feature) },
-                    set: { enabled in Task { await set(feature, enabled: enabled) } }
-                ))
-                .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(accountID))
-            }
-            Divider().padding(.horizontal, Tokens.Space.s4)
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                if let state = app.inboxWatcher(for: accountID)?.state {
-                    Text(watcherStatus(state)).font(.caption).foregroundStyle(.secondary)
-                }
-                if let error { Text(error).font(.caption).foregroundStyle(.red) }
-                Text("Turning connections off stops their use in Tern. Remove Tern from your Google Account to revoke permissions.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: Tokens.Space.s2) {
-                    if let url = URL(string: "https://myaccount.google.com/permissions") {
-                        Link("Review Google permissions", destination: url).font(.caption)
+        ForEach(features, id: \.rawValue) { feature in
+            SettingsToggleRow(title(feature), detail: detail(feature), isOn: Binding(
+                get: { connection.isEnabled(feature) },
+                set: { enabled in
+                    if feature == .permanentDeletion, enabled {
+                        confirmsPermanentDeletion = true
+                    } else {
+                        Task { await set(feature, enabled: enabled) }
                     }
-                    if busy { ProgressView().controlSize(.small) }
                 }
+            ))
+            .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(accountID))
+        }
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            if let state = app.inboxWatcher(for: accountID)?.state {
+                Text(watcherStatus(state)).font(.caption).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, Tokens.Space.s4)
-            .padding(.vertical, Tokens.Space.s2)
+            if let error { Text(error).font(.caption).foregroundStyle(Tokens.Status.error) }
+            Text("Turning connections off stops their use in Tern. Remove Tern from your Google Account to revoke permissions.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Tokens.Space.s2) {
+                if let url = URL(string: "https://myaccount.google.com/permissions") {
+                    Link("Review Google Permissions", destination: url).font(.caption)
+                }
+                if busy { ProgressView().controlSize(.small) }
+            }
         }
         .task { await connection.observe() }
+        .ternConfirm(
+            "Allow permanent deletion?",
+            isPresented: $confirmsPermanentDeletion,
+            actionTitle: "Allow",
+            message: "Tern can then delete messages from Trash and Spam for good. Google asks for its full mail permission, and deleted messages can't be recovered."
+        ) {
+            Task { await set(.permanentDeletion, enabled: true) }
+        }
     }
 
     private func set(_ feature: AccountFeature, enabled: Bool) async {

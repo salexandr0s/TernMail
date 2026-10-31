@@ -18,13 +18,15 @@ struct FilterEditorSheet: View {
         SettingsEditorSheet(
             title: original == nil ? "New Filter" : "Edit Filter",
             width: Tokens.Settings.editorWideWidth,
-            messages: [validation, model.error].compactMap { $0 }
+            messages: [validation, model.error].compactMap { $0 },
+            scrolls: false
         ) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            Form {
                 criteriaSection
-                Divider()
                 actionsSection
             }
+            .formStyle(.grouped)
+            .frame(height: Tokens.Settings.editorMaxContentHeight)
         } actions: {
             Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
             if model.isSaving { ProgressView().controlSize(.small) }
@@ -40,117 +42,65 @@ struct FilterEditorSheet: View {
     }
 
     private var criteriaSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("Match incoming messages")
-                .font(.subheadline.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                textField("From", text: $draft.criteria.from)
-                textField("To", text: $draft.criteria.to)
-                textField("Subject", text: $draft.criteria.subject)
-                textField("Has the words", text: $draft.criteria.query)
-                textField("Doesn't have", text: $draft.criteria.negatedQuery)
-                HStack(spacing: Tokens.Space.s3) {
-                    fieldLabel("Size")
-                    HStack(spacing: Tokens.Space.s2) {
-                        Picker("Size comparison", selection: Binding(get: { draft.criteria.sizeComparison ?? .larger }, set: { draft.criteria.sizeComparison = $0 })) {
-                            Text("Larger than").tag(GmailFilter.SizeComparison.larger)
-                            Text("Smaller than").tag(GmailFilter.SizeComparison.smaller)
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                        TextField("Bytes", text: $draft.sizeText)
-                            .accessibilityLabel("Size in bytes")
-                            .frame(maxWidth: .infinity)
+        Section("Match incoming messages") {
+            textField("From", text: $draft.criteria.from)
+            textField("To", text: $draft.criteria.to)
+            textField("Subject", text: $draft.criteria.subject)
+            textField("Has the words", text: $draft.criteria.query)
+            textField("Doesn't have", text: $draft.criteria.negatedQuery)
+            LabeledContent("Size") {
+                HStack(spacing: Tokens.Space.s2) {
+                    Picker("Size comparison", selection: Binding(get: { draft.criteria.sizeComparison ?? .larger }, set: { draft.criteria.sizeComparison = $0 })) {
+                        Text("Larger than").tag(GmailFilter.SizeComparison.larger)
+                        Text("Smaller than").tag(GmailFilter.SizeComparison.smaller)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                HStack(spacing: Tokens.Space.s3) {
-                    Color.clear.frame(width: Tokens.Space.s12 * 2, height: 0)
-                    HStack(spacing: Tokens.Space.s4) {
-                        Toggle("Has attachment", isOn: bool($draft.criteria.hasAttachment))
-                        Toggle("Exclude chats", isOn: bool($draft.criteria.excludeChats))
-                    }
-                    .toggleStyle(.checkbox)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .labelsHidden()
+                    .fixedSize()
+                    TextField("Bytes", text: $draft.sizeText)
+                        .accessibilityLabel("Size in bytes")
                 }
             }
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle("Has Attachment", isOn: bool($draft.criteria.hasAttachment))
+            Toggle("Exclude Chats", isOn: bool($draft.criteria.excludeChats))
         }
     }
 
     private var actionsSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        Section {
+            Toggle("Skip the Inbox", isOn: $draft.skipInbox)
+            Toggle("Mark as Read", isOn: $draft.markRead)
+            Toggle("Star", isOn: $draft.star)
+            Toggle("Never Send to Spam", isOn: $draft.neverSpam)
+            Toggle("Move to Trash", isOn: $draft.trash)
+            Picker("Importance", selection: $draft.importance) {
+                Text("Leave unchanged").tag(0)
+                Text("Always important").tag(1)
+                Text("Never important").tag(-1)
+            }
+            Picker("Apply label", selection: $draft.labelID) {
+                Text("None").tag("")
+                ForEach(model.labels.filter { !$0.isSystem }, id: \.id) { label in
+                    Text(label.name).tag(label.id)
+                }
+            }
+            Picker("Forward to", selection: $draft.forward) {
+                Text("No forwarding").tag("")
+                ForEach(model.forwarding, id: \.forwardingEmail) { address in
+                    Text(address.forwardingEmail + (address.isAccepted ? "" : " (waiting for verification)"))
+                        .tag(address.forwardingEmail).disabled(!address.isAccepted)
+                }
+                if !draft.forward.isEmpty, !model.forwarding.contains(where: { $0.forwardingEmail == draft.forward }) {
+                    Text(draft.forward + " (unavailable)").tag(draft.forward).disabled(true)
+                }
+            }
+        } header: {
             Text("Then")
-                .font(.subheadline.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
-            Grid(alignment: .leading, horizontalSpacing: Tokens.Space.s4, verticalSpacing: Tokens.Space.s2) {
-                GridRow {
-                    Toggle("Skip the Inbox", isOn: $draft.skipInbox)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Toggle("Mark as read", isOn: $draft.markRead)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+        } footer: {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("Add and verify forwarding addresses in Gmail before using them here.")
+                if !draft.preservedAdds.isEmpty || !draft.preservedRemoves.isEmpty {
+                    Text("Other Gmail actions will be kept: \((draft.preservedAdds.map { "Add " + $0 } + draft.preservedRemoves.map { "Remove " + $0 }).joined(separator: ", "))")
                 }
-                GridRow {
-                    Toggle("Star", isOn: $draft.star)
-                    Toggle("Never send to Spam", isOn: $draft.neverSpam)
-                }
-                GridRow {
-                    Toggle("Move to Trash", isOn: $draft.trash)
-                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                }
-            }
-            .toggleStyle(.checkbox)
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                HStack(spacing: Tokens.Space.s3) {
-                    fieldLabel("Importance")
-                    Picker("Importance", selection: $draft.importance) {
-                        Text("Leave unchanged").tag(0)
-                        Text("Always important").tag(1)
-                        Text("Never important").tag(-1)
-                    }
-                    .labelsHidden()
-                    .fixedSize(horizontal: true, vertical: false)
-                    Spacer(minLength: 0)
-                }
-                HStack(spacing: Tokens.Space.s3) {
-                    fieldLabel("Apply label")
-                    Picker("Apply label", selection: $draft.labelID) {
-                        Text("None").tag("")
-                        ForEach(model.labels.filter { !$0.isSystem }, id: \.id) { label in
-                            Text(label.name).tag(label.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                HStack(spacing: Tokens.Space.s3) {
-                    fieldLabel("Forward to")
-                    Picker("Forward to", selection: $draft.forward) {
-                        Text("No forwarding").tag("")
-                        ForEach(model.forwarding, id: \.forwardingEmail) { address in
-                            Text(address.forwardingEmail + (address.isAccepted ? "" : " (waiting for verification)"))
-                                .tag(address.forwardingEmail).disabled(!address.isAccepted)
-                        }
-                        if !draft.forward.isEmpty, !model.forwarding.contains(where: { $0.forwardingEmail == draft.forward }) {
-                            Text(draft.forward + " (unavailable)").tag(draft.forward).disabled(true)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Text("Add and verify forwarding addresses in Gmail before using them here.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !draft.preservedAdds.isEmpty || !draft.preservedRemoves.isEmpty {
-                Text("Other Gmail actions will be kept: \((draft.preservedAdds.map { "Add " + $0 } + draft.preservedRemoves.map { "Remove " + $0 }).joined(separator: ", "))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -158,18 +108,7 @@ struct FilterEditorSheet: View {
     private var validation: String? { draft.validation(acceptedForwarding: model.forwarding.filter(\.isAccepted).map(\.forwardingEmail)) }
 
     private func textField(_ title: String, text: Binding<String?>) -> some View {
-        HStack(spacing: Tokens.Space.s3) {
-            fieldLabel(title)
-            TextField("", text: Binding(get: { text.wrappedValue ?? "" }, set: { text.wrappedValue = $0.isEmpty ? nil : $0 }))
-                .accessibilityLabel(title)
-                .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func fieldLabel(_ title: String) -> some View {
-        Text(title)
-            .frame(width: Tokens.Space.s12 * 2, alignment: .trailing)
+        TextField(title, text: Binding(get: { text.wrappedValue ?? "" }, set: { text.wrappedValue = $0.isEmpty ? nil : $0 }))
     }
 
     private func bool(_ binding: Binding<Bool?>) -> Binding<Bool> {

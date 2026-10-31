@@ -103,12 +103,12 @@ final class AccountPreferencesModel {
         catch { self.error = "Couldn't save the account preference." }
     }
 
-    func move(_ id: String, by distance: Int) async {
+    /// Reorders accounts the way a list's `onMove` reports it and stores the result.
+    func move(fromOffsets offsets: IndexSet, toOffset destination: Int) async {
         var ordered = orderedRecords
-        guard let current = ordered.firstIndex(where: { $0.id == id }), ordered.indices.contains(current + distance) else { return }
-        ordered.swapAt(current, current + distance)
+        ordered.move(fromOffsets: offsets, toOffset: destination)
         do {
-            for (index, record) in ordered.enumerated() {
+            for (index, record) in ordered.enumerated() where preferences(for: record.id).sortOrder != index {
                 _ = try await store.updateMailPreferences(accountID: record.id) { $0.sortOrder = index }
             }
             await refresh()

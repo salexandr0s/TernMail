@@ -5,10 +5,18 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var colorScheme
-    @State private var selection: SettingsDestination? = .general
+    @AppStorage(SettingsDestination.storageKey) private var storedDestination = SettingsDestination.general.rawValue
     @State private var search = ""
+    @State private var unsaved = SettingsUnsavedChanges()
+    @State private var pendingLeave: PendingLeave?
 
-    private var destination: SettingsDestination { selection ?? .general }
+    private var destination: SettingsDestination { SettingsDestination.stored(storedDestination) }
+
+    /// The sidebar follows the stored pane, so another window can land Settings
+    /// on a pane by writing the key before it opens Settings.
+    private var selection: Binding<SettingsDestination?> {
+        Binding(get: { destination }, set: { leave(for: .destination($0 ?? .general)) })
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -36,13 +44,47 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(colorScheme == .dark ? Color(nsColor: .textBackgroundColor) : Tokens.Surface.canvas)
             .navigationTitle(destination.title)
+            .navigationSubtitle(sectionTitle)
         }
         .frame(minWidth: Tokens.Settings.minWidth, idealWidth: Tokens.Settings.width,
                minHeight: Tokens.Settings.minHeight, idealHeight: Tokens.Settings.height)
+        .environment(unsaved)
+        .background {
+            SettingsWindowCloseGuard { window in
+                guard unsaved.subject != nil else { return true }
+                pendingLeave = .close(window)
+                return false
+            }
+        }
+        .ternConfirm(
+            "Discard changes to the \(unsaved.subject ?? "pane")?",
+            item: $pendingLeave,
+            actionTitle: "Discard Changes",
+            message: "Your unsaved edits are lost. Gmail keeps what it last saved."
+        ) { leave in
+            unsaved.clear()
+            switch leave {
+            case .destination(let destination): storedDestination = destination.rawValue
+            case .close(let window): window.close()
+            }
+        }
+    }
+
+    /// Where the window title alone would be ambiguous, the section names the area.
+    private var sectionTitle: String {
+        guard let section = SettingsNavigationSection.section(containing: destination),
+              section.title != destination.title else { return "" }
+        return section.title
+    }
+
+    private func leave(for leave: PendingLeave) {
+        if case .destination(let next) = leave, next == destination { return }
+        guard unsaved.subject == nil else { pendingLeave = leave; return }
+        if case .destination(let next) = leave { storedDestination = next.rawValue }
     }
 
     private var sidebar: some View {
-        List(selection: $selection) {
+        List(selection: selection) {
             ForEach(SettingsNavigationSection.sections) { section in
                 let destinations = section.destinations.filter { $0.matches(search) }
                 if !destinations.isEmpty {
@@ -88,44 +130,94 @@ struct SettingsView: View {
         guard !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if let first = SettingsNavigationSection.sections
             .flatMap(\.destinations).first(where: { $0.matches(search) }) {
-            selection = first
+            leave(for: .destination(first))
         }
     }
 
     @ViewBuilder private var detail: some View {
         switch destination {
-        case .general: GeneralPreferencesPane()
-        case .accounts: AccountSettingsPane()
-        case .profiles:
-            if let model = app.accountPreferences { ProfilesView(model: model) }
-            else { unavailable }
+        case .general: GeneralSettings()
+        case .mailActions: TriagePreferencesPane()
         case .notifications:
             if let model = app.accountPreferences, let notifications = app.mailNotifications {
                 NotificationSettingsView(preferences: model, notifications: notifications)
             } else { unavailable }
+        case .connections: AccountsSettings()
+        case .accountPreferences:
+            if let model = app.accountPreferences { AccountPreferencesView(model: model) }
+            else { unavailable }
+        case .profiles:
+            if let model = app.accountPreferences { ProfilesView(model: model) }
+            else { unavailable }
         case .reading: ReadingSettingsView()
         case .messageList: MessageListSettingsView(mailbox: app.mailbox)
-        case .composing: ComposeSettingsPane()
+        case .attachments: AttachmentPreferencesView()
+        case .writing, .templates, .localSignatures, .suggestions: ComposeSettingsPane(destination: destination)
         case .signatures: IntegrationSettingsView(pane: .signatures)
         case .filters: IntegrationSettingsView(pane: .filters)
         case .blocked: IntegrationSettingsView(pane: .blocked)
         case .vacation: IntegrationSettingsView(pane: .vacation)
-        case .attachments: AttachmentPreferencesView()
+        case .calendar: CalendarManagementView(model: app.calendar)
+        case .assistant: AssistantSettingsView(model: app.assistant, showsIntroduction: false)
         case .failedChanges: FailedChangesView()
         case .maintenance: MaintenanceSettingsView(app: app)
-        case .assistant: AssistantSettingsView(model: app.assistant, showsIntroduction: false)
         }
     }
 
     private var unavailable: some View {
         ContentUnavailableView {
-            Label("Add an account to get started", systemImage: "person.crop.circle.badge.plus")
+            Label("No Accounts", systemImage: "person.crop.circle.badge.plus")
         } description: {
-            Text("Your accounts, profiles, and notifications will appear here.")
+            Text("Add a Google account to set up its preferences, profiles and notifications.")
         } actions: {
-            Button("Open Accounts") { selection = .accounts }
+            Button("Open Connections") { leave(for: .destination(.connections)) }
                 .buttonStyle(.borderedProminent)
         }
+    }
+
+    /// What the user asked to do while a pane still holds unsaved edits.
+    private enum PendingLeave {
+        case destination(SettingsDestination)
+        case close(NSWindow)
+    }
+}
+
+/// Vetoes closing the window while a pane holds unsaved edits. Every other
+/// delegate call still reaches the delegate SwiftUI installed.
+private struct SettingsWindowCloseGuard: NSViewRepresentable {
+    let shouldClose: @MainActor (NSWindow) -> Bool
+
+    func makeNSView(context: Context) -> GuardView { GuardView() }
+
+    func updateNSView(_ nsView: GuardView, context: Context) {
+        nsView.delegate.shouldClose = shouldClose
+    }
+
+    final class GuardView: NSView {
+        let delegate = ForwardingDelegate()
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, window.delegate !== delegate else { return }
+            delegate.next = window.delegate
+            window.delegate = delegate
+        }
+    }
+
+    final class ForwardingDelegate: NSObject, NSWindowDelegate {
+        weak var next: NSWindowDelegate?
+        var shouldClose: @MainActor (NSWindow) -> Bool = { _ in true }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            guard shouldClose(sender) else { return false }
+            return next?.windowShouldClose?(sender) ?? true
+        }
+
+        override func responds(to aSelector: Selector!) -> Bool {
+            super.responds(to: aSelector) || next?.responds(to: aSelector) == true
+        }
+
+        override func forwardingTarget(for aSelector: Selector!) -> Any? { next }
     }
 }
 

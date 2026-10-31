@@ -29,7 +29,9 @@ import Foundation
     }
 
     private func render() {
-        NSApp.dockTile.badgeLabel = unread == 0 ? nil : String(unread)
+        let showsDockBadge = defaults.object(forKey: NotificationPolicy.dockBadgeKey) == nil
+            || defaults.bool(forKey: NotificationPolicy.dockBadgeKey)
+        NSApp.dockTile.badgeLabel = unread == 0 || !showsDockBadge ? nil : String(unread)
         guard defaults.bool(forKey: NotificationPolicy.menuBarCountKey) else {
             if let item { NSStatusBar.system.removeStatusItem(item) }
             item = nil

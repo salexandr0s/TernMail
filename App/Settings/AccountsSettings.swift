@@ -7,52 +7,42 @@ struct AccountsSettings: View {
     @State private var accountToSignOut: AccountRecord?
 
     var body: some View {
-        SettingsPage {
+        Group {
             if let mailbox = app.mailbox, !mailbox.accounts.isEmpty {
-                ForEach(mailbox.accounts, id: \.account.id) { owner in
-                    VStack(spacing: 0) {
-                        row(owner.account)
-                        Divider().padding(.horizontal, Tokens.Space.s4)
-                        ConnectionsView(account: owner.account, app: app)
+                SettingsPage {
+                    ForEach(mailbox.accounts, id: \.account.id) { owner in
+                        Section {
+                            row(owner.account)
+                            ConnectionsView(account: owner.account, app: app)
+                        }
                     }
-                    .settingsSurface()
+                    if let error = app.signInError {
+                        Section {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                    }
                 }
             } else {
-                HStack(spacing: Tokens.Space.s3) {
-                    Image(systemName: "person.crop.circle.badge.plus")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    SettingsRowLabel("No accounts", detail: "Add a Google account.")
-                    Spacer(minLength: 0)
+                ContentUnavailableView {
+                    Label("No Accounts", systemImage: "person.crop.circle.badge.plus")
+                } description: {
+                    Text(app.signInError ?? "Add a Google account to read and send its mail in Tern.")
                 }
-                .padding(Tokens.Space.s3)
-                .settingsSurface()
-            }
-            if let error = app.signInError {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding(Tokens.Space.s3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .settingsSurface()
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             accountFooter
         }
-        .confirmationDialog(
+        .ternConfirm(
             "Sign out of \(accountToSignOut?.email ?? "this account")?",
-            isPresented: Binding(get: { accountToSignOut != nil }, set: { if !$0 { accountToSignOut = nil } }),
-            presenting: accountToSignOut
+            item: $accountToSignOut,
+            actionTitle: "Sign Out",
+            message: accountToSignOut.map { app.signOutMessage(for: $0) } ?? ""
         ) { account in
-            Button("Sign Out", role: .destructive) {
-                Task { await app.signOut(of: account.id) }
-            }
-        } message: { account in
-            Text(app.signOutMessage(for: account))
+            Task { await app.signOut(of: account.id) }
         }
     }
 
@@ -131,7 +121,6 @@ struct AccountsSettings: View {
             .controlSize(.small)
             .fixedSize()
         }
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1)
     }
 }

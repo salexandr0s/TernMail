@@ -3,75 +3,70 @@ import SwiftUI
 
 struct FiltersPane: View {
     @Bindable var model: SettingsModel
+    let header: GmailSettingsHeader
     @State private var editor: FilterEditorSelection?
     @State private var deleting: GmailFilter?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack {
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("\(model.filters.count) \(model.filters.count == 1 ? "filter" : "filters")")
-                        .font(.body.weight(.medium))
-                    Text("Applies to new mail as it arrives.").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Add Filter", systemImage: "plus") { editor = FilterEditorSelection(filter: nil) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.canEdit || model.filters.count >= 1_000)
-            }
-            if model.filters.isEmpty {
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("No filters").font(.body.weight(.medium))
+        SettingsPage {
+            header
+            Section {
+                if model.filters.isEmpty {
                     Text("Create a filter to choose which messages to match and what happens when they arrive.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        ForEach(Array(model.filters.enumerated()), id: \.offset) { _, filter in
-                            HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                                    Text(summary(filter))
-                                        .font(.body.weight(.medium))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .textSelection(.enabled)
-                                    Text(actions(filter))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    if filter.id == nil {
-                                        Text("Saving…").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                HStack(spacing: Tokens.Space.s2) {
-                                    Button("Edit") { editor = FilterEditorSelection(filter: filter) }
-                                        .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
-                                    Button("Delete", role: .destructive) { deleting = filter }
-                                        .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
-                                }
-                                .controlSize(.small)
-                                .fixedSize()
-                            }
-                            .padding(Tokens.Space.s3)
-                            .settingsSurface()
-                        }
+                } else {
+                    ForEach(Array(model.filters.enumerated()), id: \.offset) { _, filter in
+                        filterRow(filter)
                     }
                 }
+            } header: {
+                HStack {
+                    Text(model.filters.isEmpty ? "Filters" : "\(model.filters.count) \(model.filters.count == 1 ? "filter" : "filters")")
+                    Spacer()
+                    Button("Add Filter…", systemImage: "plus") { editor = FilterEditorSelection(filter: nil) }
+                        .controlSize(.small)
+                        .disabled(!model.canEdit || model.filters.count >= 1_000)
+                }
+            } footer: {
+                Text("Filters apply to new mail as it arrives.")
             }
         }
         .sheet(item: $editor) { selection in
             FilterEditorSheet(model: model, original: selection.filter)
         }
-        .confirmationDialog("Delete this filter?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Delete Filter", role: .destructive) {
-                if let deleting { Task { await model.deleteFilter(deleting) } }
-                deleting = nil
+        .ternConfirm("Delete this filter?", item: $deleting, actionTitle: "Delete Filter",
+                     message: "Existing messages stay as they are. You can undo this change.") { filter in
+            Task { await model.deleteFilter(filter) }
+        }
+    }
+
+    private func filterRow(_ filter: GmailFilter) -> some View {
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(summary(filter))
+                    .font(.body.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(actions(filter))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if filter.id == nil {
+                    Text("Saving…").font(.caption).foregroundStyle(.secondary)
+                }
             }
-        } message: { Text("Existing messages stay as they are. You can undo this change.") }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: Tokens.Space.s2) {
+                Button("Edit…") { editor = FilterEditorSelection(filter: filter) }
+                Button("Delete…", role: .destructive) { deleting = filter }
+            }
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
+        }
+        .padding(.vertical, Tokens.Space.s1)
     }
 
     private func summary(_ filter: GmailFilter) -> String {

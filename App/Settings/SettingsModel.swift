@@ -9,6 +9,8 @@ import SyncEngine
 final class SettingsModel {
     let accountID: String
     let connection: SettingsAccountState
+    /// Fields that save as the user types share one debounce per account.
+    let liveApply = LiveApplyScheduler()
     private(set) var snapshot = SettingsSnapshot()
     @ObservationIgnored private var serverSnapshot = SettingsSnapshot()
     var filters: [GmailFilter] { snapshot.filters }

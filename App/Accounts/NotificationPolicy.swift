@@ -33,6 +33,8 @@ struct MailNotificationDelivery: Sendable, Equatable {
 enum NotificationPolicy {
     static let soundKey = "tern.mailNotificationSound"
     static let menuBarCountKey = "tern.mailUnreadMenuBar"
+    /// Absent means on: the Dock badge shows unless the user turns it off.
+    static let dockBadgeKey = "tern.mailUnreadDockBadge"
 
     static func allows(_ message: MailNotificationMessage, preferences: AccountMailPreferences,
                        profile: MailProfile?, activeProfileID: String?, at date: Date,

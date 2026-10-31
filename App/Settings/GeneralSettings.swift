@@ -9,8 +9,6 @@ struct GeneralSettings: View {
         SettingsPage {
             SettingsGroup("Default email app", systemImage: "envelope") {
                 DefaultMailAppView()
-                    .padding(.horizontal, Tokens.Space.s4)
-                    .padding(.vertical, Tokens.Space.s2)
             }
             SettingsGroup("Sending", systemImage: "paperplane") {
                 SettingsControlRow("Undo Send", detail: "Delay sending so you can undo.") {
@@ -23,14 +21,12 @@ struct GeneralSettings: View {
                 }
             }
             SettingsGroup("Keyboard", systemImage: "keyboard") {
-                SettingsToggleRow("Single-key shortcuts", detail: "Use letter keys when you aren't typing.", isOn: $usesSingleKeys)
-                Divider().padding(.horizontal, Tokens.Space.s4)
-                SettingsControlRow("Keyboard shortcuts") {
-                    Button("View Shortcuts…") {
-                        openWindow(id: KeyboardShortcutsView.sceneID)
-                    }
-                    .accessibilityHint("Opens Keyboard Shortcuts")
+                SettingsToggleRow("Single-Key Shortcuts", detail: "Use letter keys when you aren't typing.", isOn: $usesSingleKeys)
+                Button("All Keyboard Shortcuts…") {
+                    openWindow(id: KeyboardShortcutsView.sceneID)
                 }
+                .buttonStyle(.link)
+                .accessibilityHint("Opens the Keyboard Shortcuts window")
             }
         }
     }

@@ -134,7 +134,7 @@ import Testing
         await model.refresh()
         #expect(await model.saveProfile(MailProfile(id: "work", name: "Work")))
         await model.update("a") { $0.nickname = "Office"; $0.profileID = "work" }
-        await model.move("b", by: -1)
+        await model.move(fromOffsets: IndexSet(integer: 1), toOffset: 0)
         #expect(model.orderedRecords.map(\.id) == ["b", "a"])
         #expect(model.records.first(where: { $0.id == "a" }).map(model.displayName(for:)) == "Office")
         model.selectProfile("work")
