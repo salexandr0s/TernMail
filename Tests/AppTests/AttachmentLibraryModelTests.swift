@@ -156,6 +156,31 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func indexProgressEndsWhenIndexingCompletesFailsOrNeedsSignIn() async throws {
+        let mailbox = try mailbox()
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        #expect(model.isBuildingIndex)
+        var state = AttachmentIndexState(accountID: "audit")
+        try await mailbox.cache.write { [state] tx in try tx.saveAttachmentIndexState(state) }
+        let observing = Task { await model.start() }
+        defer { observing.cancel() }
+        try await waitUntil { model.indexStates.count == 1 }
+        #expect(model.isBuildingIndex)
+        model.unavailableAccountIDs = ["audit"]
+        #expect(!model.isBuildingIndex)
+        model.unavailableAccountIDs = []
+        state.lastError = "Couldn't reach Gmail."
+        try await mailbox.cache.write { [state] tx in try tx.saveAttachmentIndexState(state) }
+        try await waitUntil { model.indexingNeedsRetry }
+        #expect(!model.isBuildingIndex)
+        state.lastError = nil
+        state.isComplete = true
+        try await mailbox.cache.write { [state] tx in try tx.saveAttachmentIndexState(state) }
+        try await waitUntil { model.indexStates.first?.isComplete == true }
+        #expect(!model.isBuildingIndex)
+        await mailbox.stop()
+    }
+
     @Test func fileExportPreservesDuplicatesAndExistingDestinationOnReadFailure() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
