@@ -4,7 +4,10 @@ import MessageContent
 /// AppKit keeps ownership of token editing; avatars occupy reserved display space.
 @MainActor
 final class RecipientTokenField: NSTokenField {
-    static let avatarPrefix = "\u{2003}\u{2003}"
+    /// Room for the avatar between the token's edge and its name.
+    static let avatarPrefix = "\u{2004}"
+    /// The cell lays out its text, tokens included, with this padding, as its field editor does.
+    private static let cellLineFragmentPadding: CGFloat = 2
     var focusChanged: (() -> Void)?
     var didLeaveWindow: (() -> Void)?
     var avatarImage: ((EmailAddress) -> NSImage?)?
@@ -43,7 +46,7 @@ final class RecipientTokenField: NSTokenField {
         let layout = NSLayoutManager()
         let rect = cell?.drawingRect(forBounds: bounds) ?? bounds
         let container = NSTextContainer(size: NSSize(width: rect.width, height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
+        container.lineFragmentPadding = Self.cellLineFragmentPadding
         text.addLayoutManager(layout)
         layout.addTextContainer(container)
         Self.drawAvatars(in: text, layout: layout, container: container,
@@ -74,28 +77,30 @@ final class RecipientTokenField: NSTokenField {
 
     static func drawAvatars(in text: NSAttributedString, layout: NSLayoutManager, container: NSTextContainer,
                             origin: NSPoint, addresses: [EmailAddress], image: ((EmailAddress) -> NSImage?)?) {
-        let ranges = avatarAttachmentRanges(in: text)
+        let tokens = avatarTokens(in: text)
         // During a native edit, metadata can lag one notification. Omit a frame rather than draw another recipient's image.
-        guard ranges.count == addresses.count else { return }
+        guard tokens.count == addresses.count else { return }
         layout.ensureLayout(for: container)
-        for (range, address) in zip(ranges, addresses) {
+        for ((range, cell), address) in zip(tokens, addresses) {
             let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let box = layout.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: origin.x, dy: origin.y)
-            let size = min(Tokens.Space.s4, box.height)
-            let frame = NSRect(x: box.minX + Tokens.Space.s1, y: box.midY - size / 2, width: size, height: size)
+            // The cell's drawing rect is the token's rounded background. The avatar stays inside it.
+            let token = cell.drawingRect(forBounds: box)
+            let size = token.height - 2 * Tokens.Space.s0_5
+            let frame = NSRect(x: token.minX + Tokens.Space.s0_5, y: token.midY - size / 2, width: size, height: size)
             RecipientAvatarDrawing.draw(image: image?(address), address: address, in: frame)
         }
     }
 
-    static func avatarAttachmentRanges(in text: NSAttributedString) -> [NSRange] {
-        var ranges: [NSRange] = []
+    static func avatarTokens(in text: NSAttributedString) -> [(range: NSRange, cell: NSCell)] {
+        var tokens: [(range: NSRange, cell: NSCell)] = []
         text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
             guard let attachment = value as? NSTextAttachment,
                   let cell = attachment.attachmentCell as? NSCell,
                   cell.stringValue.hasPrefix(avatarPrefix) else { return }
-            ranges.append(range)
+            tokens.append((range, cell))
         }
-        return ranges
+        return tokens
     }
 }
 
@@ -127,7 +132,12 @@ enum RecipientAvatarDrawing {
                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         } else {
             let label = ContactAvatar.initials(name: address.name ?? "", address: address.address)
-            let font = NSFont.preferredFont(forTextStyle: .caption1)
+            var font = NSFont.preferredFont(forTextStyle: .caption1)
+            // Initials shrink to the square inside a small circle, such as a token's.
+            let natural = NSAttributedString(string: label, attributes: [.font: font]).size()
+            let side = frame.width / 2.squareRoot()
+            let scale = min(1, side / max(natural.width, 1), frame.height / max(natural.height, 1))
+            if scale < 1, let smaller = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) { font = smaller }
             let value = NSAttributedString(string: label, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
             let size = value.size()
             value.draw(at: NSPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2))

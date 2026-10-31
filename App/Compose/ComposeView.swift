@@ -13,13 +13,18 @@ struct ComposeWindow: View {
 
     /// Changes when the message moves to another account, which makes a copy.
     @Binding var localDraftID: String?
+    /// What the view of the moved message passes to the copy's view.
+    @State private var handoff: ComposeView.Handoff?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
             if let id = localDraftID, let mailbox = app.mailbox {
-                ComposeView(localDraftID: id, mailbox: mailbox) { localDraftID = $0 }
+                ComposeView(localDraftID: id, mailbox: mailbox, handoff: handoff?.localDraftID == id ? handoff : nil) {
+                    handoff = $0
+                    localDraftID = $0.localDraftID
+                }
                     // Each draft, and a new sign-in's mailbox, needs its own model.
                     .id(id)
                     .id(ObjectIdentifier(mailbox))
@@ -29,8 +34,37 @@ struct ComposeWindow: View {
             }
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
+        .background(ComposeWindowCascade())
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
+        }
+    }
+}
+
+/// Steps a new compose window down and right while it would open exactly on
+/// top of another one.
+private struct ComposeWindowCascade: NSViewRepresentable {
+    func makeNSView(context: Context) -> CascadeView { CascadeView() }
+
+    func updateNSView(_ nsView: CascadeView, context: Context) {}
+
+    final class CascadeView: NSView {
+        /// Compose windows already placed, which a new one steps away from.
+        private static let placed = NSHashTable<NSWindow>.weakObjects()
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, !Self.placed.contains(window) else { return }
+            let others = Self.placed.allObjects.filter(\.isVisible)
+            Self.placed.add(window)
+            func covers(_ other: NSWindow) -> Bool {
+                abs(other.frame.minX - window.frame.minX) < 1 && abs(other.frame.maxY - window.frame.maxY) < 1
+            }
+            var next = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            // One step more than there are other windows is enough to clear them all.
+            for _ in 0...others.count where others.contains(where: covers) {
+                next = window.cascadeTopLeft(from: next)
+            }
         }
     }
 }
@@ -40,8 +74,16 @@ struct ComposeView: View {
     static let minWidth = Tokens.Layout.composeMinWidth
     static let minHeight = Tokens.Layout.composeMinHeight
 
-    private enum Field: Hashable {
-        case to, cc, bcc, subject, from
+    enum Field: Hashable {
+        case to, cc, bcc, subject, from, message
+    }
+
+    /// What a view passes to the one showing the copy its message moved to.
+    struct Handoff {
+        let localDraftID: String
+        /// Where the cursor was, so typing carries on in the same field.
+        let focus: Field?
+        let senderChange: ComposeModel.SenderChange?
     }
 
     @State private var model: ComposeModel
@@ -55,12 +97,22 @@ struct ComposeView: View {
     /// views, which `focus` can't reach.
     @State private var recipientFocus: Field?
     @State private var focusedRecipient: Field?
+    /// Where the cursor was last while the message could change.
+    @State private var lastFocus: Field?
+    /// Moves the cursor to the end of Subject, which selects all its text when it takes focus.
+    @State private var subjectSelection: TextSelection?
+    /// Set while the cursor goes back to Subject in a copy made by a move.
+    @State private var keepsSubjectText = false
+    @State private var highlightsFrom = false
     @Environment(\.dismiss) private var dismiss
+    /// Where the cursor starts in a copy made by a move.
+    private let restoredFocus: Field?
     /// Shows the copy the window's message became in another account.
-    private let onMove: (String) -> Void
+    private let onMove: (Handoff) -> Void
 
-    init(localDraftID: String, mailbox: MailboxModel, onMove: @escaping (String) -> Void) {
-        _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox))
+    init(localDraftID: String, mailbox: MailboxModel, handoff: Handoff? = nil, onMove: @escaping (Handoff) -> Void) {
+        _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox, senderChange: handoff?.senderChange))
+        restoredFocus = handoff?.focus
         self.onMove = onMove
     }
 
@@ -96,9 +148,20 @@ struct ComposeView: View {
             case .loading, .moving: break
             case .open: await placeFocus()
             case .closed: dismiss()
-            case .moved(let localDraftID): onMove(localDraftID)
+            case .moved(let localDraftID):
+                onMove(Handoff(localDraftID: localDraftID, focus: lastFocus, senderChange: model.copySenderChange))
             }
         }
+        // Runs when the copy of a move the window made by itself opens.
+        .task(id: model.phase == .open ? model.senderChange : nil) { await highlightSenderChange() }
+        .onChange(of: focus) { _, field in
+            if let field { noteFocus(field) }
+            if field == .subject, keepsSubjectText {
+                keepsSubjectText = false
+                subjectSelection = TextSelection(insertionPoint: model.content.subject.endIndex)
+            }
+        }
+        .onChange(of: model.isEditingMessage) { _, isEditing in if isEditing { noteFocus(.message) } }
         .onAppear(perform: configureSenderAvatars)
         .onChange(of: senderAvatarIdentity) { _, _ in configureSenderAvatars() }
         .onDisappear { senderAvatars.stop(); model.windowClosed() }
@@ -187,7 +250,7 @@ struct ComposeView: View {
     }
 
     private var header: some View {
-        VStack(spacing: Tokens.Space.s1) {
+        VStack(spacing: 0) {
             fieldRow("To:", field: .to) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                     recipientField("To", addresses: $model.content.to, field: .to)
@@ -213,17 +276,20 @@ struct ComposeView: View {
                 .buttonStyle(.borderless)
             }
             if model.showsCc {
+                rowDivider
                 fieldRow("Cc:", field: .cc) {
                     recipientField("Cc", addresses: $model.content.cc, field: .cc)
                 }
             }
             if model.showsBcc {
+                rowDivider
                 fieldRow("Bcc:", field: .bcc) {
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
                 }
             }
+            rowDivider
             fieldRow("Subject:", field: .subject) {
-                TextField("", text: $model.content.subject)
+                TextField("", text: $model.content.subject, selection: $subjectSelection)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .labelsHidden()
@@ -231,15 +297,34 @@ struct ComposeView: View {
                     .focused($focus, equals: .subject)
             }
             if model.showsFrom {
+                rowDivider
                 fromField
+                if let change = model.senderChange {
+                    senderChangeNote(change)
+                }
             }
         }
         .disabled(!model.isEditable)
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1)
         .background(Tokens.Surface.primary)
         .ternAnimation(value: focus)
         .ternAnimation(value: focusedRecipient)
+    }
+
+    /// A hairline between header rows, aligned with their labels.
+    private var rowDivider: some View {
+        Divider()
+            .padding(.horizontal, Tokens.Space.s2)
+    }
+
+    /// Rows have no border. Focus outlines the whole row, label included.
+    private func focusRing(_ isFocused: Bool) -> some View {
+        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+            .strokeBorder(isFocused ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus)
+            // Keeps the ring off the dividers above and below.
+            .padding(.vertical, Tokens.Space.s0_5)
+            .allowsHitTesting(false)
     }
 
     /// Replies keep their account while allowing any of its verified From addresses.
@@ -263,18 +348,20 @@ struct ComposeView: View {
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                 fieldLabel("From:")
-                if let sender = model.selectedSender {
-                    SenderAccountLabel(account: sender.account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text(model.fromEmail).lineLimit(1).truncationMode(.middle)
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
+                    if let sender = model.selectedSender {
+                        SenderAccountLabel(account: sender.account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text(model.fromEmail).lineLimit(1).truncationMode(.middle)
+                    }
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
             }
             .font(.body)
             .padding(.horizontal, Tokens.Space.s2)
@@ -287,11 +374,37 @@ struct ComposeView: View {
         .menuIndicator(.hidden)
         .controlSize(.regular)
         .focused($focus, equals: .from)
-        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .ternOutline(radius: Tokens.Radius.sm, focus: focus == .from ? .accentColor : nil)
+        .background {
+            if highlightsFrom {
+                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                    .fill(Color.accentColor.opacity(Tokens.Opacity.tint))
+                    .padding(.vertical, Tokens.Space.s0_5)
+                    .transition(.opacity)
+            }
+        }
+        .overlay { focusRing(focus == .from) }
+        .ternAnimation(value: highlightsFrom)
         .help(model.canChangeAccount ? "Choose a sending address." : "Choose a sending address from this conversation’s account.")
         .accessibilityLabel("From")
         .accessibilityValue(model.fromEmail)
+    }
+
+    /// Says why the window changed the sender, with a way back.
+    private func senderChangeNote(_ change: ComposeModel.SenderChange) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+            Text(change.note)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Undo") { model.undoSenderChange() }
+                .controlSize(.small)
+                .help("Send from \(change.previousAccountName) instead")
+        }
+        // Lines up with the From value above.
+        .padding(.leading, Tokens.Space.s2 + Tokens.Layout.composeLabelWidth + Tokens.Space.s2)
+        .padding(.trailing, Tokens.Space.s2)
+        .padding(.bottom, Tokens.Space.s1_5)
     }
 
     private func fieldRow<Content: View>(
@@ -309,13 +422,12 @@ struct ComposeView: View {
         .background {
             // Only the background handles blank space. Native editors keep their
             // own mouse events for cursor placement, token selection and dragging.
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .fill(Tokens.Surface.primary)
+            Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { focusField(field) }
                 .accessibilityHidden(true)
         }
-        .ternOutline(radius: Tokens.Radius.sm, focus: isFocused ? .accentColor : nil)
+        .overlay { focusRing(isFocused) }
     }
 
     private func fieldLabel(_ text: String) -> some View {
@@ -336,7 +448,15 @@ struct ComposeView: View {
         case .to, .cc, .bcc:
             focus = nil
             recipientFocus = field
+        case .message:
+            focus = nil
+            recipientFocus = nil
+            model.editor?.focus()
         }
+    }
+
+    private func noteFocus(_ field: Field) {
+        if model.isEditable { lastFocus = field }
     }
 
     private func recipientField(_ label: String, addresses: Binding<[EmailAddress]>, field: Field) -> some View {
@@ -352,6 +472,7 @@ struct ComposeView: View {
             onFocusChange: { isFocused in
                 if isFocused {
                     focusedRecipient = field
+                    noteFocus(field)
                 } else if focusedRecipient == field {
                     focusedRecipient = nil
                 }
@@ -369,7 +490,7 @@ struct ComposeView: View {
         switch field {
         case .cc: model.showsCc = true
         case .bcc: model.showsBcc = true
-        case .to, .subject, .from: break
+        case .to, .subject, .from, .message: break
         }
         focusField(field)
     }
@@ -423,6 +544,16 @@ struct ComposeView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // On the leading side, far from Send.
+        ToolbarItem(placement: .navigation) {
+            Button {
+                Task { await model.discard() }
+            } label: {
+                Label("Discard Draft", systemImage: "trash")
+            }
+            .help("Discard Draft")
+            .disabled(!model.isEditable)
+        }
         ToolbarItem(placement: .primaryAction) {
             Toggle(isOn: $model.showsFormatting) {
                 Label("Formatting", systemImage: "textformat")
@@ -447,7 +578,9 @@ struct ComposeView: View {
                     Button(template.name) { model.insertTemplate(template) }
                 }
             } label: { Label("Insert Template", systemImage: "doc.text") }
-            .help("Insert Template")
+            .help(model.templates.isEmpty ? "No templates yet. Add them in Settings > Templates." : "Insert Template")
+            // Without it, VoiceOver reads the menu's arrow image name.
+            .accessibilityLabel("Insert Template")
             .disabled(!model.isEditable || model.templates.isEmpty)
         }
         ToolbarItem(placement: .primaryAction) {
@@ -457,15 +590,6 @@ struct ComposeView: View {
                 Label("Attach Files", systemImage: "paperclip")
             }
             .help("Attach Files")
-            .disabled(!model.isEditable)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                Task { await model.discard() }
-            } label: {
-                Label("Discard Draft", systemImage: "trash")
-            }
-            .help("Discard Draft")
             .disabled(!model.isEditable)
         }
         ToolbarItem(placement: .primaryAction) {
@@ -481,12 +605,20 @@ struct ComposeView: View {
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
         }
+        // The arrow half of Send. A toolbar Menu with a primary action can't
+        // take the prominent style, so Send stays a Button.
         if model.canSendAndArchive {
             ToolbarItem(placement: .primaryAction) {
-                Button { Task { await model.send(archive: true) } } label: {
-                    Label("Send and Archive", systemImage: "archivebox")
+                Menu {
+                    Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
+                } label: {
+                    Label("More Send Options", systemImage: "chevron.down")
                 }
+                .labelStyle(.iconOnly)
+                .menuIndicator(.hidden)
                 .help("Send and Archive")
+                .accessibilityLabel("More Send Options")
+                .disabled(!model.isEditable)
             }
         }
     }
@@ -500,18 +632,36 @@ struct ComposeView: View {
     // MARK: Private
 
     /// A reply starts in the message; anything without recipients starts in To.
+    /// A copy made by a move starts where the cursor was, so the next Tab
+    /// goes where it would have gone without the move.
     private func placeFocus() async {
         guard !hasPlacedFocus, let draft = model.draft else { return }
         hasPlacedFocus = true
         // Let the fields and editor join the window first.
         await Task.yield()
-        if draft.to.isEmpty && draft.cc.isEmpty && draft.bcc.isEmpty {
+        if let restoredFocus {
+            // Typing carries on after the subject instead of replacing it.
+            keepsSubjectText = restoredFocus == .subject
+            reveal(restoredFocus)
+        } else if draft.to.isEmpty && draft.cc.isEmpty && draft.bcc.isEmpty {
             recipientFocus = .to
         } else if draft.subject.isEmpty {
             focus = .subject
         } else {
             model.editor?.focus()
         }
+    }
+
+    /// Lights up the From row for a moment and reads the note aloud.
+    private func highlightSenderChange() async {
+        guard let change = model.senderChange, model.phase == .open else {
+            highlightsFrom = false
+            return
+        }
+        AccessibilityNotification.Announcement(change.note).post()
+        highlightsFrom = true
+        try? await Task.sleep(for: Tokens.Toast.info)
+        highlightsFrom = false
     }
 }
 

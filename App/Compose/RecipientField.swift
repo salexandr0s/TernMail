@@ -88,11 +88,19 @@ struct RecipientField: NSViewRepresentable {
         if requestsFocus, isEditable {
             // Changing focus or the binding during a view update isn't allowed.
             Task { @MainActor in
-                // A click in the current row's padding must not select its text again.
-                if field.currentEditor() == nil { field.window?.makeFirstResponder(field) }
+                Self.focus(field)
                 requestsFocus = false
             }
         }
+    }
+
+    /// Puts the cursor after the last recipient, so typing adds one instead
+    /// of replacing the ones the field selects when it takes the cursor.
+    static func focus(_ field: NSTokenField) {
+        // A click in the current row's padding must not select its text again.
+        guard field.currentEditor() == nil, field.window?.makeFirstResponder(field) == true,
+              let editor = field.currentEditor() else { return }
+        editor.selectedRange = NSRange(location: (editor.string as NSString).length, length: 0)
     }
 
     static func dismantleNSView(_ field: NSTokenField, coordinator: Coordinator) {
