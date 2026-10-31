@@ -156,7 +156,7 @@ enum CalendarImportExport {
 
 struct CalendarImportReview: View {
     @Environment(\.dismiss) private var dismiss
-    @State var events: [CalendarImportItem]
+    @State private var events: [CalendarImportItem]
     let calendars: [CalendarDisplayCalendar]
     let save: ([CalendarImportItem], String) async throws -> Void
     @State private var calendarKey = ""
@@ -165,6 +165,11 @@ struct CalendarImportReview: View {
     @State private var error: String?
     @State private var editing: CalendarEditorDraft?
     @State private var editingID: UUID?
+
+    init(events: [CalendarImportItem], calendars: [CalendarDisplayCalendar],
+         save: @escaping ([CalendarImportItem], String) async throws -> Void) {
+        _events = State(initialValue: events); self.calendars = calendars; self.save = save
+    }
 
     var body: some View {
         VStack(spacing: 0) {

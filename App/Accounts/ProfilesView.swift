@@ -138,7 +138,7 @@ struct ProfilesView: View {
 }
 
 private struct ProfileEditor: View {
-    @State var profile: MailProfile
+    @State private var profile: MailProfile
     @Bindable var model: AccountPreferencesModel
     @Environment(\.dismiss) private var dismiss
     @State private var isSaving = false
@@ -150,6 +150,10 @@ private struct ProfileEditor: View {
     private var isNew: Bool { !model.profiles.contains { $0.id == profile.id } }
 
     @FocusState private var nameFocused: Bool
+
+    init(profile: MailProfile, model: AccountPreferencesModel) {
+        _profile = State(initialValue: profile); self.model = model
+    }
 
     var body: some View {
         SettingsEditorSheet(
