@@ -177,6 +177,23 @@ struct SettingsAsyncToggleRow: View {
     }
 }
 
+/// An error in a settings pane. The text is selectable so it can be copied into a report.
+struct SettingsErrorLabel: View {
+    let message: String
+
+    init(_ message: String) {
+        self.message = message
+    }
+
+    var body: some View {
+        Label(message, systemImage: "exclamationmark.circle")
+            .font(.callout)
+            .foregroundStyle(Tokens.Status.error)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+}
+
 struct SettingsNote: View {
     let text: String
     var systemImage: String = "info.circle"

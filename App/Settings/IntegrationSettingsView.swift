@@ -114,8 +114,8 @@ struct GmailSettingsHeader: View {
                 Text("Changes sync with Gmail.")
             }
             activity
-            if let error = model.error { errorRow(error) }
-            if let error = model.deliveryError { errorRow(error) }
+            if let error = model.error { SettingsErrorLabel(error) }
+            if let error = model.deliveryError { SettingsErrorLabel(error) }
             if let status = model.status { SettingsNote(status, systemImage: "checkmark.circle") }
             if !model.hasEditPermission {
                 SettingsNote("To save changes, turn on Gmail Settings in Connections.", systemImage: "lock")
@@ -141,13 +141,5 @@ struct GmailSettingsHeader: View {
             Text(text).font(.callout).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private func errorRow(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle")
-            .font(.callout)
-            .foregroundStyle(Tokens.Status.error)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
     }
 }
