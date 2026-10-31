@@ -52,11 +52,15 @@ final class AccountMailbox {
     /// Receives only committed baseline/history snapshots for new-mail alerts.
     @ObservationIgnored var onMailSync: ((MailSyncNotification) async -> Void)?
     @ObservationIgnored var onUnreadCountChange: (() -> Void)?
+    /// Keeps the app out of App Nap while this account syncs or sends.
+    @ObservationIgnored var activityGuard: SyncActivityGuard?
 
     @ObservationIgnored private let cache: MailCache
     @ObservationIgnored private var isStopped = false
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
+    /// Engine settings go in the order they were made.
+    @ObservationIgnored private var control: Task<Void, Never>?
 
     /// `outgoingDirectory` holds copies of the files attached to drafts.
     /// `snoozeStore` keeps snoozes, identities and feature settings. Without
@@ -94,7 +98,10 @@ final class AccountMailbox {
         let wokenStream = cache.wokenThreadIDs(accountID: account.id)
         let events = engine.events
         observe(labelStream) { $0.labels = $1; $0.onLabelsChange?(); $0.onUnreadCountChange?() }
-        observe(outboxStream) { $0.outbox = $1 }
+        observe(outboxStream) { mailbox, outbox in
+            mailbox.outbox = outbox
+            mailbox.activityGuard?.update(.send(accountID: mailbox.account.id), isActive: outbox.contains(where: \.isSending))
+        }
         observe(snoozedStream) { $0.snoozed = $1; $0.onSnoozedChange?() }
         var isFirstWoken = true
         observe(wokenStream) { mailbox, woken in
@@ -133,6 +140,7 @@ final class AccountMailbox {
     /// writes through the engine. Returns once nothing writes to the cache.
     func stop() async {
         isStopped = true
+        activityGuard?.release(accountID: account.id)
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         wakeObserver = nil
         await snoozeKeeper?.stop()
@@ -141,10 +149,29 @@ final class AccountMailbox {
         await engine.stop()
     }
 
+    /// Check for New Mail, and Try Again after a failure.
     func syncNow() {
+        tell { await $0.requestSync(reason: .manual) }
+    }
+
+    /// What the user is doing, which sets how often the engine checks for mail.
+    func setActivity(_ activity: SyncActivity) {
+        tell { await $0.setActivity(activity) }
+    }
+
+    /// Whether IMAP reports Inbox changes as they happen.
+    func setPushAvailable(_ available: Bool) {
+        tell { await $0.setPushAvailable(available) }
+    }
+
+    private func tell(_ body: @escaping @Sendable (SyncEngine) async -> Void) {
         guard syncEnabled, !isStopped else { return }
         let engine = engine
-        Task { await engine.syncReportingErrors() }
+        let previous = control
+        control = Task {
+            await previous?.value
+            await body(engine)
+        }
     }
 
     /// Wakes what is due. Runs after each sync pass and when the Mac wakes.
@@ -179,14 +206,17 @@ final class AccountMailbox {
         switch event {
         case .syncStarted:
             syncStatus = .syncing
+            activityGuard?.update(.pass(accountID: account.id), isActive: true)
         case .syncFinished(let date):
             syncStatus = .idle
             lastSyncedAt = date
             hasSyncedOnce = true
+            activityGuard?.update(.pass(accountID: account.id), isActive: false)
             // A pass can bring new mail that ends a snooze early.
             checkSnoozes()
         case .syncFailed(let message):
             syncStatus = .failed(message)
+            activityGuard?.update(.pass(accountID: account.id), isActive: false)
         case .actionFailed, .draftFailed, .draftCopied, .draftSent:
             onEvent?(event)
         }

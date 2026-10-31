@@ -17,7 +17,7 @@ import Testing
         await gmail.holdNextMetadata()
         let running = Task { try await engine.sync() }
         while await !gmail.isHoldingMetadata { await Task.yield() }
-        for _ in 0..<3 { await engine.requestSync() }
+        for _ in 0..<3 { await engine.requestSync(reason: .manual) }
         await gmail.releaseMetadata()
         try await running.value
         await requestedPasses(engine)
@@ -28,22 +28,27 @@ import Testing
         #expect(await events(engine) == [.syncStarted, .syncFinished(baseDate)])
     }
 
-    @Test func aRequestedPassThatFindsNoHistoryRunsOnceMoreFiveSecondsLater() async throws {
+    @Test func aSignalledPassThatFindsNoHistoryTriesAgainAfterOneAndThreeSeconds() async throws {
         let (engine, cache, gmail, sleeps) = try await makeRequestEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread])], cursor: 100)
         // The signal comes before history shows the change.
         await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId": "100"}"#))
         await gmail.queueHistory(try readPage(historyID: 120))
-        await engine.requestSync()
+        await engine.requestSync(reason: .inboxSignal)
         await requestedPasses(engine)
         #expect(try await cache.read { tx in try tx.thread(id: "t1", accountID: account)?.isUnread } == false)
-        #expect(await sleeps.durations == [.seconds(5)])
+        #expect(await sleeps.durations == [.seconds(1)])
 
-        // When history never shows anything, the passes stop after the one retry.
-        await engine.requestSync()
+        // When history never shows anything, the passes stop after the second retry.
+        await engine.requestSync(reason: .inboxSignal)
         await requestedPasses(engine)
-        #expect(await sleeps.durations == [.seconds(5), .seconds(5)])
-        #expect(await events(engine).filter { $0 == .syncStarted }.count == 4)
+        #expect(await sleeps.durations == [.seconds(1), .seconds(1), .seconds(3)])
+
+        // A manual request takes one pass, found or not.
+        await engine.requestSync(reason: .manual)
+        await requestedPasses(engine)
+        #expect(await sleeps.durations == [.seconds(1), .seconds(1), .seconds(3)])
+        #expect(await events(engine).filter { $0 == .syncStarted }.count == 6)
     }
 }
 

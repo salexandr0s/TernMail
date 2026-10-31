@@ -484,10 +484,11 @@ extension SyncEngine {
         }
         // Gmail's own record of the change, and whatever it did alongside
         // (a filter, a merged conversation), comes in with the next pass. A
-        // label that was renamed or recolored is listed again in full.
+        // label that was renamed or recolored is listed again in full. A
+        // sent or saved draft is fetched by the compose lane itself.
         if case .sent = outcome {
             if current.kind.changesLabel { labelsRefreshedAt = nil }
-            if sendsAutomatically, current.kind.lane == .labels { requestSync() }
+            if sendsAutomatically, current.kind.lane != .compose { requestSync(reason: .afterAction) }
         }
     }
 

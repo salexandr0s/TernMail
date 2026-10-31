@@ -601,7 +601,7 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         let (engine, cache, gmail, _) = try await makeEngine(indexesAttachmentsAutomatically: true)
         await gmail.add(try gmailMessage("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
         await gmail.setMetadataErrors(["m1": .rateLimited])
-        await engine.start(pollInterval: .seconds(3_600))
+        await engine.start()
         for await event in engine.events {
             if case .syncFailed = event { break }
         }
@@ -1267,7 +1267,7 @@ actor FakeGmail: GmailService {
     private var labelError: GmailError?
     private(set) var labelListRequests = 0
     private(set) var labelDetailRequests: [[String]] = []
-    private var historyCalls = 0
+    private(set) var historyCalls = 0
     private var heldHistoryCalls = Set<Int>()
     private var heldHistory: CheckedContinuation<Void, Never>?
     private var recentPages: [MessageListPage] = []
@@ -1683,10 +1683,11 @@ struct TestClock: Sendable {
 /// Pass `cache` to build a second engine over an existing cache, standing in
 /// for the next launch.
 func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHolds = UndoHolds(), sendsAutomatically: Bool = false,
-                cache existing: MailCache? = nil) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
+                cache existing: MailCache? = nil, clock existingClock: TestClock? = nil,
+                sleep: (@Sendable (Duration) async throws -> Void)? = nil) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
     let cache = try existing ?? MailCache.inMemory()
     let gmail = FakeGmail()
-    let clock = TestClock()
+    let clock = existingClock ?? TestClock()
     let engine = SyncEngine(
         accountID: account,
         sender: EmailAddress(name: "Me", address: "me@example.com"),
@@ -1696,6 +1697,7 @@ func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHo
         undoHolds: undoHolds,
         sendsAutomatically: sendsAutomatically,
         indexesAttachmentsAutomatically: indexesAttachmentsAutomatically,
+        sleep: sleep ?? { try await Task.sleep(for: $0) },
         now: clock.now
     )
     return (engine, cache, gmail, clock)

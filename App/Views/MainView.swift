@@ -84,9 +84,6 @@ struct MainView: View {
         .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: mailbox.selectedMailbox) { _, _ in app.assistant.refreshAccess() }
         .onChange(of: mailbox.selectedThreadIDs) { _, _ in app.assistant.refreshAccess() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            mailbox.syncNow()
-        }
         .confirmationDialog("Sign out of Tern?", isPresented: $app.isConfirmingSignOut) {
             Button("Sign Out", role: .destructive) {
                 Task { await app.signOut() }

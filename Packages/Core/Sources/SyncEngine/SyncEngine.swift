@@ -66,8 +66,6 @@ public actor SyncEngine {
     static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
     /// Metadata fetched per request group during a full sync.
     static let fullSyncChunk = 25
-    /// How long a requested pass that found no history waits to run again.
-    static let emptyPassRetryDelay: Duration = .seconds(5)
     /// How long a complete label listing stays current. Until then a pass
     /// refreshes only the labels its history touched.
     static let labelRefreshInterval: TimeInterval = 5 * 60
@@ -112,13 +110,26 @@ public actor SyncEngine {
     var labelsRefreshedAt: Date?
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
+    /// What the user is doing, from the app. Sets the poll interval.
+    private(set) var activity: SyncActivity = .active
+    /// Whether IMAP reports Inbox changes as they happen, from the app.
+    private(set) var pushAvailable = false
+    /// When the last pass began, whatever asked for it. One within
+    /// `SyncSchedule.activationThrottle` serves an activation request.
+    var lastPassStartedAt: Date?
     var attachmentIndexTask: Task<Void, Never>?
     var attachmentIndexPass: Task<AttachmentIndexState, any Error>?
     var attachmentClassificationPass: Task<Int, any Error>?
-    /// Runs the passes `requestSync()` asks for, then clears itself.
-    private(set) var requestedPasses: Task<Void, Never>?
-    /// Set by `requestSync()`, cleared as a requested pass starts.
-    private var passRequested = false
+    /// Runs the passes `requestSync(reason:)` asks for, then clears itself.
+    var requestedPasses: Task<Void, Never>?
+    /// The retries of the requests waiting for a pass: the longest list
+    /// among them. Nil when nothing waits.
+    var pendingRetries: [Duration]?
+    /// Waits out `SyncSchedule.afterActionDebounce` after a delivered change,
+    /// then asks for a pass.
+    var afterActionTask: Task<Void, Never>?
+    /// The sleeps `wake(_:)` can cut short.
+    var sleepers: [Sleeper: Task<Bool, Never>] = [:]
     var contactSyncTask: Task<Void, any Error>?
     var lastContactSyncAt: Date?
     /// When each source's last full contact sync began, failed ones included.
@@ -209,9 +220,10 @@ public actor SyncEngine {
 
     // MARK: Scheduling
 
-    /// Resumes interrupted sends, syncs now and every `pollInterval`, and
-    /// refreshes identities and contacts now and every 6 hours.
-    public func start(pollInterval: Duration = .seconds(60)) async {
+    /// Resumes interrupted sends, syncs now and then on `SyncSchedule`'s
+    /// interval for the current activity, and refreshes identities and
+    /// contacts now and every 6 hours.
+    public func start() async {
         guard !hasStarted, !isStopped else { return }
         hasStarted = true
         let accountID = accountID
@@ -227,13 +239,8 @@ public actor SyncEngine {
         }
         guard !isStopped else { return }
         scheduleSending()
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.syncReportingErrors()
-                try? await Task.sleep(for: pollInterval)
-                if self == nil { return }
-            }
-        }
+        requestSync(reason: .poll)
+        pollTask = Task { await runPolling() }
         peopleTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshPeople()
@@ -261,9 +268,9 @@ public actor SyncEngine {
             await withCheckedContinuation { sendWaiters.append($0) }
         }
         isStopped = true
-        pollTask?.cancel()
+        let background = [pollTask, peopleTask, requestedPasses, afterActionTask, attachmentIndexTask, prefetchTask].compactMap { $0 }
         pollTask = nil
-        let background = [peopleTask, requestedPasses, attachmentIndexTask, prefetchTask].compactMap { $0 }
+        for sleeper in sleepers.values { sleeper.cancel() }
         prefetchTask = nil
         prefetchTargets = []
         let reading = Array(readingLoads.values.map(\.task)) + Array(retiredReadingLoads.values)
@@ -331,24 +338,60 @@ public actor SyncEngine {
         _ = try await joinOrStartPass()
     }
 
-    /// Asks for a pass because something reported a change, such as an IMAP
-    /// signal. A pass already running may have started too early to see it,
-    /// so one more runs afterward, however many requests arrive meanwhile. A
-    /// requested pass that finds no history runs once more 5 seconds later,
-    /// since the signal can come before `history.list` shows the change.
-    public func requestSync() {
+    /// Asks for a pass. A pass already running may have started too early to
+    /// see what `reason` reports, so one more runs afterward, however many
+    /// requests arrive meanwhile. An Inbox signal whose pass finds nothing
+    /// tries again after 1 and 3 seconds; an activation within 5 seconds of
+    /// the last pass is already served; a delivered change waits half a
+    /// second for the next one.
+    public func requestSync(reason: SyncReason) {
         guard !isStopped else { return }
-        passRequested = true
+        switch reason {
+        case .poll, .manual:
+            requestPass(retries: [])
+        case .inboxSignal:
+            requestPass(retries: SyncSchedule.inboxSignalRetries)
+        case .activation:
+            if let started = lastPassStartedAt, now().timeIntervalSince(started) < SyncSchedule.activationThrottle { return }
+            requestPass(retries: [])
+        case .afterAction:
+            wake(.afterAction)
+            guard afterActionTask == nil else { return }
+            afterActionTask = Task { await runAfterActionDebounce() }
+        }
+    }
+
+    func requestPass(retries: [Duration]) {
+        guard !isStopped else { return }
+        if retries.count > (pendingRetries?.count ?? -1) { pendingRetries = retries }
+        wake(.retry)
         guard requestedPasses == nil else { return }
         requestedPasses = Task { await runRequestedPasses() }
     }
 
-    /// Lists every label on the next pass, and asks for one. The app calls
-    /// this when the window becomes active, so counts that moved elsewhere
-    /// while it was in the background show at once.
+    /// Sets the poll interval. Coming to the front lists every label again
+    /// and asks for a pass, so counts that moved while the app was behind
+    /// show at once.
+    public func setActivity(_ new: SyncActivity) {
+        guard !isStopped, new != activity else { return }
+        let wasActive = activity == .active
+        activity = new
+        wake(.poll)
+        if new == .active, !wasActive { requestLabelRefresh() }
+    }
+
+    /// Whether IMAP reports Inbox changes as they happen. While it does, the
+    /// engine polls every 5 minutes instead of every 15 or 60 seconds.
+    public func setPushAvailable(_ available: Bool) {
+        guard !isStopped, available != pushAvailable else { return }
+        pushAvailable = available
+        wake(.poll)
+    }
+
+    /// Lists every label on the next pass, and asks for one as an activation.
     public func requestLabelRefresh() {
         labelsRefreshedAt = nil
-        requestSync()
+        requestSync(reason: .activation)
     }
 
     /// Returns once no pass is running. Background work waits here so a pass
@@ -357,38 +400,17 @@ public actor SyncEngine {
         while let running = pass { _ = try? await running.value }
     }
 
-    private func runRequestedPasses() async {
-        defer { requestedPasses = nil }
-        var mayRetry = true
-        while passRequested, !isStopped {
-            let changed = await reportingErrors { try await freshPass() }
-            if passRequested {
-                mayRetry = true
-                continue
-            }
-            guard changed == false, mayRetry else { return }
-            mayRetry = false
-            do { try await sleep(Self.emptyPassRetryDelay) } catch { return }
-            // A request during the wait is served by the next pass, which may retry for it.
-            if passRequested { mayRetry = true }
-            passRequested = true
-        }
-    }
-
-    /// Runs a pass that starts after every request so far, waiting out any
-    /// pass already running. Requests that arrive meanwhile are served by it.
-    private func freshPass() async throws -> Bool {
-        while let running = pass { _ = try? await running.value }
-        passRequested = false
-        return try await joinOrStartPass()
-    }
-
     /// Returns whether the pass found changes.
-    private func joinOrStartPass() async throws -> Bool {
+    func joinOrStartPass() async throws -> Bool {
         if isStopped { throw CancellationError() }
         if let pass { return try await pass.value }
+        lastPassStartedAt = now()
         let task = Task {
-            defer { pass = nil }
+            defer {
+                pass = nil
+                // Polling counts from here.
+                wake(.poll)
+            }
             return try await GmailRequestBudget.$priority.withValue(.sync) { try await runPass() }
         }
         pass = task
@@ -397,7 +419,7 @@ public actor SyncEngine {
 
     /// Reports `pass` on `events`. Returns whether it found changes, or nil
     /// when it failed or was cancelled.
-    private func reportingErrors(_ pass: () async throws -> Bool) async -> Bool? {
+    func reportingErrors(_ pass: () async throws -> Bool) async -> Bool? {
         continuation.yield(.syncStarted)
         do {
             let changed = try await pass()
