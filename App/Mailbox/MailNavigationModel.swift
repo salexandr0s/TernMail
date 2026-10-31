@@ -152,6 +152,7 @@ extension MailboxModel {
         }
     }
 
+    /// A sidebar row's number: the Outbox's messages, otherwise unread conversations.
     func sidebarBadgeCount(_ box: MailboxID) -> Int {
         let owners: [AccountMailbox]
         switch box {

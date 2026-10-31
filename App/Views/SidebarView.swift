@@ -50,7 +50,7 @@ struct SidebarView: View {
                     let outboxID = MailboxID.account(owner.account.id, MailboxModel.outboxID)
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
                         let boxID = MailboxID.account(owner.account.id, box.id)
-                        MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarCount(boxID))
+                        MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
                             .conversationDropTarget(boxID, mailbox: mailbox)
                             .tag(boxID)
                         if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
@@ -272,7 +272,7 @@ private struct CombinedMailboxRows: View {
         let combinedID = MailboxID.combined(box.id)
         MailboxRow(
             box: box, title: box.title, color: box.color,
-            count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: isExpanded
+            count: isExpanded ? 0 : mailbox.sidebarBadgeCount(combinedID), isExpanded: isExpanded
         )
         .conversationDropTarget(combinedID, mailbox: mailbox)
         .tag(combinedID)
@@ -290,7 +290,7 @@ private struct CombinedMailboxRows: View {
                     let name = names[owner.account.id] ?? owner.account.email
                     MailboxRow(
                         box: box, title: name, color: colors[owner.account.id] ?? .secondary,
-                        count: mailbox.sidebarCount(boxID), isAccount: true
+                        count: mailbox.sidebarBadgeCount(boxID), isAccount: true
                     )
                     .padding(.leading, Tokens.Space.s8)
                     .help(owner.account.email)
@@ -518,13 +518,6 @@ extension SystemMailbox {
         case SystemLabel.trash: .red
         default: .secondary
         }
-    }
-}
-
-private extension MailboxModel {
-    /// A sidebar row's number: the Outbox's messages, otherwise unread conversations.
-    func sidebarCount(_ box: MailboxID) -> Int {
-        sidebarBadgeCount(box)
     }
 }
 
