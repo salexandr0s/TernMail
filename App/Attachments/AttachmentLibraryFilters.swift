@@ -80,8 +80,8 @@ struct AttachmentLibraryFilters: View {
 
     private func labelTitle(_ label: LabelRecord) -> String {
         guard model.availableAccounts.count > 1,
-              let account = model.availableAccounts.first(where: { $0.id == label.accountID }) else { return label.name }
-        return "\(label.name) · \(account.email)"
+              let account = model.availableAccounts.first(where: { $0.id == label.accountID }) else { return label.title }
+        return "\(label.title) · \(account.email)"
     }
 }
 
@@ -125,7 +125,7 @@ struct AttachmentFilterChip: Identifiable {
             chips.append(.init(id: "maximum", title: "At most \(AttachmentPresentation.size(maximum))", remove: { model.maximumSize = nil }))
         }
         if let label = model.label {
-            let name = model.availableLabels.first { $0.accountID == label.accountID && $0.id == label.id }?.name ?? "Label"
+            let name = model.availableLabels.first { $0.accountID == label.accountID && $0.id == label.id }?.title ?? "Label"
             chips.append(.init(id: "label", title: "Label: \(name)", remove: { model.label = nil }))
         }
         return chips

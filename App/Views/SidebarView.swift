@@ -171,19 +171,28 @@ struct SidebarView: View {
     @ViewBuilder private func moreMailboxes(_ owner: AccountMailbox) -> some View {
         if mailbox.listPreferences.showsMore {
             DisclosureGroup("More") {
-                let primary = Set(SystemMailbox.all.map(\.id) + [SystemLabel.unread])
-                ForEach(owner.labels.filter { label in
-                    label.isSystem && !primary.contains(label.id)
-                        && !(mailbox.accountPresentation[owner.account.id]?.inboxCategories.map(\.labelID).contains(label.id) ?? false)
-                }, id: \.id) { label in
-                    Label(label.name, systemImage: "tray").tag(MailboxID.account(owner.account.id, label.id))
-                        .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, label.id)))
+                ForEach(moreBoxes(owner), id: \.id) { box in
+                    Label(box.title, systemImage: box.systemImage).tag(MailboxID.account(owner.account.id, box.id))
+                        .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
                 }
                 ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
                     LabelRow(mailbox: mailbox, node: LabelNode(label: label, title: label.name))
                 }
             }
         }
+    }
+
+    /// The account's system labels that no other sidebar row shows, in
+    /// `SystemMailbox.more` order, then any others by title. UNREAD is left
+    /// out, and so are the inbox categories listed under the Inbox.
+    private func moreBoxes(_ owner: AccountMailbox) -> [SystemMailbox] {
+        let excluded = Set(SystemMailbox.all.map(\.id) + [SystemLabel.unread]
+            + (mailbox.accountPresentation[owner.account.id]?.inboxCategories.map(\.labelID) ?? []))
+        let ids = Set(owner.labels.filter { $0.isSystem && !excluded.contains($0.id) }.map(\.id))
+        let known = SystemMailbox.more.filter { ids.contains($0.id) }
+        let others = ids.subtracting(known.map(\.id)).map(SystemMailbox.init(labelID:))
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        return known + others
     }
 
     private static func editedLabel(_ request: MailboxModel.LabelEditorRequest) -> LabelRecord? {

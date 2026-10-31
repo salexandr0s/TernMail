@@ -85,10 +85,10 @@ struct FiltersPane: View {
 
     private func actions(_ filter: GmailFilter) -> String {
         let adds = (filter.action.addLabelIds ?? []).map { id in
-            "Add \(model.labels.first(where: { $0.id == id })?.name ?? id)"
+            "Add \(model.labels.first(where: { $0.id == id })?.title ?? id)"
         }
         let removes = (filter.action.removeLabelIds ?? []).map { id in
-            "Remove \(model.labels.first(where: { $0.id == id })?.name ?? id)"
+            "Remove \(model.labels.first(where: { $0.id == id })?.title ?? id)"
         }
         let forward = filter.action.forward.map { ["Forward to \($0)"] } ?? []
         return (adds + removes + forward).joined(separator: " · ")
