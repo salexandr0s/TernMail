@@ -474,7 +474,7 @@ final class MailboxModel {
     var selectedMailboxTitle: String {
         guard let id = selectedLabelID else { return "Tern" }
         if id == Self.outboxID { return "Outbox" }
-        return SystemMailbox.all.first { $0.id == id }?.title ?? label(id: id)?.name ?? "Tern"
+        return SystemMailbox.all.first { $0.id == id }?.title ?? label(id: id)?.title ?? "Tern"
     }
 
     func threadDetail(_ key: ThreadKey) -> AsyncThrowingStream<ThreadDetail?, any Error> {
@@ -1202,4 +1202,35 @@ struct SystemMailbox: Identifiable {
 
     /// Listed after Drafts while it has items.
     static let outbox = SystemMailbox(id: MailboxModel.outboxID, title: "Outbox", systemImage: "tray.and.arrow.up")
+
+    /// Gmail's other system labels, in the order the sidebar's More group
+    /// lists them. Gmail names each system label after its ID, so these
+    /// give them readable titles.
+    static let more = [
+        SystemMailbox(id: SystemLabel.important, title: "Important", systemImage: "exclamationmark"),
+        SystemMailbox(id: "CATEGORY_PERSONAL", title: "Primary", systemImage: "person"),
+        SystemMailbox(id: "CATEGORY_SOCIAL", title: "Social", systemImage: "person.2"),
+        SystemMailbox(id: "CATEGORY_PROMOTIONS", title: "Promotions", systemImage: "megaphone"),
+        SystemMailbox(id: "CATEGORY_UPDATES", title: "Updates", systemImage: "info.circle"),
+        SystemMailbox(id: "CATEGORY_FORUMS", title: "Forums", systemImage: "bubble.left.and.bubble.right"),
+        SystemMailbox(id: "CHAT", title: "Chats", systemImage: "bubble.left"),
+        SystemMailbox(id: "YELLOW_STAR", title: "Yellow Star", systemImage: "star"),
+    ]
+}
+
+extension SystemMailbox {
+    /// The entry for a Gmail system label. A label without one gets a title
+    /// made from its ID, without Gmail's CATEGORY_ prefix.
+    init(labelID: String) {
+        var words = labelID.split(separator: "_")
+        if words.count > 1, words.first == "CATEGORY" { words.removeFirst() }
+        self = (Self.all + Self.more).first { $0.id == labelID }
+            ?? SystemMailbox(id: labelID, title: words.map(\.capitalized).joined(separator: " "), systemImage: "tray")
+    }
+}
+
+extension LabelRecord {
+    /// The name to show. Gmail names system labels after their IDs, so those
+    /// use their `SystemMailbox` title.
+    var title: String { isSystem ? SystemMailbox(labelID: id).title : name }
 }
