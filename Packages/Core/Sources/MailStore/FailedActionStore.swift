@@ -29,11 +29,7 @@ extension CacheTransaction {
         failed.lastError = message
         failed.sentAt = nil
         try failed.update(db)
-        var threads = Set(failed.threadIDs).union(try threadIDsOf(messageIDs: failed.messageIDs, accountID: failed.accountID))
-        if failed.kind == .deleteLabel, let labelID = failed.labelID {
-            threads.formUnion(try threadIDsCarrying(labelID, accountID: failed.accountID))
-        }
-        try rebuildThreads(threads, accountID: failed.accountID)
+        try rebuildThreads(try overlayThreadIDs(of: failed), accountID: failed.accountID)
     }
 
     /// Reactivate the same durable intent; a second Retry cannot duplicate it.
@@ -41,7 +37,8 @@ extension CacheTransaction {
         guard var row = try action(id: id), row.accountID == accountID else { throw FailedActionError.notFound }
         guard row.state == .failed else { return false }
         let active = try pendingActions(accountID: accountID).filter { $0.state == .queued || $0.state == .sending }
-        var affectedThreads = Set(row.threadIDs).union(try threadIDsOf(messageIDs: row.messageIDs, accountID: accountID))
+        // A retried label delete takes the label off its conversations again.
+        var affectedThreads = try overlayThreadIDs(of: row)
         if row.kind != .createLabel {
             let labels = [row.labelID, row.labelChange?.parentLabelID].compactMap { $0 } + row.addLabelIDs + row.removeLabelIDs
             for labelID in labels where LabelRules.isTemporary(labelID) {

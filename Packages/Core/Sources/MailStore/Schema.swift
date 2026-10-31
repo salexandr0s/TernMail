@@ -414,7 +414,37 @@ enum Schema {
                 t.add(column: "confirmedHistoryID", .integer)
             }
         }
+        migrator.registerMigration("effective-labels-v1") { db in
+            // Each message's labels as the user sees them: server labels with
+            // pending changes overlaid, kept by `rebuildThreads`. The reader and
+            // the list read these rows instead of overlaying the queue on every
+            // fetch, so a queued change going out wakes neither unless a label
+            // changes. The rows start as a copy of server labels;
+            // `migrateCache` then overlays the pending changes.
+            try db.create(table: "effectiveLabel") { t in
+                t.column("accountID", .text).notNull()
+                t.column("messageID", .text).notNull()
+                t.column("labelID", .text).notNull()
+                t.primaryKey(["accountID", "messageID", "labelID"])
+                t.foreignKey(["accountID", "messageID"], references: "message", onDelete: .cascade)
+            }
+            try db.execute(sql: """
+                INSERT INTO effectiveLabel (accountID, messageID, labelID)
+                SELECT accountID, messageID, labelID FROM messageLabel
+                """)
+        }
         return migrator
+    }
+
+    /// Migrates the cache, then overlays pending changes on the effective
+    /// labels `effective-labels-v1` copied from server labels. The overlay runs
+    /// app code, which may rely on columns later migrations add, so it can't
+    /// live in the migration itself.
+    static func migrateCache(_ writer: some DatabaseWriter) throws {
+        let applied = try writer.read { db in try Schema.cacheMigrator.appliedIdentifiers(db) }
+        try cacheMigrator.migrate(writer)
+        guard !applied.contains("effective-labels-v1") else { return }
+        try writer.write { db in try CacheTransaction(db: db).rebuildThreadsReachedByPendingActions() }
     }
 
     static var configMigrator: DatabaseMigrator {

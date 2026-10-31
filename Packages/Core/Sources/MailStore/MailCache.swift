@@ -17,7 +17,7 @@ public struct MailCache: Sendable {
 
     init(writer: any DatabaseWriter) throws {
         self.writer = writer
-        try Schema.cacheMigrator.migrate(writer)
+        try Schema.migrateCache(writer)
     }
 
     /// Runs `updates` in one write transaction.
@@ -52,7 +52,8 @@ public struct CacheTransaction {
     }
 
     private static let accountTables = [
-        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "messageCalendar", "message", "label",
+        "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "effectiveLabel",
+        "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
         "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold",
         "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
@@ -499,8 +500,16 @@ public struct CacheTransaction {
         )
     }
 
+    /// Saves a change to a row. When the change alters what the row does to
+    /// labels (its state, targets or labels), the conversations it reaches are
+    /// rebuilt so their effective labels follow; one that keeps the effect,
+    /// such as a new attempt count, rebuilds nothing.
     public func updateAction(_ action: PendingAction) throws {
+        let stored = try action.id.flatMap { try PendingAction.fetchOne(db, key: $0) }
         try action.update(db)
+        guard let stored, OverlayEffect(stored) != OverlayEffect(action) else { return }
+        let threads = try overlayThreadIDs(of: stored).union(try overlayThreadIDs(of: action))
+        try rebuildThreads(threads, accountID: action.accountID)
     }
 
     /// Deletes the action if it is missing or was undone mid-send. Returns
@@ -513,11 +522,12 @@ public struct CacheTransaction {
         return true
     }
 
-    /// Removes an action and rebuilds its threads, which reverts it locally.
+    /// Removes an action and rebuilds the conversations it reached, which
+    /// reverts it locally.
     public func deleteAction(id: Int64) throws {
         guard let action = try PendingAction.fetchOne(db, key: id) else { return }
         try action.delete(db)
-        try rebuildThreads(try threadIDs(of: action), accountID: action.accountID)
+        try rebuildThreads(try overlayThreadIDs(of: action), accountID: action.accountID)
     }
 
     /// A confirmed change the cursor hasn't reached this long after its send
@@ -540,10 +550,9 @@ public struct CacheTransaction {
             }
         var threads = Set<String>()
         for action in sent {
-            threads.formUnion(try threadIDs(of: action))
+            threads.formUnion(try overlayThreadIDs(of: action))
             try action.delete(db)
             if action.kind == .deleteLabel, let labelID = action.labelID {
-                threads.formUnion(try threadIDsCarrying(labelID, accountID: accountID))
                 try db.execute(sql: "DELETE FROM messageLabel WHERE accountID = ? AND labelID = ?", arguments: [accountID, labelID])
             }
         }
@@ -552,9 +561,10 @@ public struct CacheTransaction {
 
     // MARK: Threads
 
-    /// Rebuilds the derived `thread` and `threadLabel` rows from server labels
-    /// with pending actions overlaid. Draft messages on their way out are left
-    /// out. Rows are updated in place and only when they differ: deleting and
+    /// Rebuilds the derived `effectiveLabel`, `thread` and `threadLabel` rows
+    /// from server labels with pending actions overlaid. Draft messages on
+    /// their way out keep their labels but are left out of the conversation.
+    /// Rows are updated in place and only when they differ: deleting and
     /// recreating them would wake every list observer and cascade away the
     /// conversation's opened mark, even when nothing about it changed.
     public func rebuildThreads(_ threadIDs: some Collection<String>, accountID: String) throws {
@@ -562,6 +572,8 @@ public struct CacheTransaction {
         let actions = try pendingActions(accountID: accountID)
         let hidden = try hiddenDraftMessageIDs(accountID: accountID)
         for threadID in Set(threadIDs) {
+            let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: actions)
+            try storeEffectiveLabels(labels, threadID: threadID, accountID: accountID)
             let messages = try messages(threadID: threadID, accountID: accountID).filter { !hidden.contains($0.id) }
             guard let first = messages.first, let last = messages.last else {
                 // Cascades to the list rows and the opened mark.
@@ -570,7 +582,6 @@ public struct CacheTransaction {
                 continue
             }
 
-            let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: actions)
             let threadLabels = ThreadRules.threadLabels(messageLabels: messages.map { labels[$0.id] ?? [] })
             let allLabels = messages.reduce(into: Set<String>()) { $0.formUnion(labels[$1.id] ?? []) }
 
@@ -622,11 +633,34 @@ public struct CacheTransaction {
     }
 
     /// Server labels per message in a thread, with `actions` applied in order.
+    /// Writes compute labels this way; readers take what `rebuildThreads`
+    /// stored from it (`storedEffectiveLabels`).
     func effectiveLabels(threadID: String, accountID: String, actions: [PendingAction]) throws -> [String: Set<String>] {
+        var labels = try labelsByMessage(from: .server, threadID: threadID, accountID: accountID)
+        ThreadRules.overlay(actions, onto: &labels, threadID: threadID)
+        return labels
+    }
+
+    /// Each message's labels in a thread as the user sees them, as
+    /// `rebuildThreads` last stored them. Reading these instead of the queue
+    /// keeps `pendingAction` out of what an observer tracks.
+    func storedEffectiveLabels(threadID: String, accountID: String) throws -> [String: Set<String>] {
+        try labelsByMessage(from: .effective, threadID: threadID, accountID: accountID)
+    }
+
+    private enum LabelTable: String {
+        case server = "messageLabel"
+        case effective = "effectiveLabel"
+    }
+
+    /// Every message in a thread with its rows in `table`; a message without
+    /// any maps to an empty set.
+    private func labelsByMessage(from table: LabelTable, threadID: String, accountID: String) throws -> [String: Set<String>] {
+        let name = table.rawValue
         let rows = try Row.fetchAll(db, sql: """
-            SELECT message.id AS messageID, messageLabel.labelID AS labelID
+            SELECT message.id AS messageID, \(name).labelID AS labelID
             FROM message
-            LEFT JOIN messageLabel ON messageLabel.accountID = message.accountID AND messageLabel.messageID = message.id
+            LEFT JOIN \(name) ON \(name).accountID = message.accountID AND \(name).messageID = message.id
             WHERE message.accountID = ? AND message.threadID = ?
             """, arguments: [accountID, threadID])
         var labels: [String: Set<String>] = [:]
@@ -635,8 +669,51 @@ public struct CacheTransaction {
             let labelID: String? = row["labelID"]
             labels[messageID, default: []].formUnion(labelID.map { [$0] } ?? [])
         }
-        ThreadRules.overlay(actions, onto: &labels, threadID: threadID)
         return labels
+    }
+
+    /// Writes a thread's effective labels, touching only the rows that differ,
+    /// so a rebuild that changes nothing wakes no reader.
+    private func storeEffectiveLabels(_ labels: [String: Set<String>], threadID: String, accountID: String) throws {
+        let stored = try storedEffectiveLabels(threadID: threadID, accountID: accountID)
+        for (messageID, current) in labels {
+            let previous = stored[messageID] ?? []
+            for labelID in previous.subtracting(current) {
+                try db.execute(
+                    sql: "DELETE FROM effectiveLabel WHERE accountID = ? AND messageID = ? AND labelID = ?",
+                    arguments: [accountID, messageID, labelID]
+                )
+            }
+            for labelID in current.subtracting(previous) {
+                try db.execute(
+                    sql: "INSERT INTO effectiveLabel (accountID, messageID, labelID) VALUES (?, ?, ?)",
+                    arguments: [accountID, messageID, labelID]
+                )
+            }
+        }
+    }
+
+    /// Overlays every live pending change on the effective labels. Runs once,
+    /// after `effective-labels-v1` copies them from server labels.
+    func rebuildThreadsReachedByPendingActions() throws {
+        let live = try PendingAction.fetchAll(db).filter { OverlayEffect($0) != nil }
+        for (accountID, actions) in Dictionary(grouping: live, by: \.accountID) {
+            var threads = Set<String>()
+            for action in actions {
+                threads.formUnion(try overlayThreadIDs(of: action))
+            }
+            try rebuildThreads(threads, accountID: accountID)
+        }
+    }
+
+    /// The conversations whose effective labels `action` changes: its own,
+    /// and for a label delete every conversation with the label on Gmail.
+    func overlayThreadIDs(of action: PendingAction) throws -> Set<String> {
+        var threads = try threadIDs(of: action)
+        if action.kind == .deleteLabel, let labelID = action.labelID {
+            threads.formUnion(try threadIDsCarrying(labelID, accountID: action.accountID))
+        }
+        return threads
     }
 
     private func threadIDs(of action: PendingAction) throws -> Set<String> {
@@ -652,40 +729,67 @@ public struct CacheTransaction {
     }
 }
 
+/// What a pending action does to the labels the user sees. Two saves of one
+/// row with the same effect show the same labels, so a change between them
+/// rebuilds nothing (see `CacheTransaction.updateAction`).
+struct OverlayEffect: Equatable {
+    enum Scope: Equatable {
+        /// Every message these conversations hold, or only the messages in
+        /// `only` once Gmail has applied the change.
+        case conversations(Set<String>, only: Set<String>?)
+        case messages(Set<String>)
+        /// The label leaves every message, whatever a later row adds.
+        case deletedLabel(String)
+    }
+
+    var scope: Scope
+    var add: Set<String>
+    var remove: Set<String>
+
+    /// Nil for a row that shows no label change: failed, undone, or of a kind
+    /// that changes no message's labels.
+    init?(_ action: PendingAction) {
+        guard action.state != .failed, action.state != .undone else { return nil }
+        switch action.kind {
+        case .modifyThreads, .trashThreads, .untrashThreads:
+            // Gmail applied a sent change to the messages the thread had then,
+            // which the diff names; a message that arrived since keeps its own
+            // labels. A change still to go out covers whatever the thread
+            // holds when it does.
+            scope = .conversations(Set(action.threadIDs), only: action.state == .sent ? Set(action.diff.keys) : nil)
+        case .modifyMessages, .trashMessages, .untrashMessages:
+            scope = .messages(Set(action.messageIDs))
+        case .deleteLabel:
+            guard let labelID = action.labelID else { return nil }
+            scope = .deletedLabel(labelID)
+        case .deleteMessages, .saveDraft, .sendDraft, .discardDraft, .createLabel, .updateLabel,
+             .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
+            return nil
+        }
+        add = Set(action.addLabelIDs)
+        remove = Set(action.removeLabelIDs)
+    }
+}
+
 /// Pure rules for deriving thread state, kept apart from SQL so they read plainly.
 enum ThreadRules {
     static func overlay(_ actions: [PendingAction], onto labels: inout [String: Set<String>], threadID: String) {
         var deleted = Set<String>()
-        for action in actions where action.state != .failed && action.state != .undone {
+        for effect in actions.compactMap(OverlayEffect.init) {
             let targets: [String]
-            switch action.kind {
-            case .modifyThreads, .trashThreads, .untrashThreads:
-                // Gmail applied a sent change to the messages the thread had
-                // then, which the diff names; a message that arrived since
-                // keeps its own labels. A change still to go out covers
-                // whatever the thread holds when it does.
-                if !action.threadIDs.contains(threadID) {
-                    targets = []
-                } else if action.state == .sent {
-                    targets = action.diff.keys.filter { labels[$0] != nil }
-                } else {
-                    targets = Array(labels.keys)
-                }
-            case .modifyMessages, .trashMessages, .untrashMessages:
-                targets = action.messageIDs.filter { labels[$0] != nil }
-            case .deleteMessages:
-                targets = []
-            case .deleteLabel:
-                deleted.formUnion(action.labelID.map { [$0] } ?? [])
-                targets = []
-            case .saveDraft, .sendDraft, .discardDraft, .createLabel, .updateLabel:
-                targets = []
-            case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
-                targets = []
+            switch effect.scope {
+            case .conversations(let threadIDs, let only):
+                guard threadIDs.contains(threadID) else { continue }
+                targets = labels.keys.filter { only?.contains($0) ?? true }
+            case .messages(let messageIDs):
+                targets = labels.keys.filter(messageIDs.contains)
+            case .deletedLabel(let labelID):
+                deleted.insert(labelID)
+                continue
             }
             for messageID in targets {
-                labels[messageID]?.formUnion(action.addLabelIDs)
-                labels[messageID]?.subtract(action.removeLabelIDs)
+                labels[messageID]?.formUnion(effect.add)
+                labels[messageID]?.subtract(effect.remove)
             }
         }
         // A deleted label leaves every conversation at once, whatever a row

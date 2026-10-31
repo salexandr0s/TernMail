@@ -77,48 +77,11 @@ extension MailCache {
         return observe { db in try ThreadRecord.fetchAll(db, sql: sql, arguments: arguments) }
     }
 
+    /// A conversation as the reader shows it. Its labels are the stored
+    /// effective labels, so a queue row that changes state without changing
+    /// a label wakes no reader.
     public func thread(accountID: String, threadID: String) -> AsyncThrowingStream<ThreadDetail?, any Error> {
-        observe { db in
-            guard let thread = try ThreadRecord.fetchOne(db, key: ["accountID": accountID, "id": threadID]) else {
-                return nil
-            }
-            let transaction = CacheTransaction(db: db)
-            let labels = try transaction.effectiveLabels(
-                threadID: threadID,
-                accountID: accountID,
-                actions: transaction.pendingActions(accountID: accountID)
-            )
-            let bodies = try MessageBodyRecord
-                .filter(Column("accountID") == accountID)
-                .joining(required: MessageBodyRecord.message.filter(Column("threadID") == threadID))
-                .fetchAll(db)
-            let bodiesByID = Dictionary(bodies.map { ($0.messageID, $0) }, uniquingKeysWith: { first, _ in first })
-            let hidden = try transaction.hiddenDraftMessageIDs(accountID: accountID)
-            let records = try transaction.messages(threadID: threadID, accountID: accountID)
-                .filter { !hidden.contains($0.id) }
-            let messageIDs = records.map(\.id)
-            let attachments = Dictionary(grouping: try AttachmentRecord
-                .filter(Column("accountID") == accountID && messageIDs.contains(Column("messageID")))
-                .order(Column.rowID) // payload order, as stored
-                .fetchAll(db), by: \.messageID)
-            let draftIDs = Dictionary(
-                try DraftRecord
-                    .filter(Column("accountID") == accountID && messageIDs.contains(Column("messageID")))
-                    .fetchAll(db)
-                    .map { ($0.messageID, $0.id) },
-                uniquingKeysWith: { first, _ in first }
-            )
-            let messages = records.map { record in
-                MessageDetail(
-                    record: record,
-                    labels: labels[record.id] ?? [],
-                    body: bodiesByID[record.id],
-                    attachments: attachments[record.id] ?? [],
-                    draftID: draftIDs[record.id]
-                )
-            }
-            return ThreadDetail(thread: thread, messages: messages)
-        }
+        observe { db in try CacheTransaction(db: db).threadDetail(threadID: threadID, accountID: accountID) }
     }
 
     /// Drafts and sends that haven't reached Gmail, oldest first.
@@ -296,6 +259,43 @@ public struct AccountStore: Sendable {
 }
 
 extension CacheTransaction {
+    /// What `MailCache.thread(accountID:threadID:)` observes.
+    func threadDetail(threadID: String, accountID: String) throws -> ThreadDetail? {
+        guard let thread = try ThreadRecord.fetchOne(db, key: ["accountID": accountID, "id": threadID]) else {
+            return nil
+        }
+        let labels = try storedEffectiveLabels(threadID: threadID, accountID: accountID)
+        let bodies = try MessageBodyRecord
+            .filter(Column("accountID") == accountID)
+            .joining(required: MessageBodyRecord.message.filter(Column("threadID") == threadID))
+            .fetchAll(db)
+        let bodiesByID = Dictionary(bodies.map { ($0.messageID, $0) }, uniquingKeysWith: { first, _ in first })
+        let hidden = try hiddenDraftMessageIDs(accountID: accountID)
+        let records = try messages(threadID: threadID, accountID: accountID).filter { !hidden.contains($0.id) }
+        let messageIDs = records.map(\.id)
+        let attachments = Dictionary(grouping: try AttachmentRecord
+            .filter(Column("accountID") == accountID && messageIDs.contains(Column("messageID")))
+            .order(Column.rowID) // payload order, as stored
+            .fetchAll(db), by: \.messageID)
+        let draftIDs = Dictionary(
+            try DraftRecord
+                .filter(Column("accountID") == accountID && messageIDs.contains(Column("messageID")))
+                .fetchAll(db)
+                .map { ($0.messageID, $0.id) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let messages = records.map { record in
+            MessageDetail(
+                record: record,
+                labels: labels[record.id] ?? [],
+                body: bodiesByID[record.id],
+                attachments: attachments[record.id] ?? [],
+                draftID: draftIDs[record.id]
+            )
+        }
+        return ThreadDetail(thread: thread, messages: messages)
+    }
+
     func draftActivity(_ draft: LocalDraft) throws -> DraftActivity {
         DraftActivity(
             draft: draft,

@@ -28,52 +28,58 @@ extension MailCache {
     public func messageListEntries(threadsByAccount: [String: [String]], matching query: SearchQuery? = nil,
                                    includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false) -> AsyncThrowingStream<[MessageListEntry], any Error> {
         observe { db in
-            let transaction = CacheTransaction(db: db)
-            var entries: [MessageListEntry] = []
-            for accountID in threadsByAccount.keys.sorted() {
-                let snoozedThreads = snoozedOnly ? try transaction.snoozeHolds(accountID: accountID) : [:]
-                let messageHolds = snoozedOnly ? try transaction.messageSnoozeHolds(accountID: accountID) : []
-                let snoozedMessages = Dictionary(messageHolds.map { ($0.messageID, $0.wakeAt) }, uniquingKeysWith: min)
-                var matchingIDs: Set<String>?
-                if let query {
-                    var matched = includingMessageIDs[accountID] ?? []
-                    if query.runsLocally, let root = query.root {
-                        var names: [String: [String]] = [:]
-                        for label in try transaction.labels(accountID: accountID) {
-                            names[SearchCompiler.normalizedLabelName(label.name), default: []].append(label.id)
-                        }
-                        var compiler = SearchCompiler(labelIDs: names, timeZone: .current, now: .now)
-                        let predicate = compiler.sql(root)
-                        var sql = "SELECT m.id FROM message m JOIN messageText mt ON mt.accountID=m.accountID AND mt.messageID=m.id WHERE m.accountID=? AND \(predicate)"
-                        var arguments: StatementArguments = [accountID]
-                        arguments += compiler.arguments
-                        if !query.includesSpamAndTrash {
-                            sql += " AND NOT EXISTS(SELECT 1 FROM messageLabel x WHERE x.accountID=m.accountID AND x.messageID=m.id AND x.labelID IN (?,?))"
-                            arguments += [SystemLabel.spam, SystemLabel.trash]
-                        }
-                        matched.formUnion(try String.fetchSet(db, sql: sql, arguments: arguments))
+            try CacheTransaction(db: db).messageListEntries(
+                threadsByAccount: threadsByAccount, matching: query,
+                includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly
+            )
+        }
+    }
+}
+
+extension CacheTransaction {
+    /// What `MailCache.messageListEntries` observes. Labels are the stored
+    /// effective labels, so a queue row changing state wakes no list.
+    func messageListEntries(threadsByAccount: [String: [String]], matching query: SearchQuery? = nil,
+                            includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false) throws -> [MessageListEntry] {
+        var entries: [MessageListEntry] = []
+        for accountID in threadsByAccount.keys.sorted() {
+            let snoozedThreads = snoozedOnly ? try snoozeHolds(accountID: accountID) : [:]
+            let messageHolds = snoozedOnly ? try messageSnoozeHolds(accountID: accountID) : []
+            let snoozedMessages = Dictionary(messageHolds.map { ($0.messageID, $0.wakeAt) }, uniquingKeysWith: min)
+            var matchingIDs: Set<String>?
+            if let query {
+                var matched = includingMessageIDs[accountID] ?? []
+                if query.runsLocally, let root = query.root {
+                    var names: [String: [String]] = [:]
+                    for label in try labels(accountID: accountID) {
+                        names[SearchCompiler.normalizedLabelName(label.name), default: []].append(label.id)
                     }
-                    matchingIDs = matched
-                }
-                let actions = try transaction.pendingActions(accountID: accountID)
-                let hidden = try transaction.hiddenDraftMessageIDs(accountID: accountID)
-                let fetched = try MessageListSQL.fetch(accountID: accountID, threadIDs: Set(threadsByAccount[accountID] ?? []), db: db)
-                for (threadID, messages) in Dictionary(grouping: fetched.messages, by: \.threadID) {
-                    var labels = Dictionary(messages.map { ($0.id, fetched.labels[$0.id] ?? []) }, uniquingKeysWith: { first, _ in first })
-                    ThreadRules.overlay(actions, onto: &labels, threadID: threadID)
-                    for message in messages where !hidden.contains(message.id) {
-                        guard matchingIDs?.contains(message.id) ?? true else { continue }
-                        if snoozedOnly, snoozedThreads[threadID] == nil, snoozedMessages[message.id] == nil { continue }
-                        entries.append(MessageListEntry(message: message, labels: labels[message.id] ?? [],
-                            attachments: fetched.attachments[message.id] ?? [],
-                            snoozeWakeAt: snoozedMessages[message.id] ?? snoozedThreads[threadID]))
+                    var compiler = SearchCompiler(labelIDs: names, timeZone: .current, now: .now)
+                    let predicate = compiler.sql(root)
+                    var sql = "SELECT m.id FROM message m JOIN messageText mt ON mt.accountID=m.accountID AND mt.messageID=m.id WHERE m.accountID=? AND \(predicate)"
+                    var arguments: StatementArguments = [accountID]
+                    arguments += compiler.arguments
+                    if !query.includesSpamAndTrash {
+                        sql += " AND NOT EXISTS(SELECT 1 FROM messageLabel x WHERE x.accountID=m.accountID AND x.messageID=m.id AND x.labelID IN (?,?))"
+                        arguments += [SystemLabel.spam, SystemLabel.trash]
                     }
+                    matched.formUnion(try String.fetchSet(db, sql: sql, arguments: arguments))
                 }
+                matchingIDs = matched
             }
-            return entries.sorted { lhs, rhs in
-                if lhs.message.date != rhs.message.date { return lhs.message.date > rhs.message.date }
-                return (lhs.message.accountID, lhs.message.id) < (rhs.message.accountID, rhs.message.id)
+            let hidden = try hiddenDraftMessageIDs(accountID: accountID)
+            let fetched = try MessageListSQL.fetch(accountID: accountID, threadIDs: Set(threadsByAccount[accountID] ?? []), db: db)
+            for message in fetched.messages where !hidden.contains(message.id) {
+                guard matchingIDs?.contains(message.id) ?? true else { continue }
+                if snoozedOnly, snoozedThreads[message.threadID] == nil, snoozedMessages[message.id] == nil { continue }
+                entries.append(MessageListEntry(message: message, labels: fetched.labels[message.id] ?? [],
+                    attachments: fetched.attachments[message.id] ?? [],
+                    snoozeWakeAt: snoozedMessages[message.id] ?? snoozedThreads[message.threadID]))
             }
+        }
+        return entries.sorted { lhs, rhs in
+            if lhs.message.date != rhs.message.date { return lhs.message.date > rhs.message.date }
+            return (lhs.message.accountID, lhs.message.id) < (rhs.message.accountID, rhs.message.id)
         }
     }
 }
@@ -81,6 +87,7 @@ extension MailCache {
 private enum MessageListSQL {
     struct Fetched {
         var messages: [MessageRecord] = []
+        /// Effective labels, as `rebuildThreads` stored them.
         var labels: [String: Set<String>] = [:]
         var attachments: [String: [AttachmentRecord]] = [:]
     }
@@ -97,7 +104,7 @@ private enum MessageListSQL {
             result.messages += try MessageRecord.fetchAll(db, sql: "SELECT m.* FROM message m WHERE \(predicate)", arguments: arguments)
             let rows = try Row.fetchAll(db, sql: """
                 SELECT m.id AS messageID,l.labelID FROM message m
-                LEFT JOIN messageLabel l ON l.accountID=m.accountID AND l.messageID=m.id
+                LEFT JOIN effectiveLabel l ON l.accountID=m.accountID AND l.messageID=m.id
                 WHERE \(predicate)
                 """, arguments: arguments)
             for row in rows {
