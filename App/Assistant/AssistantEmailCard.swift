@@ -115,8 +115,7 @@ struct AssistantEmailCard: View {
     /// The same tern: link the message list's Copy Link writes.
     private func copyLink() {
         guard let url = MailLink(accountID: email.source.accountID, threadID: email.source.threadID).ternURL else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        NSPasteboard.general.replaceContents(with: url.absoluteString)
     }
 
     private var sender: String {

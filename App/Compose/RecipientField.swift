@@ -431,8 +431,7 @@ struct RecipientField: NSViewRepresentable {
 
         @objc private func copyAddress(_ item: NSMenuItem) {
             guard let token = item.representedObject as? Token else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(RecipientField.editingString(token.address), forType: .string)
+            NSPasteboard.general.replaceContents(with: RecipientField.editingString(token.address))
         }
 
         /// Turns the token back into selected text, so typing replaces it.
