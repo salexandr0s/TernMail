@@ -132,7 +132,7 @@ struct CalendarManagementView: View {
 
         Divider()
         sectionTitle("Notifications")
-        Toggle("Show event notifications on this Mac", isOn: Binding(get: { calendar.notificationsEnabled }, set: { model.setNotifications(id: calendar.id, enabled: $0) }))
+        Toggle("Show event notifications on this Mac", isOn: model.notifications(of: calendar))
             .toggleStyle(.checkbox)
         Button("Allow macOS Notifications…") { Task { await model.requestNotifications() } }
             .controlSize(.small)
@@ -273,13 +273,13 @@ struct CalendarManagementView: View {
                             }
                         } icon: { Circle().fill(calendar.color).frame(width: Tokens.Space.s2, height: Tokens.Space.s2) }
                         Spacer(minLength: Tokens.Space.s2)
-                        Picker("Assistant access", selection: Binding(get: { calendar.aiAccess }, set: { model.setAssistantAccess(id: calendar.id, access: $0) })) {
+                        Picker("Assistant access", selection: model.assistantAccess(of: calendar)) {
                             ForEach(CalendarAIAccess.allCases) { access in Text(access.title).tag(access) }
                         }
                         .labelsHidden()
                         .accessibilityLabel("Assistant access to \(calendar.title)")
                     }
-                    Toggle("Include when finding available times", isOn: Binding(get: { calendar.useForScheduling }, set: { model.setScheduling(id: calendar.id, included: $0) }))
+                    Toggle("Include when finding available times", isOn: model.scheduling(of: calendar))
                         .toggleStyle(.checkbox)
                 }
             }
@@ -291,9 +291,7 @@ struct CalendarManagementView: View {
             }
             HStack(spacing: Tokens.Space.s3) {
                 ForEach(weekdayOrder, id: \.self) { day in
-                    Toggle(model.calendar.shortWeekdaySymbols[day - 1], isOn: Binding(get: { model.workingWeekdays.contains(day) }, set: { included in
-                        if included { model.workingWeekdays.insert(day) } else { model.workingWeekdays.remove(day) }
-                    }))
+                    Toggle(model.calendar.shortWeekdaySymbols[day - 1], isOn: $model.workingWeekdays.contains(day))
                     .toggleStyle(.checkbox)
                     .accessibilityLabel(model.calendar.weekdaySymbols[day - 1])
                 }

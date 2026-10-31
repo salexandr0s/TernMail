@@ -13,7 +13,9 @@ struct CalendarView: View {
     @State private var showImport = false
     @State private var importEvents: [CalendarImportItem] = []
     @State private var showImportReview = false
-    @State private var deleteTarget: CalendarDisplayEvent?
+    /// Repeating events ask for a scope; events with guests ask before notifying them.
+    @State private var recurringDeleteTarget: CalendarDisplayEvent?
+    @State private var guestDeleteTarget: CalendarDisplayEvent?
     @State private var showDatePicker = false
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(CalendarDisplayMode.storageKey, store: CalendarDefaults.store) private var storedMode = CalendarDisplayMode.week
@@ -69,24 +71,20 @@ struct CalendarView: View {
                 showImportReview = true
             } catch { model.errorMessage = error.localizedDescription }
         }
-        .confirmationDialog("Delete this repeating event?", isPresented: Binding(
-            get: { recurringDeleteTarget != nil },
-            set: { if !$0 { deleteTarget = nil } }
-        ), titleVisibility: .visible, presenting: recurringDeleteTarget) { event in
+        .confirmationDialog("Delete this repeating event?", isPresented: $recurringDeleteTarget.isPresent(),
+                            titleVisibility: .visible, presenting: recurringDeleteTarget) { event in
             Button("Delete This Event", role: .destructive) { perform { try await model.delete(event, scope: .occurrence) } }
             Button("Delete This and Following Events", role: .destructive) { perform { try await model.delete(event, scope: .following) } }
             Button("Delete All Events", role: .destructive) { perform { try await model.delete(event, scope: .series) } }
         } message: { event in
             Text(deleteMessage(for: event))
         }
-        .ternConfirm("Delete “\(deleteTarget?.title ?? "")”?", item: guestDeleteTarget,
-                     actionTitle: "Delete and Notify Guests", message: deleteTarget.map(deleteMessage) ?? "") { event in
+        .ternConfirm("Delete “\(guestDeleteTarget?.title ?? "")”?", item: $guestDeleteTarget,
+                     actionTitle: "Delete and Notify Guests", message: guestDeleteTarget.map(deleteMessage) ?? "") { event in
             perform { try await model.delete(event, scope: .occurrence) }
         }
-        .confirmationDialog("Undo the last calendar change?", isPresented: Binding(
-            get: { model.undoConfirmation != nil },
-            set: { if !$0 { model.cancelUndo() } }
-        ), presenting: model.undoConfirmation) { _ in
+        .confirmationDialog("Undo the last calendar change?", isPresented: $model.undoConfirmation.isPresent(),
+                            presenting: model.undoConfirmation) { _ in
             Button("Undo and Notify Guests") { Task { await model.confirmUndo() } }
             Button("Cancel", role: .cancel) { model.cancelUndo() }
         } message: { recipients in
@@ -283,7 +281,8 @@ struct CalendarView: View {
 
     /// Single keys and arrows act only while no sheet or popover owns the keyboard.
     private var canHandleKeys: Bool {
-        isActive && model.editor == nil && model.undoConfirmation == nil && deleteTarget == nil
+        isActive && model.editor == nil && model.undoConfirmation == nil
+            && recurringDeleteTarget == nil && guestDeleteTarget == nil
             && !showActivity && !showImport && !showImportReview && !showDatePicker && !showCalendarList
     }
 
@@ -293,20 +292,16 @@ struct CalendarView: View {
     /// so both ask first. A plain event goes straight away; Edit ▸ Undo brings it back.
     private func requestDelete(_ event: CalendarDisplayEvent) {
         guard isActive, event.canEdit else { return }
-        if event.isRecurring || !guests(of: event).isEmpty {
-            deleteTarget = event
+        if event.isRecurring {
+            recurringDeleteTarget = event
+        } else if !guests(of: event).isEmpty {
+            guestDeleteTarget = event
         } else {
             perform {
                 try await model.delete(event, scope: .occurrence)
                 model.statusText = "Deleted “\(event.title)”. Edit ▸ Undo restores it."
             }
         }
-    }
-
-    private var recurringDeleteTarget: CalendarDisplayEvent? { deleteTarget.flatMap { $0.isRecurring ? $0 : nil } }
-
-    private var guestDeleteTarget: Binding<CalendarDisplayEvent?> {
-        Binding(get: { deleteTarget.flatMap { $0.isRecurring ? nil : $0 } }, set: { if $0 == nil { deleteTarget = nil } })
     }
 
     private func guests(of event: CalendarDisplayEvent) -> [String] {
