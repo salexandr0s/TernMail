@@ -50,8 +50,11 @@ actor DomainLogoImages {
         guard parts.count == 2, !parts[0].isEmpty,
               let domain = PublicSuffix.shared.registrableDomain(String(parts[1])),
               !personalDomains.contains(domain) else { return nil }
-        return domain
+        // Unity's legacy website redirects to its current domain. Keep brand aliases explicit.
+        return canonicalDomains[domain] ?? domain
     }
+
+    nonisolated private static let canonicalDomains = ["unity3d.com": "unity.com"]
 
     func data(for address: String) async -> Data? {
         guard !Task.isCancelled, let domain = Self.domain(for: address) else { return nil }

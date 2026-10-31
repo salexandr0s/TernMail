@@ -41,6 +41,24 @@ import Testing
         #expect(urls.map(\.absoluteString) == ["https://assets.brand.com/touch.png?a=1&b=2", "https://www.brand.com/small.ico"])
     }
 
+    @Test func verifiedUnityLegacyDomainsUseTheCanonicalWebsiteAndCache() async throws {
+        #expect(DomainLogoImages.domain(for: "no-reply@unity3d.com") == "unity.com")
+        #expect(DomainLogoImages.domain(for: "team@news.unity3d.com") == "unity.com")
+        #expect(DomainLogoImages.domain(for: "Unity <no-reply@unity3d.com>") == nil)
+        #expect(DomainLogoImages.domain(for: "no-reply@unity3d.com.attacker.com") == "attacker.com")
+        let transport = LogoTransport(routes: [
+            "https://unity.com/": .html(#"<link rel='icon' href='/favicon.ico'>"#),
+            "https://unity.com/favicon.ico": .image(try png())
+        ])
+        let images = DomainLogoImages(cacheDirectory: nil, fetch: { try await transport.fetch($0) })
+        let legacy = try #require(await images.data(for: "no-reply@unity3d.com"))
+        #expect(await images.data(for: "team@news.unity3d.com") == legacy)
+        #expect(await images.data(for: "team@unity.com") == legacy)
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.url?.host == "unity.com" })
+    }
+
     @Test func fetchedIconsAreReencodedAndRequestsCarryNoMailIdentity() async throws {
         let transport = LogoTransport(routes: [
             "https://brand.com/": .html(#"<link rel='apple-touch-icon' href='/brand.png'>"#),
