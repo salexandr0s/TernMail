@@ -20,7 +20,7 @@ struct NoticeView: View {
             Image(systemName: notice.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                 .font(.title3)
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(notice.isError ? Color.orange : Color.accentColor)
+                .foregroundStyle(notice.isError ? Tokens.Status.warning : Color.accentColor)
                 .accessibilityHidden(true)
             Text(notice.message)
                 .font(.callout)

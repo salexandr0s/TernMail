@@ -241,7 +241,7 @@ struct RootView: View {
             }
         case .failed(let message):
             TernEmptyState(
-                title: "Couldn't open your mail",
+                title: "Couldn't Open Your Mail",
                 systemImage: "exclamationmark.triangle",
                 message: message
             )
@@ -257,6 +257,6 @@ struct RootView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Tokens.Surface.canvas)
+        .background(Tokens.Surface.muted)
     }
 }

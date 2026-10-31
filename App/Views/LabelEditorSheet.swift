@@ -111,7 +111,7 @@ struct LabelEditorSheet: View {
                         .overlay {
                             if problem != nil {
                                 RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                                    .strokeBorder(.red, lineWidth: Tokens.Border.hairline)
+                                    .strokeBorder(Tokens.Status.error, lineWidth: Tokens.Border.hairline)
                                     .allowsHitTesting(false)
                             }
                         }
@@ -135,7 +135,7 @@ struct LabelEditorSheet: View {
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

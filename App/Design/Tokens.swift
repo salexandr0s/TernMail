@@ -37,8 +37,8 @@ enum Tokens {
         static let focus: CGFloat = 2
     }
 
-    /// Status colors. System colors carry Increase Contrast and dark variants
-    /// that the literal `.red` and friends lack.
+    /// Status colors named by meaning, so errors, warnings and stars match
+    /// across the app. They resolve to the system colors.
     enum Status {
         static let error = Color(nsColor: .systemRed)
         static let warning = Color(nsColor: .systemOrange)

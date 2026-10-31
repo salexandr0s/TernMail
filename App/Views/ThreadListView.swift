@@ -139,12 +139,12 @@ struct ThreadListView: View {
     private var emptyMailbox: some View {
         if !mailbox.listPreferences.filters.isEmpty {
             VStack(spacing: Tokens.Space.s3) {
-                TernEmptyState(title: "No matching mail", systemImage: "line.3.horizontal.decrease.circle", message: "Try different filters or clear them to see all mail.", fillsSpace: false)
+                TernEmptyState(title: "No Matching Mail", systemImage: "line.3.horizontal.decrease.circle", message: "Try different filters or clear them to see all mail.", fillsSpace: false)
                 Button("Clear Filters") { mailbox.listPreferences.filters = [] }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if mailbox.selectedHaveSyncedOnce {
             VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "No conversations", systemImage: "tray", message: emptyDescription, fillsSpace: false)
+                TernEmptyState(title: "No Conversations", systemImage: "tray", message: emptyDescription, fillsSpace: false)
                 if mailbox.offersOlderConversations {
                     GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
                 }
@@ -152,7 +152,7 @@ struct ThreadListView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if case .failed(let message) = mailbox.selectedSyncStatus {
             VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "Can't download mail", systemImage: "wifi.exclamationmark", message: message, fillsSpace: false)
+                TernEmptyState(title: "Can't Download Mail", systemImage: "wifi.exclamationmark", message: message, fillsSpace: false)
                 Button("Try Again") { mailbox.syncNow() }
                     .buttonStyle(.bordered)
             }
@@ -171,7 +171,7 @@ struct ThreadListView: View {
         let gmail = search.gmail?.state ?? .ready
         if search.readFailed {
             TernEmptyState(
-                title: "Can't search",
+                title: "Can't Search",
                 systemImage: "exclamationmark.magnifyingglass",
                 message: "Tern couldn't read the mail saved on this Mac."
             )
@@ -184,7 +184,7 @@ struct ThreadListView: View {
         } else {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(
-                    title: "No results",
+                    title: "No Results",
                     systemImage: "magnifyingglass",
                     message: gmail == .finished
                         ? "No matches on this Mac or in Gmail."
@@ -221,10 +221,10 @@ struct ThreadListView: View {
                     .popover(isPresented: Binding(get: { snoozeAnchor == row.id }, set: { if !$0 { mailbox.snoozeDateTargets = nil } }),
                              arrowEdge: .trailing) { snoozeDatePicker }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row.id)
+                        swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, row: row.id)
+                        swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, row: row)
                     }
                     .onAppear {
                         if row.id == rows.last?.id {
@@ -274,14 +274,15 @@ struct ThreadListView: View {
         .focused($listFocused)
     }
 
-    @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, row: MailListRowID) -> some View {
+    @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, row: MessageListItem) -> some View {
         swipeButton(first, row: row)
         swipeButton(second, row: row)
     }
 
-    @ViewBuilder private func swipeButton(_ action: MailSwipeAction, row: MailListRowID) -> some View {
+    @ViewBuilder private func swipeButton(_ action: MailSwipeAction, row: MessageListItem) -> some View {
         if action != .none {
-            Button { mailbox.performSwipe(action, on: row) } label: { Label(action.title, systemImage: action.symbol) }
+            let title = action.buttonTitle(isUnread: row.thread.isUnread, isStarred: row.thread.isStarred)
+            Button { mailbox.performSwipe(action, on: row.id) } label: { Label(title, systemImage: action.symbol) }
                 .tint(action == .trash || action == .spam ? .red : .accentColor)
                 .disabled((action == .archive && !mailbox.offersArchive) || (action == .trash && !mailbox.offersTrash)
                           || (action == .snooze && !mailbox.offersArchive))

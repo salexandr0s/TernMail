@@ -22,7 +22,7 @@ struct OriginalMessageWindow: View {
             if let bytes {
                 OriginalMessageText(bytes: bytes, limit: Self.previewLimit)
             } else if let failure {
-                TernEmptyState(title: "Couldn't load the original", systemImage: "doc.plaintext", message: failure)
+                TernEmptyState(title: "Couldn't Load the Original", systemImage: "doc.plaintext", message: failure)
             } else {
                 ProgressView("Loading original message…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

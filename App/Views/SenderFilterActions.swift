@@ -83,7 +83,12 @@ struct SenderFilterReview: View {
                 }
                 .padding(Tokens.Space.s3)
             }
-            if let error { Text(error).font(.callout).foregroundStyle(.red).padding(Tokens.Space.s3) }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(Tokens.Status.error)
+                    .padding(Tokens.Space.s3)
+            }
             FilterEditorSheet(model: model, original: nil, initialCriteria: request.criteria)
         }
         .task {

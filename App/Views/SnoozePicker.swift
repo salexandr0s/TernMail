@@ -110,7 +110,7 @@ struct SnoozeDateSheet: View {
                 if isInPast {
                     Label("Choose a future time.", systemImage: "exclamationmark.triangle")
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Tokens.Status.error)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

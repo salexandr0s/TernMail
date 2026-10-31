@@ -23,7 +23,7 @@ struct KeyboardShortcutsView: View {
                     shortcutRow(key.title, keys: "g then \(key.label)")
                 }
             } header: {
-                Text("Single-key shortcuts")
+                Text("Single-Key Shortcuts")
             } footer: {
                 Text(usesSingleKeys
                     ? "On in the main window when you aren't typing."

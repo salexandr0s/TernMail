@@ -51,7 +51,7 @@ struct SettingsEditorSheet<Content: View, Actions: View>: View {
 
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
-                    Text(message)
+                    Label(message, systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(Tokens.Status.error)
                         .fixedSize(horizontal: false, vertical: true)
                 }

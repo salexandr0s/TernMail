@@ -37,7 +37,7 @@ struct ConnectionsView: View {
             if let state = app.inboxWatcher(for: accountID)?.state {
                 Text(watcherStatus(state)).font(.caption).foregroundStyle(.secondary)
             }
-            if let error { Text(error).font(.caption).foregroundStyle(Tokens.Status.error) }
+            if let error { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Tokens.Status.error) }
             Text("Turning connections off stops their use in Tern. Remove Tern from your Google Account to revoke permissions.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

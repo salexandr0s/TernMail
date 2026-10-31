@@ -62,7 +62,7 @@ struct SignInView: View {
             if let error = model.signInError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Tokens.Status.error)
                     .padding(Tokens.Space.s3)
                     .frame(maxWidth: Tokens.Sheet.smallWidth)
                     .fixedSize(horizontal: false, vertical: true)
