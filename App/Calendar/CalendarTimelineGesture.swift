@@ -40,11 +40,11 @@ struct CalendarTimelineDrag {
 extension CalendarTimeGrid {
     var previewEvent: CalendarDisplayEvent? {
         guard !dragCancelled, let drag, let range = drag.range else { return nil }
-        var preview = drag.action.event ?? CalendarDisplayEvent(
+        let preview = drag.action.event ?? CalendarDisplayEvent(
             event: GoogleCalendarEvent(id: "selection", summary: "New event"), accountID: "", calendarID: "")
-        preview.event = range.applying(to: preview.event, calendar: calendar)
-        preview.fallbackTimeZoneID = calendar.timeZone.identifier
-        return preview
+        return CalendarDisplayEvent(event: range.applying(to: preview.event, calendar: calendar),
+            accountID: preview.accountID, calendarID: preview.calendarID, colorHex: preview.colorHex,
+            isPending: preview.isPending, canEdit: preview.canEdit, fallbackTimeZoneID: calendar.timeZone.identifier)
     }
 
     var scrollDirection: CGFloat {
