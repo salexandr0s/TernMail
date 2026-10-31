@@ -33,7 +33,7 @@ enum CalendarAIAccess: String, CaseIterable, Identifiable {
     case off, availability, details
     var id: String { rawValue }
     var title: String {
-        switch self { case .off: "Off"; case .availability: "Availability only"; case .details: "Event details" }
+        switch self { case .off: "Off"; case .availability: "Availability Only"; case .details: "Event Details" }
     }
 }
 

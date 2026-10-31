@@ -77,7 +77,7 @@ struct AssistantView: View {
             HStack(spacing: Tokens.Space.s0_5) {
                 iconButton("New Chat", symbol: "plus", action: startNewChat)
                 Menu {
-                    Button("Assistant Settings", systemImage: "gearshape") { showsSettings = true }
+                    Button("Assistant Settings…", systemImage: "gearshape") { showsSettings = true }
                     if let onDetach { Button("Open in a Window", systemImage: "macwindow", action: onDetach) }
                     if let onExpand {
                         Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)

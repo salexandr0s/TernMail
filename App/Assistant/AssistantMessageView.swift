@@ -87,7 +87,7 @@ struct AssistantMessageView: View {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Button { onOpenDraft(draftID) } label: {
                         HStack(spacing: Tokens.Space.s2) {
-                            Label("Review draft", systemImage: "square.and.pencil")
+                            Label("Review Draft", systemImage: "square.and.pencil")
                             Spacer(minLength: Tokens.Space.s2)
                             Image(systemName: "arrow.up.right").font(.caption).accessibilityHidden(true)
                         }

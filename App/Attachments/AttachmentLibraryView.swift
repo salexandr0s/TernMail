@@ -165,7 +165,7 @@ struct AttachmentLibraryView: View {
                 Text(model.coverageDetail).font(.callout)
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if model.indexingNeedsRetry {
-                    Button("Retry indexing") { Task { await model.retryIndexing() } }
+                    Button("Retry Indexing") { Task { await model.retryIndexing() } }
                 }
             }
             .padding(Tokens.Space.s4).frame(width: Tokens.Popover.width)

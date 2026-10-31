@@ -112,7 +112,7 @@ struct ThreadSummaryView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityLabel("Summary Options")
-                .help("Summary options")
+                .help("Summary Options")
             }
             Text(report.summary.summary)
                 .font(.callout)
