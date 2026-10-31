@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
 import Foundation
 
 /// Synthetic sent mail for opt-in native writing-style checks. No real mail is copied.

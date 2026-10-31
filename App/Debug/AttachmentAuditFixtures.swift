@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
 import Foundation
 
 /// A valid one-page PDF assembled from synthetic ASCII text. No customer data.
