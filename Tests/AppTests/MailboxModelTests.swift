@@ -347,6 +347,30 @@ import Testing
         #expect(!mailbox.showsOutbox(.account("audit", MailboxModel.outboxID)))
         await mailbox.stop()
     }
+
+    @Test func relaunchReopensOnlyAMailboxThatStillExists() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        let inbox = MailboxID.account("audit", SystemLabel.inbox)
+        let sent = MailboxID.account("audit", SystemLabel.sent)
+        #expect(sent.restorationValue.flatMap(MailboxID.init(restorationValue:)) == sent)
+        #expect(MailboxID.scoped(SystemLabel.inbox, ["audit"]).restorationValue == nil)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && !mailbox.userLabels.isEmpty }
+
+        // A deleted label, a signed-out account, and Combined with one account.
+        for gone in [MailboxID.account("audit", "Label_deleted"), .account("signed-out", SystemLabel.sent), .combined(SystemLabel.sent)] {
+            mailbox.restoreMailbox(gone)
+            #expect(mailbox.selectedMailbox == inbox)
+        }
+        mailbox.restoreMailbox(sent)
+        #expect(mailbox.selectedMailbox == sent)
+        // A mailbox chosen since launch, such as by a link, stays.
+        mailbox.restoreMailbox(.account("audit", SystemLabel.trash))
+        #expect(mailbox.selectedMailbox == sent)
+        await mailbox.stop()
+    }
 }
 
 @MainActor

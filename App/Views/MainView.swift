@@ -16,6 +16,9 @@ struct MainView: View {
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @AppStorage("mailColumnVisibility") private var storedColumnVisibility = ""
+    /// Kept with the window, so it follows the system setting for reopening
+    /// windows after a quit.
+    @SceneStorage("selectedMailbox") private var storedMailbox = ""
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
     @State private var paneSizing = AssistantMailPaneSizing()
     @State private var libraryToolbar = AttachmentLibraryToolbarState()
@@ -117,7 +120,9 @@ struct MainView: View {
         .onAppear {
             mailbox.undoManager = undoManager
             if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) { columnVisibility = stored }
+            if let stored = MailboxID(restorationValue: storedMailbox) { mailbox.restoreMailbox(stored) }
         }
+        .onChange(of: mailbox.selectedMailbox) { _, box in storedMailbox = box?.restorationValue ?? "" }
         .onChange(of: columnVisibility) { _, visibility in
             // The assistant narrows the columns for a while; keep the user's own choice.
             if !showsAssistant { storedColumnVisibility = visibility.storageValue }
