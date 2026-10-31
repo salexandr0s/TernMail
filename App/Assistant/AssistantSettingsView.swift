@@ -72,7 +72,7 @@ struct AssistantSettingsView: View {
     private var hasChat: Bool { !model.messages.isEmpty || !model.composerText.isEmpty }
 
     private var connectionSection: some View {
-        SettingsGroup("ChatGPT", systemImage: "person.crop.circle") {
+        Section("ChatGPT") {
             HStack(spacing: Tokens.Space.s3) {
                 ChatGPTBrand(size: Tokens.Space.s6)
                     .accessibilityHidden(true)
@@ -185,7 +185,7 @@ struct AssistantSettingsView: View {
     }
 
     private var modelSection: some View {
-        SettingsGroup("Model", systemImage: "slider.horizontal.3") {
+        Section("Model") {
             SettingsControlRow("ChatGPT model") {
                 HStack(spacing: Tokens.Space.s2) {
                     if model.isLoadingModels {
@@ -225,7 +225,7 @@ struct AssistantSettingsView: View {
     }
 
     private var accountsSection: some View {
-        SettingsGroup("Mail access", systemImage: "envelope") {
+        Section("Mail access") {
             if model.availableAccounts.isEmpty {
                 Label("Add a mail account in Accounts settings.", systemImage: "person.crop.circle.badge.plus")
                     .font(.callout)
@@ -276,7 +276,7 @@ struct AssistantSettingsView: View {
     }
 
     private var privacySection: some View {
-        SettingsGroup("Privacy", systemImage: "lock") {
+        Section("Privacy") {
             SettingsNote("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.", systemImage: "lock")
             LabeledContent {
                 Button("Clear Chat…") { confirmsClearChat = true }

@@ -4,7 +4,7 @@ import SwiftUI
 
 struct CalendarEventEditor: View {
     @Environment(\.dismiss) private var dismiss
-    @State var draft: CalendarEditorDraft
+    @State private var draft: CalendarEditorDraft
     let calendars: [CalendarDisplayCalendar]
     let calendar: Calendar
     let save: (CalendarEditorDraft) async throws -> Void

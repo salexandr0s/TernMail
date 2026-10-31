@@ -6,7 +6,7 @@ struct AssistantWritingStyleSettingsSection: View {
     let confirmTurnOff: (AssistantWritingStyleEntry) -> Void
 
     var body: some View {
-        SettingsGroup("Writing style", systemImage: "pencil.line") {
+        Section("Writing style") {
             SettingsNote("Learn how you write from up to 100 recent sent emails in each enabled account. Replies use that account’s style and follow any tone you request.", systemImage: "text.quote")
             ForEach(model.entries) { entry in
                 accountRow(entry)

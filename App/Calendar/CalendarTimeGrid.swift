@@ -16,6 +16,7 @@ struct CalendarTimeGrid: View {
     let hourHeight = Tokens.Space.s16
     let gutter = Tokens.Space.s16
     static let coordinateSpace = "calendarTimeline"
+    // Internal, not private: the drag gesture in CalendarTimelineGesture.swift reads and sets these.
     @State var frames: [CalendarTimelineRegion: CGRect] = [:]
     @State var drag: CalendarTimelineDrag?
     @State var dragCancelled = false

@@ -50,7 +50,7 @@ struct TernApp: App {
                 .environment(model)
                 .modifier(AddressAvatarEnvironment(app: model))
         }
-        .defaultSize(width: 720, height: 600)
+        .defaultSize(width: Tokens.Layout.composeWidth, height: Tokens.Layout.composeHeight)
         .windowToolbarStyle(.unifiedCompact)
         .windowResizability(.contentMinSize)
         // File > New Message replaces the New Window item this scene would add.

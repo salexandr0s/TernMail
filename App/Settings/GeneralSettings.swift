@@ -7,10 +7,10 @@ struct GeneralSettings: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("Default email app", systemImage: "envelope") {
+            Section("Default email app") {
                 DefaultMailAppView()
             }
-            SettingsGroup("Sending", systemImage: "paperplane") {
+            Section("Sending") {
                 SettingsControlRow("Undo Send", detail: "Delay sending so you can undo.") {
                     Picker("Undo Send delay", selection: $undoSendDelay) {
                         ForEach(UndoSendDelay.choices, id: \.self) { seconds in
@@ -20,7 +20,7 @@ struct GeneralSettings: View {
                     .pickerStyle(.menu)
                 }
             }
-            SettingsGroup("Keyboard", systemImage: "keyboard") {
+            Section("Keyboard") {
                 SettingsToggleRow("Single-Key Shortcuts", detail: "Use letter keys when you aren't typing.", isOn: $usesSingleKeys)
                 Button("All Keyboard Shortcuts…") {
                     openWindow(id: KeyboardShortcutsView.sceneID)

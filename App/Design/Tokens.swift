@@ -73,11 +73,9 @@ enum Tokens {
         static let sidebarMaxWidth: CGFloat = 480
         static let readerMinWidth = Layout.emptyStateWidth
         static let contentWidth: CGFloat = 720
-        static let settingsHeight: CGFloat = 680
         static let bubbleInset = Space.s10
         static let userBubble = Color.accentColor.opacity(0.14)
         static let assistantBubble = Surface.primary
-        static let chatBackground = Surface.canvas
     }
 
     /// Calendar panes and sheets share native control sizing and semantic surfaces.
@@ -85,11 +83,8 @@ enum Tokens {
         static let sidebarWidth: CGFloat = 248
         static let compactWidth: CGFloat = 760
         static let contentMinWidth: CGFloat = 420
-        static let viewPickerWidth: CGFloat = 260
         static let editorWidth: CGFloat = 600
         static let editorHeight: CGFloat = 680
-        static let settingsWidth: CGFloat = 760
-        static let settingsHeight: CGFloat = 680
         static let activityWidth: CGFloat = 620
         static let activityHeight: CGFloat = 520
         static let eventTint = 0.12
@@ -107,7 +102,6 @@ enum Tokens {
         static let minHeight: CGFloat = 500
         static let sidebarWidth: CGFloat = 208
         static let contentWidth: CGFloat = 640
-        static let controlWidth: CGFloat = 280
         /// Pickers and fields inside a settings group.
         static let pickerWidth: CGFloat = 240
         static let navigationIcon = Space.s5
@@ -152,6 +146,8 @@ enum Tokens {
         static let searchMaxWidth: CGFloat = 420
         static let readableWidth: CGFloat = 880
         static let emptyStateWidth: CGFloat = 320
+        static let composeWidth: CGFloat = 720
+        static let composeHeight: CGFloat = 600
         static let composeMinWidth: CGFloat = 480
         static let composeMinHeight: CGFloat = 360
         /// A conversation in its own window keeps its header and toolbar readable.
@@ -168,7 +164,6 @@ enum Tokens {
         static let attachmentWidth: CGFloat = 240
         static let shortcutsWidth: CGFloat = 480
         static let shortcutsHeight: CGFloat = 600
-        static let settingsWidth: CGFloat = 520
         static let settingsHeight: CGFloat = 280
     }
 

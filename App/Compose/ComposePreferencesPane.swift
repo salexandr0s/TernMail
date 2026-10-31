@@ -12,7 +12,7 @@ struct ComposePreferencesPane: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("New messages", systemImage: "envelope") {
+            Section("New messages") {
                 SettingsControlRow("Send from") {
                     Picker("New messages from", selection: $defaultAccount) {
                         Text("Automatic").tag("")
@@ -26,7 +26,7 @@ struct ComposePreferencesPane: View {
                     .padding(.bottom, Tokens.Space.s2)
             }
 
-            SettingsGroup("Writing", systemImage: "textformat") {
+            Section("Writing") {
                 SettingsControlRow("Default font") {
                     Picker("Default font", selection: $font) {
                         Text("Sans serif").tag(ComposeFont.sansSerif.rawValue)
@@ -39,7 +39,7 @@ struct ComposePreferencesPane: View {
                 SettingsToggleRow("Format Markdown", detail: "Apply formatting to typed and pasted Markdown.", isOn: $markdown)
             }
 
-            SettingsGroup("Replies and recipients", systemImage: "arrowshape.turn.up.left") {
+            Section("Replies and recipients") {
                 SettingsControlRow("Quote selected text") {
                     Picker("Quote selected text", selection: $quote) {
                         Text("Ask").tag(QuoteSelectionPolicy.ask.rawValue)

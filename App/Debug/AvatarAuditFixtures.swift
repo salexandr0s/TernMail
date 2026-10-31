@@ -88,7 +88,7 @@ struct AvatarAuditFixtures: View {
             .frame(minHeight: Tokens.Space.s8)
         }
         .padding(Tokens.Space.s2)
-        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline))
+        .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
     }
 
     private var calendarAndAccounts: some View {

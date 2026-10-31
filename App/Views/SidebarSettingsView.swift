@@ -6,7 +6,7 @@ struct SidebarSettingsView: View {
     let mailbox: MailboxModel
     var body: some View {
         ForEach(mailbox.accounts, id: \.account.id) { owner in
-            SettingsGroup(mailbox.accountTitle(owner.account), systemImage: "person.crop.circle") {
+            Section(mailbox.accountTitle(owner.account)) {
                 DisclosureGroup("Inbox categories") {
                     VStack(spacing: 0) {
                         ForEach(InboxCategory.allCases, id: \.rawValue) { category in

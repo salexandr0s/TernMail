@@ -17,7 +17,7 @@ struct ComposeTemplatesPane: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("Templates", systemImage: "doc.on.doc") {
+            Section("Templates") {
                 HStack(spacing: Tokens.Space.s3) {
                     Text("Template")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
