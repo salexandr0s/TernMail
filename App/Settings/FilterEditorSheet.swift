@@ -43,14 +43,14 @@ struct FilterEditorSheet: View {
 
     private var criteriaSection: some View {
         Section("Match incoming messages") {
-            textField("From", text: $draft.criteria.from)
-            textField("To", text: $draft.criteria.to)
-            textField("Subject", text: $draft.criteria.subject)
-            textField("Has the words", text: $draft.criteria.query)
-            textField("Doesn't have", text: $draft.criteria.negatedQuery)
+            TextField("From", text: $draft.from)
+            TextField("To", text: $draft.to)
+            TextField("Subject", text: $draft.subject)
+            TextField("Has the words", text: $draft.query)
+            TextField("Doesn't have", text: $draft.negatedQuery)
             LabeledContent("Size") {
                 HStack(spacing: Tokens.Space.s2) {
-                    Picker("Size comparison", selection: Binding(get: { draft.criteria.sizeComparison ?? .larger }, set: { draft.criteria.sizeComparison = $0 })) {
+                    Picker("Size comparison", selection: $draft.sizeComparison) {
                         Text("Larger than").tag(GmailFilter.SizeComparison.larger)
                         Text("Smaller than").tag(GmailFilter.SizeComparison.smaller)
                     }
@@ -60,8 +60,8 @@ struct FilterEditorSheet: View {
                         .accessibilityLabel("Size in bytes")
                 }
             }
-            Toggle("Has Attachment", isOn: bool($draft.criteria.hasAttachment))
-            Toggle("Exclude Chats", isOn: bool($draft.criteria.excludeChats))
+            Toggle("Has Attachment", isOn: $draft.hasAttachment)
+            Toggle("Exclude Chats", isOn: $draft.excludeChats)
         }
     }
 
@@ -106,12 +106,4 @@ struct FilterEditorSheet: View {
     }
 
     private var validation: String? { draft.validation(acceptedForwarding: model.forwarding.filter(\.isAccepted).map(\.forwardingEmail)) }
-
-    private func textField(_ title: String, text: Binding<String?>) -> some View {
-        TextField(title, text: Binding(get: { text.wrappedValue ?? "" }, set: { text.wrappedValue = $0.isEmpty ? nil : $0 }))
-    }
-
-    private func bool(_ binding: Binding<Bool?>) -> Binding<Bool> {
-        Binding(get: { binding.wrappedValue == true }, set: { binding.wrappedValue = $0 ? true : nil })
-    }
 }

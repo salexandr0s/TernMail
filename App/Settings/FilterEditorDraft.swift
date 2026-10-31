@@ -4,7 +4,15 @@ import MailStore
 
 /// Edits supported choices while preserving every other Gmail label action.
 struct FilterEditorDraft {
-    var criteria: GmailFilter.Criteria
+    /// Criteria fields hold plain values; `filter()` writes unset ones as `nil`.
+    var from = ""
+    var to = ""
+    var subject = ""
+    var query = ""
+    var negatedQuery = ""
+    var hasAttachment = false
+    var excludeChats = false
+    var sizeComparison = GmailFilter.SizeComparison.larger
     var skipInbox = false
     var markRead = false
     var star = false
@@ -19,7 +27,15 @@ struct FilterEditorDraft {
     var preservedRemoves: [String]
 
     init(filter: GmailFilter?, labels: [LabelRecord]) {
-        criteria = filter?.criteria ?? .init()
+        let criteria = filter?.criteria ?? .init()
+        from = criteria.from ?? ""
+        to = criteria.to ?? ""
+        subject = criteria.subject ?? ""
+        query = criteria.query ?? ""
+        negatedQuery = criteria.negatedQuery ?? ""
+        hasAttachment = criteria.hasAttachment == true
+        excludeChats = criteria.excludeChats == true
+        if criteria.sizeComparison == .smaller { sizeComparison = .smaller }
         let adds = filter?.action.addLabelIds ?? []
         let removes = filter?.action.removeLabelIds ?? []
         skipInbox = removes.contains("INBOX")
@@ -43,9 +59,9 @@ struct FilterEditorDraft {
             return "Choose a verified forwarding address, or turn forwarding off."
         }
         if !sizeText.isEmpty, Int(sizeText).map({ $0 < 0 }) ?? true { return "Size must be a whole number of bytes, zero or greater." }
-        let text = [criteria.from, criteria.to, criteria.subject, criteria.query, criteria.negatedQuery]
-        if text.allSatisfy({ ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
-           criteria.hasAttachment != true, criteria.excludeChats != true, sizeText.isEmpty {
+        let text = [from, to, subject, query, negatedQuery]
+        if text.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+           !hasAttachment, !excludeChats, sizeText.isEmpty {
             return "Add at least one filter condition."
         }
         if !skipInbox && !markRead && !star && !neverSpam && !trash && importance == 0 && labelID.isEmpty
@@ -54,15 +70,13 @@ struct FilterEditorDraft {
     }
 
     func filter() -> GmailFilter {
-        var criteria = criteria
-        criteria.from = trimmed(criteria.from)
-        criteria.to = trimmed(criteria.to)
-        criteria.subject = trimmed(criteria.subject)
-        criteria.query = trimmed(criteria.query)
-        criteria.negatedQuery = trimmed(criteria.negatedQuery)
-        criteria.size = Int(sizeText)
-        if criteria.size == nil { criteria.sizeComparison = nil }
-        else if criteria.sizeComparison == nil || criteria.sizeComparison == .unspecified { criteria.sizeComparison = .larger }
+        let size = Int(sizeText)
+        let criteria = GmailFilter.Criteria(
+            from: trimmed(from), to: trimmed(to), subject: trimmed(subject),
+            query: trimmed(query), negatedQuery: trimmed(negatedQuery),
+            hasAttachment: hasAttachment ? true : nil, excludeChats: excludeChats ? true : nil,
+            size: size, sizeComparison: size == nil ? nil : sizeComparison
+        )
         var adds = preservedAdds
         var removes = preservedRemoves
         if skipInbox { removes.append("INBOX") }
@@ -79,8 +93,8 @@ struct FilterEditorDraft {
         ))
     }
 
-    private func trimmed(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-        return value
+    private func trimmed(_ value: String) -> String? {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
