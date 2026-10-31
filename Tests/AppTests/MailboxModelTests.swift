@@ -108,6 +108,10 @@ import Testing
         #expect(mailbox.search.status == .searching)
         try await waitUntil { mailbox.listedThreads.map(\.id).sorted() == ["t2", "t3"] }
         #expect(mailbox.selectedThreadIDs.isEmpty)
+        // The Window menu, Mission Control and saved window state show the
+        // window's title and subtitle, so they leave the query out.
+        #expect(!mailbox.selectedLabelTitle.contains("plans"))
+        #expect(!mailbox.selectedMailboxSubtitle.contains("plans"))
 
         // Gmail alone answers this query, so its conversations make up the list.
         mailbox.search.update("has:attachment")
