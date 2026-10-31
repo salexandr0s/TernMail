@@ -634,10 +634,13 @@ final class MailboxModel {
     }
 
     /// Stores the drafts of open compose windows before the app quits.
-    func prepareToQuit() async {
+    /// Returns the titles of the windows whose drafts couldn't be stored.
+    func prepareToQuit() async -> [String] {
+        var unsaved: [String] = []
         for model in composeModels.allObjects {
-            await model.prepareToQuit()
+            if !(await model.prepareToQuit()) { unsaved.append(model.title) }
         }
+        return unsaved
     }
 
     func didQueueDiscard(_ localDraftID: String, hold: TimeInterval) {

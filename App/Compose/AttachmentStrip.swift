@@ -9,9 +9,14 @@ import UniformTypeIdentifiers
 /// through the draft's other files. Dragging one out copies the file.
 struct AttachmentStrip: View {
     let attachments: [OutgoingAttachment]
+    /// Files that failed to attach or to be removed, marked as failed in the row.
+    let failed: [ComposeModel.FailedAttachment]
     let isEditable: Bool
     /// A copy of the file under its own name, or nil when it can't be read.
     let fileURL: @MainActor (OutgoingAttachment) async -> URL?
+    let retry: (ComposeModel.FailedAttachment) -> Void
+    /// Takes a failed file off the list, which keeps one that couldn't be removed.
+    let dismissFailure: (ComposeModel.FailedAttachment) -> Void
     let remove: (OutgoingAttachment) -> Void
     @State private var previewURL: URL?
     @State private var previewItems: [URL] = []
@@ -25,7 +30,14 @@ struct AttachmentStrip: View {
             ScrollView(.horizontal) {
                 HStack(spacing: Tokens.Space.s2) {
                     ForEach(attachments) { attachment in
-                        chip(attachment)
+                        if let failure = failed.first(where: { $0.removedID == attachment.id }) {
+                            failedChip(failure)
+                        } else {
+                            chip(attachment)
+                        }
+                    }
+                    ForEach(failed.filter { !$0.isRemoval }) { failure in
+                        failedChip(failure)
                     }
                 }
                 .padding(.horizontal, Tokens.Space.s4)
@@ -75,6 +87,38 @@ struct AttachmentStrip: View {
                 Button("Remove", systemImage: "xmark", role: .destructive) { remove(attachment) }
             }
         }
+    }
+
+    /// A file that failed to attach or to be removed, with Retry, and Remove
+    /// for one that wasn't attached or Keep for one still attached.
+    private func failedChip(_ failure: ComposeModel.FailedAttachment) -> some View {
+        HStack(spacing: Tokens.Space.s2) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Tokens.Status.warning)
+                .frame(width: Tokens.Control.avatar, height: Tokens.Control.avatar)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                Text(failure.filename)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(failure.isRemoval ? "Couldn't remove" : "Couldn't attach")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if isEditable {
+                Button("Retry") { retry(failure) }
+                Button(failure.isRemoval ? "Keep" : "Remove") { dismissFailure(failure) }
+            }
+        }
+        .controlSize(.small)
+        .padding(Tokens.Space.s1)
+        .frame(maxWidth: Tokens.Layout.attachmentWidth, alignment: .leading)
+        .ternSurface()
+        .help(failure.reason)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(failure.filename), \(failure.isRemoval ? "couldn't remove" : "couldn't attach")")
     }
 
     /// Quick Look pages through the draft's files, so each gets its copy first.
