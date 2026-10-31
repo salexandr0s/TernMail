@@ -1,9 +1,11 @@
 import MailStore
+import MessageContent
 import SwiftUI
 
 /// Uses the same sidebar as Mail while giving the library the full detail area.
 struct AttachmentLibraryDestination: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.openWindow) private var openWindow
     @Bindable var model: AttachmentLibraryModel
     @Bindable var toolbar: AttachmentLibraryToolbarState
     private var mailbox: MailboxModel { model.mailbox }
@@ -15,7 +17,7 @@ struct AttachmentLibraryDestination: View {
                 .navigationSplitViewColumnWidth(min: Tokens.Layout.sidebarMinWidth,
                     ideal: Tokens.Layout.sidebarWidth, max: Tokens.Layout.sidebarMaxWidth)
         } detail: {
-            AttachmentLibraryView(model: model, viewMode: toolbar.viewMode, onOpenSource: {},
+            AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
         }
         .toolbar(removing: .sidebarToggle)
@@ -25,27 +27,11 @@ struct AttachmentLibraryDestination: View {
         .onChange(of: toolbar.sort) { _, sort in if model.sort != sort { model.sort = sort } }
         .onChange(of: model.sort, initial: true) { _, sort in if toolbar.sort != sort { toolbar.sort = sort } }
         .onChange(of: app.accountsNeedingSignIn, initial: true) { _, ids in model.unavailableAccountIDs = ids }
-        .onChange(of: mailbox.accounts.map(\.account.id)) { _, ids in
-            if let key = model.sourceThreadKey, !ids.contains(key.accountID) { model.sourceThreadKey = nil }
-            model.previewURL = nil
-        }
-        .sheet(isPresented: Binding(get: { model.sourceThreadKey != nil }, set: { if !$0 { model.sourceThreadKey = nil } })) {
-            if let key = model.sourceThreadKey {
-                VStack(spacing: 0) {
-                    HStack {
-                        Label("Original email", systemImage: "envelope")
-                            .font(.headline)
-                        Spacer()
-                        Button("Done") { model.sourceThreadKey = nil }
-                            .keyboardShortcut(.cancelAction)
-                    }
-                    .padding(Tokens.Space.s4)
-                    Divider()
-                    ThreadView(key: key, mailbox: mailbox)
-                        .id(key)
-                }
-                .frame(width: Tokens.Layout.readableWidth, height: Tokens.Layout.windowMinHeight)
-            }
+        .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in model.previewURL = nil }
+        .onChange(of: model.sourceLink) { _, link in
+            guard let link else { return }
+            model.sourceLink = nil
+            openWindow(id: ConversationWindow.sceneID, value: link)
         }
     }
 }

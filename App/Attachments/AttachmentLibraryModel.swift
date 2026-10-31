@@ -1,6 +1,7 @@
 import AppKit
 import GmailAPI
 import MailStore
+import MessageContent
 import Observation
 import SyncEngine
 
@@ -32,7 +33,9 @@ final class AttachmentLibraryModel {
     var label: AttachmentLibraryLabel?
     var sort: AttachmentLibrarySort = .newest
     var previewURL: URL?
-    var sourceThreadKey: ThreadKey?
+    /// The conversation Open Conversation in New Window loaded. The library
+    /// opens its window and clears this.
+    var sourceLink: MailLink?
     var errorMessage: String?
     var unavailableAccountIDs: Set<String> = [] {
         didSet {
@@ -171,7 +174,7 @@ final class AttachmentLibraryModel {
         switch lastAction {
         case .preview(let item): await preview(item)
         case .open(let item): await openFile(item)
-        case .source(let item): _ = await openSource(item)
+        case .source(let item): await openSource(item)
         case .save(let item): await save(item)
         case .saveSelection: await saveSelection()
         case .category(let category, let item): await setCategory(category, for: item)
@@ -244,6 +247,9 @@ final class AttachmentLibraryModel {
         await perform { AttachmentActions.copy(try await file(for: item)) }
     }
 
+    /// Loads the email the file came from, which may be older than the
+    /// cached mail, then asks the library to open it in a window.
+    @discardableResult
     func openSource(_ item: AttachmentLibraryItem) async -> Bool {
         guard !isWorking else { return false }
         let revision = presentationRevision
@@ -256,7 +262,7 @@ final class AttachmentLibraryModel {
             try await owner.engine.loadAttachmentSource(item.threadID)
             guard try self.owner(for: item) === owner else { throw AttachmentActionError.accountUnavailable }
             guard presentationRevision == revision else { return false }
-            sourceThreadKey = ThreadKey(accountID: item.accountID, threadID: item.threadID)
+            sourceLink = MailLink(accountID: item.accountID, threadID: item.threadID, messageID: item.messageID)
             lastAction = nil
             return true
         } catch { errorMessage = Self.message(for: error); return false }
@@ -265,7 +271,7 @@ final class AttachmentLibraryModel {
     func dismissPresentation() {
         presentationRevision = UUID()
         previewURL = nil
-        sourceThreadKey = nil
+        sourceLink = nil
     }
 
     func save(_ item: AttachmentLibraryItem) async {

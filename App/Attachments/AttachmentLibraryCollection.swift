@@ -8,7 +8,6 @@ struct AttachmentLibraryCollection: View {
     @Bindable var model: AttachmentLibraryModel
     let viewMode: AttachmentLibraryViewMode
     let availableWidth: CGFloat
-    let onOpenSource: () -> Void
     @State private var anchorID: String?
     @State private var currentID: String?
     @FocusState private var gridFocused: Bool
@@ -76,13 +75,13 @@ struct AttachmentLibraryCollection: View {
                     .tag(item.id)
                     .accessibilityAction(named: "Preview") { Task { await model.preview(item) } }
                     .accessibilityAction(named: "Save") { Task { await model.save(item) } }
-                    .accessibilityAction(named: "Show Email") { openSource(item) }
+                    .accessibilityAction(named: "Open Conversation in New Window") { Task { await model.openSource(item) } }
             }
         }
         .listStyle(.inset(alternatesRowBackgrounds: true))
         .contextMenu(forSelectionType: String.self) { ids in
             if let item = model.items.first(where: { ids.contains($0.id) }) {
-                AttachmentItemMenu(item: item, model: model, onOpenSource: onOpenSource)
+                AttachmentItemMenu(item: item, model: model)
             }
         } primaryAction: { ids in
             guard let item = model.items.first(where: { ids.contains($0.id) }) else { return }
@@ -112,7 +111,7 @@ struct AttachmentLibraryCollection: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s4)],
                       spacing: Tokens.Space.s4) {
                 ForEach(model.items) { item in
-                    AttachmentCardCell(item: item, model: model, onSelect: { select(item) }, onOpenSource: onOpenSource)
+                    AttachmentCardCell(item: item, model: model, onSelect: { select(item) })
                         .id(item.id)
                 }
             }
@@ -159,30 +158,23 @@ struct AttachmentLibraryCollection: View {
         let index = old.map { min(model.items.count - 1, max(0, $0 + delta)) } ?? 0
         select(model.items[index])
     }
-
-    private func openSource(_ item: AttachmentLibraryItem) {
-        Task { if await model.openSource(item) { onOpenSource() } }
-    }
 }
 
 private struct AttachmentCardCell: View {
     let item: AttachmentLibraryItem
     let model: AttachmentLibraryModel
     let onSelect: () -> Void
-    let onOpenSource: () -> Void
 
     var body: some View {
         AttachmentLibraryCard(item: item, accountName: model.accountName(item),
             accounts: model.availableAccounts, selected: model.selection.contains(item.id))
             .onTapGesture(count: 2) { Task { await model.preview(item) } }
             .onTapGesture(perform: onSelect)
-            .contextMenu { AttachmentItemMenu(item: item, model: model, onOpenSource: onOpenSource) }
+            .contextMenu { AttachmentItemMenu(item: item, model: model) }
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { onSelect() }
             .accessibilityAction(named: "Preview") { Task { await model.preview(item) } }
             .accessibilityAction(named: "Save") { Task { await model.save(item) } }
-            .accessibilityAction(named: "Show Email") {
-                Task { if await model.openSource(item) { onOpenSource() } }
-            }
+            .accessibilityAction(named: "Open Conversation in New Window") { Task { await model.openSource(item) } }
     }
 }

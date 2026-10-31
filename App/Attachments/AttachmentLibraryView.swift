@@ -7,7 +7,6 @@ struct AttachmentLibraryView: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: AttachmentLibraryModel
     let viewMode: AttachmentLibraryViewMode
-    var onOpenSource: () -> Void
     /// Moves focus to the window's search field, which searches the library.
     var focusSearch: () -> Void = {}
     @State private var showsFilters = false
@@ -28,7 +27,7 @@ struct AttachmentLibraryView: View {
                 if model.items.isEmpty { emptyState }
                 else {
                     AttachmentLibraryCollection(model: model, viewMode: viewMode,
-                        availableWidth: geometry.size.width, onOpenSource: onOpenSource)
+                        availableWidth: geometry.size.width)
                 }
             }
             Divider()
@@ -125,7 +124,7 @@ struct AttachmentLibraryView: View {
     private var footer: some View {
         VStack(spacing: Tokens.Space.s3) {
             if !model.selection.isEmpty {
-                AttachmentSelectionActions(model: model, onOpenSource: onOpenSource)
+                AttachmentSelectionActions(model: model)
                 Divider()
             }
             ViewThatFits(in: .horizontal) {
@@ -176,7 +175,6 @@ struct AttachmentLibraryView: View {
 
 struct AttachmentSelectionActions: View {
     let model: AttachmentLibraryModel
-    let onOpenSource: () -> Void
 
     private var selected: AttachmentLibraryItem? {
         model.selection.count == 1 ? model.items.first { model.selection.contains($0.id) } : nil
@@ -204,9 +202,10 @@ struct AttachmentSelectionActions: View {
         HStack(spacing: Tokens.Space.s2) {
             if let item = selected {
                 Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }.help("Preview (Space)")
-                Button("Show Email", systemImage: "envelope") {
-                    Task { if await model.openSource(item) { onOpenSource() } }
+                Button("Open Conversation", systemImage: "macwindow.badge.plus") {
+                    Task { await model.openSource(item) }
                 }
+                .help("Open Conversation in New Window")
             }
             Button(model.selection.count == 1 ? "Save…" : "Save Files…", systemImage: "arrow.down.to.line") {
                 Task { await model.saveSelection() }
@@ -220,7 +219,6 @@ struct AttachmentSelectionActions: View {
 struct AttachmentItemMenu: View {
     let item: AttachmentLibraryItem
     let model: AttachmentLibraryModel
-    let onOpenSource: () -> Void
 
     var body: some View {
         Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }
@@ -232,8 +230,8 @@ struct AttachmentItemMenu: View {
             Button("Save Selected Files…") { Task { await model.saveSelection() } }
         }
         Divider()
-        Button("Show Email", systemImage: "envelope") {
-            Task { if await model.openSource(item) { onOpenSource() } }
+        Button("Open Conversation in New Window", systemImage: "macwindow.badge.plus") {
+            Task { await model.openSource(item) }
         }
         Menu("Category") {
             ForEach(AttachmentCategory.allCases, id: \.self) { category in
