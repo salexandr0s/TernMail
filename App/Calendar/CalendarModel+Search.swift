@@ -8,6 +8,7 @@ struct CalendarSearchIdentity: Hashable {
     let timeZone: String
     let owners: [String]
     let lifecycle: Int
+    let accessRevision: Int
 }
 
 extension CalendarModel {
@@ -17,17 +18,22 @@ extension CalendarModel {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = CalendarSearchIdentity(query: query, day: calendar.startOfDay(for: date),
             timeZone: calendar.timeZone.identifier, owners: calendars.filter(\.isVisible).map(\.id).sorted(),
-            lifecycle: lifecycleRevision)
+            lifecycle: lifecycleRevision, accessRevision: accessRevision)
         if completedSearch == key, let searchCompletedAt, Date.now.timeIntervalSince(searchCompletedAt) < 60 { return }
         searchRevision += 1
         let revision = searchRevision
         let access = lifecycleRevision
+        let authorization = accessRevision
+        func isCurrent() -> Bool {
+            revision == searchRevision && access == lifecycleRevision
+                && authorization == accessRevision && !Task.isCancelled
+        }
         guard !query.isEmpty else {
             searchResults = []; searchStatus = ""; completedSearch = nil; searchCompletedAt = nil; return
         }
         guard query.count <= 500 else { searchStatus = "Use a shorter search."; return }
         do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-        guard revision == searchRevision else { return }
+        guard isCurrent() else { return }
         let pivot = calendar.startOfDay(for: date)
         guard let start = calendar.date(byAdding: .year, value: -1, to: pivot),
               let end = calendar.date(byAdding: .year, value: 1, to: pivot) else { return }
@@ -36,12 +42,13 @@ extension CalendarModel {
         var failures = 0
         let owners = calendars.filter { $0.isVisible && $0.entry.canReadDetails }
         for owner in owners {
-            guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+            guard isCurrent() else { return }
             guard let engine = engines[owner.accountID] else { failures += 1; continue }
             do {
                 var matches = try await engine.searchEvents(calendarID: owner.calendarID, query: query, start: start, end: pivot)
+                guard isCurrent() else { return }
                 matches += try await engine.searchEvents(calendarID: owner.calendarID, query: query, start: pivot, end: end)
-                guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+                guard isCurrent() else { return }
                 let loaded = matches
                 let timeZoneID = calendar.timeZone.identifier
                 let prepared = await Task.detached(priority: .userInitiated) {
@@ -51,10 +58,12 @@ extension CalendarModel {
                             fallbackTimeZoneID: timeZoneID)
                     }
                 }.value
-                guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+                guard isCurrent() else { return }
                 found += prepared
             } catch {
-                if Task.isCancelled { return }
+                guard isCurrent() else { return }
+                handleCalendarAccessFailure(error, accountID: owner.accountID, calendarID: owner.calendarID)
+                guard isCurrent() else { return }
                 failures += 1
                 found += events.filter {
                     $0.calendarKey == owner.id && [$0.event.summary, $0.event.location, $0.event.description]
@@ -62,9 +71,9 @@ extension CalendarModel {
                 }
             }
         }
-        guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+        guard isCurrent() else { return }
         await reloadOperations(reconcileEmailLinks: false)
-        guard revision == searchRevision, access == lifecycleRevision, !Task.isCancelled else { return }
+        guard isCurrent() else { return }
         var ids = Set<String>()
         searchResults = found.filter { ids.insert($0.id).inserted }.map { event in
             var value = event

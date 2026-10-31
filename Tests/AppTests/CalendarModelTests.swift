@@ -6,6 +6,60 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func searchCannotRestoreEventsWhenAccessChangesDuringRequest() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "search-private")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.searchText = "Planning"
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let search = Task { await fixture.model.searchEvents() }
+            #expect(await fixture.waitForSuspendedRange())
+
+            fixture.model.handleCalendarAccessFailure(CalendarEngineError.permissionDenied,
+                accountID: fixture.accountID, calendarID: fixture.owner.calendarID)
+            await fixture.service.resumeRange()
+            await search.value
+
+            #expect(fixture.model.searchResults.isEmpty)
+            #expect(fixture.model.completedSearch == nil)
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test func deniedSearchDoesNotFallBackToRetainedPrivateEvents() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "search-denied")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.events = [fixture.display(event)]
+            fixture.model.searchText = "Planning"
+            await fixture.service.setRangeFailure(.http(status: 403, reason: nil))
+
+            await fixture.model.searchEvents()
+
+            #expect(fixture.model.searchResults.isEmpty)
+            #expect(fixture.model.events.isEmpty)
+            #expect(fixture.model.completedSearch == nil)
+        }
+    }
+
+    @Test func oneHundredUnchangedSearchActivationsReuseCompletedResults() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "search-warm")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.searchText = "Planning"
+            await fixture.service.put(event)
+            await fixture.model.searchEvents()
+            let revision = fixture.model.searchRevision
+
+            for _ in 0..<100 { await fixture.model.searchEvents() }
+
+            #expect(fixture.model.searchResults.map(\.event) == [event])
+            #expect(fixture.model.searchRevision == revision)
+            #expect(await fixture.service.rangeRequestCount == 2)
+        }
+    }
+
     @Test func deniedRangeCannotRestoreAnotherRetainedRangeFromThatCalendar() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "private")
