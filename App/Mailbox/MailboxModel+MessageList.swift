@@ -141,4 +141,26 @@ extension MailboxModel {
         case .unstar: "Remove Star"
         }
     }
+
+    var currentMailboxMessageCount: Int {
+        selectedAccounts.reduce(0) { total, owner in
+            let label = owner.labels.first { $0.id == selectedLabelID }
+            return total + (label?.messagesTotal ?? label?.threadsTotal ?? listEntries.filter { $0.message.accountID == owner.account.id }.count)
+        }
+    }
+
+    func performSwipe(_ action: MailSwipeAction, on row: MailListRowID) {
+        switch action {
+        case .archive: performListAction(.archive, rows: [row])
+        case .trash: performListAction(.trash, rows: [row])
+        case .read: toggleListRead([row])
+        case .star: toggleListStar([row])
+        case .move: showMoveTo(forRows: [row])
+        case .label: showEditLabels(forRows: [row])
+        case .spam: triage.perform(.spam, targets: actionTargets(forRows: [row]))
+        case .snooze:
+            showSnoozeDate(forRows: [row])
+        case .none: break
+        }
+    }
 }
