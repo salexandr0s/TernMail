@@ -33,7 +33,7 @@ File: New Chat, New Event, New Label, Open Conversation, Print… and Export as 
 
 Search moved from the message list into the window toolbar as one field that follows the active section (mail, events, attachments); ⌥⌘F and Find focus it. Sidebar mailbox rows gained context menus (Mark All as Read, Empty Trash…, Delete All Spam…, Add or Remove from Favorites) and favorites reorder by drag. Column visibility persists. The conversation window shows the subject and participants, carries the shared triage and reply items and has a minimum size. A Dock click reopens the main window, the Dock menu offers New Message, Check for New Mail, Inbox and Calendar, and calendar notifications open the window through `openWindow`. The mail triage items hide instead of greying out while Calendar or the library shows. A shared `ConversationDragItem` with an exported UTType carries conversations between the message list, the sidebar and the calendar grid.
 
-Three later commits finish the shell. `e478e97` scales the sidebar's mailbox, account and label symbols with the Sidebar icon size setting, and Medium, the default, keeps the earlier sizes. `55d09a4` collapses the sidebar while the window is narrower than the three column minimums, about 818 points, and brings it back when there is room. A sidebar the user shows or hides stays that way. `dc69a8a` adds fixed toolbar spaces, so triage, replies, search and the assistant each get their own capsule, and moves More to the end of the triage group.
+Three later commits finish the shell. `e478e97` scales the sidebar's mailbox, account and label symbols with the Sidebar icon size setting, and Medium, the default, keeps the earlier sizes. `55d09a4` collapses the sidebar while the window is narrower than the three column minimums, about 818 points, and brings it back when there is room. A sidebar the user shows or hides stays that way. `dc69a8a` adds fixed toolbar spaces, so triage, replies, search and the assistant each get their own capsule, and moves More to the end of the triage group. The last merge with `main` replaced `55d09a4`, `dc69a8a` and the section picker decision below with `main`'s versions from its UI design review (see Merges with main).
 
 Deviations, with reasons:
 
@@ -44,7 +44,7 @@ Deviations, with reasons:
 - `SplitDividerHandle` kept (it already sets the resize cursor); `isCompact` toolbar switching kept; the `.inspector` spike skipped (the panel stays, the calendar copy is resizable).
 - `DisclosureGroup`/`OutlineGroup` not adopted in the sidebar because a disclosure row cannot be selected on macOS.
 - `SidebarLayoutTests` waits for the first layout (rows and toolbar inset) instead of a fixed 200 ms; under load the first layout takes 200–500 ms.
-- Toolbar spaces ignore `hidden(_:)`, so each takes about 8 points in every section. The calendar and library items now come before the mail items, which keeps the mail spaces out of their groups. Archive and Trash still share the triage capsule, because one more space pushes search into the overflow menu at 960 points.
+- Toolbar spaces ignore `hidden(_:)`, so each takes about 8 points in every section. The calendar items come before the mail items and the library items after them, which keeps the mail spaces out of their groups. Archive and Trash still share the triage capsule, because one more space pushes search into the overflow menu at 960 points.
 
 ### Phase 4: message list and reader (`b71eb0e`, `079a259`, `1bee764`, `2cdb19b`)
 
@@ -68,7 +68,7 @@ Deviations: grid cards are not SwiftUI drag sources because a drag source would 
 
 ### Phase 7: attachment library (`86b0018`, `bbac132`, `cd88a02`, `57e6506`, `44cc61c`, `18e2cb4`)
 
-The header tile that repeated the window title is gone. While the library shows, the window toolbar carries a List and Grid switch and a Sort By menu, and the window's search field searches the library; the layout choice persists. The content keeps the category shortcuts and the Filters popover in a slim bar, and the popover sizes to its content with `PopupHeader` and `PopupFooter`. `Tokens.Opacity` gained `wash` (0.08) and `outline` (0.5). The source-email sheet became Open Conversation in New Window. The reader and the library share `AttachmentFileItem`, so files drag out to Finder, Compose and other apps, a drag that starts on a selected file carries the whole selection, and each file downloads only when the receiver asks for it. The context menu adds Share, and Show in Finder for copies this window saved or opened in Downloads; the download cache is pruned, so it is never revealed. Double-click and Return open files in both layouts, Space opens Quick Look, and Quick Look pages through the selection. Rows and cards offer the same commands to VoiceOver as actions.
+The header tile that repeated the window title is gone. While the library shows, the window toolbar carries a List and Grid switch and a Sort By menu, and the window's search field searches the library; the layout choice persists. In narrow toolbars both controls fold into one View Options menu (`1d47301`). The content keeps the category shortcuts and the Filters popover in a slim bar, and the popover sizes to its content with `PopupHeader` and `PopupFooter`. `Tokens.Opacity` gained `wash` (0.08) and `outline` (0.5). The source-email sheet became Open Conversation in New Window. The reader and the library share `AttachmentFileItem`, so files drag out to Finder, Compose and other apps, a drag that starts on a selected file carries the whole selection, and each file downloads only when the receiver asks for it. The context menu adds Share, and Show in Finder for copies this window saved or opened in Downloads; the download cache is pruned, so it is never revealed. Double-click and Return open files in both layouts, Space opens Quick Look, and Quick Look pages through the selection. Rows and cards offer the same commands to VoiceOver as actions.
 
 Not checked by hand: the grid in Dark, dragging out, Share, Show in Finder, Quick Look, the keyboard paths, toolbar customization and the row context menu in the running app.
 
@@ -102,13 +102,13 @@ Not confirmed: `mdfind` found no Tern items after indexing was turned on in the 
 
 ### Phase 12: sweep (`e4caf5e`, `1ba5751`, `7ed2950`, `2ee2864`, `f7b3ff9`, `8bfe57f`)
 
-Errors, warnings and outbox states use `Tokens.Status`, and error text that relied on color alone gets a warning icon. The loading screen uses the window background, like sign-in. Popover titles, buttons, picker items, empty-state titles, the summary menu and the single-key shortcut names use Title Case; Assistant Settings… ends in an ellipsis because it opens a sheet. Swipe buttons say Read or Unread and Star or Unstar for the row, and Settings lists swipe actions by their menu names. The saved-search editor says "Search terms" and links to Gmail's search operators. With nothing selected, Message ▸ Snooze is a plain disabled item, because a disabled submenu still opens from the menu bar, and Share… is disabled. Mail notices show while the attachment library is open. The sidebar's sync status is a safe area bar, so rows scrolling under it fade instead of showing through.
+Errors, warnings and outbox states use `Tokens.Status`, and error text that relied on color alone gets a warning icon. The loading screen uses the window background, like sign-in. Popover titles, buttons, picker items, empty-state titles, the summary menu and the single-key shortcut names use Title Case; Assistant Settings… ends in an ellipsis because it opens a sheet. Swipe buttons say Read or Unread and Star or Unstar for the row, and Settings lists swipe actions by their menu names. The saved-search editor says "Search terms" and links to Gmail's search operators. With nothing selected, Message ▸ Snooze is a plain disabled item, because a disabled submenu still opens from the menu bar, and Share… is disabled. Mail notices show while the attachment library is open. The sidebar's sync status became a safe area bar. The last merge took `main`'s version of it, which adds a hard scroll edge.
 
 Deviations: `legibilityWeight` was skipped because macOS has no Bold Text setting. Swipe buttons keep short verbs instead of the full menu titles. Settings section headers stay sentence case. Not checked in the running app: Message ▸ Snooze and Share… with a conversation selected.
 
 ## Merges with main
 
-Other sessions refactored SwiftUI views and fixed defects on `main` while this work ran. `main` fast-forwarded to this branch once, at Phase 10 (`58101df`). After that the branch merged `main` back in 12 times, each by exact hash.
+Other sessions refactored SwiftUI views and fixed defects on `main` while this work ran. `main` fast-forwarded to this branch once, at Phase 10 (`58101df`). After that the branch merged `main` back in 13 times, each by exact hash.
 
 - `7f64b2f` merged `main` at `a7801f2`. Shared views moved to their own files and `SettingsGroup` was deleted, so the assistant settings panes use `Section`. `AssistantMarkdown` keeps the unbounded parse that copying a reply uses, and `AttachmentStrip` keeps its drag item and the imports it needs.
 - `b34ea5e` merged `main` at `e3b9935`. Binding helpers and `isPresent()` replaced hand-built bindings, and `SidebarExpansion` replaced `SidebarView.expandedKey`. The library's source sheet, which `main` had rebound, stays removed in favor of Open Conversation in New Window, and the compose alert keeps its title and message. `e3b9935` left `SidebarLayoutTests` writing to the removed key, so the merge points the test at `SidebarExpansion.storageKey`; the stored format did not change.
@@ -122,22 +122,23 @@ Other sessions refactored SwiftUI views and fixed defects on `main` while this w
 - `3f0859b` merged `main` at `16d0572`. The mail column probe moved to `MailColumnProbe`, XcodeGen regenerated the conflicting project file, and this branch's narrow-window test now looks for the renamed probe.
 - `623124d` merged `main` at `d3c5136`, which only adds notes to the SwiftUI plan and the handoff log.
 - `7fef621` merged `main` at `8360797`. `e0410b9` aligns the mail content to the leading edge of its frame, so a split wider than the mail area runs under the assistant or off the trailing edge, never off the leading edge. `SidebarLayoutTests` keeps this branch's sidebar collapse checks at 720 points and adds `main`'s leading-edge checks there and, with the assistant open, at 960 and 720 points.
+- `6b977fc` merged `main` at `a1fd65a`, which carries the UI design review's implementation and gives `SearchQuery` in Core a scope. Where both branches had fixed the same review item, the merge keeps `main`'s version; the next section lists them. `SidebarLayoutTests` now checks `main`'s sidebar collapse at 720 points and its return at 1,280. This branch keeps the reader's Handoff activity, the stored mailbox, the notice overlay, the assistant's persisted width and system focus ring, the Spotlight keywords in Settings, and its Title Case strings. After the merge, the library's layout and sort controls pushed Search into the overflow menu at 720 points. `1d47301` folds them into one menu below the compact toolbar width, and `SidebarLayoutTests` checks the library toolbar at 1,280 and 720 points.
 
 ## UI design review
 
-`docs/plans/ui-design-review.md` on `main` lists 26 suggested changes from a separate audit of the running app. Their status on this branch:
+`docs/plans/ui-design-review.md` lists 26 suggested changes from a separate audit of the running app. `main` implemented every item except 4, which did not reproduce, and that file records how. Eight items overlapped this branch: it had fixed or partly fixed items 1, 2, 5, 20 and 25, and items 6, 7 and 8 were open. The merge at `6b977fc` settled each one:
 
-| Item | Status |
+| Item | After the merge |
 |---|---|
-| 1. Sync status draws over the sidebar | Fixed in `f7b3ff9`. The status is a safe area bar, so rows fade under it. |
-| 2. Columns overflow narrow windows | Fixed in `55d09a4`. The sidebar collapses while the three columns don't fit and returns when they do. |
-| 5. Toolbar items merge into one capsule | Mostly fixed in `dc69a8a`. Triage, replies, search and the assistant are separate capsules, and New Event no longer joins search. Archive and Trash still share the triage capsule, and More ends the triage group instead of following the replies. |
-| 20. Discard sits next to Send | Partly fixed. Phase 5 moved Discard Draft to the far end from Send. Send and Archive is still its own button. |
-| 25. Attachments repeats itself | Partly fixed. Phase 7 removed the in-page search field and title. The count still shows in the bar above the files and in the footer, and the empty state still shows while the index is being prepared. |
-| 6. The Assistant button lands in the overflow menu at 960 points | Open. Search stays visible at 960 points, but the Assistant button still moves to the overflow menu. |
-| 7. Moving between sections works differently in each direction | Open. Phase 3 records why the segmented switcher was not adopted. |
-| 8. Unlabeled toolbar menus | Open. The review folds it into Phase 5 of `docs/plans/swiftui-improvements.md`. |
-| 3, 4, 9 to 19, 21 to 24, 26 | Outside this plan. Item 9, which moves the Library rows below Favorites, changes navigation and needs a decision first. |
+| 1. Sync status draws over the sidebar | `main`'s safe area bar with a hard scroll edge replaces `f7b3ff9`. |
+| 2. Columns overflow narrow windows | `main`'s `0b1477e` replaces `55d09a4`. Restoring the stored column choice still clears the automatic state. |
+| 5. Toolbar items merge into one capsule | `main`'s capsules replace the spacing from `dc69a8a`. |
+| 6. The Assistant button lands in the overflow menu | `main`'s toolbar tiers, which its review records as keeping search and the assistant in the toolbar down to 720 points. In Attachments, `1d47301` folds the layout and sort controls so search stays there too. |
+| 7. Moving between sections | `main`'s switcher shows segments when the toolbar has room and a pop-up menu when it doesn't. It replaces the Phase 3 choice of a pop-up in Calendar only, with the sidebar's Library rows elsewhere. |
+| 8. Unlabeled toolbar menus | `main`'s `8d6f9b6` names the profile and mail action menus. |
+| 20. Discard sits next to Send | `main`'s layout: Discard Draft before the title, and Send and Archive in its own item. This branch keeps the edited-document dot and the problem alerts. |
+| 25. Attachments repeats itself | `main`'s single count and first-pass progress. The layout and sort controls stay in the window toolbar from Phase 7. |
+| 3, 9 to 19, 21 to 24, 26 | Arrived with the merge as `main` built them. `e84f73e` took the Library section out of the sidebar, because the section switcher covers Calendar and Attachments. |
 
 ## HIG checklist
 
@@ -158,7 +159,7 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 | | Title and edited state | Met. Conversation windows show the subject and participants, and compose windows show the edited dot while closing would save changes Gmail doesn't have. |
 | Toolbars | Toolbar with common actions | Met. |
 | | User-customizable | Partly. The main window's toolbar is customizable and keeps stable item IDs. The customization palette was not exercised, and the compose toolbar is fixed. |
-| | Search field in the toolbar | Met, as an `NSSearchField` item that follows the active section (see the Phase 3 deviations). |
+| | Search field in the toolbar | Met, as an `NSSearchField` item that follows the active section (see the Phase 3 deviations). Since the last merge an idle field folds into a button below 760 points of toolbar room. |
 | Sidebars | Sidebar for navigation | Met. |
 | | Collapsible | Met: the toolbar button and View ▸ Show Sidebar (⌃⌘S). The state persists, and narrow windows collapse it without saving that as the user's choice. |
 | | Source list style | Met. Mail, Calendar and Settings sidebars use the sidebar list style. Favorites reorder by drag, and mailboxes show unread badges. |
@@ -187,7 +188,7 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 | Popovers | Anchored with an arrow | Met. |
 | | Esc dismisses | Met. |
 | | Sized to content | Partly checked. Phase 7 sized the attachment filters popover to its content. The others were not measured. |
-| Accessibility | Labels on icon-only items | Partly. Every icon-only button has a label. Three toolbar menus still read as symbol names (review item 8). |
+| Accessibility | Labels on icon-only items | Met in code. Every icon-only button has a label, and `main`'s `8d6f9b6` names the toolbar menus that read as symbol names (review item 8). Not read through accessibility after the merge. |
 | | Full Keyboard Access | Not audited. |
 | | Reduce Motion | Met through `ternAnimation`. |
 | | Reduce Transparency | Not checked (see Visual design). |
@@ -197,10 +198,10 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 
 ## Verification
 
-- Core: 516 tests in 87 suites with `swift test --package-path Packages/Core`, run after the `2cd0c5a` merge. No later commit changes `Packages/`.
-- Hosted: 349 tests in 58 suites at `e877fdc`, and again at `7fef621` after the last merge with `main`.
-- The Debug build succeeded after every merge and fix. The universal Release build covers arm64 and x86_64, passes `codesign --verify --deep --strict` and reports no app warnings. Its three Core warnings predate this work. It was built from `e877fdc`, before the last merge with `main`.
-- Native checks used the Debug `--ui-audit` app with synthetic accounts: light and dark captures at 720, 960 and 1280 points, sidebar symbols at Small, Medium and Large through a per-process `NSTableViewDefaultSizeMode` override, the menu bar read through accessibility, and Window ▸ Tern reopening a closed main window.
+- Core: 517 tests in 87 suites with `swift test --package-path Packages/Core`, run on the `6b977fc` merge, which brought `main`'s Core changes. No later commit changes `Packages/`.
+- Hosted: 349 tests in 58 suites at `e877fdc` and at `7fef621`, 358 on the `6b977fc` merge, and 359 at `1d47301`.
+- The Debug build succeeded after every merge and fix. The universal Release build covers arm64 and x86_64, passes `codesign --verify --deep --strict` and reports no app warnings. Its three Core warnings predate this work. It was built from `e877fdc`, before the last two merges with `main`.
+- Native checks used the Debug `--ui-audit` app with synthetic accounts: light and dark captures at 720, 960 and 1280 points, sidebar symbols at Small, Medium and Large through a per-process `NSTableViewDefaultSizeMode` override, the menu bar read through accessibility, and Window ▸ Tern reopening a closed main window. After the `6b977fc` merge the audit app opened on another Space, where its windows could not be reached without switching the user's Space, so the merged toolbar was checked in hosted test windows instead: the visible items and rendered captures at 1,280, 960 and 720 points.
 - Two full hosted runs were disturbed by other sessions. In one, another session quit the shared test host. The other ran 40 to 50 times slower while other sessions built and tested, and seven suites failed on timed waits. Each rerun on a quiet machine passed.
 - `SESSION_HANDOFF.md` records the install of the Release build and its first launch.
 
@@ -210,6 +211,7 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 - Live Gmail, Google Calendar and ChatGPT calls were not used for verification; synthetic mail and events stand in.
 - Spotlight indexing is unconfirmed: `mdfind` found no Tern items in the Debug build.
 - Full screen for the main window, the toolbar customization palette, Tab order, Full Keyboard Access and Reduce Transparency were not exercised.
+- The UI that `main`'s review work brought in was checked in hosted test windows, not in the `--ui-audit` app.
 
 ## Follow-ups
 
@@ -218,7 +220,7 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 - Confirm Spotlight indexing with a signed build before relying on it. The setting stays off by default.
 - Moving a conversation out of Trash through `LabelQueue.move` removes INBOX rather than TRASH. Drop-to-Inbox works around it with `editLabels`.
 - Debug runs log "Application performed a reentrant operation in its NSTableView delegate". The source is not traced.
-- Review items 5, 6, 7, 8, 20 and 25 are open or partly fixed. The UI design review section lists what remains.
+- `ToolbarSpacer` ignores `hidden(_:)`, so the mail toolbar's three fixed spaces stay in the toolbar in Calendar and Attachments and take about 24 points there.
 - Undo Send has no key equivalent.
 - The Keyboard Shortcuts window prints the catalog's keys, while the menu bar shows the keys macOS remaps for the active layout. With Swiss German, ⌘/ shows as ⌘'.
 
