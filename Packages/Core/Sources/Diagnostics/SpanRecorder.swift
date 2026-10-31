@@ -17,7 +17,7 @@ public struct SpanRecord: Sendable, Equatable {
 /// Keeps the most recent spans in memory for the diagnostics window and the
 /// benchmarks. Safe to call from any thread.
 public final class SpanRecorder: Sendable {
-    public static let shared = SpanRecorder(capacity: 200)
+    public static let shared = SpanRecorder(capacity: 4_096)
 
     public let capacity: Int
     private let state: OSAllocatedUnfairLock<Ring>
@@ -67,6 +67,8 @@ public final class SpanRecorder: Sendable {
         public let count: Int
         public let median: Duration
         public let p90: Duration
+        public let p95: Duration
+        public let p99: Duration
         public let max: Duration
     }
 
@@ -78,6 +80,7 @@ public final class SpanRecorder: Sendable {
             let index = Int((Double(sorted.count - 1) * fraction).rounded())
             return sorted[min(max(index, 0), sorted.count - 1)]
         }
-        return Summary(count: sorted.count, median: percentile(0.5), p90: percentile(0.9), max: last)
+        return Summary(count: sorted.count, median: percentile(0.5), p90: percentile(0.9),
+                       p95: percentile(0.95), p99: percentile(0.99), max: last)
     }
 }
