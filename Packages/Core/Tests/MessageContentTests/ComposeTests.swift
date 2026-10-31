@@ -151,4 +151,19 @@ import Testing
         #expect(forward.quotedPlainText.hasPrefix("---------- Forwarded message ---------\nFrom: Jane <jane@example.com>\nDate: "))
         #expect(forward.quotedPlainText.hasSuffix("\n\nHi\n> earlier\n\nbye"))
     }
+
+    @Test func plainTextQuotesKeepSpacingAndLinks() {
+        let original = OriginalMessage(
+            threadID: "t1",
+            from: [jane],
+            body: ExtractedBody(plainText: "Steps:\r\n    1.  Run  it\r\nSee https://example.com/a?b=1&c=2  now\r\n")
+        )
+
+        let reply = ReplyBuilder.draft(.reply, replyingTo: original, ownAddresses: [])
+
+        #expect(reply.quotedHTML.contains(#"""
+            <div>Steps:<br>&nbsp; &nbsp; 1. &nbsp;Run &nbsp;it<br>See \#
+            <a href="https://example.com/a?b=1&amp;c=2">https://example.com/a?b=1&amp;c=2</a> &nbsp;now<br></div>
+            """#))
+    }
 }

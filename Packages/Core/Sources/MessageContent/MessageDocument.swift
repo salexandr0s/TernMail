@@ -94,23 +94,30 @@ public enum MessageDocument {
 
     /// Escapes plain text and turns web and mail addresses into links.
     static func linkified(_ text: String) -> String {
+        linkedRuns(text).map { run in
+            guard let link = run.link else { return escaped(run.text) }
+            return "<a href=\"\(escaped(link.absoluteString))\">\(escaped(run.text))</a>"
+        }.joined()
+    }
+
+    /// Plain text as compose runs, with a link on each web or mail address in it.
+    static func linkedRuns(_ text: String) -> [ComposeDocument.Run] {
         let source = text as NSString
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
-            return escaped(text)
+            return [ComposeDocument.Run(text)]
         }
-        var output = ""
+        var runs: [ComposeDocument.Run] = []
         var cursor = 0
         for match in detector.matches(in: text, range: NSRange(location: 0, length: source.length)) {
-            guard let url = match.url,
-                  let scheme = url.scheme?.lowercased(),
-                  ["http", "https", "mailto"].contains(scheme)
-            else { continue }
-            output += escaped(source.substring(with: NSRange(location: cursor, length: match.range.location - cursor)))
-            output += "<a href=\"\(escaped(url.absoluteString))\">\(escaped(source.substring(with: match.range)))</a>"
+            guard let link = ComposeDocument.safeLink(match.url) else { continue }
+            if match.range.location > cursor {
+                runs.append(ComposeDocument.Run(source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))))
+            }
+            runs.append(ComposeDocument.Run(source.substring(with: match.range), link: link))
             cursor = NSMaxRange(match.range)
         }
-        output += escaped(source.substring(from: cursor))
-        return output
+        if cursor < source.length { runs.append(ComposeDocument.Run(source.substring(from: cursor))) }
+        return runs
     }
 
     static func escaped(_ text: String) -> String {

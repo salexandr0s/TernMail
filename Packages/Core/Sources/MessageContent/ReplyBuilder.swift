@@ -194,8 +194,11 @@ public enum ReplyBuilder {
             document.outputSettings().prettyPrint(pretty: false)
             if let inner = try? content.html() { return inner }
         }
-        let text = (body.plainText ?? "").replacingOccurrences(of: "\r\n", with: "\n")
-        return MessageDocument.linkified(text).replacingOccurrences(of: "\n", with: "<br>")
+        guard let text = body.plainText, !text.isEmpty else { return "" }
+        // `ComposeDocument.html()` keeps indentation and repeated spaces, which
+        // HTML would collapse. One paragraph, so `br` separates the lines and a
+        // final line break adds no blank line.
+        return ComposeDocument(blocks: [ComposeDocument.Block(runs: MessageDocument.linkedRuns(text))]).html()
     }
 
     private static func originalPlainText(_ body: ExtractedBody) -> String {
