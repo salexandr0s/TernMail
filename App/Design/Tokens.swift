@@ -107,7 +107,7 @@ enum Tokens {
         static let editorWideWidth: CGFloat = 560
         static let editorMaxContentHeight: CGFloat = 440
         static let editorLabelWidth: CGFloat = 80
-        /// Account rows in Preferences show an avatar beside two lines of text.
+        /// Account rows in Account Settings show an avatar beside two lines of text.
         static let accountRowHeight = Space.s12
         /// Typing pauses this long before a live-applied field writes.
         static let liveApplyDelay: Duration = .milliseconds(750)
