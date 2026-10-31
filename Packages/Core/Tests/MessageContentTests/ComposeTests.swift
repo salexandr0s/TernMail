@@ -56,6 +56,41 @@ import Testing
         #expect(!tail.contains("script"))
         #expect(!tail.contains("onclick"))
     }
+
+    @Test func importKeepsWhitespaceInsidePre() {
+        let html = """
+            <p>Run   it:</p><pre>
+            func greet() {
+            \t<b>let</b>  name = <span>"you"</span>
+
+                <code>print(name)  </code>
+            }
+            </pre><p>  Then   wait.  </p>
+            """
+
+        let imported = HTMLImporter.importHTML(html)
+
+        #expect(imported.document.blocks == [
+            Block(runs: [Run("Run it:")]),
+            Block(runs: [Run("func greet() {")]),
+            Block(runs: [Run("\t"), Run("let", bold: true), Run("  name = \"you\"")]),
+            Block(runs: []),
+            Block(runs: [Run("    print(name)  ")]),
+            Block(runs: [Run("}")]),
+            Block(runs: [Run("Then wait.")]),
+        ])
+        let crlf = HTMLImporter.importHTML("<pre>\r\n  a\r\n\r\n  b\r\n</pre><p>c\r\nd</p>")
+        #expect(crlf.document.blocks.map(\.text) == ["  a", "", "  b", "c d"])
+    }
+
+    @Test(arguments: ["pre", "pre-wrap", "pre-line"])
+    func importFollowsWhiteSpaceStyle(value: String) {
+        let html = "<div style=\"color: gray; white-space: \(value)\"><span>  a  b\n\tc</span></div><p> d  e </p>"
+
+        let lines = HTMLImporter.importHTML(html).document.blocks.map(\.text)
+
+        #expect(lines == (value == "pre-line" ? ["a b", "c"] : ["  a  b", "\tc"]) + ["d e"])
+    }
 }
 
 @Suite struct ReplyBuilderTests {
