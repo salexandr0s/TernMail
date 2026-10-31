@@ -16,8 +16,7 @@ struct NotificationSettingsView: View {
             Section {
                 permissionRow
                 if let error = notifications.error {
-                    Label(error, systemImage: "exclamationmark.circle")
-                        .font(.callout).foregroundStyle(Tokens.Status.error)
+                    SettingsErrorLabel(error)
                 }
             }
 
@@ -73,7 +72,7 @@ struct NotificationSettingsView: View {
 
             if let error = preferences.error {
                 Section {
-                    Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(Tokens.Status.error)
+                    SettingsErrorLabel(error)
                 }
             }
         }

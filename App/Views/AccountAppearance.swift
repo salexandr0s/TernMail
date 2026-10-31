@@ -9,7 +9,17 @@ enum AccountAppearance {
     /// The `UserDefaults` key holding the stored palette indexes.
     static let storageKey = "accountColors"
 
-    static let palette: [Color] = [.blue, .pink, .orange, .green, .purple, .teal, .indigo, .brown]
+    struct Swatch: Sendable {
+        let name: String
+        let color: Color
+    }
+
+    static let palette: [Swatch] = [
+        Swatch(name: "Blue", color: .blue), Swatch(name: "Pink", color: .pink),
+        Swatch(name: "Orange", color: .orange), Swatch(name: "Green", color: .green),
+        Swatch(name: "Purple", color: .purple), Swatch(name: "Teal", color: .teal),
+        Swatch(name: "Indigo", color: .indigo), Swatch(name: "Brown", color: .brown)
+    ]
 
     /// Palette indexes for `accountIDs`. An account in `stored` keeps its
     /// index. Each new account takes the index the fewest listed accounts
@@ -26,7 +36,7 @@ enum AccountAppearance {
     }
 
     static func color(at index: Int?) -> Color {
-        index.flatMap { palette.indices.contains($0) ? palette[$0] : nil } ?? .secondary
+        index.flatMap { palette.indices.contains($0) ? palette[$0].color : nil } ?? .secondary
     }
 
     /// Each account's address up to the @, or the whole address when another

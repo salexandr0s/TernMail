@@ -39,7 +39,7 @@ struct MailViewCommands: Commands {
                 .disabled(!(reader?.canCollapse ?? false))
         }
         CommandGroup(after: .windowArrangement) {
-            Button("Tern", systemImage: "envelope") { openWindow(id: "main") }
+            Button("Tern", systemImage: "envelope") { openWindow(id: RootView.sceneID) }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.mainWindow.shortcut)
             Button("Assistant", systemImage: "sparkles") { AssistantWindow.open(using: openWindow, fullScreen: false) }

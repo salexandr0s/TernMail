@@ -33,11 +33,9 @@ struct ContactAvatar: View {
         .accessibilityHidden(true)
     }
 
+    /// Initials on the tinted fallback disc, or "?" when neither the name nor the address has a word.
     static func initials(name: String, address: String) -> String {
-        let value = name.isEmpty ? address : name
-        let words = value.prefix { $0 != "@" }.split { $0.isWhitespace || $0 == "." || $0 == "_" || $0 == "-" }
-        guard let first = words.first else { return "?" }
-        if words.count > 1, let last = words.last { return (String(first.prefix(1)) + String(last.prefix(1))).uppercased() }
-        return String(first.prefix(2)).uppercased()
+        let letters = AvatarInitials.from(name: name, address: address)
+        return letters.isEmpty ? "?" : letters
     }
 }

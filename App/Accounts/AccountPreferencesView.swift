@@ -35,7 +35,7 @@ struct AccountPreferencesView: View {
                 }
                 if let error = model.error {
                     Section {
-                        Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(Tokens.Status.error)
+                        SettingsErrorLabel(error)
                     }
                 }
             }
@@ -70,7 +70,6 @@ private struct AccountPreferenceEditor: View {
     @State private var nickname = ""
     @State private var nicknameWrite = LiveApplyScheduler()
     @AppStorage(AccountAppearance.storageKey) private var accountColors = Data()
-    private let colors = ["Blue", "Pink", "Orange", "Green", "Purple", "Teal", "Indigo", "Brown"]
 
     var body: some View {
         Section("Appearance") {
@@ -92,28 +91,11 @@ private struct AccountPreferenceEditor: View {
                 }
             }
             SettingsControlRow("Account color") {
-                HStack(spacing: Tokens.Space.s1) {
-                    ForEach(AccountAppearance.palette.indices, id: \.self) { index in
-                        Button {
-                            var values = AccountAppearance.decode(accountColors)
-                            values[account.id] = index
-                            accountColors = AccountAppearance.encode(values)
-                        } label: {
-                            Circle().fill(AccountAppearance.palette[index])
-                                .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
-                                .overlay {
-                                    if colorIndex == index {
-                                        Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.white)
-                                    }
-                                }
-                                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(colors[index]).accessibilityLabel(colors[index])
-                        .accessibilityAddTraits(colorIndex == index ? .isSelected : [])
-                    }
-                }
+                SwatchPicker(selection: Binding(colorIndex, set: { index in
+                    var values = AccountAppearance.decode(accountColors)
+                    values[account.id] = index
+                    accountColors = AccountAppearance.encode(values)
+                }))
             }
         }
 

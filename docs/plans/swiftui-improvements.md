@@ -18,7 +18,7 @@ The fourteen `NSViewRepresentable` wrappers, the `Task.detached` render path in 
 
 ## Status at `58101df`
 
-Phase 0 finished after this review, in `035b43c` to `a7801f2`; its entry under Work phases lists the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
+Phase 0 (`035b43c` to `a7801f2`) and Phase 1 (`2b6fbab` to `88def6b`) finished after this review; their entries under Work phases list the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
 
 - `ThreadRow` and `ThreadMenuItems` were deleted (`c1b7537`).
 - `MessageListRow` reads `ReadingPreferences.textScaleKey` (`2012eb2`) and exposes one accessibility element with a composed summary (`b71eb0e`).
@@ -253,7 +253,7 @@ Both columns use the same patterns, listed below the table, so the next revision
 | Pattern | `75374d4` | `58101df` | Replacement |
 | --- | --- | --- | --- |
 | `Binding(get:set:)` | 60 | 64 | three helpers plus model-provided bindings |
-| `.weight(.medium)`, `.weight(.semibold)` or `fontWeight` | 128 | 110 | `.bold()` or weight tokens |
+| `.weight(.medium)`, `.weight(.semibold)` or `fontWeight` | 128 | 110 | stay; only regular, medium and semibold (Phase 1) |
 | `.caption2` | 35 | 29 | `.caption` on anything read or tapped |
 | icon-only `Button` or `Menu` labels | 42 | 37 | `Button(title, systemImage:)` and `.labelStyle(.iconOnly)` |
 | `onTapGesture` | 14 | 13 | `Button`, or `.accessibilityAddTraits(.isButton)` where the gesture must stay |
@@ -316,10 +316,33 @@ Done in seventeen commits, `035b43c` to `a7801f2`.
 
 ### Phase 1: shared helpers
 
-- `App/Design/Binding+Tern.swift`: `isPresent()` on `Binding<T?>`, `contains(_:)` on `Binding<Set<T>>`, and `or(_:)` for optional-with-default. Then replace the 64 sites in commits of five files, favoring `@Bindable` on nested observables, `ternConfirm(item:)` for dialogs and model-provided bindings over the helpers wherever the state is already stored.
-- `ternOutline(radius:)` modifier with an optional focus color, and a `radius:` parameter on `TernSurface` that retires `SettingsSurface`; a `copyToPasteboard(_:)` helper; `SettingsErrorLabel` with one icon; `SwatchPicker` with `AccountAppearance.names`; one initials function; a `SettingsToggleRow` variant that takes an async `onToggle`.
-- A `GmailQuery.quoted(_:)` helper for the three quote-escaping copies, and a `sceneID` constant for the main window in place of the five `openWindow(id: "main")` strings.
-- Decide on weight tokens versus `.bold()`, and on `TernEmptyState` versus `ContentUnavailableView`, before Phase 5 applies either.
+Done in 24 commits, `2b6fbab` to `88def6b`. `c02569c` in that range is the separate UI design review.
+
+- Bindings (`2b6fbab` to `1f1e304`):
+  - `App/Design/Binding+Tern.swift` has the planned `isPresent()`, `contains(_:)` and `or(_:)`, plus `isPresent(default:)`, `equals(_:)` for one value of an optional, `selecting(_:)` for radio-style toggles, `negated()`, and `init(_:set:)` for a value with its own write.
+  - `Binding(get:` now appears only in that file and in `App/Calendar/CalendarModel+Bindings.swift`, which meets the acceptance check.
+  - State that a model stores gets its binding from the model: `SidebarExpansion` (the expanded set in `@AppStorage`), `CalendarModel+Bindings.swift`, `RecurrenceSelection`, `AttachmentLibraryModel+Filters.swift`, `ProfileNotificationSchedule+Editing.swift`, and a setter on `selectedListRowIDs` in `MailboxModel+MessageList.swift`.
+  - The calendar delete confirmation is two optionals, one per kind, each shown with `ternConfirm(item:)`.
+  - The recurrence control parses the rule once when it opens, so opening it no longer rewrites a rule the provider wrote.
+  - `SettingsAsyncToggleRow` shows the new value while `onToggle` runs and drops it when the call returns.
+  - Account preference changes show at once and revert if the save fails (`f2a80a3`). No test covers the revert yet.
+  - Pickers with an empty choice tag it `String?.none` in place of `""`.
+  - Picking a profile schedule's current mode again keeps its custom hours.
+  - The filter editor edits plain values in `FilterEditorDraft` (`ab7f2c7`). The size stays a `String`: on macOS, `TextField(value:format:)` commits only on Return or focus loss, so a click on Save could miss a typed size.
+  - `ProfileScheduleView` still converts times on each read, so a time zone change shows correctly.
+  - `3cf0c4b` renamed `SidebarView.expandedKey` and broke the TernTests build; `ef1897e` fixed the test. Every build since uses `build-for-testing`.
+- `ternOutline(radius:style:focus:)` and `ternSurface(radius:style:)` in `Components.swift`, and `SettingsSurface` is gone (`dde15b8`, `6b0b19a`, `6e10ecd`). These outlines stay hand-drawn because they depend on other state: the user bubble in `AssistantMessageView`, `AssistantEmailCard` (contrast before hover and focus), the button style in `AssistantView`, the header borders in `ThreadSummaryView` and `EmailCalendarSuggestionsView`, selection in `AttachmentLibraryFilters` and `AttachmentLibraryRows`, the circle in `SenderAccountLabel`, and the avatar ring in `Components.swift`.
+- `NSPasteboard.replaceContents(with:)` in `App/Integration/NSPasteboard+Text.swift` replaces the nine plain-text copies (`b11bd4f`, `adf1d78`). `AttachmentActions` copies a file URL and `OriginalMessageView` copies a message source, so both keep their own code.
+- `SettingsErrorLabel` in `SettingsComponents.swift` shows errors in seven panes, all with the circle icon (`cd83a6d`, `a55ea14`). The writing style section keeps its caption-sized message inside its surface.
+- `SwatchPicker` serves both color rows (`55b8ade`). `AccountAppearance.palette` holds `Swatch` values with a name and a color, so no separate names list exists to drift.
+- `AvatarInitials.from(name:address:)` serves `TernAvatar` and `ContactAvatar`, and `AvatarInitialsTests` covers the input forms both pass (`4d55064`).
+- `SearchQuery.quoted(_:)` sits in `MessageContent` beside the parser that reads it back, in place of the planned `GmailQuery`, and a Core test checks the round trip (`40d6cf9`). `RecipientField.editingString` quotes a display name for an address header, not a search operand, so it keeps its own code.
+  - Open issue: the parser does not read backslash escapes, so a label name containing `"` does not survive the round trip. Gmail's own handling of escapes is unverified. Addresses can't contain quotes.
+- `RootView.sceneID` names the mailbox window's scene (`88def6b`).
+- Decisions for Phase 5:
+  - Weights: no weight tokens and no `.bold()`. `design_tokens.json` defines regular (400), medium (500) and semibold (600), and those are `Font.Weight.regular`, `.medium` and `.semibold`, so the sites already name the token values. `.bold()` would draw at 700. Phase 5 checks that text uses only those three weights and moves the two `fontWeight(_:)` sites into `.font(_:)`. Bold stays on the small glyphs drawn on a fill (`SwatchPicker`, `LabelAppearancePicker`, the `EmailCalendarSuggestionsView` badge), and the empty-state symbol keeps `.light`.
+  - Empty states: `TernEmptyState` keeps its API and is rebuilt on `ContentUnavailableView`, so the 24 call sites stay as they are and look like the seven that already use the system view. `fillsSpace: false` and the width cap need checking on the rebuilt view. The no-results case in `SettingsView` becomes `ContentUnavailableView.search(text:)`.
+- At `88def6b`, TernTests pass (331 tests in 54 suites), Core tests pass (516 tests in 87 suites), and a clean Debug build reports one app-target warning, `MessageListRow.swift` L54. The first full TernTests run failed `mailboxExpansionKeepsSidebarViewportAndInboxInPlace`: from the fourth mailbox on, the sidebar viewport was 59 points shorter. The test alone, its suite and a second full run all passed, so it is recorded as a timing flake.
 
 ### Phase 2: correctness
 

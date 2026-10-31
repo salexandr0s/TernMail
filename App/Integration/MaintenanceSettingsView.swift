@@ -46,7 +46,7 @@ struct MaintenanceSettingsView: View {
                 if let status = app.maintenance.status {
                     SettingsNote(status, systemImage: app.maintenance.protectedBudgetLimit ? "lock.shield" : "checkmark.circle")
                 }
-                if let error = app.maintenance.error { errorMessage(error) }
+                if let error = app.maintenance.error { SettingsErrorLabel(error) }
             }
             Section("Reset") {
                 LabeledContent {
@@ -60,7 +60,7 @@ struct MaintenanceSettingsView: View {
                     SettingsNote("Reset is unavailable: \(readiness.localDraftCount) local drafts, \(readiness.activeActionCount) pending changes and \(readiness.failedActionCount) failed changes. Send or discard drafts, and finish or discard changes first.", systemImage: "exclamationmark.circle")
                 }
                 if app.isResettingCache { ProgressView("Rebuilding mail…").controlSize(.small) }
-                if let resetError { errorMessage(resetError) }
+                if let resetError { SettingsErrorLabel(resetError) }
             }
         }
         .task { await app.maintenance.refresh() }
@@ -105,14 +105,6 @@ struct MaintenanceSettingsView: View {
     }
 
     private var budgetBytes: Int64 { Int64(max(budget, 1)) * 1024 * 1024 }
-
-    private func errorMessage(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.circle")
-            .font(.callout)
-            .foregroundStyle(Tokens.Status.error)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
-    }
 
     private func bytes(_ value: Int64) -> String { Self.sizes.string(fromByteCount: value) }
 
