@@ -3,8 +3,8 @@ import Foundation
 /// Client for the parts of the Gmail REST API the app uses. Calls that take
 /// several IDs go through `/batch` and report a result per ID.
 public struct GmailClient: Sendable {
-    /// Calls per `/batch` request. Google accepts 100; 25 `messages.get` calls
-    /// stay under Gmail's per-user rate limit.
+    /// Bound both concurrent parts and their quota cost. The account's shared
+    /// budget also paces batches against direct Gmail requests.
     static let batchSize = 25
     /// `messages.batchModify` accepts at most 1,000 IDs.
     static let batchModifyLimit = 1000
@@ -22,9 +22,10 @@ public struct GmailClient: Sendable {
     public init(
         tokens: any AccessTokenProvider,
         transport: any HTTPTransport = GoogleSession.defaultTransport,
-        retryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)]
+        retryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4)],
+        gmailRequestBudget: GmailRequestBudget = GmailRequestBudget()
     ) {
-        self.init(session: GoogleSession(tokens: tokens, transport: transport), retryDelays: retryDelays)
+        self.init(session: GoogleSession(tokens: tokens, transport: transport, gmailRequestBudget: gmailRequestBudget), retryDelays: retryDelays)
     }
 
     // MARK: Reads
@@ -159,7 +160,9 @@ public struct GmailClient: Sendable {
     }
 
     func send(_ request: URLRequest, forceRefresh: Bool = false) async throws -> (data: Data, response: HTTPURLResponse) {
-        try await session.send(request, forceRefresh: forceRefresh)
+        try await session.send(request, forceRefresh: forceRefresh,
+                               gmailQuotaUnits: GmailRequestBudget.units(for: request),
+                               retryReadFailures: request.httpMethod == "GET")
     }
 
     /// Sends `endpoints` through `/batch`, `batchSize` at a time and one batch at
@@ -171,7 +174,7 @@ public struct GmailClient: Sendable {
         var delays = retryDelays[...]
         while !pending.isEmpty {
             var retry: [Int] = []
-            for chunk in pending.chunked(into: Self.batchSize) {
+            for chunk in Self.batchChunks(pending, endpoints: endpoints) {
                 let parts = try await sendBatch(chunk.map { endpoints[$0] })
                 for (index, result) in zip(chunk, parts) {
                     results[index] = result
@@ -187,13 +190,36 @@ public struct GmailClient: Sendable {
         return results
     }
 
+    private static func batchChunks(_ pending: [Int], endpoints: [Endpoint]) -> [[Int]] {
+        var chunks: [[Int]] = []
+        var chunk: [Int] = []
+        var units = 0
+        for index in pending {
+            let cost = endpoints[index].quotaUnits
+            if !chunk.isEmpty, chunk.count == batchSize || units + cost > GmailRequestBudget.maximumRequestUnits {
+                chunks.append(chunk)
+                chunk = []
+                units = 0
+            }
+            chunk.append(index)
+            units += cost
+        }
+        if !chunk.isEmpty { chunks.append(chunk) }
+        return chunks
+    }
+
     private func sendBatch(_ endpoints: [Endpoint], forceRefresh: Bool = false) async throws -> [Result<Data, GmailError>] {
         let boundary = "tern-\(UUID().uuidString)"
         var request = try Endpoint.batchRequest()
         request.setValue("multipart/mixed; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = try BatchCodec.encode(endpoints, boundary: boundary)
 
-        let (data, response) = try await send(request, forceRefresh: forceRefresh)
+        let (data, response) = try await session.send(
+            request, forceRefresh: forceRefresh,
+            gmailQuotaUnits: endpoints.reduce(0) { $0 + $1.quotaUnits },
+            retryReadFailures: endpoints.allSatisfy { $0.method == "GET" },
+            gmailResponseCooldown: Self.batchCooldown
+        )
         guard let responseBoundary = BatchCodec.boundary(contentType: response.value(forHTTPHeaderField: "Content-Type")) else {
             throw GmailError.decoding("Batch response has no boundary")
         }
@@ -219,6 +245,17 @@ public struct GmailClient: Sendable {
             }
         }
         return results
+    }
+
+    /// Inspect parts while the account's request permit is still held, so a
+    /// competing direct request observes the same provider cooldown.
+    private static func batchCooldown(_ data: Data, _ response: HTTPURLResponse) -> TimeInterval? {
+        guard let boundary = BatchCodec.boundary(contentType: response.value(forHTTPHeaderField: "Content-Type")),
+              let parts = try? BatchCodec.decode(data, boundary: boundary) else { return nil }
+        return parts.compactMap { part -> TimeInterval? in
+            guard GmailError(status: part.status, body: part.body).isRetryable else { return nil }
+            return max(1, GmailRequestBudget.retryAfter(part.retryAfter) ?? 1)
+        }.max()
     }
 
     func batchDecode<T: Decodable & Sendable>(
@@ -286,6 +323,10 @@ struct Endpoint: Sendable {
     let body: Data?
     var contentType = "application/json"
     var headers: [String: String] = [:]
+
+    var quotaUnits: Int {
+        GmailRequestBudget.units(method: method, path: path, format: query.first { $0.name == "format" }?.value)
+    }
 
     static func get(_ path: String, _ query: [URLQueryItem] = []) -> Endpoint {
         Endpoint(method: "GET", path: path, query: query, body: nil)

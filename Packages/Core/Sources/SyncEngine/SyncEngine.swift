@@ -29,9 +29,9 @@ enum SyncError: Error, Equatable {
 /// Keeps one account's cache in step with Gmail, sends queued changes and
 /// refreshes the account's identities and contacts.
 ///
-/// Passes run one at a time. A pass fetches first and then writes its changes
-/// with the new history cursor in one transaction, so a failed pass leaves the
-/// cursor where it was.
+/// Passes run one at a time. The first download publishes complete chunks so
+/// mail is available while it continues. History and reset passes commit
+/// atomically; no pass advances its cursor until all requests succeed.
 public actor SyncEngine {
     /// The threading headers let a reply answer a message without fetching it.
     static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"]
@@ -39,7 +39,7 @@ public actor SyncEngine {
     /// Releasing a search hold keeps what this lists, so both use one window.
     static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
     /// Metadata fetched per request group during a full sync.
-    static let fullSyncChunk = 100
+    static let fullSyncChunk = 25
     /// How long a requested pass that found no history waits to run again.
     static let emptyPassRetryDelay: Duration = .seconds(5)
     /// How often identities and contacts refresh while the engine runs.
@@ -196,7 +196,6 @@ public actor SyncEngine {
                 if self == nil { return }
             }
         }
-        if indexesAttachmentsAutomatically { startAttachmentIndexing() }
     }
 
     /// Errors wait for the next run, since the window has no status for
@@ -356,6 +355,11 @@ public actor SyncEngine {
             changed = true
         }
         try await releaseExpiredHolds()
+        // Historical attachment scans compete with the first mail download.
+        // Start them only after a usable baseline has committed.
+        if hasStarted, indexesAttachmentsAutomatically, !isStopped, !Task.isCancelled {
+            startAttachmentIndexing()
+        }
         return changed
     }
 
@@ -369,6 +373,9 @@ public actor SyncEngine {
         let profile = try await gmail.profile()
         guard let historyID = Int64(profile.historyId), historyID > 0 else { throw SyncError.invalidHistoryID }
         let labels = try await fetchLabels()
+        if !reset {
+            try await write { tx in try tx.replaceLabels(labels, accountID: accountID) }
+        }
 
         let inbox = try await listMessageIDs(labelIDs: [SystemLabel.inbox], query: nil, includeSpamTrash: false, limit: Self.inboxCap)
         let recent = try await listMessageIDs(labelIDs: [], query: Self.recentQuery, includeSpamTrash: true)
@@ -395,6 +402,13 @@ public actor SyncEngine {
                 updates += fetched
                 fetchedIDs.formUnion(chunk)
                 gone.formUnion(missing)
+                if !reset {
+                    try await write { tx in
+                        let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
+                        let threads = try tx.upsertMessages(live)
+                        try tx.rebuildThreads(threads, accountID: accountID)
+                    }
+                }
             }
             let finishedAt = now()
             let remaining = try await write { [gone, fetchedIDs, updates] tx -> Set<String> in

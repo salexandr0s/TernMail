@@ -36,31 +36,81 @@ public struct GoogleSession: Sendable {
 
     private let tokens: any AccessTokenProvider
     private let transport: any HTTPTransport
+    let gmailRequestBudget: GmailRequestBudget
 
-    public init(tokens: any AccessTokenProvider, transport: any HTTPTransport = GoogleSession.defaultTransport) {
+    public init(
+        tokens: any AccessTokenProvider, transport: any HTTPTransport = GoogleSession.defaultTransport,
+        gmailRequestBudget: GmailRequestBudget = GmailRequestBudget()
+    ) {
         self.tokens = tokens
         self.transport = transport
+        self.gmailRequestBudget = gmailRequestBudget
     }
 
-    /// Sends a request with a bearer token. A 401 is retried once with a
-    /// forced token refresh; any other non-2xx status throws.
-    func send(_ request: URLRequest, forceRefresh initiallyForced: Bool = false) async throws -> (data: Data, response: HTTPURLResponse) {
+    /// Refreshes once after a 401. Gmail reads also retry transient failures
+    /// within their account's shared quota and provider cooldown.
+    func send(
+        _ request: URLRequest, forceRefresh initiallyForced: Bool = false,
+        gmailQuotaUnits: Int? = nil, retryReadFailures: Bool = false,
+        gmailResponseCooldown: (@Sendable (Data, HTTPURLResponse) -> TimeInterval?)? = nil
+    ) async throws -> (data: Data, response: HTTPURLResponse) {
         var forceRefresh = initiallyForced
+        var hasRefreshed = initiallyForced
+        var retries = 0
         while true {
-            var authorized = request
-            let token = try await tokens.accessToken(forceRefresh: forceRefresh)
-            try Task.checkCancellation()
-            authorized.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let (data, response) = try await perform(authorized)
+            let refresh = forceRefresh
+            forceRefresh = false
+            let responseValue: (Data, HTTPURLResponse)
+            do {
+                if let gmailQuotaUnits {
+                    let backoff = pow(2, Double(retries))
+                    responseValue = try await gmailRequestBudget.perform(units: gmailQuotaUnits) {
+                        let result = try await authorized(request, forceRefresh: refresh)
+                        let error = GmailError(status: result.1.statusCode, body: result.0)
+                        if error.isRetryable {
+                            let delay = GmailRequestBudget.retryAfter(result.1.value(forHTTPHeaderField: "Retry-After")) ?? backoff
+                            await gmailRequestBudget.postpone(for: max(1, delay))
+                        }
+                        if let delay = gmailResponseCooldown?(result.0, result.1) {
+                            await gmailRequestBudget.postpone(for: delay)
+                        }
+                        return result
+                    }
+                } else {
+                    responseValue = try await authorized(request, forceRefresh: refresh)
+                }
+            } catch let error as GmailError {
+                if gmailQuotaUnits != nil, retryReadFailures, error.isRetryable, retries < 3 {
+                    await gmailRequestBudget.postpone(for: pow(2, Double(retries)))
+                    retries += 1
+                    continue
+                }
+                throw error
+            }
+            let (data, response) = responseValue
             if (200..<300).contains(response.statusCode) {
                 return (data, response)
             }
-            if response.statusCode == 401, !forceRefresh {
+            if response.statusCode == 401, !hasRefreshed {
+                hasRefreshed = true
                 forceRefresh = true
                 continue
             }
-            throw GmailError(status: response.statusCode, body: data)
+            let error = GmailError(status: response.statusCode, body: data)
+            if gmailQuotaUnits != nil, retryReadFailures, error.isRetryable, retries < 3 {
+                retries += 1
+                continue
+            }
+            throw error
         }
+    }
+
+    private func authorized(_ request: URLRequest, forceRefresh: Bool) async throws -> (Data, HTTPURLResponse) {
+        var request = request
+        let token = try await tokens.accessToken(forceRefresh: forceRefresh)
+        try Task.checkCancellation()
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return try await perform(request)
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {

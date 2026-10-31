@@ -413,15 +413,60 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(await gmail.metadataRequests.contains(["m2"]))
     }
 
-    @Test func failedFullSyncDoesNotPublishPartialMessages() async throws {
+    @Test(arguments: [false, true])
+    func failedBaselinePublishesChunksOnlyForFirstDownload(reset: Bool) async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
+        if reset {
+            try await seed(cache, [("old", "old-thread", [SystemLabel.inbox])], cursor: 100)
+            await gmail.expireHistory()
+        }
+        let oldLabels = try await cache.read { try $0.labels(accountID: account) }
+        await gmail.setLabels([try decode(GmailLabel.self, #"{"id":"folder","name":"Work/Projects","type":"user"}"#)])
         for index in 0...100 {
             await gmail.add(try gmailMessage("m\(index)", thread: "t\(index)", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
         }
         await gmail.setMetadataErrors(["m100": .server(status: 503)])
         await #expect(throws: GmailError.server(status: 503)) { try await engine.sync() }
-        #expect(try await cache.read { tx in try tx.cachedMessageIDs(accountID: account) }.isEmpty)
+        let downloaded = try await cache.read { try $0.cachedMessageIDs(accountID: account) }
+        let labels = try await cache.read { try $0.labels(accountID: account) }
+        if reset {
+            #expect(downloaded == ["old"])
+            #expect(labels == oldLabels)
+            #expect(try await cache.syncState(accountID: account)?.historyID == 100)
+        } else {
+            #expect(downloaded.count == 100)
+            #expect(!downloaded.contains("m100"))
+            #expect(labels.map(\.name) == ["Work/Projects"])
+            #expect(try await threadIDs(cache, SystemLabel.inbox).count == 100)
+            #expect(try await cache.syncState(accountID: account) == nil)
+        }
+
+        // A retry must refetch staged messages: their labels may have changed
+        // since the incomplete pass even though their metadata is cached.
+        await gmail.setMetadataErrors([:])
+        await gmail.add(try gmailMessage("m0", thread: "t0", labels: [SystemLabel.sent], historyID: 175))
+        try await engine.sync()
+        #expect(try await cache.read { try $0.cachedMessageIDs(accountID: account) }.count == 101)
+        #expect(try await threadIDs(cache, SystemLabel.inbox).count == 100)
+        #expect(try await threadIDs(cache, SystemLabel.sent) == ["t0"])
+        #expect(try await cache.syncState(accountID: account)?.historyID == 200)
+        #expect(await gmail.metadataRequests.filter { $0.contains("m0") }.count == 2)
+    }
+
+    @Test func automaticAttachmentScanWaitsForSuccessfulMailBaseline() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine(indexesAttachmentsAutomatically: true)
+        await gmail.add(try gmailMessage("m1", thread: "t1", labels: [SystemLabel.inbox], historyID: 150), inInbox: true)
+        await gmail.setMetadataErrors(["m1": .rateLimited])
+        await engine.start(pollInterval: .seconds(3_600))
+        for await event in engine.events {
+            if case .syncFailed = event { break }
+        }
+        #expect(await engine.attachmentIndexTask == nil)
         #expect(try await cache.syncState(accountID: account) == nil)
+        await gmail.setMetadataErrors([:])
+        try await engine.sync()
+        #expect(await engine.attachmentIndexTask != nil)
+        await engine.stop()
     }
 
     @Test func historyPassAppliesChangesAndDropsConfirmedActions() async throws {
@@ -1456,7 +1501,7 @@ struct TestClock: Sendable {
     }
 }
 
-func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
+func makeEngine(indexesAttachmentsAutomatically: Bool = false) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
     let cache = try MailCache.inMemory()
     let gmail = FakeGmail()
     let clock = TestClock()
@@ -1467,6 +1512,7 @@ func makeEngine() async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) 
         gmail: gmail,
         cache: cache,
         sendsAutomatically: false,
+        indexesAttachmentsAutomatically: indexesAttachmentsAutomatically,
         now: clock.now
     )
     return (engine, cache, gmail, clock)

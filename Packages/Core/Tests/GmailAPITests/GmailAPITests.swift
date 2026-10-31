@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import GmailAPI
 
@@ -51,7 +52,8 @@ import Testing
             (0, 200, #"{"id":"b","threadId":"t2"}"#),
         ])
         let transport = RecordingTransport([first, retry])
-        let client = GmailClient(tokens: CountingTokens(), transport: transport, retryDelays: [.zero])
+        let clock = BudgetTestClock()
+        let client = GmailClient(tokens: CountingTokens(), transport: transport, retryDelays: [.zero], gmailRequestBudget: clock.budget())
 
         let results = try await client.messages(ids: ["a", "b", "c", "d"], format: .minimal)
 
@@ -89,7 +91,7 @@ import Testing
         ])
     }
 
-    @Test(arguments: ["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"])
+    @Test(arguments: ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"])
     func rateLimitReasonsAreRetryable(_ reason: String) {
         let rateLimited = Data(#"{"error":{"code":403,"errors":[{"reason":"\#(reason)"}]}}"#.utf8)
         let forbidden = Data(#"{"error":{"code":403,"errors":[{"reason":"insufficientPermissions"}]}}"#.utf8)
@@ -111,6 +113,21 @@ import Testing
         #expect(GmailError(status: 403, body: scope) == .http(status: 403, reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
         #expect(GmailError(status: 403, body: limited) == .rateLimited)
         #expect(GmailError(status: 400, body: odd) == .http(status: 400, reason: "badRequest"))
+    }
+
+    @Test func dailyQuotaAndDisabledServiceAreNotMinuteThrottles() async throws {
+        let daily = #"{"error":{"errors":[{"reason":"dailyLimitExceeded"}]}}"#
+        let disabled = #"{"error":{"errors":[{"reason":"dailyLimitExceeded"}],"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED"}]}}"#
+        let minute = #"{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}"#
+        #expect(GmailError(status: 403, body: Data(disabled.utf8)) == .http(status: 403, reason: "SERVICE_DISABLED"))
+        #expect(GmailError(status: 403, body: Data(minute.utf8)) == .rateLimited)
+        let error = GmailError(status: 403, body: Data(daily.utf8))
+        #expect(error == .http(status: 403, reason: "dailyLimitExceeded"))
+        #expect(!error.isRetryable)
+        let transport = RecordingTransport([.init(status: 403, body: daily)])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
+        await #expect(throws: error) { try await client.profile() }
+        #expect(await transport.requests.count == 1)
     }
 
     @Test func queryEscapesPlusSigns() async throws {
@@ -330,7 +347,199 @@ import Testing
     }
 }
 
+@Suite struct GmailRequestBudgetTests {
+    private let profile = #"{"emailAddress":"user@example.com","historyId":"42"}"#
+
+    @Test func quotaCostsReflectFormatsAndSettings() {
+        #expect(Endpoint.get("messages/m1", [.init(name: "format", value: "metadata")]).quotaUnits == 20)
+        #expect(Endpoint.get("messages/m1", [.init(name: "format", value: "full")]).quotaUnits == 60)
+        #expect(Endpoint.get("threads/t1").quotaUnits == 120)
+        #expect(Endpoint.get("messages/m1/attachments/a1").quotaUnits == 20)
+        #expect(Endpoint.get("labels/INBOX").quotaUnits == 1)
+        #expect(Endpoint.post("drafts/send").quotaUnits == 100)
+        #expect(Endpoint.post("settings/sendAs").quotaUnits == 100)
+    }
+
+    @Test func fullMessageBatchesAndDirectCallsShareOneQuotaBudget() async throws {
+        let clock = BudgetTestClock()
+        let budget = clock.budget()
+        let chunks = [0..<8, 8..<16, 16..<24, 24..<25]
+        let responses = chunks.map { chunk in
+            batchResponse(chunk.enumerated().map { index, id in (index, 200, #"{"id":"m\#(id)","threadId":"t1"}"#) })
+        }
+        let transport = RecordingTransport(responses + [.init(status: 200, body: #"{"id":"t1"}"#)])
+        let first = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let second = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let ids = (0..<25).map { "m\($0)" }
+
+        let messages = try await first.messages(ids: ids, format: .full)
+        #expect(try ids.allSatisfy { try messages[$0]?.get().id == $0 })
+        #expect(try await second.thread(id: "t1").id == "t1")
+        let requests = await transport.requests
+        #expect(requests.count == 5)
+        #expect(requests.prefix(4).map { String(decoding: $0.httpBody ?? Data(), as: UTF8.self).components(separatedBy: "GET /gmail").count - 1 } == [8, 8, 8, 1])
+        // 25 full messages and one full thread cost 1,620 units. After the
+        // initial 500 units, the shared 4,000/minute refill takes 16.8 seconds.
+        #expect(clock.instant >= 16.8 && clock.instant < 16.81)
+    }
+
+    @Test func concurrentDirectRequestsShareTheBatchBudget() async throws {
+        let clock = BudgetTestClock()
+        let budget = clock.budget()
+        let metadata = batchResponse((0..<25).map { ($0, 200, #"{"id":"m\#($0)","threadId":"t1"}"#) })
+        let transport = RecordingTransport([metadata] + Array(repeating: .init(status: 200, body: profile), count: 20))
+        let first = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let second = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        _ = try await first.messages(ids: (0..<25).map { "m\($0)" }, format: .metadata)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<20 {
+                group.addTask { _ = try await (index.isMultiple(of: 2) ? first : second).profile() }
+            }
+            try await group.waitForAll()
+        }
+        #expect(await transport.requests.count == 21)
+        #expect(clock.instant >= 0.3 && clock.instant < 0.31)
+    }
+
+    @Test func outerBatchRetryAfterIsHonoredForReads() async throws {
+        let clock = BudgetTestClock()
+        let transport = RecordingTransport([
+            .init(status: 429, headers: ["Retry-After": "30"], body: "{}"),
+            batchResponse([(0, 200, #"{"id":"m1","threadId":"t1"}"#)]),
+        ])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: clock.budget())
+        #expect(try await client.messages(ids: ["m1"], format: .metadata)["m1"]?.get().id == "m1")
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(requests.first?.httpBody == requests.last?.httpBody)
+        #expect(clock.instant == 30)
+    }
+
+    @Test(arguments: [429, 503])
+    func failedSendsAreNotReplayedAndOtherClientsObserveCooldown(_ status: Int) async throws {
+        let clock = BudgetTestClock()
+        let budget = clock.budget()
+        let transport = RecordingTransport([
+            .init(status: status, headers: ["Retry-After": "23"], body: "{}"),
+            .init(status: 200, body: profile),
+        ])
+        let writer = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let reader = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        await #expect(throws: status == 429 ? GmailError.rateLimited : GmailError.server(status: status)) {
+            try await writer.sendDraft(id: "d1")
+        }
+        #expect(await transport.requests.count == 1)
+        #expect(try await reader.profile().historyId == "42")
+        #expect(clock.instant == 23)
+        #expect(await transport.requests.map(\.httpMethod) == ["POST", "GET"])
+    }
+
+    @Test func innerBatchThrottleDelaysOtherCallsWithoutReplayingCompletedParts() async throws {
+        let clock = BudgetTestClock()
+        let budget = clock.budget()
+        var response = batchResponse([
+            (0, 200, #"{"id":"a","threadId":"t1"}"#),
+            (1, 429, "{}"),
+        ])
+        response.body = response.body.replacingOccurrences(of: "HTTP/1.1 429 Status\r\n", with: "HTTP/1.1 429 Status\r\nrEtRy-AfTeR: 17\r\n")
+        let transport = RecordingTransport([response, .init(status: 200, body: profile)])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport, retryDelays: [], gmailRequestBudget: budget)
+        let other = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let results = try await client.messages(ids: ["a", "b"], format: .metadata)
+        #expect(try results["a"]?.get().id == "a")
+        #expect(results["b"].flatMap(failure) == .rateLimited)
+        _ = try await other.profile()
+        #expect(clock.instant == 17)
+        #expect(await transport.requests.count == 2)
+    }
+
+    @Test func directReadRetriesAreBoundedAndDoNotAffectOtherGoogleAPIs() async throws {
+        let clock = BudgetTestClock()
+        let budget = clock.budget()
+        let transport = RecordingTransport(Array(repeating: .init(status: 503, body: "{}"), count: 5))
+        let session = GoogleSession(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let client = GmailClient(session: session)
+        await #expect(throws: GmailError.server(status: 503)) { try await client.profile() }
+        #expect(await transport.requests.count == 4)
+        #expect(clock.instant == 7)
+        // A non-Gmail caller using this GoogleSession does not wait on the
+        // pending Gmail cooldown or acquire units from its budget.
+        let request = URLRequest(url: try #require(URL(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList")))
+        await #expect(throws: GmailError.server(status: 503)) { try await session.send(request) }
+        #expect(await transport.requests.count == 5)
+        #expect(clock.instant == 7)
+    }
+
+    @Test func transientReadRetriesDoNotRepeatAForcedTokenRefresh() async throws {
+        let clock = BudgetTestClock()
+        let tokens = CountingTokens()
+        let transport = RecordingTransport([
+            .init(status: 401, body: "{}"),
+            .init(status: 429, body: "{}"),
+            .init(status: 503, body: "{}"),
+            .init(status: 200, body: profile),
+        ])
+        let client = GmailClient(tokens: tokens, transport: transport, gmailRequestBudget: clock.budget())
+        #expect(try await client.profile().historyId == "42")
+        #expect(await tokens.refreshes == 1)
+        #expect(await transport.requests.map { $0.value(forHTTPHeaderField: "Authorization") } == [
+            "Bearer token-0", "Bearer token-1", "Bearer token-1", "Bearer token-1",
+        ])
+    }
+
+    @Test func cancellingAQuotaWaitDoesNotConsumeUnitsOrBlockLaterRequests() async throws {
+        let clock = BudgetTestClock()
+        let sleeping = AsyncStream<Void>.makeStream()
+        let suspend = OSAllocatedUnfairLock(initialState: true)
+        let budget = GmailRequestBudget(now: { clock.instant }, sleep: { duration in
+            if suspend.withLock({ $0 }) {
+                sleeping.continuation.yield(())
+                try await Task.sleep(for: .seconds(30))
+            } else { try await clock.sleep(duration) }
+        })
+        try await budget.perform(units: 500) {}
+        let pending = Task { try await budget.perform(units: 100) { Issue.record("Cancelled request was dispatched") } }
+        var iterator = sleeping.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        suspend.withLock { $0 = false }
+        pending.cancel()
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        try await budget.perform(units: 500) {}
+        #expect(abs(clock.instant - 7.5) < 0.01)
+        sleeping.continuation.finish()
+    }
+
+    @Test func retryAfterAcceptsSecondsAndHTTPDatesAndRejectsInvalidValues() {
+        let instant = Date(timeIntervalSince1970: 0)
+        #expect(GmailRequestBudget.retryAfter("12") == 12)
+        #expect(GmailRequestBudget.retryAfter("Thu, 01 Jan 1970 00:01:30 GMT", now: instant) == 90)
+        #expect(GmailRequestBudget.retryAfter("Thu, 01 Jan 1970 00:00:00 GMT", now: instant) == 0)
+        #expect(GmailRequestBudget.retryAfter("-10") == nil)
+        #expect(GmailRequestBudget.retryAfter("nan") == nil)
+        #expect(GmailRequestBudget.retryAfter("invalid") == nil)
+    }
+}
+
 // MARK: Helpers
+
+/// Advances monotonic time immediately; quota tests never wait for real refill.
+private struct BudgetTestClock: Sendable {
+    private let time = OSAllocatedUnfairLock(initialState: TimeInterval.zero)
+
+    var instant: TimeInterval { time.withLock { $0 } }
+
+    func sleep(_ duration: Duration) async throws {
+        try Task.checkCancellation()
+        let components = duration.components
+        let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
+        time.withLock { $0 += seconds }
+        await Task.yield()
+    }
+
+    func budget() -> GmailRequestBudget {
+        GmailRequestBudget(now: { instant }, sleep: { try await sleep($0) })
+    }
+}
 
 private func failure<T>(_ result: Result<T, GmailError>) -> GmailError? {
     if case .failure(let error) = result { return error }

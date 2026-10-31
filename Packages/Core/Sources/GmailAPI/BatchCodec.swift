@@ -7,6 +7,7 @@ enum BatchCodec {
         let contentID: String?
         let status: Int
         let body: Data
+        var retryAfter: String? = nil
 
         /// The request index from a response `Content-ID` such as `<response-item-3>`.
         var itemIndex: Int? {
@@ -83,7 +84,8 @@ enum BatchCodec {
         return Part(
             contentID: headerValue("Content-ID", in: outerHeaders),
             status: status,
-            body: Data(body.trimmingCharacters(in: .newlines).utf8)
+            body: Data(body.trimmingCharacters(in: .newlines).utf8),
+            retryAfter: headerValue("Retry-After", in: head)
         )
     }
 

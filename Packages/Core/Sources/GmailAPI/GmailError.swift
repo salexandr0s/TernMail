@@ -40,11 +40,12 @@ public enum GmailError: Error, Sendable, Equatable {
 
     /// The 403 reasons Gmail gives in `errors[]` for a usage limit, which a
     /// later retry can pass.
-    static let usageLimitReasons: Set<String> = ["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"]
+    static let usageLimitReasons: Set<String> = ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"]
 
     init(status: Int, body: Data) {
         let error = (try? JSONDecoder().decode(ErrorEnvelope.self, from: body))?.error
         let listed = error?.errors?.first?.reason
+        let reason = error?.errorInfoReason ?? listed
         switch status {
         case 401:
             self = .unauthorized
@@ -52,12 +53,12 @@ public enum GmailError: Error, Sendable, Equatable {
             self = .notFound
         case 429:
             self = .rateLimited
-        case 403 where listed.map(Self.usageLimitReasons.contains) == true:
+        case 403 where reason.map(Self.usageLimitReasons.contains) == true:
             self = .rateLimited
         case 500...599:
             self = .server(status: status)
         default:
-            self = .http(status: status, reason: error?.errorInfoReason ?? listed)
+            self = .http(status: status, reason: reason)
         }
     }
 }

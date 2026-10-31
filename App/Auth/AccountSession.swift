@@ -9,6 +9,8 @@ import GmailAPI
 @MainActor
 final class AccountSession: AccessTokenProvider {
     let accountID: String
+    /// Mail sync, search and settings clients share this account's quota.
+    let gmailRequestBudget = GmailRequestBudget()
 
     /// Called when Google rejects the refresh token, for example after a
     /// testing-mode consent expires.

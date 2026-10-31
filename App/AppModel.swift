@@ -250,7 +250,7 @@ final class AppModel {
         guard mailbox?.account(id: accountID) != nil,
               let session = sessions[accountID], session.isSignedIn,
               !accountsNeedingSignIn.contains(accountID) else { return nil }
-        return GmailClient(tokens: session)
+        return GmailClient(tokens: session, gmailRequestBudget: session.gmailRequestBudget)
     }
 
     func inboxWatcher(for accountID: String) -> InboxWatcher? { inboxWatchers[accountID] }
@@ -498,7 +498,7 @@ final class AppModel {
             } else {
                 mailNotifications?.prepareAccount(account.id)
                 let syncEnabled = (try? await accounts.mailPreferences(accountID: account.id).syncEnabled) ?? true
-                await mailbox.addAccount(account, gmail: GmailClient(tokens: session), syncEnabled: syncEnabled, onCreate: configureMailRuntime)
+                await mailbox.addAccount(account, gmail: GmailClient(tokens: session, gmailRequestBudget: session.gmailRequestBudget), syncEnabled: syncEnabled, onCreate: configureMailRuntime)
                 if case .signInRequired(let old) = phase {
                     // Added from Settings while the only account needed
                     // sign-in. With several, its section asks instead.
@@ -867,7 +867,7 @@ final class AppModel {
     /// Opens the window's mailbox with every signed-in account, starting in
     /// the combined Inbox when there are several.
     private func mailboxService(for accountID: String) -> (any GmailService)? {
-        if let session = sessions[accountID] { return GmailClient(tokens: session) }
+        if let session = sessions[accountID] { return GmailClient(tokens: session, gmailRequestBudget: session.gmailRequestBudget) }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
             return accountID == "ui-audit-2" ? AuditGmail(.second) : AuditGmail()
