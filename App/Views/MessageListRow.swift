@@ -16,13 +16,7 @@ struct MessageListRow: View {
     private var thread: ThreadRecord { item.thread }
     private var displayedLabels: [LabelRecord] {
         let labels = mailbox.account(id: item.id.accountID)?.labels ?? []
-        return labels.filter {
-            item.labels.contains($0.id) && $0.id != mailbox.selectedLabelID
-                && ![SystemLabel.unread, SystemLabel.starred, SystemLabel.important, SystemLabel.allMail].contains($0.id)
-        }.sorted { lhs, rhs in
-            if lhs.isSystem != rhs.isSystem { return !lhs.isSystem }
-            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-        }
+        return item.displayedLabels(from: labels, mailboxID: mailbox.selectedLabelID)
     }
 
     var body: some View {

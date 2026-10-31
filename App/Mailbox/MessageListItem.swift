@@ -24,6 +24,20 @@ struct MessageListItem: Identifiable, Equatable {
     }
     var recipients: String { messages.first?.message.recipients ?? "" }
 
+    func displayedLabels(from available: [LabelRecord], mailboxID: String?) -> [LabelRecord] {
+        let applied = labels
+        return available.filter {
+            applied.contains($0.id) && (!$0.isSystem || $0.id != mailboxID)
+                && ![SystemLabel.unread, SystemLabel.starred, SystemLabel.important, SystemLabel.allMail].contains($0.id)
+        }.sorted { lhs, rhs in
+            let leftSelected = !lhs.isSystem && lhs.id == mailboxID
+            let rightSelected = !rhs.isSystem && rhs.id == mailboxID
+            if leftSelected != rightSelected { return leftSelected }
+            if lhs.isSystem != rhs.isSystem { return !lhs.isSystem }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
+    }
+
     static func project(threads: [ThreadRecord], entries: [MessageListEntry], conversations: Bool,
                         filters: Set<MailQuickFilter>, mailboxID: String?, categories: [String: Set<String>],
                         addresses: [String: Set<String>]) -> [MessageListItem] {

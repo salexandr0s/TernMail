@@ -91,6 +91,56 @@ import Testing
         #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m2"])
     }
 
+    @Test(arguments: [true, false])
+    func customMailboxShowsOnlyMessagesCarryingItsLabel(conversations: Bool) async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let action = LabelRecord(accountID: "a", id: "action", name: "01 Action", isSystem: false)
+        let waiting = LabelRecord(accountID: "a", id: "waiting", name: "02 Waiting", isSystem: false)
+        try await cache.write { tx in
+            try tx.replaceLabels([action, waiting], accountID: "a")
+            _ = try tx.applyLabelChange(messageID: "m1", added: [action.id], removed: [], historyID: 2, accountID: "a")
+            _ = try tx.applyLabelChange(messageID: "m2", added: [waiting.id], removed: [], historyID: 2, accountID: "a")
+            try tx.rebuildThreads(["t"], accountID: "a")
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while mailbox.labels.count < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(mailbox.labels.contains { $0.id == action.id })
+        var iterator = cache.messageListEntries(threadsByAccount: ["a": ["t"]]).makeAsyncIterator()
+        mailbox.listEntries = try #require(try await iterator.next())
+        mailbox.listPreferences.conversations = conversations
+
+        for (label, messageID) in [(action, "m1"), (waiting, "m2")] {
+            mailbox.selectedMailbox = .account("a", label.id)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while mailbox.threads.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+            try #require(!mailbox.threads.isEmpty)
+            #expect(mailbox.listItems.flatMap(\.messages).map(\.message.id) == [messageID])
+            #expect(mailbox.listItems.allSatisfy { $0.labels.contains(label.id) })
+        }
+    }
+
+    @Test func selectedCustomLabelRemainsVisibleBeforeOtherLabels() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let source = try #require(mailbox.listItems.first)
+        let available = [
+            LabelRecord(accountID: "a", id: "action", name: "Z Action", isSystem: false),
+            LabelRecord(accountID: "a", id: "accounts", name: "Accounts & Security", isSystem: false),
+            LabelRecord(accountID: "a", id: "finance", name: "Finance", isSystem: false),
+            LabelRecord(accountID: "a", id: "absent", name: "Absent", isSystem: false)
+        ] + [SystemLabel.inbox, SystemLabel.unread, SystemLabel.starred, SystemLabel.important, SystemLabel.allMail].map {
+            LabelRecord(accountID: "a", id: $0, name: $0, isSystem: true)
+        }
+        let entry = MessageListEntry(message: try #require(source.messages.first).message,
+            labels: Set(available.filter { $0.id != "absent" }.map(\.id)))
+        let item = MessageListItem(id: source.id, thread: source.thread, messages: [entry])
+        let displayed = item.displayedLabels(from: available, mailboxID: "action").map(\.id)
+        #expect(Array(displayed.prefix(2)) == ["action", "accounts"])
+        #expect(displayed == ["action", "accounts", "finance", SystemLabel.inbox])
+        #expect(item.displayedLabels(from: available, mailboxID: SystemLabel.inbox).map(\.id) == ["accounts", "finance", "action"])
+    }
+
     @Test func selectionPreferenceAndMixedTargetsNeverWidenMessageAuthority() async throws {
         let (mailbox, _) = try await fixture()
         defer { Task { await mailbox.stop() } }
