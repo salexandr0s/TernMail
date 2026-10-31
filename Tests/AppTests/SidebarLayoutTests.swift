@@ -408,9 +408,13 @@ import Testing
         scroll.reflectScrolledClipView(clip)
     }
 
-    /// The library's layout and sort controls once pushed Search into the
+    /// Toolbar spaces ignore hidden(_:), so the mail toolbar's spaces stay in
+    /// Calendar and the attachment library, and only the item order keeps them
+    /// ahead of those sections' controls. In Mail, More once had a group of
+    /// its own, and its space stayed before Search after narrow windows folded
+    /// it into a menu. The library's controls once pushed Search into the
     /// overflow menu at the minimum window width.
-    @Test func attachmentLibraryKeepsSearchInNarrowToolbars() async throws {
+    @Test func sectionToolbarsKeepTheirSpacingAndSearch() async throws {
         let app = AppModel()
         await app.start()
         let mailbox = try #require(app.mailbox)
@@ -438,25 +442,60 @@ import Testing
         app.destination = .mail
         mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
 
-        // Narrow toolbars fold both controls into one menu, as the mail actions fold.
-        // SwiftUI hides and shows the items over several passes, so this waits
-        // for the toolbar to settle.
-        for (width, folds) in [(CGFloat(1_280), false), (Tokens.Layout.windowMinWidth, true)] {
-            window.setContentSize(NSSize(width: width, height: 760))
-            let shown: Set<String> = folds
-                ? ["library.compactOptions", "workspace.search"]
-                : ["library.viewMode", "library.sort", "workspace.search"]
-            let hidden: Set<String> = folds ? ["library.viewMode", "library.sort"] : ["library.compactOptions"]
-            let layoutDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-            var visible: Set<String> = []
-            repeat {
-                try await settle()
-                visible = Set(window.toolbar?.visibleItems?.map(\.itemIdentifier.rawValue) ?? [])
-            } while !(shown.isSubset(of: visible) && hidden.isDisjoint(with: visible)) && ContinuousClock.now < layoutDeadline
-            #expect(shown.isSubset(of: visible), "Visible toolbar items at width \(Int(width)): \(visible.sorted())")
-            #expect(hidden.isDisjoint(with: visible), "Visible toolbar items at width \(Int(width)): \(visible.sorted())")
-        }
+        try await expectToolbar(
+            in: window, width: 1_280, section: "library.", spacesAfter: ["library.sort"],
+            hiding: ["library.compactOptions"]
+        )
+        // Narrow toolbars fold the layout and sort controls into one menu, as the mail actions fold.
+        try await expectToolbar(
+            in: window, width: Tokens.Layout.windowMinWidth, section: "library.",
+            spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"]
+        )
+        app.destination = .calendar
+        try await expectToolbar(in: window, width: 1_280, section: "calendar.", spacesAfter: ["calendar.newEvent"])
+        app.destination = .mail
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await expectToolbar(
+            in: window, width: 1_280, section: "mail.", spacesAfter: ["mail.trash", "mail.more", "mail.forward"],
+            hiding: ["mail.compactActions", "mail.compactReplies"]
+        )
+        try await expectToolbar(
+            in: window, width: 960, section: "mail.", spacesAfter: ["mail.trash", "mail.compactActions", "mail.compactReplies"],
+            hiding: ["mail.more"]
+        )
         await app.signOut()
+    }
+
+    /// Waits for the toolbar to settle at `width`, then checks that Search is
+    /// visible and which of the section's items a space follows, from the
+    /// section's first item to Search. SwiftUI shows and hides items over
+    /// several passes after a change. Other sections' items are left out,
+    /// since SwiftUI sometimes leaves them in `visibleItems` long after a switch.
+    private func expectToolbar(
+        in window: NSWindow, width: CGFloat, section prefix: String,
+        spacesAfter expected: [String], hiding hidden: Set<String> = []
+    ) async throws {
+        window.setContentSize(NSSize(width: width, height: 760))
+        let space = NSToolbarItem.Identifier.space.rawValue
+        let search = "workspace.search"
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        var visible: [String] = []
+        var beforeSpaces: [String] = []
+        func settled() -> Bool {
+            beforeSpaces == expected && visible.contains(search) && hidden.isDisjoint(with: visible)
+        }
+        repeat {
+            try await settle()
+            visible = window.toolbar?.visibleItems?.map(\.itemIdentifier.rawValue) ?? []
+            let sectionItems = visible
+                .filter { $0.hasPrefix(prefix) || $0 == space || $0 == search }
+                .drop(while: { !$0.hasPrefix(prefix) })
+                .prefix(while: { $0 != search })
+            beforeSpaces = zip(sectionItems, sectionItems.dropFirst()).compactMap { $1 == space ? $0 : nil }
+        } while !settled() && ContinuousClock.now < deadline
+        #expect(beforeSpaces == expected, "Items before each space at width \(Int(width)): \(visible)")
+        #expect(visible.contains(search), "Search must stay out of the overflow menu at width \(Int(width)): \(visible)")
+        #expect(hidden.isDisjoint(with: visible), "Hidden items shown at width \(Int(width)): \(visible)")
     }
 
     private func settle() async throws {
