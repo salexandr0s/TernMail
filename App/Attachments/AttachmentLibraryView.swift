@@ -5,7 +5,6 @@ import SwiftUI
 
 struct AttachmentLibraryView: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.colorSchemeContrast) private var contrast
     @Bindable var model: AttachmentLibraryModel
     var onOpenSource: () -> Void
     var searchFocusRequest = 0
@@ -100,12 +99,7 @@ struct AttachmentLibraryView: View {
         .padding(.horizontal, Tokens.Space.s3)
         .frame(minWidth: Tokens.Layout.searchMinWidth, minHeight: Tokens.Space.s10)
         .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(searchFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
-                              lineWidth: searchFocused ? Tokens.Border.focus : Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
+        .ternOutline(radius: Tokens.Radius.md, focus: searchFocused ? .accentColor : nil)
     }
 
     private var resultsToolbar: some View {

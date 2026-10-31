@@ -4,7 +4,6 @@ import SwiftUI
 
 struct ComposeTemplatesPane: View {
     let store: AccountStore
-    @Environment(\.colorSchemeContrast) private var contrast
     @State private var templates: [ComposeTemplate] = []
     @State private var selection: String?
     @State private var name = ""
@@ -50,13 +49,7 @@ struct ComposeTemplatesPane: View {
                         onFocusChange: { focused = $0 }
                         .frame(minHeight: Tokens.Layout.quoteMaxHeight)
                 }
-                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                                      lineWidth: Tokens.Border.hairline)
-                        .allowsHitTesting(false)
-                }
+                .ternSurface(radius: Tokens.Radius.sm)
                 .padding(.horizontal, Tokens.Space.s3)
                 HStack {
                     Button("Delete", role: .destructive) {
