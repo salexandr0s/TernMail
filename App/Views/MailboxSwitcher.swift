@@ -63,7 +63,8 @@ extension MailboxModel {
             let detail = accountTitle(owner.account)
             options += SystemMailbox.all.map { .init(title: $0.title, detail: detail, mailbox: .account(owner.account.id, $0.id), symbol: $0.systemImage) }
             options += owner.labels.filter { !primaryIDs.contains($0.id) && !LabelRules.isTemporary($0.id) }
-                .map { .init(title: $0.name, detail: detail, mailbox: .account(owner.account.id, $0.id), symbol: $0.isSystem ? "tray" : "tag") }
+                .map { .init(title: $0.title, detail: detail, mailbox: .account(owner.account.id, $0.id),
+                             symbol: $0.isSystem ? SystemMailbox(labelID: $0.id).systemImage : "tag") }
             if showsOutbox(.account(owner.account.id, Self.outboxID)) {
                 options.append(.init(title: "Outbox", detail: detail, mailbox: .account(owner.account.id, Self.outboxID), symbol: SystemMailbox.outbox.systemImage))
             }

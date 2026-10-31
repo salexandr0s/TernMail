@@ -29,14 +29,18 @@ import Testing
         let (mailbox, cache) = try await fixture()
         defer { Task { await mailbox.stop() } }
         let hidden = LabelRecord(accountID: "a", id: "hidden", name: "Hidden", isSystem: false, labelListVisibility: "labelHide")
+        // Gmail names system labels after their IDs.
+        let system = [SystemLabel.important, "CATEGORY_PURCHASES"].map { LabelRecord(accountID: "a", id: $0, name: $0, isSystem: true) }
         try await cache.write { tx in
-            try tx.replaceLabels([hidden, .init(accountID: "a", id: SystemLabel.important, name: "Important", isSystem: true)], accountID: "a")
+            try tx.replaceLabels([hidden] + system, accountID: "a")
         }
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while mailbox.labels.count < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        while mailbox.labels.count < 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(mailbox.isVisibleInSidebar(hidden) == false)
-        #expect(mailbox.mailboxSwitchOptions.contains { $0.mailbox == .account("a", "hidden") })
-        #expect(mailbox.mailboxSwitchOptions.contains { $0.mailbox == .account("a", SystemLabel.important) })
+        func title(_ id: String) -> String? { mailbox.mailboxSwitchOptions.first { $0.mailbox == .account("a", id) }?.title }
+        #expect(title("hidden") == "Hidden")
+        #expect(title(SystemLabel.important) == "Important")
+        #expect(title("CATEGORY_PURCHASES") == "Purchases")
     }
 
     @Test func messageSnoozeAndItsDatePickerKeepExactTargetsAndCancelClearsTheSnapshot() async throws {

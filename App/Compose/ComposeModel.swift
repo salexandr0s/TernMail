@@ -58,6 +58,42 @@ final class ComposeModel {
         var message: String
     }
 
+    /// A file the window couldn't attach or remove. It stays in the list,
+    /// marked as failed, until Retry works or it's dismissed: a file that
+    /// wasn't attached stays out, and one that wasn't removed stays attached.
+    struct FailedAttachment: Identifiable {
+        enum Action {
+            case attach(Attachable, inlineImage: Bool)
+            case remove(OutgoingAttachment)
+        }
+
+        let id = UUID()
+        let action: Action
+        /// What went wrong, shown as the file's help text.
+        let reason: String
+
+        var filename: String {
+            switch action {
+            case .attach(let item, _): item.name
+            case .remove(let attachment): attachment.filename
+            }
+        }
+
+        /// The attachment a failed removal left in the draft.
+        var removedID: Int64? {
+            guard case .remove(let attachment) = action else { return nil }
+            return attachment.id
+        }
+
+        var isRemoval: Bool { removedID != nil }
+    }
+
+    /// A file being copied into the draft, which `attachments` doesn't list yet.
+    private struct CopyingFile {
+        let id = UUID()
+        let name: String
+    }
+
     /// A sender the window picked by itself for the first recipient. The
     /// copy the move makes shows it, and Undo moves the message back.
     struct SenderChange: Equatable {
@@ -129,7 +165,11 @@ final class ComposeModel {
     /// Changed since the last save to Gmail was asked for.
     private var changedSinceSave = false
     /// Files still being copied into the draft, which `attachments` doesn't list yet.
-    private var attachmentsInProgress = 0
+    private var copying: [CopyingFile] = []
+    /// Files that failed to attach or to be removed, listed with the attachments.
+    private(set) var failedAttachments: [FailedAttachment] = []
+    /// Storing the draft before the window closes, so nothing changes meanwhile.
+    private(set) var isClosing = false
     @ObservationIgnored private let attachmentFiles: OutgoingAttachmentFiles
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
@@ -183,7 +223,20 @@ final class ComposeModel {
     /// Only a new message can change accounts.
     var canChangeAccount: Bool { draft?.kind == .new }
 
-    var isEditable: Bool { phase == .open && draft?.state == .editing }
+    var isEditable: Bool { takesEdits && !isClosing }
+
+    /// Open, and not taken by a send or discard.
+    private var takesEdits: Bool { phase == .open && draft?.state == .editing }
+
+    /// Closing the window now loses nothing. Otherwise `requestClose()`
+    /// stores the draft first, and the window waits for it.
+    var closesAtOnce: Bool {
+        switch phase {
+        case .open: !takesEdits
+        case .moving: false
+        case .loading, .closed, .moved: true
+        }
+    }
 
     /// Gmail doesn't have the latest changes, so closing the window saves
     /// them. The window's close button shows a dot meanwhile.
@@ -198,9 +251,10 @@ final class ComposeModel {
     var canSendAndArchive: Bool { draft?.kind != .new && draft?.threadID != nil && isEditable }
 
     var progressText: String? {
+        if isClosing { return "Saving draft…" }
         if expandingGroups > 0 { return "Loading contact group…" }
         if phase == .moving { return "Changing sender account…" }
-        if attachmentsInProgress > 0 { return "Attaching files…" }
+        if let file = copying.first { return copying.count == 1 ? "Attaching “\(file.name)”…" : "Attaching \(copying.count) files…" }
         return nil
     }
 
@@ -322,6 +376,10 @@ final class ComposeModel {
             alert = Problem(title: "Can't Send Yet", message: "Wait for the contact group to finish loading.")
             return false
         }
+        if let hold = attachmentHold {
+            alert = Problem(title: failedAttachments.isEmpty ? "Can't Send Yet" : "Can't Send Message", message: hold)
+            return false
+        }
         let recipients = content.to + content.cc + content.bcc
         if recipients.isEmpty {
             alert = Problem(title: "Can't Send Message", message: "Add at least one recipient.")
@@ -337,6 +395,11 @@ final class ComposeModel {
         let id = localDraftID
         let delay = UndoSendDelay.current
         let queued = await serially { [self] in
+            // A file attached or removed just before may have failed meanwhile.
+            if let hold = attachmentHold {
+                alert = Problem(title: "Can't Send Message", message: hold)
+                return false
+            }
             do {
                 return try await engine.sendDraft(id, content: content, delay: delay)
             } catch {
@@ -347,6 +410,9 @@ final class ComposeModel {
         if queued {
             mailbox.didQueueSend(id, delay: delay)
             close()
+        } else if hasPendingEdits {
+            // Send stopped the timer that would have stored them.
+            store()
         }
         return queued
     }
@@ -386,6 +452,11 @@ final class ComposeModel {
         serially { [self] in
             // A move that fails or doesn't happen opens the window again.
             defer { if phase == .moving { phase = .open } }
+            // The copy would lose a file that failed to attach or to be removed.
+            if let hold = attachmentHold {
+                if automaticChange == nil { alert = Problem(title: "Can't Change Account", message: hold) }
+                return
+            }
             do {
                 let target = sender ?? ComposeSender.preferred(
                     in: senderChoices.filter { $0.account.id == accountID }, original: nil, kind: .new
@@ -427,35 +498,42 @@ final class ComposeModel {
         senderChange.map { mailbox.account(id: $0.previousAccountID) != nil } ?? false
     }
 
-    /// Copies the files into the draft, one at a time, in order.
+    /// Copies the files into the draft, one at a time, in order. A file that
+    /// can't be copied stays listed as failed, with Retry.
     func attach(_ items: [Attachable], inlineImages: Bool = false) {
         guard isEditable, !items.isEmpty else { return }
         markChanged()
         guard let engine = owner?.engine else { return }
         let id = localDraftID
         for item in items {
-            attachmentsInProgress += 1
+            let file = CopyingFile(name: item.name)
+            copying.append(file)
             serially { [self] in
-                defer { attachmentsInProgress -= 1 }
+                defer { copying.removeAll { $0.id == file.id } }
+                let attached: OutgoingAttachment?
                 do {
-                    let attached: OutgoingAttachment?
                     switch item {
                     case .file(let url):
                         attached = try await engine.attachFile(at: url, to: id)
                     case .data(let data, let filename, let mimeType):
                         attached = try await engine.attachData(data, filename: filename, mimeType: mimeType, to: id)
                     }
-                    if inlineImages, let attached, let image = try await engine.markInlineImage(attached), let cid = image.contentID {
-                        let bytes = try await engine.outgoingAttachmentData(image)
-                        inlineImageData[cid] = bytes
-                        let reference = InlineImageReference(contentID: cid, altText: image.filename)
-                        if let editor { editor.insertImage(reference, data: bytes) }
-                        else { content.body.blocks.append(.init(runs: [.init("", image: reference)])) }
-                    }
-                } catch let error as ComposeError {
-                    alert = Problem(title: "Can't Attach File", message: error.errorDescription ?? "")
                 } catch {
-                    alert = Problem(title: "Can't Attach File", message: "Tern couldn't attach “\(item.name)”.")
+                    let reason = (error as? ComposeError)?.errorDescription ?? "Tern couldn't attach “\(item.name)”."
+                    failedAttachments.append(FailedAttachment(action: .attach(item, inlineImage: inlineImages), reason: reason))
+                    return
+                }
+                guard inlineImages, let attached else { return }
+                do {
+                    guard let image = try await engine.markInlineImage(attached), let cid = image.contentID else { return }
+                    let bytes = try await engine.outgoingAttachmentData(image)
+                    inlineImageData[cid] = bytes
+                    let reference = InlineImageReference(contentID: cid, altText: image.filename)
+                    // A closing window's editor takes no edits, so the image goes in the content it stores.
+                    if let editor, isEditable { editor.insertImage(reference, data: bytes) }
+                    else { content.body.blocks.append(.init(runs: [.init("", image: reference)])) }
+                } catch {
+                    alert = Problem(title: "Can't Insert Image", message: "Tern couldn't place “\(attached.filename)” in the message.")
                 }
             }
         }
@@ -465,16 +543,48 @@ final class ComposeModel {
     func removeAttachment(_ attachment: OutgoingAttachment) {
         guard isEditable, let rowID = attachment.id else { return }
         markChanged()
+        failedAttachments.removeAll { $0.removedID == rowID }
         attachmentFiles.remove(attachment)
         guard let engine = owner?.engine else { return }
         serially { [self] in
             do {
                 try await engine.removeAttachment(id: rowID)
             } catch {
-                alert = Problem(title: "Can't Remove File", message: "Tern couldn't remove “\(attachment.filename)”.")
+                // Still attached, so it stays listed until Retry works or it's kept.
+                failedAttachments.append(FailedAttachment(
+                    action: .remove(attachment), reason: "Tern couldn't remove “\(attachment.filename)”."
+                ))
             }
         }
         scheduleAutosave()
+    }
+
+    /// Tries a failed attach or removal again.
+    func retry(_ failed: FailedAttachment) {
+        guard isEditable, failedAttachments.contains(where: { $0.id == failed.id }) else { return }
+        failedAttachments.removeAll { $0.id == failed.id }
+        switch failed.action {
+        case .attach(let item, let inlineImage): attach([item], inlineImages: inlineImage)
+        case .remove(let attachment): removeAttachment(attachment)
+        }
+    }
+
+    /// Takes a failed file off the list: one that wasn't attached stays out,
+    /// and one that couldn't be removed stays attached.
+    func dismissFailure(_ failed: FailedAttachment) {
+        guard isEditable else { return }
+        failedAttachments.removeAll { $0.id == failed.id }
+    }
+
+    /// What keeps the draft from going out or closing: a file that failed to
+    /// attach or to be removed, or one still being copied in.
+    private var attachmentHold: String? {
+        if let failed = failedAttachments.first {
+            return failed.isRemoval
+                ? "“\(failed.filename)” couldn't be removed. Retry or keep it first."
+                : "“\(failed.filename)” couldn't be attached. Retry or remove it first."
+        }
+        return copying.first.map { "Wait for “\($0.name)” to finish attaching." }
     }
 
     /// A copy of the file under its own name, for Quick Look, dragging out and
@@ -500,40 +610,93 @@ final class ComposeModel {
         saveNow()
     }
 
-    /// The window closed. An untouched draft that never reached Gmail goes
-    /// away; anything else stays in Drafts.
+    /// Closes the window once the draft is stored as closing leaves it: kept
+    /// in Drafts with the latest edits, or removed when blank or untouched.
+    /// A store that fails keeps the window open and says so, as does a file
+    /// that failed or is still being copied in. Asking again while a close
+    /// waits does nothing.
+    func requestClose() async {
+        guard isEditable, let draft else { return }
+        if let hold = attachmentHold {
+            alert = Problem(title: "Can't Close Message", message: hold)
+            return
+        }
+        isClosing = true
+        cancelTimers()
+        let action = closingAction(for: draft)
+        let problem = await serially { [self] in
+            // A file attached or removed just before may have failed meanwhile.
+            await storeForClosing(action) ?? attachmentHold.map { Problem(title: "Can't Close Message", message: $0) }
+        }.value
+        isClosing = false
+        if let problem { alert = problem } else { close() }
+    }
+
+    /// The window went away. Its close button stored the draft already. Any
+    /// other way, such as signing out, keeps or discards the draft as closing
+    /// would, without waiting.
     func windowClosed() {
         observation?.cancel()
         integrationRefresh?.cancel()
         featureObservation?.cancel()
         recipientAccountTask?.cancel()
         attachmentFiles.removeAll()
-        guard isEditable else { return }
+        guard isEditable, let draft else { return }
+        let action = closingAction(for: draft)
         phase = .closed
-        keepOrDiscard()
+        cancelTimers()
+        serially { [self] in _ = await storeForClosing(action) }
     }
 
-    /// Before quitting: keeps or discards the draft as closing the window
-    /// would, then waits until that is stored. A kept draft goes to Gmail,
-    /// so it shows in Drafts even when its window isn't restored.
-    func prepareToQuit() async {
-        if isEditable { keepOrDiscard() }
-        await lastWrite?.value
+    /// Before quitting: stores the draft as closing the window would, and
+    /// waits for that. A kept draft goes to Gmail, so it shows in Drafts even
+    /// when its window isn't restored. False when it couldn't be stored, or a
+    /// file failed to attach or to be removed; the window then stays as it
+    /// was, showing why.
+    func prepareToQuit() async -> Bool {
+        guard takesEdits, let draft else {
+            await lastWrite?.value
+            return true
+        }
+        cancelTimers()
+        let action = closingAction(for: draft)
+        return await serially { [self] in
+            // The draft goes first, so quitting anyway keeps its text.
+            await storeForClosing(action) == nil && attachmentHold == nil
+        }.value
     }
 
-    private func keepOrDiscard() {
-        guard let draft else { return }
-        switch closingAction(for: draft) {
+    /// Stores the draft as `action` leaves it, after the edits and files
+    /// queued before. Callers decide `action` when the close is asked for,
+    /// while a file still being copied in counts: the attachment list shows
+    /// it only later. Returns what keeps the window open instead, or nil.
+    private func storeForClosing(_ action: ClosingAction) async -> Problem? {
+        guard let engine = owner?.engine else { return nil }
+        switch action {
         case .discard:
-            cancelTimers()
-            guard let engine = owner?.engine else { return }
-            let id = localDraftID
-            serially { _ = try? await engine.discardDraft(id, hold: 0) }
+            // Blank or untouched, so a discard that fails loses nothing.
+            _ = try? await engine.discardDraft(localDraftID, hold: 0)
         case .save:
-            saveNow()
+            do {
+                // Edits made while the store ran go too.
+                var stored: DraftContent
+                repeat {
+                    stored = content
+                    try await engine.saveDraft(localDraftID, content: stored)
+                } while content != stored
+                hasPendingEdits = false
+                changedSinceSave = false
+                unsavedSince = nil
+                storeError = nil
+            } catch {
+                storeError = "Tern couldn't save this draft on this Mac."
+                return Problem(title: "Can't Close Message",
+                               message: "Tern couldn't save this draft on this Mac, so the window stays open. Try closing it again.")
+            }
         case .keep:
             break
         }
+        return nil
     }
 
     private enum ClosingAction {
@@ -546,7 +709,7 @@ final class ComposeModel {
         if draft.gmailDraftID == nil {
             let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
                 && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
-                && attachments.isEmpty && attachmentsInProgress == 0
+                && attachments.isEmpty && copying.isEmpty && failedAttachments.isEmpty
             let untouched = draft.revision == uneditedRevision && !isTouched
             if untouched || isBlank { return .discard }
         }
@@ -734,7 +897,7 @@ final class ComposeModel {
     /// A new message that is still blank stays on this Mac.
     private var shouldSaveToGmail: Bool {
         draft?.gmailDraftID != nil || !content.to.isEmpty || !content.cc.isEmpty || !content.bcc.isEmpty
-            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty || attachmentsInProgress > 0
+            || !content.subject.isEmpty || !content.body.isEmpty || !attachments.isEmpty || !copying.isEmpty
     }
 
     private func store() {

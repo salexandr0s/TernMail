@@ -21,22 +21,47 @@ struct CalendarTimeGrid: View {
     @State var drag: CalendarTimelineDrag?
     @State var dragCancelled = false
     @GestureState var pointerIsDown = false
-    /// Starts at 8 AM: the top padding plus eight `hourHeight` rows. A user's scroll
-    /// replaces the point, so the grid is never pulled back to it.
-    @State private var hourScroll = ScrollPosition(y: Tokens.Space.s2 + 8 * Tokens.Space.s16)
+    /// Starts at 8 AM: the top padding plus the `hourHeight` rows above it, which
+    /// are eight unless the clocks change earlier in the days shown. A user's
+    /// scroll replaces the point, so the grid is never pulled back to it.
+    @State private var hourScroll: ScrollPosition
 
-    var days: [Date] {
+    init(date: Date, isWeek: Bool, calendar: Calendar, events: [CalendarDisplayEvent], selectedID: Binding<String?>,
+         create: @escaping (CalendarEventRange) -> Void, edit: @escaping (CalendarDisplayEvent) -> Void,
+         change: @escaping (CalendarDisplayEvent, CalendarEventRange) -> Void, delete: @escaping (CalendarDisplayEvent) -> Void,
+         duplicate: @escaping (CalendarDisplayEvent) -> Void, dropMail: @escaping (MailLink, CalendarEventRange) -> Void) {
+        self.date = date
+        self.isWeek = isWeek
+        self.calendar = calendar
+        self.events = events
+        _selectedID = selectedID
+        self.create = create
+        self.edit = edit
+        self.change = change
+        self.delete = delete
+        self.duplicate = duplicate
+        self.dropMail = dropMail
+        let axis = CalendarTimeAxis(days: Self.days(showing: date, isWeek: isWeek, calendar: calendar), calendar: calendar)
+        _hourScroll = State(initialValue: ScrollPosition(y: Tokens.Space.s2 + CGFloat(axis.row(ofHour: 8)) * Tokens.Space.s16))
+    }
+
+    var days: [Date] { Self.days(showing: date, isWeek: isWeek, calendar: calendar) }
+    /// The hour rows of `days`. The drag gesture maps points through it too.
+    var timeAxis: CalendarTimeAxis { CalendarTimeAxis(days: days, calendar: calendar) }
+
+    private static func days(showing date: Date, isWeek: Bool, calendar: Calendar) -> [Date] {
         guard let interval = calendar.dateInterval(of: isWeek ? .weekOfYear : .day, for: date) else { return [] }
         return CalendarLayout.days(in: interval, calendar: calendar)
     }
 
     var body: some View {
+        let axis = timeAxis
         GeometryReader { geometry in
             let minimumWidth = gutter + CGFloat(days.count) * (Tokens.Space.s16 + Tokens.Space.s8)
             let contentWidth = max(geometry.size.width, minimumWidth)
             let columnWidth = (contentWidth - gutter) / CGFloat(max(1, days.count))
             ScrollView(.horizontal) {
-                timeline(columnWidth: columnWidth)
+                timeline(columnWidth: columnWidth, axis: axis)
                     .frame(width: contentWidth, height: geometry.size.height)
             }
             .calendarTimelineFrame(.canvas)
@@ -76,7 +101,7 @@ struct CalendarTimeGrid: View {
         return nil
     }
 
-    private func timeline(columnWidth: CGFloat) -> some View {
+    private func timeline(columnWidth: CGFloat, axis: CalendarTimeAxis) -> some View {
         VStack(spacing: 0) {
             dayHeaders(columnWidth: columnWidth)
             Divider()
@@ -85,15 +110,14 @@ struct CalendarTimeGrid: View {
             ScrollView(.vertical) {
                 HStack(alignment: .top, spacing: 0) {
                     VStack(spacing: 0) {
-                        ForEach(0..<24) { hour in
-                            Text(CalendarLayout.format(CalendarInteraction.date(at: hour * 60, on: date, calendar: calendar),
-                                                       style: .dateTime.hour(), calendar: calendar))
+                        ForEach(0..<axis.rows.count, id: \.self) { row in
+                            Text(CalendarLayout.format(axis.rowDates[row], style: .dateTime.hour(), calendar: calendar))
                                 .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
                                 .frame(width: gutter - Tokens.Space.s2, height: hourHeight, alignment: .topTrailing)
                                 .padding(.trailing, Tokens.Space.s2)
                         }
                     }
-                    ForEach(days, id: \.self) { day in dayColumn(day, width: columnWidth) }
+                    ForEach(days, id: \.self) { day in dayColumn(day, width: columnWidth, axis: axis) }
                 }
                 .calendarTimelineFrame(.content)
                 .background(CalendarDragAutoScroll(direction: scrollDirection))
@@ -197,13 +221,14 @@ struct CalendarTimeGrid: View {
             .help(action.isStartEdge ? "Drag to change the first day" : "Drag to change the last day")
     }
 
-    private func dayColumn(_ day: Date, width: CGFloat) -> some View {
+    private func dayColumn(_ day: Date, width: CGFloat, axis: CalendarTimeAxis) -> some View {
         let timed = CalendarLayout.events(events, on: day, calendar: calendar).filter { !$0.isAllDay }
-        let placements = CalendarTimelinePlacement.layout(timed, day: day, calendar: calendar)
+        let placements = CalendarTimelinePlacement.layout(timed, day: day, axis: axis)
         return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
-                ForEach(0..<24) { _ in
+                ForEach(0..<axis.rows.count, id: \.self) { row in
                     Rectangle().fill(Color.clear).frame(height: hourHeight)
+                        .overlay { if !axis.has(row: row, on: day) { missingHour(axis.rows[row]) } }
                         .overlay(alignment: .top) { Divider() }
                         .overlay { Rectangle().fill(Tokens.Surface.border).frame(height: Tokens.Border.hairline).opacity(Tokens.Calendar.selectedTint) }
                 }
@@ -224,7 +249,7 @@ struct CalendarTimeGrid: View {
                             y: CGFloat(placement.startMinute) / 60 * hourHeight)
             }
             if let preview = previewEvent, !preview.isAllDay,
-               let placement = CalendarTimelinePlacement.layout(CalendarLayout.events([preview], on: day, calendar: calendar), day: day, calendar: calendar).first {
+               let placement = CalendarTimelinePlacement.layout(CalendarLayout.events([preview], on: day, calendar: calendar), day: day, axis: axis).first {
                 CalendarTimelineEvent(event: preview, selected: true, height: max(Tokens.Space.s6, CGFloat(placement.endMinute - placement.startMinute) / 60 * hourHeight),
                                       calendar: calendar, showsRange: true)
                     .frame(width: max(Tokens.Space.s1, width - Tokens.Space.s1))
@@ -233,18 +258,25 @@ struct CalendarTimeGrid: View {
             }
             if calendar.isDateInToday(day) {
                 TimelineView(.periodic(from: .now, by: 60)) { context in
-                    let parts = calendar.dateComponents([.hour, .minute], from: context.date)
+                    let minute = axis.minute(of: context.date, on: day).rounded(.down)
                     Rectangle().fill(Color.accentColor).frame(height: Tokens.Border.focus)
                         .overlay(alignment: .leading) { Circle().fill(Color.accentColor).frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5) }
-                        .offset(y: CGFloat((parts.hour ?? 0) * 60 + (parts.minute ?? 0)) / 60 * hourHeight)
+                        .offset(y: CGFloat(minute) / 60 * hourHeight)
                 }.allowsHitTesting(false)
             }
         }
-        .frame(width: width, height: hourHeight * 24)
+        .frame(width: width, height: hourHeight * CGFloat(axis.rows.count))
         .background { if calendar.isDateInToday(day) { Color.accentColor.opacity(Tokens.Calendar.todayTint) } }
         .background(calendar.isDateInWeekend(day) ? Tokens.Surface.muted : Tokens.Surface.primary)
         .clipped()
         .overlay(alignment: .trailing) { Rectangle().fill(Tokens.Surface.border).frame(width: Tokens.Border.hairline).allowsHitTesting(false) }
+    }
+
+    /// A row of a week that this day's clock never shows: the hour it skips, or
+    /// the repeat of an hour that only another day has.
+    private func missingHour(_ row: CalendarTimeAxis.Row) -> some View {
+        Rectangle().fill(Tokens.Surface.border)
+            .help(row.pass > 0 ? "This hour repeats only on the day the clocks go back" : "The clocks skip this hour on this day")
     }
 
     private func eventCard(_ placement: CalendarTimelinePlacement, day: Date) -> some View {

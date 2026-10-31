@@ -57,7 +57,7 @@ struct SettingsView: View {
                minHeight: Tokens.Settings.minHeight, idealHeight: Tokens.Settings.height)
         .environment(unsaved)
         .background {
-            SettingsWindowCloseGuard { window in
+            WindowCloseGuard { window in
                 guard unsaved.subject != nil else { return true }
                 pendingLeave = .close(window)
                 return false
@@ -194,45 +194,6 @@ struct SettingsView: View {
     private enum PendingLeave {
         case destination(SettingsDestination)
         case close(NSWindow)
-    }
-}
-
-/// Vetoes closing the window while a pane holds unsaved edits. Every other
-/// delegate call still reaches the delegate SwiftUI installed.
-private struct SettingsWindowCloseGuard: NSViewRepresentable {
-    let shouldClose: @MainActor (NSWindow) -> Bool
-
-    func makeNSView(context: Context) -> GuardView { GuardView() }
-
-    func updateNSView(_ nsView: GuardView, context: Context) {
-        nsView.delegate.shouldClose = shouldClose
-    }
-
-    final class GuardView: NSView {
-        let delegate = ForwardingDelegate()
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let window, window.delegate !== delegate else { return }
-            delegate.next = window.delegate
-            window.delegate = delegate
-        }
-    }
-
-    final class ForwardingDelegate: NSObject, NSWindowDelegate {
-        weak var next: NSWindowDelegate?
-        var shouldClose: @MainActor (NSWindow) -> Bool = { _ in true }
-
-        func windowShouldClose(_ sender: NSWindow) -> Bool {
-            guard shouldClose(sender) else { return false }
-            return next?.windowShouldClose?(sender) ?? true
-        }
-
-        override func responds(to aSelector: Selector!) -> Bool {
-            super.responds(to: aSelector) || next?.responds(to: aSelector) == true
-        }
-
-        override func forwardingTarget(for aSelector: Selector!) -> Any? { next }
     }
 }
 

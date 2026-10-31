@@ -889,7 +889,22 @@ final class AppModel {
 
     // MARK: Quitting
 
+    /// What stops a quit until the person tries again, stays open or quits anyway.
+    enum QuitProblem: Error, Equatable {
+        /// Open drafts Tern couldn't store, by window title.
+        case unsavedDrafts([String])
+        /// The Outbox couldn't be read, so what still waits to send is unknown.
+        case unreadableOutbox
+    }
+
     /// Stores what open compose windows show, so quitting loses no typing.
+    /// Nothing has stopped when this throws, so Tern can stay open as it was.
+    func storeOpenDrafts() async throws(QuitProblem) {
+        let unsaved = await mailbox?.prepareToQuit() ?? []
+        guard unsaved.isEmpty else { throw QuitProblem.unsavedDrafts(unsaved) }
+    }
+
+    /// Stops background work before quitting. `cancelQuit()` starts it again.
     func prepareToQuit() async {
         inboxUpdatesAreStopped = true
         await maintenanceModel?.suspend()
@@ -900,7 +915,6 @@ final class AppModel {
         assistantModel?.stop()
         assistantModel?.connection.cancelSignIn()
         await calendarModel?.stop()
-        await mailbox?.prepareToQuit()
     }
 
     /// A user can keep Tern open after its final send attempt fails.
@@ -917,20 +931,33 @@ final class AppModel {
 
     /// Drafts whose send waits out its undo delay or a retry, which quitting
     /// sends at once. Read from the cache, since the Outbox can lag behind a
-    /// send that just changed.
-    func sendingDraftIDs() async -> Set<String> {
+    /// send that just changed. A read that fails throws rather than passing
+    /// for an empty Outbox.
+    func sendingDraftIDs() async throws(QuitProblem) -> Set<String> {
         let paused = Set(mailbox?.accounts.filter { !$0.syncEnabled }.map(\.account.id) ?? [])
-        return Set(await localDrafts().filter { $0.state == .sending && !paused.contains($0.accountID) }.map(\.id))
+        let drafts = try await localDrafts()
+        return Set(drafts.filter { $0.state == .sending && !paused.contains($0.accountID) }.map(\.id))
     }
 
     /// How many of `ids` Gmail refused to send, which returns them to editing.
-    func refusedDraftCount(among ids: Set<String>) async -> Int {
-        await localDrafts().filter { ids.contains($0.id) && $0.state == .editing }.count
+    func refusedDraftCount(among ids: Set<String>) async throws(QuitProblem) -> Int {
+        let drafts = try await localDrafts()
+        return drafts.filter { ids.contains($0.id) && $0.state == .editing }.count
     }
 
-    private func localDrafts() async -> [LocalDraft] {
+    private func localDrafts() async throws(QuitProblem) -> [LocalDraft] {
         guard let cache, let accountIDs = mailbox?.accounts.map(\.account.id) else { return [] }
-        return (try? await cache.read { tx in try accountIDs.flatMap { try tx.localDrafts(accountID: $0) } }) ?? []
+        return try await Self.localDrafts(of: accountIDs, in: cache)
+    }
+
+    /// The drafts of `accountIDs` in `cache`. A read that fails throws, so it
+    /// never passes for an Outbox with nothing waiting.
+    static func localDrafts(of accountIDs: [String], in cache: MailCache) async throws(QuitProblem) -> [LocalDraft] {
+        do {
+            return try await cache.read { tx in try accountIDs.flatMap { try tx.localDrafts(accountID: $0) } }
+        } catch {
+            throw QuitProblem.unreadableOutbox
+        }
     }
 
     /// Sends every waiting message now. False when one of them couldn't

@@ -30,7 +30,8 @@ actor AuditGmail: GmailService {
 
     private var drafts: [String: String] = [:]
     private var nextDraft = 1
-    private static let systemLabels = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"]
+    /// Gmail lists UNREAD with the other system labels and answers `labels.get` for it.
+    private static let systemLabels = ["INBOX", "STARRED", "UNREAD", "SENT", "DRAFT", "SPAM", "TRASH"]
     private var userLabels = [UserLabel(id: "Label_1", name: "Hiking")]
     private var nextLabel = 2
     private var shouldFailNextThreadLoad = false
@@ -38,7 +39,7 @@ actor AuditGmail: GmailService {
     private var version = 200
     private let referenceDate = Date.now
     private var mail: [Message] = [
-        Message(id: "m1", thread: "t1", subject: "Field notes", text: "<p>Today’s field notes.</p><img src='https://example.invalid/pixel'><p><a href='https://example.com/'>Example link</a></p><div style='width:900px;background:#eef'>Wide message, right edge →</div>" + String(repeating: "<p>Another paragraph of synthetic mail.</p>", count: 18), html: true, labels: ["INBOX", "UNREAD"]),
+        Message(id: "m1", thread: "t1", subject: "Field notes", text: "<p>Today’s field notes.</p><img src='https://example.invalid/pixel'><img src='https://example.invalid/open.gif' width='1' height='1'><img src='https://example.invalid/click.gif' style='width:1px;height:1px'><p><a href='https://example.com/'>Example link</a></p><div style='width:900px;background:#eef'>Wide message, right edge →</div>" + String(repeating: "<p>Another paragraph of synthetic mail.</p>", count: 18), html: true, labels: ["INBOX", "UNREAD"]),
         Message(id: "m2", thread: "t2", subject: "Weekend plans", text: "The earlier message.", html: false, labels: ["INBOX"]),
         Message(id: "m3", thread: "t2", subject: "Weekend plans", text: "The latest reply. See https://example.com/ for details.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], attachment: "Trail map.txt"),
         Message(id: "m4", thread: "t3", subject: "Trail plans", text: "Archived mail with a custom label.", html: false, labels: ["Label_1", "UNREAD"]),
@@ -133,8 +134,12 @@ actor AuditGmail: GmailService {
         Set(mail.filter { $0.labels.contains(labelID) && $0.labels.contains("UNREAD") }.map(\.thread)).count
     }
 
+    /// Like Gmail's batch, answers every ID, with a 404 for a label it doesn't have.
     func labels(ids: [String]) throws -> [String: Result<GmailLabel, GmailError>] {
-        Dictionary(uniqueKeysWithValues: try labels().filter { ids.contains($0.id) }.map { ($0.id, .success($0)) })
+        let all = try labels()
+        return Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, all.first { $0.id == id }.map { .success($0) } ?? .failure(.notFound))
+        })
     }
 
     func listMessages(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) throws -> MessageListPage {
@@ -200,7 +205,7 @@ actor AuditGmail: GmailService {
 
     func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
         let changed = mail.filter { $0.history > (Int(startHistoryID) ?? 0) }
-        let allLabels = Set(Self.systemLabels + ["UNREAD"] + userLabels.map(\.id))
+        let allLabels = Set(Self.systemLabels + userLabels.map(\.id))
         return try decode(["historyId": String(version), "history": changed.map { message in
             ["id": String(message.history),
              "labelsAdded": [["message": ["id": message.id, "threadId": message.thread], "labelIds": Array(message.labels)]],

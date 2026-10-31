@@ -34,18 +34,13 @@ struct CalendarEventRange: Equatable {
 enum CalendarInteraction {
     static let snapMinutes = 15
 
-    static func snappedMinute(at y: CGFloat, hourHeight: CGFloat, allowEndOfDay: Bool = false) -> Int {
-        guard y.isFinite, hourHeight > 0 else { return 0 }
-        let minute = min(1440, max(0, y / hourHeight * 60))
-        let snapped = Int((minute / CGFloat(snapMinutes)).rounded()) * snapMinutes
-        return min(allowEndOfDay ? 1440 : 1440 - snapMinutes, max(0, snapped))
-    }
-
-    static func date(at minute: Int, on day: Date, calendar: Calendar) -> Date {
-        if minute >= 1440 {
-            return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day)) ?? day
-        }
-        return CalendarLayout.date(at: max(0, minute), on: day, calendar: calendar)
+    /// Rounds `date` to a quarter hour of its day's real time, so a time in the
+    /// hour the clocks repeat stays in the pass it was in.
+    static func snapped(_ date: Date, calendar: Calendar) -> Date {
+        let day = calendar.startOfDay(for: date)
+        let minutes = (date.timeIntervalSince(day) / 60).rounded(.down)
+        let step = Double(snapMinutes)
+        return day.addingTimeInterval((minutes / step).rounded() * step * 60)
     }
 
     static func selection(from anchor: Date, to target: Date, allDay: Bool, calendar: Calendar) -> CalendarEventRange {
@@ -76,6 +71,16 @@ enum CalendarInteraction {
             end = start.addingTimeInterval(duration)
         }
         return CalendarEventRange(start: start, end: end, isAllDay: targetAllDay)
+    }
+
+    /// Where a drag in the hours puts `event`: it keeps its real-time offset from
+    /// the point it was grabbed at, so after the clocks go back it can land in
+    /// either pass of the repeated hour. An all-day event starts at the pointer.
+    static func dragging(_ event: CalendarDisplayEvent, from anchor: Date, to target: Date,
+                         calendar: Calendar) -> CalendarEventRange {
+        let candidate = event.isAllDay ? target : event.start.addingTimeInterval(target.timeIntervalSince(anchor))
+        let start = candidate == event.start && !event.isAllDay ? event.start : snapped(candidate, calendar: calendar)
+        return moving(event, to: start, allDay: false, calendar: calendar)
     }
 
     /// Month/all-day moves keep the day under the pointer attached to the pointer.

@@ -44,12 +44,39 @@ import Testing
         model.start()
         try await waitUntil { model.phase == .open }
 
-        model.windowClosed()
+        // A normal close asks nothing.
+        await model.requestClose()
+        #expect(model.phase == .closed && model.alert == nil)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while try await cache.read({ try $0.localDraft(id: id) }) != nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await cache.read { try $0.localDraft(id: id) } == nil)
+        await mailbox.stop()
+    }
+
+    @Test func closingWaitsForTheStoreAndStaysOpenWhenItFails() async throws {
+        let file = CacheFile()
+        let (mailbox, cache) = try await makeMailbox(in: file)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        #expect(!model.closesAtOnce)
+
+        try file.refuse("UPDATE", on: "localDraft")
+        model.content.subject = "Plan"
+        await model.requestClose()
+        // Still open, showing the error, with the edit this Mac doesn't have.
+        #expect(model.phase == .open && model.isEditable && model.content.subject == "Plan")
+        #expect(model.alert?.title == "Can't Close Message" && model.status?.isError == true)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject != "Plan")
+
+        try file.allow("UPDATE", on: "localDraft")
+        model.alert = nil
+        await model.requestClose()
+        #expect(model.phase == .closed && model.alert == nil)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         await mailbox.stop()
     }
 
@@ -98,6 +125,67 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func aFileThatFailsToAttachStaysListedAndHoldsSendAndCloseUntilRetried() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.content.to = [EmailAddress(address: "pat@example.com")]
+        let folder = FileManager.default.temporaryDirectory.appending(path: "TernAttachTests-\(UUID().uuidString)")
+        let file = folder.appending(path: "agenda.txt")
+
+        // Not there yet, so copying it in fails.
+        model.attach([.file(file)])
+        #expect(await model.send() == false)
+        #expect(model.alert == ComposeModel.Problem(title: "Can't Send Yet", message: "Wait for “agenda.txt” to finish attaching."))
+        try await waitUntil { !model.failedAttachments.isEmpty }
+        #expect(model.failedAttachments.map(\.filename) == ["agenda.txt"])
+        #expect(await model.send() == false)
+        #expect(model.alert?.message == "“agenda.txt” couldn't be attached. Retry or remove it first.")
+        await model.requestClose()
+        #expect(model.phase == .open && model.alert?.title == "Can't Close Message")
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.state == .editing)
+
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("agenda".utf8).write(to: file)
+        let failure = try #require(model.failedAttachments.first)
+        model.retry(failure)
+        try await waitUntil { model.attachments.count == 1 }
+        #expect(model.failedAttachments.isEmpty && model.attachments.first?.filename == "agenda.txt")
+        #expect(await model.send())
+        await mailbox.stop()
+    }
+
+    @Test func aFileThatFailsToBeRemovedStaysAttachedAndHoldsSendUntilRetried() async throws {
+        let file = CacheFile()
+        let (mailbox, _) = try await makeMailbox(in: file)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.content.to = [EmailAddress(address: "pat@example.com")]
+        model.attach([.data(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain")])
+        try await waitUntil { model.attachments.count == 1 }
+        let agenda = try #require(model.attachments.first)
+
+        try file.refuse("DELETE", on: "outgoingAttachment")
+        model.removeAttachment(agenda)
+        try await waitUntil { !model.failedAttachments.isEmpty }
+        #expect(model.failedAttachments.first?.removedID == agenda.id)
+        #expect(model.attachments.map(\.id) == [agenda.id])
+        #expect(await model.send() == false)
+        #expect(model.alert?.message == "“agenda.txt” couldn't be removed. Retry or keep it first.")
+
+        try file.allow("DELETE", on: "outgoingAttachment")
+        let failure = try #require(model.failedAttachments.first)
+        model.retry(failure)
+        try await waitUntil { model.attachments.isEmpty }
+        #expect(model.failedAttachments.isEmpty)
+        #expect(await model.send())
+        await mailbox.stop()
+    }
+
     @Test func undoingADiscardBringsBackTheLastEdits() async throws {
         let (mailbox, cache) = try await makeMailbox()
         let id = try #require(await mailbox.startCompose(.newMessage))
@@ -120,13 +208,32 @@ import Testing
         try await waitUntil { model.phase == .open }
 
         model.content.subject = "Plan"
-        await mailbox.prepareToQuit()
+        #expect(await mailbox.prepareToQuit().isEmpty)
         #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while try await cache.read({ try $0.localDraft(id: id) })?.gmailDraftID == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await cache.read { try $0.localDraft(id: id) }?.gmailDraftID != nil)
+        await mailbox.stop()
+    }
+
+    @Test func quittingStopsWhileADraftCanNotBeStored() async throws {
+        let file = CacheFile()
+        let (mailbox, cache) = try await makeMailbox(in: file)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+
+        try file.refuse("UPDATE", on: "localDraft")
+        model.content.subject = "Plan"
+        #expect(await mailbox.prepareToQuit() == ["Plan"])
+        #expect(model.phase == .open && model.isEditable && model.content.subject == "Plan")
+
+        try file.allow("UPDATE", on: "localDraft")
+        #expect(await mailbox.prepareToQuit().isEmpty)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         await mailbox.stop()
     }
 
@@ -181,8 +288,9 @@ import Testing
         await mailbox.stop()
     }
 
-    private func makeMailbox() async throws -> (MailboxModel, MailCache) {
-        let cache = try MailCache.inMemory()
+    /// A mailbox whose cache is in memory, or in `file` for a test that breaks it.
+    private func makeMailbox(in file: CacheFile? = nil) async throws -> (MailboxModel, MailCache) {
+        let cache = try file.map { try MailCache.open(at: $0.url) } ?? MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
         let outgoing = FileManager.default.temporaryDirectory.appending(path: "TernComposeTests-\(UUID().uuidString)")
         let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)

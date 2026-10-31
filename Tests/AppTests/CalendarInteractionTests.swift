@@ -24,9 +24,8 @@ import Testing
     @Test func backwardSelectionsAndMidnightKeepPositiveExclusiveRanges() throws {
         let calendar = try calendar()
         let day = try date(30, calendar: calendar)
-        let midnight = CalendarInteraction.date(at: 1440, on: day, calendar: calendar)
-        #expect(midnight == calendar.date(byAdding: .day, value: 1, to: day))
-        let late = CalendarInteraction.date(at: 1425, on: day, calendar: calendar)
+        let midnight = try date(31, calendar: calendar)
+        let late = midnight.addingTimeInterval(-900)
         let interval = CalendarInteraction.selection(from: midnight, to: late, allDay: false, calendar: calendar)
         #expect(interval.start == late)
         #expect(interval.end == midnight)
@@ -110,11 +109,32 @@ import Testing
         #expect(Set(changed.changedFields(from: original).keys) == Set(["start"]))
     }
 
-    @Test func snappingClampsCreationAndAllowsMidnightForResizing() {
-        #expect(CalendarInteraction.snappedMinute(at: -20, hourHeight: 60) == 0)
-        #expect(CalendarInteraction.snappedMinute(at: 37, hourHeight: 60) == 30)
-        #expect(CalendarInteraction.snappedMinute(at: 38, hourHeight: 60) == 45)
-        #expect(CalendarInteraction.snappedMinute(at: 1500, hourHeight: 60) == 1425)
-        #expect(CalendarInteraction.snappedMinute(at: 1500, hourHeight: 60, allowEndOfDay: true) == 1440)
+    @Test func snappingClampsCreationAndAllowsMidnightForResizing() throws {
+        let calendar = try calendar()
+        let day = try date(30, calendar: calendar)
+        let midnight = try date(31, calendar: calendar)
+        let axis = CalendarTimeAxis(days: [day], calendar: calendar)
+        #expect(axis.date(atMinute: -20, on: day) == day)
+        #expect(axis.date(atMinute: 37, on: day) == day.addingTimeInterval(30 * 60))
+        #expect(axis.date(atMinute: 38, on: day) == day.addingTimeInterval(45 * 60))
+        #expect(axis.date(atMinute: 1500, on: day) == midnight.addingTimeInterval(-15 * 60))
+        #expect(axis.date(atMinute: 1500, on: day, allowEndOfDay: true) == midnight)
+        #expect(axis.date(atMinute: 1500, on: day, snapped: false) == midnight.addingTimeInterval(-60))
+    }
+
+    @Test func dragIntoTheRepeatedHourKeepsTheSecondPass() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Berlin"))
+        let day = try date(25, calendar: calendar)
+        let firstPass = day.addingTimeInterval(2 * 3600 + 900)
+        let secondPass = day.addingTimeInterval(3 * 3600 + 900)
+        #expect(calendar.dateComponents([.hour, .minute], from: firstPass) == calendar.dateComponents([.hour, .minute], from: secondPass))
+        let original = event(start: firstPass.addingTimeInterval(-3600), end: firstPass, allDay: false, calendar: calendar)
+        let grabbed = original.start.addingTimeInterval(600)
+        // Two real hours later, plus four minutes that the snap rounds away.
+        let moved = CalendarInteraction.dragging(original, from: grabbed, to: grabbed.addingTimeInterval(2 * 3600 + 240), calendar: calendar)
+        #expect(moved.start == secondPass)
+        #expect(moved.end == secondPass.addingTimeInterval(3600))
+        #expect(CalendarInteraction.dragging(original, from: grabbed, to: grabbed, calendar: calendar) == CalendarEventRange(original))
     }
 }

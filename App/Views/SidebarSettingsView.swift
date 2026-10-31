@@ -10,7 +10,7 @@ struct SidebarSettingsView: View {
                 DisclosureGroup("Inbox categories") {
                     VStack(spacing: 0) {
                         ForEach(InboxCategory.allCases, id: \.rawValue) { category in
-                            SettingsAsyncToggleRow(category.rawValue.capitalized,
+                            SettingsAsyncToggleRow(SystemMailbox(labelID: category.labelID).title,
                                                    isOn: mailbox.accountPresentation[owner.account.id]?.inboxCategories.contains(category) == true) { enabled in
                                 await mailbox.setCategory(category, enabled: enabled, accountID: owner.account.id)
                             }
