@@ -12,7 +12,8 @@ struct MainView: View {
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var isCompactWindow = false
     @State private var showsAssistant = false
-    @State private var preferredAssistantWidth = Tokens.Assistant.sidebarWidth
+    /// `Double`, because `@AppStorage` cannot store `CGFloat`.
+    @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @AppStorage("mailColumnVisibility") private var storedColumnVisibility = ""
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
@@ -68,7 +69,7 @@ struct MainView: View {
         let contentTopInset = paneSizing.contentTopInset
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
-                preferredWidth: preferredAssistantWidth, isPresented: showsAssistant)
+                preferredWidth: CGFloat(preferredAssistantWidth), isPresented: showsAssistant)
             HStack(spacing: 0) {
                 mailContent(topInset: contentTopInset)
                     .frame(width: layout.mailWidth)
@@ -274,7 +275,7 @@ struct MainView: View {
     }
 
     private func resizeAssistant(_ width: CGFloat) {
-        preferredAssistantWidth = min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth)
+        preferredAssistantWidth = Double(min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth))
     }
 
     private func openAssistantWindow(fullScreen: Bool) {

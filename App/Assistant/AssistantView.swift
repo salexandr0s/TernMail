@@ -39,6 +39,7 @@ struct AssistantView: View {
             composer
         }
         .background(Tokens.Surface.primary)
+        .onKeyPress(.escape) { closeOnEscape() }
         .task {
             guard !hasPlacedInitialFocus else { return }
             // Let the native field join the window before assigning focus.
@@ -235,6 +236,17 @@ struct AssistantView: View {
         model.send(model.composerText)
         if model.isRunning { model.composerText = "" }
         isComposerFocused = true
+    }
+
+    /// Esc closes the sidebar unless the composer holds a message or an unfinished
+    /// input-method entry. The detached window stays open, like any window.
+    private func closeOnEscape() -> KeyPress.Result {
+        guard let onClose, model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .ignored
+        }
+        if let editor = NSApp.keyWindow?.firstResponder as? NSTextInputClient, editor.hasMarkedText() { return .ignored }
+        onClose()
+        return .handled
     }
 
     private func startNewChat() {
