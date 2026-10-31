@@ -192,6 +192,23 @@ import Testing
         #expect(try first("Starts 9am-11am on July 15, 2031.").end == (try date("2031-07-15T11:00:00Z")))
     }
 
+    @Test func onlyASenderClockInAnotherZoneCountsAsADifference() throws {
+        let paris = try #require(TimeZone(identifier: "Europe/Paris"))
+        let winter = try date("2031-01-15T08:00:00Z")
+        let summer = try date("2031-07-01T08:00:00Z")
+        func difference(_ offset: Int?, _ sent: Date) -> Int? {
+            CalendarDetection.senderClockDifference(dateHeaderOffset: offset, sentAt: sent, readerTimeZone: paris)
+        }
+        // Pacific daylight time runs nine hours behind Paris in summer.
+        #expect(difference(-25_200, summer) == -32_400)
+        // +01:00 is Paris itself in winter, and London in summer.
+        #expect(difference(3_600, winter) == nil)
+        #expect(difference(3_600, summer) == -3_600)
+        // Servers and bulk senders write +0000 whatever their events' zone.
+        #expect(difference(0, summer) == nil)
+        #expect(difference(nil, summer) == nil)
+    }
+
     @Test func forwardedTextAndOversizedInputAreExcluded() throws {
         let text = "Thanks.\n---------- Forwarded message ---------\nMeet July 15, 2031 at 14:00."
         #expect(CalendarDetection.suggestions(in: text, messageDate: try date("2031-07-01T10:00:00Z")).isEmpty)

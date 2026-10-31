@@ -3,6 +3,8 @@ import SwiftSoup
 
 /// A date found in a message is a candidate for review, not a confirmed meeting.
 public struct DetectedCalendarSuggestion: Codable, Sendable, Equatable, Identifiable {
+    /// `timeZoneMissing` means the text gives a time without a zone. That only
+    /// matters when the sender is elsewhere (`senderClockDifference`).
     public enum Uncertainty: String, Codable, Sendable {
         case dateNeedsReview, timeNeedsReview, timeZoneMissing, durationMissing
     }
@@ -86,6 +88,16 @@ public enum CalendarDetection {
                 && timedStarts.contains { calendar.isDate($0, inSameDayAs: candidate.start) }
         }
         return Array(results.prefix(maximumSuggestions))
+    }
+
+    /// How many seconds the sender's clock ran ahead of the reader's when the
+    /// message was sent, from the Date header's UTC offset. Nil when the two
+    /// agree or the header tells nothing: mail servers and bulk senders often
+    /// write +0000 whatever zone their events are in.
+    public static func senderClockDifference(dateHeaderOffset: Int?, sentAt date: Date, readerTimeZone: TimeZone) -> Int? {
+        guard let dateHeaderOffset, dateHeaderOffset != 0 else { return nil }
+        let difference = dateHeaderOffset - readerTimeZone.secondsFromGMT(for: date)
+        return difference == 0 ? nil : difference
     }
 
     /// Masking keeps source offsets stable while excluding common quotation and
