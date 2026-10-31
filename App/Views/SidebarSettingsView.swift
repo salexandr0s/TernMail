@@ -19,7 +19,6 @@ struct SidebarSettingsView: View {
                 }
                 .padding(.horizontal, Tokens.Space.s4)
                 .padding(.vertical, Tokens.Space.s2)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 DisclosureGroup("Label visibility") {
                     VStack(spacing: 0) {
                         let labels = owner.labels.filter { !$0.isSystem }

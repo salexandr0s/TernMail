@@ -36,7 +36,6 @@ struct ComposePreferencesPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Format Markdown", detail: "Apply formatting to typed and pasted Markdown.", isOn: $markdown)
             }
 
@@ -50,7 +49,6 @@ struct ComposePreferencesPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Show full recipient addresses", isOn: $fullAddresses)
             }
         }

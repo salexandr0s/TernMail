@@ -34,7 +34,6 @@ struct LocalSignaturesPane: View {
                 }
                 .padding(.horizontal, Tokens.Space.s3)
                 .padding(.vertical, Tokens.Space.s2)
-                Divider().padding(.horizontal, Tokens.Space.s3)
                 HStack(spacing: Tokens.Space.s3) {
                     Text("Name")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
@@ -61,7 +60,6 @@ struct LocalSignaturesPane: View {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("Address") {
                     Picker("Address", selection: $address) {
                         Text("Account default").tag("")
@@ -69,21 +67,16 @@ struct LocalSignaturesPane: View {
                     }
                     .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("New messages") {
                     signaturePicker("New messages", selection: $assignment.newMessages)
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("Replies and forwards") {
                     signaturePicker("Replies and forwards", selection: $assignment.replies)
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Place signature above quoted text", isOn: $assignment.placeAboveQuote)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Include signature separator (--)", isOn: $assignment.includeSeparator)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 HStack {
                     if loadingAssignment { ProgressView().controlSize(.small) }
                     Spacer()

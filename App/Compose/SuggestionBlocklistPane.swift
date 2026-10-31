@@ -16,7 +16,6 @@ struct SuggestionBlocklistPane: View {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     HStack(spacing: Tokens.Space.s2) {
                         TextField("Email address", text: $address)
@@ -55,7 +54,6 @@ struct SuggestionBlocklistPane: View {
                     .padding(.vertical, Tokens.Space.s3)
                 } else {
                     ForEach(blocked, id: \.self) { entry in
-                        if entry != blocked.first { Divider().padding(.horizontal, Tokens.Space.s4) }
                         HStack(spacing: Tokens.Space.s3) {
                             Image(systemName: "envelope")
                                 .foregroundStyle(.secondary)

@@ -32,7 +32,6 @@ struct ComposeTemplatesPane: View {
                 }
                 .padding(.horizontal, Tokens.Space.s3)
                 .padding(.vertical, Tokens.Space.s2)
-                Divider().padding(.horizontal, Tokens.Space.s3)
                 HStack(spacing: Tokens.Space.s3) {
                     Text("Name")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)

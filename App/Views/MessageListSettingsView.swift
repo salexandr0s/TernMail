@@ -15,17 +15,13 @@ struct MessageListSettingsView: View {
                     .fixedSize()
                     .help("Compact density hides message previews.")
                 }
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Show account badges", isOn: $preferences.showsAccountBadges)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Show importance markers", isOn: $preferences.showsImportance)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Show quick filters", isOn: $preferences.showsQuickFilters)
             }
 
             SettingsGroup("Selection", systemImage: "cursorarrow") {
                 SettingsToggleRow("Group messages into conversations", isOn: $preferences.conversations)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsControlRow("After archiving or moving to Trash") {
                     Picker("Select next message", selection: $preferences.nextSelection) {
                         ForEach(MailNextSelection.allCases) { Text($0.title).tag($0) }
@@ -61,11 +57,8 @@ struct MessageListSettingsView: View {
 
             SettingsGroup("Sidebar", systemImage: "sidebar.left") {
                 SettingsToggleRow("Show More mailboxes", isOn: $preferences.showsMore)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Total count for Starred", isOn: $preferences.starredTotal)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Total count for Drafts", isOn: $preferences.draftsTotal)
-                Divider().padding(.horizontal, Tokens.Space.s4)
                 SettingsToggleRow("Unread count for Spam", isOn: $preferences.spamUnread)
             }
             if let mailbox { SidebarSettingsView(mailbox: mailbox) }

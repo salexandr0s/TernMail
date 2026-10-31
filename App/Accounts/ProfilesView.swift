@@ -8,41 +8,45 @@ struct ProfilesView: View {
 
     var body: some View {
         SettingsPage {
-            HStack(spacing: Tokens.Space.s3) {
-                profileIcon("tray.2", color: .accentColor)
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("All accounts").font(.body.weight(.medium))
-                    Text("\(accountCount(model.records.count)) · Always includes every account")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: Tokens.Space.s2)
-                if model.activeProfileID == nil { activeBadge }
-            }
-            .padding(.horizontal, Tokens.Space.s4)
-            .padding(.vertical, Tokens.Space.s2)
-            .settingsSurface()
-
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                HStack {
-                    Text("Your profiles").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    Text("\(model.profiles.count)").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Add Profile", systemImage: "plus") {
-                        editing = MailProfile(name: "", sortOrder: model.profiles.count)
+            Section {
+                HStack(spacing: Tokens.Space.s3) {
+                    profileIcon("tray.2", color: .accentColor)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        Text("All accounts").font(.body.weight(.medium))
+                        Text("\(accountCount(model.records.count)) · Always includes every account")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    Spacer(minLength: Tokens.Space.s2)
+                    if model.activeProfileID == nil { activeBadge }
                 }
+                .padding(.vertical, Tokens.Space.s1)
+            }
+
+            Section {
                 if model.profiles.isEmpty { emptyProfiles }
                 else {
                     ForEach(model.profiles) { profile in profileCard(profile) }
                 }
+            } header: {
+                HStack {
+                    Text("Your profiles")
+                    Text("\(model.profiles.count)").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Add Profile", systemImage: "plus") {
+                        editing = MailProfile(name: "", sortOrder: model.profiles.count)
+                    }
+                    .controlSize(.small)
+                }
+            } footer: {
+                Text("Assign accounts in Accounts → Preferences. Switch profiles from the mailbox toolbar. Each profile can have its own notification hours.")
             }
 
-            SettingsNote("Assign accounts in Accounts → Preferences. Switch profiles from the mailbox toolbar. Each profile can have its own notification hours.", systemImage: "person.2")
             if let error = model.error {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.red)
+                Section {
+                    Label(error, systemImage: "exclamationmark.circle")
+                        .font(.callout)
+                        .foregroundStyle(Tokens.Status.error)
+                }
             }
         }
         .sheet(item: $editing) { profile in ProfileEditor(profile: profile, model: model) }
@@ -66,9 +70,7 @@ struct ProfilesView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s3)
-        .settingsSurface()
+        .padding(.vertical, Tokens.Space.s1)
     }
 
     private func profileCard(_ profile: MailProfile) -> some View {
@@ -104,9 +106,7 @@ struct ProfilesView: View {
             }
             .font(.caption).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s2)
-        .settingsSurface()
+        .padding(.vertical, Tokens.Space.s1)
     }
 
     private var activeBadge: some View {
