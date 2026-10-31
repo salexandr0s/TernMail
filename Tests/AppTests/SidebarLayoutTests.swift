@@ -377,6 +377,57 @@ import Testing
         scroll.reflectScrolledClipView(clip)
     }
 
+    /// The library's layout and sort controls once pushed Search into the
+    /// overflow menu at the minimum window width.
+    @Test func attachmentLibraryKeepsSearchInNarrowToolbars() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+        let suite = "SidebarLayoutTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set("", forKey: SidebarExpansion.storageKey)
+        defer { settings.removePersistentDomain(forName: suite) }
+
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.toolbar = workspaceToolbar()
+        window.toolbarStyle = .unified
+        window.contentViewController = controller
+        window.orderFront(nil)
+        defer { window.close() }
+        app.destination = .mail
+        mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+
+        // Narrow toolbars fold both controls into one menu, as the mail actions fold.
+        // SwiftUI hides and shows the items over several passes, so this waits
+        // for the toolbar to settle.
+        for (width, folds) in [(CGFloat(1_280), false), (Tokens.Layout.windowMinWidth, true)] {
+            window.setContentSize(NSSize(width: width, height: 760))
+            let shown: Set<String> = folds
+                ? ["library.compactOptions", "workspace.search"]
+                : ["library.viewMode", "library.sort", "workspace.search"]
+            let hidden: Set<String> = folds ? ["library.viewMode", "library.sort"] : ["library.compactOptions"]
+            let layoutDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+            var visible: Set<String> = []
+            repeat {
+                try await settle()
+                visible = Set(window.toolbar?.visibleItems?.map(\.itemIdentifier.rawValue) ?? [])
+            } while !(shown.isSubset(of: visible) && hidden.isDisjoint(with: visible)) && ContinuousClock.now < layoutDeadline
+            #expect(shown.isSubset(of: visible), "Visible toolbar items at width \(Int(width)): \(visible.sorted())")
+            #expect(hidden.isDisjoint(with: visible), "Visible toolbar items at width \(Int(width)): \(visible.sorted())")
+        }
+        await app.signOut()
+    }
+
     private func settle() async throws {
         // Allow SwiftUI updates and the asynchronous mailbox observation to lay out.
         try await Task.sleep(for: .milliseconds(200))

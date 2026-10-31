@@ -33,33 +33,58 @@ enum AttachmentLibraryViewMode: String, CaseIterable {
 /// field searches the library, so the library has no field of its own.
 struct AttachmentLibraryToolbar: CustomizableToolbarContent {
     @Bindable var state: AttachmentLibraryToolbarState
+    /// Narrow toolbars fold the layout and sort controls into one menu, as the
+    /// mail actions fold, so search stays out of the overflow menu.
+    var isCompact = false
+    /// Each item reads it here, because an inner `hidden(false)` would win
+    /// over one applied to the whole group.
+    var isVisible = true
 
     var body: some CustomizableToolbarContent {
         ToolbarItem(id: "library.viewMode", placement: .automatic) {
-            Picker("View", selection: $state.viewMode) {
-                ForEach(AttachmentLibraryViewMode.allCases, id: \.self) { mode in
-                    Label(mode.title, systemImage: mode.systemImage).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelStyle(.iconOnly)
-            .help("Show attachments as a list or a grid")
+            Picker("View", selection: $state.viewMode) { viewModes }
+                .pickerStyle(.segmented)
+                .labelStyle(.iconOnly)
+                .help("Show attachments as a list or a grid")
         }
+        .mailToolbarVisible(isVisible && !isCompact)
         ToolbarItem(id: "library.sort", placement: .automatic) {
             // A bare menu picker shows no title in the toolbar, so a menu holds it.
-            Menu {
-                Picker("Sort By", selection: $state.sort) {
-                    ForEach(AttachmentLibrarySort.allCases, id: \.self) { sort in
-                        Text(sort.menuTitle).tag(sort)
-                    }
-                }
-                .pickerStyle(.inline)
-            } label: {
+            Menu { sortPicker } label: {
                 Label("Sort By", systemImage: "arrow.up.arrow.down")
             }
             .help("Sort attachments")
             .accessibilityValue(state.sort.menuTitle)
         }
+        .mailToolbarVisible(isVisible && !isCompact)
+        ToolbarItem(id: "library.compactOptions", placement: .automatic) {
+            Menu {
+                Picker("View As", selection: $state.viewMode) { viewModes }
+                    .pickerStyle(.inline)
+                sortPicker
+            } label: {
+                Label("View Options", systemImage: state.viewMode.systemImage)
+            }
+            .menuIndicator(.visible)
+            .help("Choose the layout and sort order")
+            .accessibilityValue("\(state.viewMode.title), \(state.sort.menuTitle)")
+        }
+        .mailToolbarVisible(isVisible && isCompact)
+    }
+
+    private var viewModes: some View {
+        ForEach(AttachmentLibraryViewMode.allCases, id: \.self) { mode in
+            Label(mode.title, systemImage: mode.systemImage).tag(mode)
+        }
+    }
+
+    private var sortPicker: some View {
+        Picker("Sort By", selection: $state.sort) {
+            ForEach(AttachmentLibrarySort.allCases, id: \.self) { sort in
+                Text(sort.menuTitle).tag(sort)
+            }
+        }
+        .pickerStyle(.inline)
     }
 }
 

@@ -271,7 +271,7 @@ struct MainView: View {
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
             // After the mail items: toolbar spaces ignore hidden(_:), and this
             // keeps the mail spaces out of the library's group.
-            AttachmentLibraryToolbar(state: libraryToolbar).mailToolbarVisible(isActive && showsLibrary)
+            AttachmentLibraryToolbar(state: libraryToolbar, isCompact: isCompactWindow, isVisible: isActive && showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
                 section: section, isCompact: isCompactWindow,
