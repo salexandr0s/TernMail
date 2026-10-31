@@ -83,7 +83,9 @@ struct SidebarView: View {
             MailboxSwitcher(mailbox: mailbox)
         }
         .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
-        .safeAreaInset(edge: .bottom) {
+        // A bar, not a plain inset, so rows scrolling under the status fade
+        // behind the scroll edge effect instead of showing through its text.
+        .safeAreaBar(edge: .bottom) {
             SyncStatusView(mailbox: mailbox)
         }
         .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
