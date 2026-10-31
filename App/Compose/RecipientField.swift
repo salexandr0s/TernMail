@@ -397,7 +397,7 @@ struct RecipientField: NSViewRepresentable {
                 menu.addItem(menuItem(entry.title, action: entry.action, token: token, isEnabled: entry.isEnabled))
             }
             menu.addItem(.separator())
-            menu.addItem(menuItem("Add to Blocklist", action: #selector(blockToken(_:)), token: token,
+            menu.addItem(menuItem("Hide from Suggestions", action: #selector(blockToken(_:)), token: token,
                                   isEnabled: token.address.isValid))
             return menu
         }

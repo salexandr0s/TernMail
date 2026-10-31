@@ -452,7 +452,7 @@ final class ComposeModel {
         do {
             try await store.setSuggestionBlocked(true, address: address.address, accountID: accountID)
         } catch {
-            alert = Problem(title: "Can't Add to Blocklist", message: "Tern couldn't save the change. Try again.")
+            alert = Problem(title: "Can't Hide This Address", message: "Tern couldn't save the change. Try again.")
         }
     }
 
