@@ -30,6 +30,8 @@ final class SearchModel {
     private(set) var accountID: String?
     /// Local matches plus Gmail's conversations, newest first.
     private(set) var results: [ThreadRecord] = []
+    /// The query's words, for the rows to show in bold.
+    private(set) var highlights = SearchHighlights()
     /// Gmail's side of the current query. Nil while the field is empty.
     private(set) var gmail: GmailPager?
     /// Reading the cache failed for an account being searched.
@@ -170,6 +172,7 @@ final class SearchModel {
 
     private func restart() {
         query = SearchQuery(queryText)
+        highlights = SearchHighlights(query)
         limit = Self.pageSize
         delayTask?.cancel()
         gmail?.cancel()

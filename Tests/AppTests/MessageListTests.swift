@@ -210,6 +210,22 @@ import Testing
                                                     messageCount: 1, starred: false) == "Sender, No Subject, Oct 30")
     }
 
+    @Test func searchHighlightsMatchWholeWordsAndStartLongPreviewsNearTheMatch() {
+        func bold(_ string: AttributedString) -> [String] {
+            string.runs.compactMap { run in
+                run.inlinePresentationIntent == .stronglyEmphasized ? String(string[run.range].characters) : nil
+            }
+        }
+        let highlights = SearchHighlights(SearchQuery("cafe -rain subject:plans \"trail map\" sat"))
+        // Case and accents don't matter. Words match whole, except the last one typed.
+        #expect(bold(highlights.subject("Café plans for Saturday")) == ["Café", "plans", "Sat"])
+        #expect(bold(highlights.preview("Café plans, then the Trail Map. Rain or not, cafes open")) == ["Café", "Trail Map"])
+
+        let preview = highlights.preview("Thanks for the photos from last weekend, they look great. The trail map is attached.")
+        #expect(String(preview.characters) == "…great. The trail map is attached.")
+        #expect(bold(preview) == ["trail map"])
+    }
+
     @Test func profilePresentationFiltersOwnersAndFavoritesKeepExplicitScopes() async throws {
         let (mailbox, _) = try await fixture()
         let second = AccountRecord(id: "b", email: "second@example.com", displayName: nil, grantedScopes: [], addedAt: .now)

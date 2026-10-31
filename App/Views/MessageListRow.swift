@@ -108,7 +108,7 @@ struct MessageListRow: View {
             if item.labels.contains(SystemLabel.draft) {
                 Text("Draft").font(scaledFont(.caption1, weight: .medium)).foregroundStyle(Tokens.Status.error)
             }
-            Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
+            Text(thread.subject.isEmpty ? AttributedString("No Subject") : mailbox.search.highlights.subject(thread.subject))
                 .font(scaledFont(.callout, weight: thread.isUnread ? .medium : .regular))
                 .foregroundStyle(thread.subject.isEmpty ? Color.secondary : Color.primary)
                 .lineLimit(1)
@@ -119,7 +119,7 @@ struct MessageListRow: View {
         if let wake = wakeTime {
             Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock").font(scaledFont(.caption1)).foregroundStyle(.secondary)
         } else if !thread.snippet.isEmpty {
-            Text(thread.snippet).font(scaledFont(.callout)).foregroundStyle(.secondary).lineLimit(1)
+            Text(mailbox.search.highlights.preview(thread.snippet)).font(scaledFont(.callout)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 
