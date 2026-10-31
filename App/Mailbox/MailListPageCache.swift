@@ -1,4 +1,5 @@
 import Dispatch
+import Diagnostics
 import Foundation
 import MailStore
 
@@ -19,18 +20,34 @@ actor MailListPreparation {
     func prepare(_ page: MailListPage, input: MessageListProjection.Input,
                  configuration: MessageListProjection.Key, reusing previous: PreparedMailListPage? = nil) throws -> PreparedMailListPage {
         try Task.checkCancellation()
+        let span = TernSignposts.begin(.mailListProjection)
         let rows = MessageListProjection.prepare(input,
             reusing: previous?.configuration == configuration ? previous?.rows ?? [] : [])
-        try Task.checkCancellation()
+        if Task.isCancelled {
+            TernSignposts.cancel(span)
+            throw CancellationError()
+        }
+        TernSignposts.end(span)
         // Include array/record overhead and the strings retained by both the
         // raw page and presentation. Shared COW storage makes this conservative.
-        let cost = page.threads.reduce(0) { sum, thread in
-            sum + 512 + thread.subject.utf8.count + thread.snippet.utf8.count + thread.participants.utf8.count
-        } + page.entries.reduce(0) { sum, entry in
+        var cost = 0
+        for thread in page.threads {
+            cost += 512
+            cost += thread.subject.utf8.count
+            cost += thread.snippet.utf8.count
+            cost += thread.participants.utf8.count
+        }
+        for entry in page.entries {
             let message = entry.message
-            return sum + 768 + message.subject.utf8.count + message.snippet.utf8.count
-                + message.sender.utf8.count + message.recipients.utf8.count + (message.cc?.utf8.count ?? 0)
-                + entry.attachments.reduce(0) { $0 + 256 + $1.filename.utf8.count }
+            cost += 768
+            cost += message.subject.utf8.count
+            cost += message.snippet.utf8.count
+            cost += message.sender.utf8.count
+            cost += message.recipients.utf8.count
+            cost += message.cc?.utf8.count ?? 0
+            for attachment in entry.attachments {
+                cost += 256 + attachment.filename.utf8.count
+            }
         }
         return PreparedMailListPage(page: page, rows: rows, configuration: configuration, cost: cost)
     }
