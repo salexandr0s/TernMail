@@ -155,11 +155,11 @@ struct MailToolbar: CustomizableToolbarContent {
     }
 
     private var isEditingLabels: Binding<Bool> {
-        Binding(get: { mailbox.labelEdit != nil }, set: { if !$0 { mailbox.labelEdit = nil } })
+        $mailbox.labelEdit.isPresent()
     }
 
     private var isMoving: Binding<Bool> {
-        Binding(get: { mailbox.moveTargets != nil }, set: { if !$0 { mailbox.moveTargets = nil } })
+        $mailbox.moveTargets.isPresent()
     }
 }
 

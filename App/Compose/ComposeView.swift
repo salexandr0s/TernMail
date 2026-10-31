@@ -88,7 +88,7 @@ struct ComposeView: View {
         .navigationTitle(model.title)
         .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
-        .alert(model.alert ?? "", isPresented: isShowingAlert) {
+        .alert(model.alert ?? "", isPresented: $model.alert.isPresent()) {
             Button("OK") {}
         }
         .task { model.start() }
@@ -511,10 +511,6 @@ struct ComposeView: View {
     }
 
     // MARK: Private
-
-    private var isShowingAlert: Binding<Bool> {
-        Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })
-    }
 
     /// A reply starts in the message; anything without recipients starts in To.
     private func placeFocus() async {

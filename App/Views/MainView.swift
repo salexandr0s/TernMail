@@ -403,16 +403,13 @@ private struct SignOutDialogs: ViewModifier {
             } message: {
                 Text(app.signOutMessage)
             }
-            .confirmationDialog(
+            .ternConfirm(
                 "Sign out of \(app.accountToSignOut?.email ?? "this account")?",
-                isPresented: Binding(get: { app.accountToSignOut != nil }, set: { if !$0 { app.accountToSignOut = nil } }),
-                presenting: app.accountToSignOut
+                item: $app.accountToSignOut,
+                actionTitle: "Sign Out",
+                message: app.accountToSignOut.map { app.signOutMessage(for: $0) } ?? ""
             ) { account in
-                Button("Sign Out", role: .destructive) {
-                    Task { await app.signOut(of: account.id) }
-                }
-            } message: { account in
-                Text(app.signOutMessage(for: account))
+                Task { await app.signOut(of: account.id) }
             }
     }
 }
