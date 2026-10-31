@@ -34,6 +34,11 @@ final class SearchModel {
     private(set) var highlights = SearchHighlights()
     /// Gmail's side of the current query. Nil while the field is empty.
     private(set) var gmail: GmailPager?
+    /// Whether every account searched has answered the current query from
+    /// this Mac.
+    private(set) var hasLocalAnswer = false
+    /// Set while Gmail waits for typing to pause before it's asked.
+    private var isGmailScheduled = false
     /// Reading the cache failed for an account being searched.
     var readFailed: Bool { !failedAccountIDs.isEmpty }
     /// Changes when ⌥⌘F or / asks the toolbar field for focus.
@@ -58,6 +63,33 @@ final class SearchModel {
     /// or another page from Gmail.
     var hasMoreResults: Bool {
         results.count >= limit || gmail?.state == .more
+    }
+
+    /// Where the current query stands. The empty list and the window
+    /// subtitle both go by it, so they agree.
+    enum Status: Equatable {
+        /// An account hasn't answered from this Mac yet, or Gmail is due to
+        /// answer.
+        case searching
+        /// The mail saved on this Mac couldn't be read.
+        case unreadable
+        /// This Mac has answered. Gmail wasn't asked, has more pages or
+        /// couldn't answer.
+        case searchedThisMac
+        /// This Mac and Gmail have both answered in full.
+        case searchedEverywhere
+    }
+
+    var status: Status {
+        if readFailed { return .unreadable }
+        if !hasLocalAnswer || gmailState == .loading { return .searching }
+        return gmailState == .finished ? .searchedEverywhere : .searchedThisMac
+    }
+
+    /// Gmail's side as the list shows it: loading from the moment it's due
+    /// to be asked.
+    var gmailState: GmailPager.State {
+        isGmailScheduled ? .loading : gmail?.state ?? .ready
     }
 
     func setMessageMode(_ enabled: Bool) {
@@ -131,6 +163,7 @@ final class SearchModel {
     /// Asks Gmail for its next page, or again after a failure.
     func askGmail() {
         delayTask?.cancel()
+        isGmailScheduled = false
         gmail?.next { [weak self] _ in self?.observeResults() }
     }
 
@@ -158,6 +191,7 @@ final class SearchModel {
 
     func stop() {
         delayTask?.cancel()
+        isGmailScheduled = false
         resultsTasks.forEach { $0.cancel() }
         gmail?.cancel()
     }
@@ -177,11 +211,13 @@ final class SearchModel {
         highlights = SearchHighlights(query)
         limit = Self.pageSize
         delayTask?.cancel()
+        isGmailScheduled = false
         gmail?.cancel()
         gmail = nil
         // Results for another query or other accounts no longer count.
         found = [:]
         failedAccountIDs = []
+        hasLocalAnswer = false
         results = []
         onResultsChange?()
         guard isActive else {
@@ -202,6 +238,7 @@ final class SearchModel {
         }))
         observeResults()
         guard trimmedText.count >= Self.gmailMinimumLength else { return }
+        isGmailScheduled = true
         delayTask = Task { [weak self] in
             try? await Task.sleep(for: Self.gmailDelay)
             guard !Task.isCancelled else { return }
@@ -237,6 +274,8 @@ final class SearchModel {
                 }
             }
         }
+        // With no account to search, there's nothing to wait for.
+        if resultsTasks.isEmpty { publish() }
     }
 
     /// Merges the accounts' results in the order each account's list uses,
@@ -249,6 +288,7 @@ final class SearchModel {
         let merged = found.values.joined().sorted { lhs, rhs in
             lhs.lastDate != rhs.lastDate ? lhs.lastDate > rhs.lastDate : lhs.key < rhs.key
         }
+        hasLocalAnswer = true
         results = Array(merged.prefix(limit))
         onResultsChange?()
     }

@@ -30,14 +30,23 @@ extension MailboxModel {
         return accounts.count > 1 ? accounts : []
     }
 
-    /// How many results the list shows: "12 results". The query stays out of
-    /// the window's title and subtitle, which the Window menu and Mission
-    /// Control show and saved window state can keep. The field shows it.
+    /// How many results the list shows, "12 results", or where the search
+    /// stands while it shows none. The query stays out of the window's title
+    /// and subtitle, which the Window menu and Mission Control show and saved
+    /// window state can keep. The field shows it.
     var searchResultsSubtitle: String {
         let count = listItems.count
-        guard count > 0 else { return search.gmail?.state == .loading ? "Searching…" : "No results" }
-        if search.hasMoreResults { return "\(count.formatted())+ results" }
-        return count == 1 ? "1 result" : "\(count.formatted()) results"
+        // Until this Mac answers, the rows belong to the previous query.
+        if count > 0, search.hasLocalAnswer {
+            if search.hasMoreResults { return "\(count.formatted())+ results" }
+            return count == 1 ? "1 result" : "\(count.formatted()) results"
+        }
+        switch search.status {
+        case .searching: return "Searching…"
+        case .unreadable: return "Can't search"
+        case .searchedThisMac: return "No matches on this Mac"
+        case .searchedEverywhere: return "No results"
+        }
     }
 
     /// The sidebar's selection. Empty during a search, except for a saved
