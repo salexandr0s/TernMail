@@ -178,7 +178,7 @@ import Testing
                    MailboxModel.outboxID, SystemLabel.inbox] {
             mailbox.selectedMailbox = .combined(id)
             if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
-            settings.set(expanded.sorted().joined(separator: ","), forKey: SidebarExpansion.storageKey)
+            settings.set(SidebarExpansion(ids: expanded).rawValue, forKey: SidebarExpansion.storageKey)
             try await settle()
             #expect(table.window === window)
             #expect(scroll.contentInsets.top == scrollInsets.top)

@@ -49,7 +49,7 @@ import Testing
         let original = GmailFilter(id: "filter", criteria: .init(from: "sender@example.com"),
             action: .init(addLabelIds: ["Label_work", "CATEGORY_PROMOTIONS", "FUTURE_LABEL"], removeLabelIds: ["CHAT", "INBOX"]))
         var draft = FilterEditorDraft(filter: original, labels: [label])
-        draft.criteria.subject = "Planning"
+        draft.subject = "Planning"
         draft.skipInbox = false
         let edited = draft.filter()
         #expect(Set(edited.action.addLabelIds ?? []) == ["Label_work", "CATEGORY_PROMOTIONS", "FUTURE_LABEL"])
@@ -73,7 +73,7 @@ import Testing
         var draft = FilterEditorDraft(filter: nil, labels: [])
         draft.markRead = true
         #expect(draft.validation(acceptedForwarding: []) != nil)
-        draft.criteria.hasAttachment = true
+        draft.hasAttachment = true
         draft.sizeText = "-10"
         #expect(draft.validation(acceptedForwarding: []) != nil)
         draft.sizeText = "1000"

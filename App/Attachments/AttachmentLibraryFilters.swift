@@ -38,16 +38,16 @@ struct AttachmentLibraryFilters: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Email date") {
-                    dateFilter("From", date: $model.startDate)
-                    dateFilter("Through", date: $model.endDate)
+                    dateFilter("From", isOn: $model.hasStartDate, day: $model.startDay)
+                    dateFilter("Through", isOn: $model.hasEndDate, day: $model.endDay)
                     if let start = model.startDate, let end = model.endDate, start > end {
                         Label("The end date is before the start date.", systemImage: "exclamationmark.circle")
                             .font(.caption).foregroundStyle(Tokens.Status.warning)
                     }
                 }
                 Section("File size") {
-                    TextField("At least (MB)", text: sizeBinding($model.minimumSize), prompt: Text("Any"))
-                    TextField("At most (MB)", text: sizeBinding($model.maximumSize), prompt: Text("Any"))
+                    TextField("At least (MB)", value: $model.minimumMegabytes, format: .number.grouping(.never), prompt: Text("Any"))
+                    TextField("At most (MB)", value: $model.maximumMegabytes, format: .number.grouping(.never), prompt: Text("Any"))
                     if let minimum = model.minimumSize, let maximum = model.maximumSize, minimum > maximum {
                         Label("The maximum is smaller than the minimum.", systemImage: "exclamationmark.circle")
                             .font(.caption).foregroundStyle(Tokens.Status.warning)
@@ -68,34 +68,14 @@ struct AttachmentLibraryFilters: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func dateFilter(_ title: String, date: Binding<Date?>) -> some View {
+    private func dateFilter(_ title: String, isOn: Binding<Bool>, day: Binding<Date>) -> some View {
         HStack {
-            Toggle(title, isOn: Binding(get: { date.wrappedValue != nil }, set: { enabled in
-                date.wrappedValue = enabled ? Calendar.current.startOfDay(for: .now) : nil
-            }))
-            if date.wrappedValue != nil {
-                DatePicker(title, selection: Binding(get: { date.wrappedValue ?? .now }, set: {
-                    date.wrappedValue = Calendar.current.startOfDay(for: $0)
-                }), displayedComponents: .date)
-                .labelsHidden()
+            Toggle(title, isOn: isOn)
+            if isOn.wrappedValue {
+                DatePicker(title, selection: day, displayedComponents: .date)
+                    .labelsHidden()
             }
         }
-    }
-
-    private func sizeBinding(_ bytes: Binding<Int?>) -> Binding<String> {
-        Binding(get: {
-            guard let value = bytes.wrappedValue else { return "" }
-            return (Double(value) / 1_000_000).formatted(.number.grouping(.never))
-        }, set: { text in
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            guard let value = formatter.number(from: text)?.doubleValue, value.isFinite, value >= 0,
-                  value < Double(Int.max) / 1_000_000 else {
-                bytes.wrappedValue = nil
-                return
-            }
-            bytes.wrappedValue = Int(value * 1_000_000)
-        })
     }
 
     private func labelTitle(_ label: LabelRecord) -> String {
