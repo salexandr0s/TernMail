@@ -34,6 +34,30 @@ import Testing
         #expect(mixed.blocks.first?.runs.last?.italic == true)
     }
 
+    @Test func pastedHTMLKeepsMessageFormattingOrReadsAsPlainText() {
+        let view = ComposeTextView(usingTextLayoutManager: false)
+        view.isRichText = true
+        var inserted: [ComposeDocument] = []
+        view.onInsertDocument = { inserted.append($0) }
+        let pasteboard = NSPasteboard(name: .init("tern.compose-paste." + UUID().uuidString))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.declareTypes([.html, .string], owner: nil)
+        pasteboard.setString(#"<p>See <b>this</b> <a href="https://example.com/a">page</a><img src="https://example.com/p.png"></p>"#, forType: .html)
+        pasteboard.setString("See this page", forType: .string)
+        #expect(view.readSelection(from: pasteboard, type: .html))
+        let runs = inserted.first?.blocks.first?.runs ?? []
+        #expect(runs.map(\.text).joined() == "See this page")
+        #expect(runs.contains { $0.text == "this" && $0.bold })
+        #expect(runs.contains { $0.text == "page" && $0.link?.host() == "example.com" })
+        // An editor's code gets its indentation from styles, which the plain text keeps.
+        pasteboard.declareTypes([.html, .string], owner: nil)
+        pasteboard.setString(#"<div style="white-space: pre"><div><span style="color: #00f">if</span> ready {</div><div>    go()</div></div>"#, forType: .html)
+        pasteboard.setString("if ready {\n    go()", forType: .string)
+        #expect(view.readSelection(from: pasteboard, type: .html))
+        #expect(inserted.count == 1)
+        #expect(view.string == "if ready {\n    go()")
+    }
+
     @Test func mailtoPrefillPersistsBodyRecipientsAndDefaultSenderBeforeOpening() async throws {
         let store = try AccountStore.inMemory()
         let account = AccountRecord(id: "a", email: "me@example.com", displayName: nil, grantedScopes: [], addedAt: .now)

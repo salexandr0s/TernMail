@@ -35,14 +35,36 @@ final class ComposeTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
-        if let items = Self.attachables(on: .general) { onAttach?(items); return }
-        if ComposePreferences.markdown, NSPasteboard.general.data(forType: .rtf) == nil,
-           NSPasteboard.general.data(forType: .html) == nil,
-           let text = NSPasteboard.general.string(forType: .string) {
+        let pasteboard = NSPasteboard.general
+        if let items = Self.attachables(on: pasteboard) { onAttach?(items); return }
+        if ComposePreferences.markdown, pasteboard.data(forType: .rtf) == nil, Self.htmlDocument(on: pasteboard) == nil,
+           let text = pasteboard.string(forType: .string) {
             onInsertDocument?(MarkdownConverter.document(from: text))
             return
         }
         super.paste(sender)
+    }
+
+    /// AppKit reads HTML with WebKit, which can load remote images, so paste
+    /// and drop read it with the importer drafts use.
+    override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        guard type == .html else { return super.readSelection(from: pboard, type: type) }
+        guard let document = Self.htmlDocument(on: pboard) else { return super.readSelection(from: pboard, type: .string) }
+        onInsertDocument?(document)
+        return true
+    }
+
+    /// The HTML on the pasteboard as message text, unless the plain text beside
+    /// it says the same. HTML without a list, a link or styled text reads as
+    /// plain text, which keeps spacing the HTML set with styles, as code from
+    /// an editor does.
+    private static func htmlDocument(on pasteboard: NSPasteboard) -> ComposeDocument? {
+        guard let html = pasteboard.string(forType: .html) else { return nil }
+        let document = HTMLImporter.importHTML(html, detachingQuote: false).document
+        let isFormatted = document.blocks.contains { block in
+            block.kind != .paragraph || block.runs.contains { $0.bold || $0.italic || $0.underline || $0.link != nil }
+        }
+        return isFormatted || pasteboard.availableType(from: [.string]) == nil ? document : nil
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
