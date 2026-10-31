@@ -34,7 +34,7 @@ final class MailURLRouter {
         guard pending.count < 20 else { error = "Too many mail links are waiting. Open them one at a time."; return }
         pending.append(url)
         openMainWindow?()
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         resume()
     }
 

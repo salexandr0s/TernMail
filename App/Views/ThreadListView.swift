@@ -226,14 +226,8 @@ struct ThreadListView: View {
     }
 
     @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, row: MailListRowID) -> some View {
-        // macOS 15 aligned the order with construction order on iOS.
-        if #available(macOS 15, *) {
-            swipeButton(first, row: row)
-            swipeButton(second, row: row)
-        } else {
-            swipeButton(second, row: row)
-            swipeButton(first, row: row)
-        }
+        swipeButton(first, row: row)
+        swipeButton(second, row: row)
     }
 
     @ViewBuilder private func swipeButton(_ action: MailSwipeAction, row: MailListRowID) -> some View {

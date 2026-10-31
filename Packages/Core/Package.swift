@@ -1,9 +1,9 @@
-// swift-tools-version: 6.1
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "Core",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v26)],
     products: [
         .library(name: "GmailAPI", targets: ["GmailAPI"]),
         .library(name: "MailStore", targets: ["MailStore"]),

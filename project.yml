@@ -2,7 +2,7 @@ name: Tern
 options:
   bundleIdPrefix: dev.tern
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 configFiles:
   Debug: Config/Base.xcconfig

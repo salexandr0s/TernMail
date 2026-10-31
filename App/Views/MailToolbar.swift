@@ -161,13 +161,10 @@ struct MailToolbar: CustomizableToolbarContent {
     }
 }
 
-/// macOS 15 can suppress an item without removing its customization definition.
-/// Earlier systems retain the supported conditional-content behavior.
+/// Suppresses an item without removing its customization definition.
 extension CustomizableToolbarContent {
-    @ToolbarContentBuilder
     func mailToolbarVisible(_ visible: Bool) -> some CustomizableToolbarContent {
-        if #available(macOS 15, *) { hidden(!visible) }
-        else if visible { self }
+        hidden(!visible)
     }
 }
 

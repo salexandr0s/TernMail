@@ -71,7 +71,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
         textView.typingAttributes = AttributedDocument.baseAttributes(font)
-        if #available(macOS 15.1, *) { textView.writingToolsBehavior = .complete }
+        textView.writingToolsBehavior = .complete
         textView.setAccessibilityLabel("Message")
         textView.onAttach = onAttach
         textView.composeFont = font
