@@ -2,6 +2,9 @@ import Foundation
 
 /// Local document-purpose detection. Uncertain evidence leaves the file uncategorized.
 public enum AttachmentCategoryClassifier {
+    public static let supportedLanguages = AttachmentClassificationLanguagePack.all.map(\.language)
+    public static let ocrLanguageCodes = supportedLanguages.map(\.ocrLanguageCode)
+
     public static func classify(filename: String, mimeType: String, subject: String, text: String? = nil) -> AttachmentCategory {
         let suffix = (filename as NSString).pathExtension.lowercased()
         let name = normalized((filename as NSString).deletingPathExtension)
@@ -16,7 +19,7 @@ public enum AttachmentCategoryClassifier {
         let body = String((text ?? "").prefix(60_000))
         let content = normalized(body)
         let supportContext = contains(subject, any: supportTerms) || contains(name, any: supportTerms)
-        let named = evidence(in: name, supportContext: supportContext)
+        let named = evidence(in: name, supportContext: supportContext, includesFilenameTerms: true)
 
         // A document title is stronger than its download filename. Restrict this
         // to short lines so ordinary references in paragraphs are not titles.
@@ -24,6 +27,7 @@ public enum AttachmentCategoryClassifier {
         for line in body.split(whereSeparator: \.isNewline).prefix(12) {
             let heading = normalized(String(line))
             guard heading.count <= 100 else { continue }
+            if documentFieldTerms.contains(where: { heading == $0 || heading.hasPrefix($0 + " ") }) { continue }
             for (category, terms) in purposeTerms where terms.contains(where: { isHeading(heading, term: $0) }) {
                 if category == .ticket && supportContext && !contains(heading, any: travelTerms) { continue }
                 headingScores[category] = 1
@@ -33,52 +37,76 @@ public enum AttachmentCategoryClassifier {
         if let namedCategory = winner(named) { return namedCategory }
 
         var contentScores = evidence(in: content, supportContext: supportContext)
-        if contains(content, any: ["invoice number", "invoice no", "rechnungsnummer", "rechnungsnr"]),
-           contains(content, any: ["amount due", "total", "balance due", "zahlbar", "gesamt", "rechnungsbetrag"]) {
-            contentScores[.invoice, default: 0] += 3
-        }
-        if contains(content, any: ["amount paid", "paid by", "payment received", "zahlung erhalten", "bezahlt", "kartenzahlung"]),
-           contains(content, any: ["transaction", "total", "gesamt", "betrag", "summe"]) {
-            contentScores[.receipt, default: 0] += 3
-        }
-        if contains(content, any: ["boarding", "departure", "abfahrt", "flugnummer", "flight", "einlass"]),
-           contains(content, any: ["seat", "sitzplatz", "gate", "passenger", "reisender", "reservation", "buchung"]) {
-            contentScores[.ticket, default: 0] += 3
+        for rule in contentRules where rule.requiredGroups.values.allSatisfy({ contains(content, any: $0) }) {
+            contentScores[rule.category, default: 0] += 3
         }
         if let contentCategory = winner(contentScores) { return contentCategory }
 
         // Conflicting evidence within the file must not be resolved merely by
         // the email subject, which also describes its other attachments.
         guard named.isEmpty, contentScores.isEmpty else { return .uncategorized }
+        if contains(name, any: voucherTerms), contains(name + " " + subject, any: bookingContextTerms), !supportContext { return .ticket }
         return winner(evidence(in: subject, supportContext: supportContext)) ?? .uncategorized
     }
 
-    private static let purposeTerms: [(AttachmentCategory, [String])] = [
-        (.invoice, ["invoice", "invoices", "tax invoice", "vat invoice", "rechnung", "rechnungen", "faktura", "honorarnote"]),
-        (.receipt, ["receipt", "receipts", "payment receipt", "payment confirmation", "proof of payment", "quittung", "quittungen",
-                    "beleg", "zahlungsbeleg", "zahlungsbestatigung", "zahlungsbestaetigung", "kassenbon", "kassenzettel"]),
-        (.contract, ["contract", "contracts", "agreement", "agreements", "vertrag", "vertrage", "vertraege", "mietvertrag",
-                     "arbeitsvertrag", "dienstvertrag", "kaufvertrag", "lease", "nda", "non disclosure agreement"]),
-        (.ticket, ["ticket", "tickets", "eticket", "etickets", "e ticket", "boarding pass", "boardingpass", "bordkarte", "bordkarten",
-                   "fahrkarte", "fahrkarten", "fahrschein", "bahnticket", "zugticket", "flugticket", "eintrittskarte", "konzertticket",
-                   "booking confirmation", "reservation confirmation", "buchungsbestatigung", "buchungsbestaetigung",
-                   "reservierungsbestatigung", "reservierungsbestaetigung", "itinerary", "reiseplan"])
-    ]
-    private static let decorations = ["logo", "logos", "icon", "icons", "avatar", "banner", "signature", "signatur", "spacer", "tracking pixel"]
-    private static let companionDocuments = ["terms", "terms and conditions", "conditions of carriage", "agb", "privacy", "datenschutz",
-                                             "payment instructions", "zahlungsanleitung", "instructions", "anleitung", "template", "vorlage",
-                                             "sample", "muster", "brochure", "broschure", "manual"]
-    private static let supportTerms = ["support", "helpdesk", "help desk", "incident", "bug", "supportanfrage", "kundendienst", "störung", "storung"]
-    private static let travelTerms = ["boarding", "boardingpass", "bordkarte", "fahrkarte", "fahrschein", "bahnticket", "zugticket",
-                                      "flugticket", "eintrittskarte", "konzertticket", "itinerary", "booking confirmation", "buchungsbestatigung"]
+    private static let purposeTerms = categoryTerms(\.purposeTerms)
+    private static let filenameTerms = categoryTerms(\.filenameTerms)
+    private static let numberedFilenameTerms = categoryTerms(\.numberedFilenameTerms)
+    private static let decorations = vocabulary(\.decorationTerms)
+    private static let companionDocuments = vocabulary(\.companionTerms)
+    private static let supportTerms = vocabulary(\.supportTerms)
+    private static let travelTerms = vocabulary(\.travelTerms)
+    private static let voucherTerms = vocabulary(\.voucherTerms)
+    private static let bookingContextTerms = vocabulary(\.bookingContextTerms)
+    private static let headingNumberLabels = vocabulary(\.headingNumberLabels)
+    private static let documentFieldTerms = vocabulary(\.documentFieldTerms)
+    private static let contentRules: [AttachmentClassificationLanguagePack.ContentRule] = {
+        let rules = AttachmentClassificationLanguagePack.all.flatMap(\.contentRules)
+        return AttachmentClassificationLanguagePack.ContentRule.ID.allCases.compactMap { id in
+            let translations = rules.filter { $0.id == id }
+            guard !translations.isEmpty else { return nil }
+            // Merge translations of each semantic field, so a Swiss receipt
+            // can combine Kartenzahlung with Total without duplicating rules.
+            var fields: [AttachmentClassificationLanguagePack.ContentRule.Field: [String]] = [:]
+            for rule in translations {
+                for (field, terms) in rule.requiredGroups { fields[field, default: []] += terms.map(normalized) }
+            }
+            return .init(id: id, requiredGroups: fields)
+        }
+    }()
 
-    private static func evidence(in value: String, supportContext: Bool) -> [AttachmentCategory: Int] {
+    private static func evidence(in value: String, supportContext: Bool, includesFilenameTerms: Bool = false) -> [AttachmentCategory: Int] {
         var scores: [AttachmentCategory: Int] = [:]
         for (category, terms) in purposeTerms where contains(value, any: terms) {
             if category == .ticket && supportContext && !contains(value, any: travelTerms) { continue }
             scores[category] = 1
         }
+        // Export filenames such as emailreceipt and printinvoicepreview are
+        // useful aliases. A generic booking name never overrides Invoice or Receipt.
+        if scores.isEmpty, includesFilenameTerms {
+            for (category, terms) in numberedFilenameTerms where terms.contains(where: { term in
+                (" " + value).components(separatedBy: " " + term + " ").dropFirst().contains { $0.first?.isNumber == true }
+            }) {
+                scores[category] = 1
+            }
+            if !scores.isEmpty { return scores }
+            for (category, terms) in filenameTerms where contains(value, any: terms) {
+                if category == .ticket && supportContext { continue }
+                scores[category] = 1
+            }
+        }
         return scores
+    }
+
+    private static func vocabulary(_ keyPath: KeyPath<AttachmentClassificationLanguagePack, [String]>) -> [String] {
+        AttachmentClassificationLanguagePack.all.flatMap { $0[keyPath: keyPath] }.map(normalized)
+    }
+
+    private static func categoryTerms(_ keyPath: KeyPath<AttachmentClassificationLanguagePack, [AttachmentCategory: [String]]>) -> [(AttachmentCategory, [String])] {
+        AttachmentCategory.allCases.compactMap { category in
+            let terms = AttachmentClassificationLanguagePack.all.flatMap { $0[keyPath: keyPath][category] ?? [] }.map(normalized)
+            return terms.isEmpty ? nil : (category, terms)
+        }
     }
 
     private static func winner(_ scores: [AttachmentCategory: Int]) -> AttachmentCategory? {
@@ -97,7 +125,7 @@ public enum AttachmentCategoryClassifier {
         let remainder = value.dropFirst(term.count).trimmingCharacters(in: .whitespaces)
         // A title may carry a document number, date, or a "No." label.
         return remainder.isEmpty || remainder.first?.isNumber == true ||
-            ["number ", "no ", "nr ", "nummer "].contains(where: remainder.hasPrefix)
+            headingNumberLabels.contains { remainder == $0 || remainder.hasPrefix($0 + " ") }
     }
 
     private static func normalized(_ value: String) -> String {
@@ -109,10 +137,11 @@ public enum AttachmentCategoryClassifier {
     }
 
     private static func isDocument(suffix: String, mimeType: String) -> Bool {
+        let mime = mimeType.lowercased().split(separator: ";").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        if ["ics", "ical", "vcf"].contains(suffix) || ["text/calendar", "text/vcard", "text/x-vcard"].contains(mime) { return false }
         let extensions: Set<String> = ["pdf", "txt", "text", "csv", "md", "xml", "html", "htm", "rtf", "doc", "docx", "odt",
                                        "xls", "xlsx", "ods", "png", "jpg", "jpeg", "heic", "heif", "bmp", "tif", "tiff", "webp", "gif", "pkpass"]
         if extensions.contains(suffix) { return true }
-        let mime = mimeType.lowercased().split(separator: ";").first?.trimmingCharacters(in: .whitespaces) ?? ""
         return ["application/pdf", "application/rtf", "application/msword", "application/vnd.apple.pkpass"].contains(mime) ||
             mime.hasPrefix("text/") || mime.hasPrefix("image/") ||
             mime.hasPrefix("application/vnd.openxmlformats-officedocument.") || mime.hasPrefix("application/vnd.oasis.opendocument.")

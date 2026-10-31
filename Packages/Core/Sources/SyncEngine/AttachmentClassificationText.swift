@@ -1,5 +1,6 @@
 import Foundation
 import ImageIO
+import MailStore
 import PDFKit
 import Vision
 
@@ -64,7 +65,7 @@ enum AttachmentClassificationText {
         try Task.checkCancellation()
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["en-US", "de-DE"]
+        request.recognitionLanguages = AttachmentCategoryClassifier.ocrLanguageCodes
         request.usesLanguageCorrection = true
         do {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])

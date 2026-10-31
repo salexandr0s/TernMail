@@ -64,6 +64,36 @@ import UniformTypeIdentifiers
         #expect(!(await gmail.attachmentRequests).contains("oversized"))
     }
 
+    @Test func germanDocumentsClassifyFromPDFTextAndRasterOCR() async throws {
+        let cache = try MailCache.inMemory()
+        let gmail = FakeGmail()
+        let fixtures: [(id: String, data: Data, mime: String, filename: String, category: AttachmentCategory)] = [
+            ("rechnung", try documentPDF(lines: ["RECHNUNG", "Rechnungsnummer 1042", "Rechnungsbetrag EUR 480,00"]),
+             "application/pdf", "scan-001.pdf", .invoice),
+            ("kaufbeleg", try documentImage(lines: ["KAUFBELEG", "Zahlung erhalten", "Gesamt EUR 42,00"]),
+             "image/png", "scan-002.png", .receipt),
+            ("fahrkarte", try documentPDF(lines: ["FAHRKARTE", "Wien nach München", "Abfahrt 09:30", "Sitzplatz 12A"], scanned: true),
+             "application/pdf", "scan-003.pdf", .ticket),
+        ]
+        for fixture in fixtures {
+            try await seed(cache, id: fixture.id, mime: fixture.mime, filename: fixture.filename,
+                size: fixture.data.count, subject: "Ihre Unterlagen")
+            await gmail.setAttachment(fixture.id, data: fixture.data)
+        }
+        let initial = try await cache.attachmentLibrary(query: .init(accountIDs: ["a"])).items
+        #expect(initial.count == fixtures.count)
+        #expect(initial.allSatisfy { $0.category == .uncategorized })
+        let engine = classificationEngine(cache, gmail)
+        #expect(try await engine.classifyAttachments() == fixtures.count)
+        let items = try await cache.attachmentLibrary(query: .init(accountIDs: ["a"])).items
+        for fixture in fixtures {
+            let item = try #require(items.first { $0.messageID == fixture.id })
+            #expect(item.category == fixture.category)
+            #expect(item.categorySource == .content)
+        }
+        #expect(try await engine.classifyAttachments() == 0)
+    }
+
     @Test func documentContentsDisambiguateFilesSharingBookingSubject() async throws {
         let cache = try MailCache.inMemory()
         let gmail = FakeGmail()

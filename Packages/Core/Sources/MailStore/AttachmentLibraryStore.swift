@@ -43,13 +43,18 @@ extension CacheTransaction {
                 subject: message.subject, date: message.date, labelIDs: labelIDs,
                 historyID: message.historyID, generation: generation ?? previous?.generation)
             if let previous {
-                if previous.categorySource == .manual || previous.matchesClassificationInput(item) {
+                let unchanged = previous.matchesClassificationInput(item)
+                let successfulContent = previous.categorySource == .content && previous.category != .uncategorized
+                let keepClassification = previous.categorySource == .manual || (unchanged &&
+                    (successfulContent || previous.classificationVersion >= AttachmentClassification.version))
+                if keepClassification {
                     item.category = previous.category
                     item.categorySource = previous.categorySource
+                    item.classificationVersion = previous.classificationVersion
                 }
-                if previous.matchesClassificationInput(item) {
+                if unchanged {
                     item.contentClassificationVersion = previous.contentClassificationVersion
-                    item.classificationRetryAfter = previous.classificationRetryAfter
+                    if keepClassification { item.classificationRetryAfter = previous.classificationRetryAfter }
                 }
             }
             try item.upsert(db)

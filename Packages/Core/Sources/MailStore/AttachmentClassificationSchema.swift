@@ -35,12 +35,39 @@ enum AttachmentClassificationSchema {
                     let inferred = AttachmentClassification.metadataClassification(filename: row["filename"],
                         mimeType: row["mimeType"], subject: row["subject"])
                     try db.execute(sql: "UPDATE attachmentLibrary SET category = ?, categorySource = ?, classificationVersion = ? WHERE rowid = ?",
-                        arguments: [inferred.category.rawValue, inferred.source.rawValue, AttachmentClassification.version, rowID])
+                        arguments: [inferred.category.rawValue, inferred.source.rawValue, 1, rowID])
                     lastRowID = rowID
                 }
             }
             try db.create(index: "attachmentLibrary_classification", on: "attachmentLibrary",
                 columns: ["accountID", "category", "contentClassificationVersion", "date"])
+        }
+        migrator.registerMigration("attachment-classification-v2") { db in
+            // Updated rules can resolve metadata missed by the previous version.
+            // Keep manual choices and successful content results. Unresolved
+            // content attempts retain version 1 so the worker can retry once.
+            var lastRowID: Int64 = 0
+            while true {
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT rowid AS classificationRowID, filename, mimeType, subject
+                    FROM attachmentLibrary WHERE rowid > ? AND classificationVersion < 2
+                      AND (categorySource IN ('metadata','subject')
+                           OR (categorySource = 'content' AND category = 'uncategorized'))
+                    ORDER BY rowid LIMIT 250
+                    """, arguments: [lastRowID])
+                guard !rows.isEmpty else { break }
+                for row in rows {
+                    let rowID: Int64 = row["classificationRowID"]
+                    let inferred = AttachmentClassification.metadataClassification(filename: row["filename"],
+                        mimeType: row["mimeType"], subject: row["subject"])
+                    try db.execute(sql: """
+                        UPDATE attachmentLibrary
+                        SET category = ?, categorySource = ?, classificationVersion = 2, classificationRetryAfter = NULL
+                        WHERE rowid = ?
+                        """, arguments: [inferred.category.rawValue, inferred.source.rawValue, rowID])
+                    lastRowID = rowID
+                }
+            }
         }
     }
 }

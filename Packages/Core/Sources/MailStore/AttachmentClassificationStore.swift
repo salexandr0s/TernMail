@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 public enum AttachmentClassification {
-    public static let version = 1
+    public static let version = 2
     public static let maximumContentBytes = 10 * 1_024 * 1_024
 
     static func metadataClassification(filename: String, mimeType: String, subject: String)

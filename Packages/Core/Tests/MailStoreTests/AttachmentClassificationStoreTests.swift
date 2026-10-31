@@ -58,6 +58,72 @@ import Testing
         #expect(try await item(cache, "manual").categorySource == .manual)
     }
 
+    @Test func versionTwoRechecksOldPredictionsAndRetriesOnlyUnresolvedContent() async throws {
+        let writer = try DatabaseQueue()
+        try Schema.cacheMigrator.migrate(writer, upTo: "attachment-classification-v1")
+        let fixtures = ["compound", "manual", "metadata", "resolved", "subject", "unresolved"].map { id in
+            let filename = ["compound", "manual"].contains(id) ? "Rechnungskopie_2026.pdf"
+                : id == "metadata" ? "receipt.pdf" : "document.pdf"
+            let attachment = AttachmentRecord(accountID: "a", messageID: id, partID: "1", attachmentID: "download",
+                filename: filename, mimeType: "application/pdf", size: 100, isInline: false)
+            var item = AttachmentLibraryItem(attachment: attachment, threadID: "t", sender: "sender@example.test",
+                subject: id == "subject" ? "Ihre Rechnungskopie" : "Document", date: Date(timeIntervalSince1970: 1_000))
+            item.category = id == "resolved" ? .ticket : id == "metadata" ? .invoice : id == "subject" ? .receipt : .uncategorized
+            item.categorySource = id == "manual" ? .manual : ["resolved", "unresolved"].contains(id) ? .content
+                : id == "subject" ? .subject : .metadata
+            item.classificationVersion = 1
+            item.contentClassificationVersion = ["resolved", "unresolved"].contains(id) ? 1 : 0
+            item.classificationRetryAfter = .distantFuture
+            return item
+        }
+        try await writer.write { db in for item in fixtures { try item.insert(db) } }
+
+        let cache = try MailCache(writer: writer)
+        #expect(try await item(cache, "compound").category == .invoice)
+        #expect(try await item(cache, "compound").classificationVersion == 2)
+        #expect(try await item(cache, "metadata").category == .receipt)
+        #expect(try await item(cache, "subject").category == .invoice)
+        #expect(try await item(cache, "subject").categorySource == .subject)
+        #expect(try await item(cache, "manual").category == .uncategorized)
+        #expect(try await item(cache, "manual").categorySource == .manual)
+        #expect(try await item(cache, "resolved").category == .ticket)
+        #expect(try await item(cache, "resolved").classificationVersion == 1)
+        #expect(try await item(cache, "resolved").contentClassificationVersion == 1)
+        #expect(try await cache.pendingAttachmentClassifications(accountID: "a").map(\.messageID) == ["subject", "unresolved"])
+
+        let unresolved = try await item(cache, "unresolved")
+        try await cache.applyAttachmentClassification(.uncategorized, for: unresolved)
+        let subject = try await item(cache, "subject")
+        try await cache.applyAttachmentClassification(.invoice, for: subject)
+        let reopened = try MailCache(writer: writer)
+        #expect(try await reopened.pendingAttachmentClassifications(accountID: "a").isEmpty)
+        #expect(try await item(reopened, "unresolved").contentClassificationVersion == 2)
+    }
+
+    @Test func metadataRefreshRechecksOldRulesWithoutRestampingSuccessfulContent() async throws {
+        let cache = try MailCache.inMemory()
+        try await seed(cache, id: "metadata", filename: "Rechnungskopie_2026.pdf")
+        try await seed(cache, id: "content")
+        try await cache.write { tx in
+            try tx.db.execute(sql: """
+                UPDATE attachmentLibrary SET category = 'uncategorized', categorySource = 'metadata', classificationVersion = 1
+                WHERE messageID = 'metadata'
+                """)
+            try tx.db.execute(sql: """
+                UPDATE attachmentLibrary SET category = 'ticket', categorySource = 'content', classificationVersion = 1,
+                    contentClassificationVersion = 1 WHERE messageID = 'content'
+                """)
+        }
+        try await seed(cache, id: "metadata", filename: "Rechnungskopie_2026.pdf", historyID: 2)
+        try await seed(cache, id: "content", historyID: 2)
+        #expect(try await item(cache, "metadata").category == .invoice)
+        #expect(try await item(cache, "metadata").classificationVersion == 2)
+        #expect(try await item(cache, "content").category == .ticket)
+        #expect(try await item(cache, "content").classificationVersion == 1)
+        #expect(try await item(cache, "content").contentClassificationVersion == 1)
+        #expect(try await cache.pendingAttachmentClassifications(accountID: "a").isEmpty)
+    }
+
     @Test func contentQueueIsScopedBoundedAndDoesNotRepeatCompletedOrDeferredFiles() async throws {
         let cache = try MailCache.inMemory()
         try await seed(cache, id: "one")
