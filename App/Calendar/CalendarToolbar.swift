@@ -24,12 +24,18 @@ struct CalendarToolbar: CustomizableToolbarContent {
                 .help("Today (\(ShortcutCatalog.today.label))")
         }
         ToolbarItem(id: "calendar.mode", placement: .automatic) {
-            Picker("View", selection: $model.mode) {
-                ForEach(CalendarDisplayMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+            // A bare menu picker shows no title in the toolbar, so the menu
+            // carries the current mode as its label.
+            Menu {
+                Picker("View", selection: $model.mode) {
+                    ForEach(CalendarDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
                 }
+                .pickerStyle(.inline)
+            } label: {
+                Text(model.mode.title)
             }
-            .pickerStyle(.menu)
             .help("Day, Week, Month, Year or Schedule")
             .accessibilityLabel("Calendar view")
             .accessibilityValue(model.mode.title)

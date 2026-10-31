@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import GmailAPI
+import SwiftUI
 import Testing
 @testable import Tern
 
@@ -104,5 +106,27 @@ import Testing
         #expect(updated.reminders == nil)
         #expect(updated.rawValue["futureField"] == original.rawValue["futureField"])
         #expect(updated.rawValue["source"] == original.rawValue["source"])
+    }
+
+    @Test func arrowsStepInsideTheViewWhileOptionArrowsChangeThePeriod() {
+        #expect(CalendarDisplayMode.day.stepComponent == .day)
+        #expect(CalendarDisplayMode.week.stepComponent == .day)
+        #expect(CalendarDisplayMode.month.stepComponent == .weekOfYear)
+        #expect(CalendarDisplayMode.year.stepComponent == .month)
+        #expect(CalendarDisplayMode.week.component == .weekOfYear)
+        #expect(CalendarDisplayMode.month.component == .month)
+    }
+
+    @Test func calendarColorsLiftInDarkAndDeepenWithIncreasedContrast() throws {
+        let components = try #require(CalendarColor.components(hex: "#0b8043"))
+        let light = CalendarColor.adjusted(components, dark: false, contrast: false)
+        let dark = CalendarColor.adjusted(components, dark: true, contrast: false)
+        let contrast = CalendarColor.adjusted(components, dark: false, contrast: true)
+        #expect(dark.brightnessComponent > light.brightnessComponent)
+        #expect(contrast.saturationComponent > light.saturationComponent)
+        #expect(abs(dark.hueComponent - light.hueComponent) < 0.01)
+        #expect(CalendarColor.components(hex: "teal") == nil)
+        #expect(CalendarColor.tint(Tokens.Calendar.eventTint, contrast: .increased) == Tokens.Calendar.eventTint * 2)
+        #expect(CalendarColor.tint(Tokens.Calendar.eventTint, contrast: .standard) == Tokens.Calendar.eventTint)
     }
 }

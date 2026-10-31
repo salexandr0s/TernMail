@@ -238,6 +238,35 @@ import Testing
         }
     }
 
+    @Test func arrowKeysWalkTheDaysEventsAndClampAtTheEnds() async throws {
+        try await withFixture { fixture in
+            fixture.model.date = try fixture.event("review").start
+            let today = CalendarLayout.events(fixture.model.events, on: fixture.model.date, calendar: fixture.model.calendar)
+            try #require(today.count == 2)
+            fixture.model.selectedEventID = nil
+            #expect(fixture.model.selectAdjacentEvent(1))
+            #expect(fixture.model.selectedEventID == today[0].id)
+            fixture.model.selectAdjacentEvent(-1)
+            #expect(fixture.model.selectedEventID == today[0].id)
+            fixture.model.selectAdjacentEvent(1)
+            fixture.model.selectAdjacentEvent(1)
+            #expect(fixture.model.selectedEventID == today[1].id)
+            fixture.model.selectedEventID = nil
+            fixture.model.selectAdjacentEvent(-1)
+            #expect(fixture.model.selectedEventID == today[1].id)
+
+            let anchor = fixture.model.date
+            fixture.model.mode = .week
+            fixture.model.shift(steps: 1)
+            #expect(fixture.model.date == fixture.model.calendar.date(byAdding: .day, value: 1, to: anchor))
+            fixture.model.mode = .month
+            fixture.model.shift(steps: -1)
+            #expect(fixture.model.date == fixture.model.calendar.date(byAdding: .day, value: -6, to: anchor))
+            fixture.model.shift(periods: 1)
+            #expect(fixture.model.calendar.component(.month, from: fixture.model.date) == 11)
+        }
+    }
+
     private func withFixture(_ body: @MainActor (Fixture) async throws -> Void) async throws {
         let fixture = try await Fixture()
         do { try await body(fixture) }
