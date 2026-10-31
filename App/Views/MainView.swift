@@ -14,6 +14,7 @@ struct MainView: View {
     @State private var showsAssistant = false
     @State private var preferredAssistantWidth = Tokens.Assistant.sidebarWidth
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @AppStorage("mailColumnVisibility") private var storedColumnVisibility = ""
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
     @State private var paneSizing = AssistantMailPaneSizing()
     @State private var libraryToolbar = AttachmentLibraryToolbarState()
@@ -34,8 +35,36 @@ struct MainView: View {
     private var focusedMailbox: MailboxModel? { isActive && !showsLibrary ? mailbox : nil }
     private var focusedLibraryToolbar: AttachmentLibraryToolbarState? { isActive && showsLibrary ? libraryToolbar : nil }
 
+    /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
+    private var sidebarToggle: SidebarToggle? {
+        guard isActive else { return nil }
+        if showsLibrary { return SidebarToggle(isVisible: libraryToolbar.showsSidebar, toggle: libraryToolbar.toggleSidebar) }
+        return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
+    }
+
+    private func toggleSidebar() {
+        columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
+    }
+
+    private var section: WorkspaceSection {
+        guard isActive else { return .calendar }
+        return showsLibrary ? .attachments : .mail
+    }
+
+    private func show(_ section: WorkspaceSection) {
+        switch section {
+        case .mail:
+            app.destination = .mail
+            if showsLibrary { mailbox.go(to: SystemLabel.inbox) }
+        case .calendar:
+            app.destination = .calendar
+        case .attachments:
+            app.destination = .mail
+            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+        }
+    }
+
     var body: some View {
-        @Bindable var app = app
         let contentTopInset = paneSizing.contentTopInset
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
@@ -83,34 +112,20 @@ struct MainView: View {
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
         .focusedSceneValue(\.mailboxModel, focusedMailbox)
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
-        .onAppear { mailbox.undoManager = undoManager }
-        .task { await app.assistant.refreshConnection() }
-        .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
-        .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
-        .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }
-        .onChange(of: mailbox.selectedMailbox) { _, _ in app.assistant.refreshAccess() }
-        .onChange(of: mailbox.selectedThreadIDs) { _, _ in app.assistant.refreshAccess() }
+        .focusedSceneValue(\.sidebarToggle, sidebarToggle)
+        .onAppear {
+            mailbox.undoManager = undoManager
+            if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) { columnVisibility = stored }
+        }
+        .onChange(of: columnVisibility) { _, visibility in
+            // The assistant narrows the columns for a while; keep the user's own choice.
+            if !showsAssistant { storedColumnVisibility = visibility.storageValue }
+        }
+        .modifier(AssistantAccessRefresh(mailbox: mailbox))
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             mailbox.syncNow()
         }
-        .confirmationDialog("Sign out of Tern?", isPresented: $app.isConfirmingSignOut) {
-            Button("Sign Out", role: .destructive) {
-                Task { await app.signOut() }
-            }
-        } message: {
-            Text(app.signOutMessage)
-        }
-        .confirmationDialog(
-            "Sign out of \(app.accountToSignOut?.email ?? "this account")?",
-            isPresented: Binding(get: { app.accountToSignOut != nil }, set: { if !$0 { app.accountToSignOut = nil } }),
-            presenting: app.accountToSignOut
-        ) { account in
-            Button("Sign Out", role: .destructive) {
-                Task { await app.signOut(of: account.id) }
-            }
-        } message: { account in
-            Text(app.signOutMessage(for: account))
-        }
+        .modifier(SignOutDialogs())
         .onChange(of: mailbox.draftToReopen) { _, id in
             guard let id else { return }
             mailbox.draftToReopen = nil
@@ -122,6 +137,9 @@ struct MainView: View {
     private func mailContent(topInset: CGFloat) -> some View {
         MailWorkspaceColumns(columnVisibility: $columnVisibility, showsReader: !hidesReader) {
             SidebarView(mailbox: mailbox)
+                // AppKit asserts when the system toggle, or any item over the sidebar
+                // column, meets a saved customizable toolbar or a second window, so
+                // the content toolbar carries its own sidebar button.
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
                 .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .navigation, isPresented: showsAssistant) }
@@ -164,28 +182,19 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
                 .background(Tokens.Surface.canvas)
         }
-        .toolbar(id: "Tern.MailWorkspace") {
-            ToolbarItem(id: "library.sidebar", placement: .navigation) {
-                Button(libraryToolbar.showsSidebar ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
-                    libraryToolbar.toggleSidebar()
+        .toolbar(id: MailWindowPreferences.toolbarID) {
+            ToolbarItem(id: "workspace.sidebar", placement: .navigation) {
+                Button(sidebarToggle?.isVisible == false ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left") {
+                    sidebarToggle?.toggle()
                 }
-                .help(libraryToolbar.showsSidebar ? "Hide Sidebar" : "Show Sidebar")
+                .help(sidebarToggle?.isVisible == false ? "Show Sidebar" : "Hide Sidebar")
             }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
-            ToolbarItem(id: "library.find", placement: .primaryAction) {
-                Button { libraryToolbar.searchFocusRequest += 1 } label: {
-                    Label("Find attachment", systemImage: "magnifyingglass")
-                }
-                .help("Find attachment (\(ShortcutCatalog.find.label))")
-            }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
-            ToolbarItem(id: "mail.sidebar", placement: .navigation) {
-                Button(showsSidebar ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
-                    columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
-                }
-                .help(showsSidebar ? "Hide Sidebar" : "Show Sidebar")
-            }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            .customizationBehavior(.disabled)
+            .mailToolbarVisible(sidebarToggle != nil)
+            // Mail and Attachments switch sections from the sidebar's Library rows;
+            // Calendar has no mail sidebar, so its toolbar offers the way back.
+            WorkspaceSectionToolbar(section: section, onSelect: show)
+                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
                     .help("New Message")
@@ -195,8 +204,11 @@ struct MainView: View {
                 if let preferences = app.accountPreferences { ProfilePicker(model: preferences) }
             }
             .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && app.accountPreferences != nil)
-            MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow)
-                .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
+            WorkspaceSearchToolbar(
+                mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
+                section: section, isCompact: isCompactWindow
+            )
             WorkspaceAssistantToolbar(
                 isAssistantPresented: isActive ? showsAssistant : isCalendarAssistantPresented,
                 onToggleAssistant: { if isActive { toggleAssistant() } else { onCalendarAssistantToggle?() } },
@@ -356,6 +368,50 @@ struct MainView: View {
         case .discard(let id):
             Task { if await mailbox.undoDiscard(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
         }
+    }
+}
+
+/// Keeps the assistant's account access current as the mailbox changes.
+private struct AssistantAccessRefresh: ViewModifier {
+    let mailbox: MailboxModel
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
+        content
+            .task { await app.assistant.refreshConnection() }
+            .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
+            .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
+            .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }
+            .onChange(of: mailbox.selectedMailbox) { _, _ in app.assistant.refreshAccess() }
+            .onChange(of: mailbox.selectedThreadIDs) { _, _ in app.assistant.refreshAccess() }
+    }
+}
+
+/// The sign-out confirmations the Mailbox menu and account headers open.
+private struct SignOutDialogs: ViewModifier {
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
+        @Bindable var app = app
+        content
+            .confirmationDialog("Sign out of Tern?", isPresented: $app.isConfirmingSignOut) {
+                Button("Sign Out", role: .destructive) {
+                    Task { await app.signOut() }
+                }
+            } message: {
+                Text(app.signOutMessage)
+            }
+            .confirmationDialog(
+                "Sign out of \(app.accountToSignOut?.email ?? "this account")?",
+                isPresented: Binding(get: { app.accountToSignOut != nil }, set: { if !$0 { app.accountToSignOut = nil } }),
+                presenting: app.accountToSignOut
+            ) { account in
+                Button("Sign Out", role: .destructive) {
+                    Task { await app.signOut(of: account.id) }
+                }
+            } message: { account in
+                Text(app.signOutMessage(for: account))
+            }
     }
 }
 

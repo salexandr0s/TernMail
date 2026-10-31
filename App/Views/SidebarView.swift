@@ -284,6 +284,9 @@ private struct CombinedMailboxRows: View {
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(isExpanded ? "Hides accounts" : "Shows accounts")
         .accessibilityAction(.default, selectAndToggle)
+        .contextMenu {
+            MailboxContextMenu(mailbox: mailbox, box: combinedID, favoriteTarget: .mailbox(labelID: box.id, scope: .allAccounts))
+        }
         if isExpanded {
             ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
                 let boxID = MailboxID.account(owner.account.id, box.id)
@@ -297,6 +300,10 @@ private struct CombinedMailboxRows: View {
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
                     .tag(boxID)
+                    .contextMenu {
+                        MailboxContextMenu(mailbox: mailbox, box: boxID,
+                            favoriteTarget: .mailbox(labelID: box.id, scope: .accounts([owner.account.id])))
+                    }
                     if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                 }
             }

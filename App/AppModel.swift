@@ -39,6 +39,20 @@ final class AppModel {
     @ObservationIgnored private var preferenceReconciliation: Task<Void, Never>?
     var destination: WorkspaceDestination = .mail
     @ObservationIgnored var assistantNavigationTask: Task<Void, Never>?
+    /// Set by the main window's root view. The Dock, notifications and a
+    /// Dock-icon click with no window open use it to show the window again.
+    @ObservationIgnored var openMainWindow: (@MainActor () -> Void)? {
+        didSet { CalendarNotificationRouter.shared.openMainWindow = openMainWindow }
+    }
+
+    func showMainWindow() { openMainWindow?() }
+
+    /// The Dock menu's New Message: the main window opens the draft's window.
+    func composeFromDock() {
+        showMainWindow()
+        guard let mailbox else { return }
+        Task { if let id = await mailbox.startCompose(.newMessage) { mailbox.draftToReopen = id } }
+    }
 
     var mailURLs: MailURLRouter {
         if let mailURLRouter { return mailURLRouter }

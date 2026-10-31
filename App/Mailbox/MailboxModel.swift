@@ -937,7 +937,7 @@ final class MailboxModel {
         selectedMailbox.map(owners(of:)) ?? []
     }
 
-    private func owners(of box: MailboxID) -> [AccountMailbox] {
+    func owners(of box: MailboxID) -> [AccountMailbox] {
         switch box {
         case .account(let accountID, _): presentedAccounts.filter { $0.account.id == accountID }
         case .combined: presentedAccounts

@@ -11,6 +11,8 @@ final class CalendarModel {
     var date = Date()
     var mode: CalendarDisplayMode = .week
     var searchText = ""
+    /// Bumped by Find so the window's search field takes focus.
+    var searchFocusRequest = 0
     var searchResults: [CalendarDisplayEvent] = []
     var searchStatus = ""
     @ObservationIgnored var searchRevision = 0

@@ -1,23 +1,32 @@
-import AppKit
 import MessageContent
 import SwiftUI
 
 /// The main window's toolbar over the conversation: triage actions, then
-/// replies, then search, in the order mail apps on the Mac use.
+/// replies, in the order mail apps on the Mac use. The window's search
+/// field follows them (`WorkspaceSearch`).
 struct MailToolbar: CustomizableToolbarContent {
     @Bindable var mailbox: MailboxModel
     let reply: (ReplyKind) -> Void
     var isCompact = false
+    /// Hidden while the window shows Calendar or the attachment library. Each
+    /// group reads it here because an inner `hidden(false)` would win over one
+    /// applied to the whole toolbar.
+    var isVisible = true
+
+    private var showsStandard: Bool { isVisible && !isCompact }
+    private var showsCompact: Bool { isVisible && isCompact }
 
     var body: some CustomizableToolbarContent {
         ToolbarItem(id: "mail.archive", placement: .primaryAction) {
             Button { mailbox.perform(.archive) } label: { Label("Archive", systemImage: "archivebox") }
                 .help("Archive").disabled(!mailbox.canArchive)
         }
+        .mailToolbarVisible(isVisible)
         ToolbarItem(id: "mail.trash", placement: .primaryAction) {
             Button { mailbox.perform(.trash) } label: { Label("Move to Trash", systemImage: "trash") }
                 .help("Move to Trash").disabled(!mailbox.canTrash)
         }
+        .mailToolbarVisible(isVisible)
         standardTriage
         ToolbarItem(id: "mail.compactActions", placement: .primaryAction) {
             Menu {
@@ -33,17 +42,10 @@ struct MailToolbar: CustomizableToolbarContent {
                 .popover(isPresented: isMoving, arrowEdge: .bottom) { movePicker }
                 .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
         }
-        .mailToolbarVisible(isCompact)
+        .mailToolbarVisible(showsCompact)
         replies
-        ToolbarItem(id: "mail.search", placement: .primaryAction) {
-            SearchField(search: mailbox.search, text: mailbox.search.text,
-                        focusRequest: mailbox.search.fieldFocusRequest)
-                .frame(width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth)
-                .help("Search mail (⌥⌘F). Return searches Gmail.")
-        }
-        .customizationBehavior(.disabled)
         ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
-            .mailToolbarVisible(!isCompact)
+            .mailToolbarVisible(showsStandard)
     }
 
     private var standardTriage: some CustomizableToolbarContent {
@@ -57,17 +59,17 @@ struct MailToolbar: CustomizableToolbarContent {
             }
             ToolbarItem(id: "mail.snooze", placement: .primaryAction) { snoozeMenu }
         }
-        .mailToolbarVisible(!isCompact)
+        .mailToolbarVisible(showsStandard)
     }
 
     private var replies: some CustomizableToolbarContent {
         Group {
             ToolbarItem(id: "mail.reply", placement: .primaryAction) { replyButton(.reply, title: "Reply", symbol: "arrowshape.turn.up.left") }
-                .mailToolbarVisible(!isCompact)
+                .mailToolbarVisible(showsStandard)
             ToolbarItem(id: "mail.replyAll", placement: .primaryAction) { replyButton(.replyAll, title: "Reply All", symbol: "arrowshape.turn.up.left.2") }
-                .mailToolbarVisible(!isCompact)
+                .mailToolbarVisible(showsStandard)
             ToolbarItem(id: "mail.forward", placement: .primaryAction) { replyButton(.forward, title: "Forward", symbol: "arrowshape.turn.up.right") }
-                .mailToolbarVisible(!isCompact)
+                .mailToolbarVisible(showsStandard)
             ToolbarItem(id: "mail.compactReplies", placement: .primaryAction) {
                 Menu { replyActions.labelStyle(.titleAndIcon) } label: {
                     Label("Reply or Forward", systemImage: "arrowshape.turn.up.left")
@@ -75,7 +77,7 @@ struct MailToolbar: CustomizableToolbarContent {
                 .menuIndicator(.visible).help("Reply or Forward")
                 .accessibilityLabel("Reply or Forward").disabled(!mailbox.canReply)
             }
-            .mailToolbarVisible(isCompact)
+            .mailToolbarVisible(showsCompact)
         }
     }
 
@@ -165,68 +167,5 @@ struct MailToolbar: CustomizableToolbarContent {
 extension CustomizableToolbarContent {
     func mailToolbarVisible(_ visible: Bool) -> some CustomizableToolbarContent {
         hidden(!visible)
-    }
-}
-
-/// The toolbar's search field. An AppKit field, so ⌥⌘F can focus it on
-/// macOS 14. Return asks Gmail and Escape clears the search.
-private struct SearchField: NSViewRepresentable {
-    let search: SearchModel
-    /// Passed in so a change to either updates the field.
-    let text: String
-    let focusRequest: Int
-
-    func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
-        field.placeholderString = "Search mail"
-        field.setAccessibilityLabel("Search mail")
-        field.setAccessibilityHelp("Type to search saved mail. Return searches Gmail; Escape clears the search.")
-        field.sendsSearchStringImmediately = true
-        field.sendsWholeSearchString = false
-        field.delegate = context.coordinator
-        field.target = context.coordinator
-        field.action = #selector(Coordinator.textChanged(_:))
-        return field
-    }
-
-    func updateNSView(_ field: NSSearchField, context: Context) {
-        context.coordinator.search = search
-        if field.stringValue != text { field.stringValue = text }
-        if context.coordinator.focusRequest != focusRequest {
-            context.coordinator.focusRequest = focusRequest
-            field.window?.makeFirstResponder(field)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(search: search, focusRequest: focusRequest)
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var search: SearchModel
-        var focusRequest: Int
-
-        init(search: SearchModel, focusRequest: Int) {
-            self.search = search
-            self.focusRequest = focusRequest
-        }
-
-        @objc func textChanged(_ sender: NSSearchField) {
-            search.update(sender.stringValue)
-        }
-
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            switch selector {
-            case #selector(NSResponder.insertNewline(_:)):
-                search.submit()
-                return true
-            case #selector(NSResponder.cancelOperation(_:)):
-                search.cancel()
-                return true
-            default:
-                return false
-            }
-        }
     }
 }

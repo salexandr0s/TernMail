@@ -40,6 +40,7 @@
 		1A83D898D548471315EB7094 /* AccountsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4297592C028D1762FD28480 /* AccountsSettings.swift */; };
 		1BE83A4C7652FFEB2974E6EA /* MailToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6E763B99120FDE987E6302E /* MailToolbar.swift */; };
 		1D9533B01C204A2EBC8AF535 /* TriageControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBCB320012A0F94BB95991B /* TriageControls.swift */; };
+		1DA0EA3A9CB0810E593D6325 /* WorkspaceSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB31A42ACD68CED567F7AE15 /* WorkspaceSearch.swift */; };
 		1E91F99C60039185B4A78181 /* AccountProfileImagesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE2ACE54F3ADDBC509D9753 /* AccountProfileImagesTests.swift */; };
 		2009393C26D5131845B7652D /* AddressAvatarModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01FD84EC8C7AAF08CA41BFA8 /* AddressAvatarModelTests.swift */; };
 		209724709650B6D1289ADC7F /* AccountSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E1394C0E8A402AB905CEE2A /* AccountSession.swift */; };
@@ -529,6 +530,7 @@
 		C9F8AAE6944AEB1E1714F399 /* AssistantWritingStyleSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleSettingsSection.swift; sourceTree = "<group>"; };
 		CA71DE49E2223C4232B67FAF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CB21866DEEF6F3657DA70731 /* ComposeModel+ContactGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ComposeModel+ContactGroups.swift"; sourceTree = "<group>"; };
+		CB31A42ACD68CED567F7AE15 /* WorkspaceSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSearch.swift; sourceTree = "<group>"; };
 		CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		CEDAD2351D4D9A40BCC4E155 /* PublicSuffix.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublicSuffix.swift; sourceTree = "<group>"; };
 		CF9168AB9D186528609BC387 /* EmailCalendarPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCalendarPresentation.swift; sourceTree = "<group>"; };
@@ -732,6 +734,7 @@
 				313612542F6E2902BDDD3B95 /* ThreadListView.swift */,
 				24BB9B46E342248DBF893DA9 /* ThreadView.swift */,
 				4CBCB320012A0F94BB95991B /* TriageControls.swift */,
+				CB31A42ACD68CED567F7AE15 /* WorkspaceSearch.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -1441,6 +1444,7 @@
 				6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */,
 				1D9533B01C204A2EBC8AF535 /* TriageControls.swift in Sources */,
 				FD6DE2872464C2EE7C1666B2 /* VacationPane.swift in Sources */,
+				1DA0EA3A9CB0810E593D6325 /* WorkspaceSearch.swift in Sources */,
 				EFC823C7D14CEC3A7790E830 /* WorkspaceView.swift in Sources */,
 				E8C3C545B272BBEAC6D0EB5C /* WritingStyleAuditFixtures.swift in Sources */,
 			);

@@ -108,7 +108,6 @@ enum ShortcutCatalog {
 
     // MARK: View
 
-    /// Provided by `SidebarCommands`; listed so Help shows it and tests guard the keys.
     static let toggleSidebar = Command("view.toggleSidebar", menu: .view, title: "Show or Hide Sidebar", key: "s",
                                        modifiers: [.control, .command], scopes: Scope.mainWindow)
     /// Provided by `ToolbarCommands`.

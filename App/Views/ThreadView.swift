@@ -9,6 +9,8 @@ struct ThreadView: View {
     let mailbox: MailboxModel
     var selectedMessageID: String? = nil
     var isReaderActive = true
+    /// A conversation window titles itself from this.
+    var onDetailChange: ((ThreadDetail) -> Void)? = nil
 
     @State private var detail: ThreadDetail?
     @State private var expanded: Set<String> = []
@@ -210,6 +212,7 @@ struct ThreadView: View {
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
         .onChange(of: key) { _, _ in selectedMailQuote = nil }
+        .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
         .task {
             blocker = await RemoteContentBlocker.ruleList()

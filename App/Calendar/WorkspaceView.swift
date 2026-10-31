@@ -12,6 +12,7 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @State private var showsCalendarAssistant = false
+    @State private var calendarAssistantWidth = Tokens.Assistant.sidebarWidth
     let mailbox: MailboxModel
 
     var body: some View {
@@ -25,12 +26,24 @@ struct WorkspaceView: View {
             HStack(spacing: 0) {
                 CalendarView(model: app.calendar, isActive: app.destination == .calendar)
                 if showsCalendarAssistant {
-                    Divider()
+                    Rectangle()
+                        .fill(Tokens.Surface.border)
+                        .frame(width: Tokens.Border.hairline)
+                        .overlay {
+                            AssistantSidebarResizeHandle(width: calendarAssistantWidth, onResize: resizeAssistant)
+                                .frame(width: Tokens.Space.s3)
+                                .accessibilityElement()
+                                .accessibilityLabel("Assistant width")
+                                .accessibilityValue("\(Int(calendarAssistantWidth)) points")
+                                .accessibilityAdjustableAction { direction in
+                                    resizeAssistant(calendarAssistantWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                                }
+                        }
                     AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
                         onExpand: { openAssistant(fullScreen: true) },
                         onDetach: { openAssistant(fullScreen: false) },
                         onClose: { showsCalendarAssistant = false })
-                        .frame(width: Tokens.Assistant.sidebarWidth)
+                        .frame(width: calendarAssistantWidth)
                 }
             }
             .opacity(app.destination == .calendar ? 1 : 0)
@@ -52,6 +65,10 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await app.calendar.refresh() }
         }
+    }
+
+    private func resizeAssistant(_ width: CGFloat) {
+        calendarAssistantWidth = min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth)
     }
 
     private func openAssistant(fullScreen: Bool) {

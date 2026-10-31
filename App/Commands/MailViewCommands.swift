@@ -11,14 +11,18 @@ extension FocusedValues {
 struct MailViewCommands: Commands {
     @FocusedValue(\.mailboxModel) private var mailbox
     @FocusedValue(\.readerActions) private var reader
+    @FocusedValue(\.sidebarToggle) private var sidebar
     @Environment(\.openWindow) private var openWindow
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @AppStorage("showMessageSize") private var showsMessageSize = false
 
     var body: some Commands {
-        SidebarCommands()
         ToolbarCommands()
         CommandGroup(after: .toolbar) {
+            Button(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") { sidebar?.toggle() }
+                .labelStyle(.titleAndIcon)
+                .keyboardShortcut(ShortcutCatalog.toggleSidebar.shortcut)
+                .disabled(sidebar == nil)
             Toggle("Show Viewing Pane", isOn: Binding(get: { !hidesReader }, set: { hidesReader = !$0 }))
                 .keyboardShortcut(ShortcutCatalog.toggleReader.shortcut)
             MessageListDensityPicker()

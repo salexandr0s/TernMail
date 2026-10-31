@@ -1,4 +1,5 @@
 import AppKit
+import MailStore
 import MessageContent
 import SwiftUI
 
@@ -85,6 +86,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// A Dock click with every window closed brings the mailbox back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard !hasVisibleWindows else { return true }
+        model.showMainWindow()
+        return false
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let signedIn = model.mailbox != nil
+        for (title, action, enabled) in [
+            ("New Message", #selector(dockNewMessage), signedIn),
+            ("Check for New Mail", #selector(dockCheckForNewMail), signedIn),
+        ] as [(String, Selector, Bool)] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        for (title, action) in [("Inbox", #selector(dockShowInbox)), ("Calendar", #selector(dockShowCalendar))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = signedIn
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func dockNewMessage() { model.composeFromDock() }
+
+    @objc private func dockCheckForNewMail() { model.mailbox?.syncNow() }
+
+    @objc private func dockShowInbox() {
+        model.showMainWindow()
+        model.destination = .mail
+        model.mailbox?.go(to: SystemLabel.inbox)
+    }
+
+    @objc private func dockShowCalendar() {
+        model.showMainWindow()
+        model.destination = .calendar
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where !model.auth.handleRedirect(url) { model.mailURLs.receive(url) }
     }
@@ -156,8 +202,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Picks the screen for the current sign-in phase.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        content
+            .onAppear {
+                model.openMainWindow = {
+                    NSApp.activate()
+                    openWindow(id: "main")
+                }
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         switch model.phase {
         case .loading:
             openingState

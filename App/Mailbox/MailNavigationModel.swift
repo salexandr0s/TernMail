@@ -63,6 +63,14 @@ final class MailNavigationModel {
         _ = await change { try await $0.saveMailFavorites(updated) }
     }
 
+    /// Drag reorder from the sidebar, in `onMove` terms.
+    func moveFavorites(fromOffsets source: IndexSet, toOffset destination: Int) async {
+        var updated = favorites
+        updated.move(fromOffsets: source, toOffset: destination)
+        guard updated.map(\.id) != favorites.map(\.id) else { return }
+        _ = await change { try await $0.saveMailFavorites(updated) }
+    }
+
     func resetFavorites() async { _ = await change { try await $0.resetMailFavorites() } }
 
     private func change(_ operation: (AccountStore) async throws -> Void) async -> Bool {

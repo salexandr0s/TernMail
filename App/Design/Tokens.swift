@@ -136,12 +136,15 @@ enum Tokens {
         static let listMinWidth: CGFloat = 300
         static let listWidth: CGFloat = 360
         static let searchMinWidth: CGFloat = 180
-        static let searchWidth: CGFloat = 320
+        static let searchWidth: CGFloat = 200
         static let searchMaxWidth: CGFloat = 420
         static let readableWidth: CGFloat = 880
         static let emptyStateWidth: CGFloat = 320
         static let composeMinWidth: CGFloat = 480
         static let composeMinHeight: CGFloat = 360
+        /// A conversation in its own window keeps its header and toolbar readable.
+        static let conversationMinWidth: CGFloat = 560
+        static let conversationMinHeight: CGFloat = 400
         /// The To, Cc and Subject column in a compose header.
         static let composeLabelWidth: CGFloat = 64
         /// Room to write below the recipients, files and quoted text.

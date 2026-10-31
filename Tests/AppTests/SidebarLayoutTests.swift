@@ -29,7 +29,7 @@ import Testing
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        let toolbar = NSToolbar(identifier: "Tern.MailWorkspace")
+        let toolbar = NSToolbar(identifier: MailWindowPreferences.toolbarID)
         toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified
@@ -43,13 +43,13 @@ import Testing
         for (width, toolbarStyle) in configurations {
             window.toolbarStyle = toolbarStyle
             window.setContentSize(NSSize(width: width, height: 760))
-            try await settle()
+            try await settleMail(in: controller.view, window: window)
             try await expectMailVisible(in: controller.view, window: window)
         }
         app.destination = .calendar
         try await settle()
         app.destination = .mail
-        try await settle()
+        try await settleMail(in: controller.view, window: window)
         try await expectMailVisible(in: controller.view, window: window)
         await app.signOut()
     }
@@ -96,6 +96,22 @@ import Testing
         }
     }
 
+    /// The first layout fills the lists and reserves the toolbar inset a few
+    /// hundred milliseconds after the window appears, later under load.
+    private func settleMail(in rootView: NSView, window: NSWindow) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        repeat {
+            try await settle()
+            let tables = tables(in: rootView)
+            let filled = tables.count >= 2 && tables.allSatisfy { $0.numberOfRows > 0 }
+            let inset = tables.allSatisfy { table in
+                guard let scroll = table.enclosingScrollView else { return false }
+                return scroll.safeAreaInsets.top > 0 || scroll.convert(scroll.bounds, to: nil).maxY <= window.contentLayoutRect.maxY + 1
+            }
+            if filled, inset { return }
+        } while ContinuousClock.now < deadline
+    }
+
     private func descendants(in view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants(in: $0) }
     }
@@ -120,7 +136,7 @@ import Testing
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        let toolbar = NSToolbar(identifier: "Tern.MailWorkspace")
+        let toolbar = NSToolbar(identifier: MailWindowPreferences.toolbarID)
         toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified

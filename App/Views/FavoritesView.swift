@@ -13,6 +13,9 @@ struct FavoritesView: View {
                     favoriteRows(favorite, box: box)
                 }
             }
+            .onMove { source, destination in
+                Task { await mailbox.navigation.moveFavorites(fromOffsets: source, toOffset: destination) }
+            }
         } header: {
             HStack {
                 Text("Favorites")
@@ -49,6 +52,8 @@ struct FavoritesView: View {
         .accessibilityLabel(title(favorite))
         .accessibilityValue(canExpand ? (isExpanded ? "Expanded" : "Collapsed") : "")
         .contextMenu {
+            MailboxContextMenu(mailbox: mailbox, box: box, isSystemMailbox: favorite.target.isSystemMailbox)
+            Divider()
             Button("Move Up", systemImage: "arrow.up") { Task { await mailbox.navigation.moveFavorite(favorite.id, by: -1) } }
                 .disabled(mailbox.navigation.favorites.first?.id == favorite.id)
             Button("Move Down", systemImage: "arrow.down") { Task { await mailbox.navigation.moveFavorite(favorite.id, by: 1) } }
@@ -120,6 +125,42 @@ struct FavoritesView: View {
             }
         }
         Task { await mailbox.navigation.addFavorite(target) }
+    }
+}
+
+/// Mark All as Read and, for Trash and Spam, emptying the mailbox. Rows in
+/// the Mailboxes section add Favorites membership.
+struct MailboxContextMenu: View {
+    let mailbox: MailboxModel
+    let box: MailboxID
+    var isSystemMailbox = true
+    var favoriteTarget: MailFavoriteTarget?
+
+    var body: some View {
+        if isSystemMailbox {
+            Button("Mark All as Read", systemImage: "envelope.open") { mailbox.triage.markAllRead(in: box) }
+                .disabled(!MailTriageModel.canMarkAllRead(box))
+            if box.id == SystemLabel.trash || box.id == SystemLabel.spam {
+                Button(box.id == SystemLabel.trash ? "Empty Trash…" : "Delete All Spam…", systemImage: "trash.slash", role: .destructive) {
+                    mailbox.selectedMailbox = box
+                    Task { await mailbox.triage.preparePermanentDeletion(entireMailbox: true) }
+                }
+            }
+        }
+        if let favoriteTarget {
+            if let favorite = mailbox.navigation.favorites.first(where: { $0.target == favoriteTarget }) {
+                Button("Remove from Favorites", systemImage: "star.slash") { Task { await mailbox.navigation.removeFavorite(favorite.id) } }
+            } else {
+                Button("Add to Favorites", systemImage: "star") { Task { await mailbox.navigation.addFavorite(favoriteTarget) } }
+            }
+        }
+    }
+}
+
+extension MailFavoriteTarget {
+    var isSystemMailbox: Bool {
+        if case .mailbox = self { return true }
+        return false
     }
 }
 

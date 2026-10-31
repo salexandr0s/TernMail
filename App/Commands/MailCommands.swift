@@ -290,7 +290,10 @@ struct MailCommands: Commands {
 
     private var goMenu: some Commands {
         CommandMenu("Go") {
-            Button("Mail", systemImage: "envelope") { app.destination = .mail }
+            Button("Mail", systemImage: "envelope") {
+                app.destination = .mail
+                if mailbox?.selectedLabelID == AttachmentLibraryModel.mailboxID { mailbox?.go(to: SystemLabel.inbox) }
+            }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.goMail.shortcut)
                 .disabled(!isMainWindowFocused)

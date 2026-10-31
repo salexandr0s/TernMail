@@ -23,7 +23,14 @@ struct CalendarActions {
     let print: @MainActor () -> Void
 }
 
+/// The sidebar of the split view in front, for View ▸ Show or Hide Sidebar.
+struct SidebarToggle {
+    let isVisible: Bool
+    let toggle: @MainActor () -> Void
+}
+
 extension FocusedValues {
+    @Entry var sidebarToggle: SidebarToggle?
     @Entry var readerActions: ReaderActions?
     @Entry var calendarModel: CalendarModel?
     @Entry var calendarActions: CalendarActions?

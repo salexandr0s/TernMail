@@ -56,15 +56,25 @@ final class MailTriageModel {
     }
 
     func markAllRead() {
-        guard let mailbox, let labelID = mailbox.selectedLabelID,
-              !mailbox.search.isActive, labelID != MailboxModel.outboxID, labelID != MailboxModel.snoozedID else { return }
+        guard let mailbox, let box = mailbox.selectedMailbox, !mailbox.search.isActive else { return }
+        markAllRead(in: box)
+    }
+
+    /// Sidebar rows offer this for mailboxes other than the selected one.
+    func markAllRead(in box: MailboxID) {
+        guard let mailbox, Self.canMarkAllRead(box) else { return }
         mailbox.undoManager?.beginUndoGrouping()
-        for owner in mailbox.selectedAccounts {
+        for owner in mailbox.owners(of: box) {
             mailbox.queueUndoable("Mark All as Read", confirmation: "Unread messages marked as read", in: owner) { engine in
-                try await engine.markAllRead(labelID: labelID)
+                try await engine.markAllRead(labelID: box.id)
             }
         }
         mailbox.undoManager?.endUndoGrouping()
+    }
+
+    /// The Outbox and Snoozed are not Gmail labels, so Gmail cannot mark them.
+    static func canMarkAllRead(_ box: MailboxID) -> Bool {
+        box.id != MailboxModel.outboxID && box.id != MailboxModel.snoozedID
     }
 
     func preparePermanentDeletion(entireMailbox: Bool = false) async {

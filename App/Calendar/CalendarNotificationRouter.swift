@@ -9,6 +9,8 @@ final class CalendarNotificationRouter: NSObject, UNUserNotificationCenterDelega
     static let shared = CalendarNotificationRouter()
     private weak var model: CalendarModel?
     private var pending: Target?
+    /// Shows the main window; the app model sets it.
+    var openMainWindow: (@MainActor () -> Void)?
 
     struct Target: Sendable {
         let accountID: String
@@ -27,8 +29,8 @@ final class CalendarNotificationRouter: NSObject, UNUserNotificationCenterDelega
         guard let model else { pending = target; return }
         Task {
             await model.openEvent(accountID: target.accountID, calendarID: target.calendarID, eventID: target.eventID)
-            NSApp.activate(ignoringOtherApps: true)
-            NSApp.windows.first(where: { $0.identifier?.rawValue == "main" || $0.title == "Tern" })?.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            openMainWindow?()
         }
     }
 
