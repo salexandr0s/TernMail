@@ -19,12 +19,14 @@ struct ComposeWindow: View {
     @Environment(\.dismiss) private var dismiss
     /// The draft differs from its last save, so the close button shows a dot.
     @State private var isEdited = false
+    /// Asks the draft's model before the window closes.
+    @State private var closer = ComposeWindowCloser()
 
     var body: some View {
         Group {
             if let id = localDraftID, let mailbox = app.mailbox {
                 ComposeView(localDraftID: id, mailbox: mailbox, isEdited: $isEdited,
-                            handoff: handoff?.localDraftID == id ? handoff : nil) {
+                            handoff: handoff?.localDraftID == id ? handoff : nil, closer: closer) {
                     handoff = $0
                     localDraftID = $0.localDraftID
                 }
@@ -38,6 +40,7 @@ struct ComposeWindow: View {
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
         .background(WindowEditedMarker(isEdited: isEdited))
+        .background(ComposeWindowCloseGuard { [closer] in closer.shouldClose() })
         .background(ComposeWindowCascade())
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
@@ -122,12 +125,15 @@ struct ComposeView: View {
     private let restoredFocus: Field?
     /// Shows the copy the window's message became in another account.
     private let onMove: (Handoff) -> Void
+    /// Asks this view's model before the window closes.
+    private let closer: ComposeWindowCloser
 
     init(localDraftID: String, mailbox: MailboxModel, isEdited: Binding<Bool>, handoff: Handoff? = nil,
-         onMove: @escaping (Handoff) -> Void) {
+         closer: ComposeWindowCloser, onMove: @escaping (Handoff) -> Void) {
         _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox, senderChange: handoff?.senderChange))
         _isEdited = isEdited
         restoredFocus = handoff?.focus
+        self.closer = closer
         self.onMove = onMove
     }
 
@@ -160,7 +166,10 @@ struct ComposeView: View {
             Text(model.alert?.message ?? "")
         }
         .onChange(of: model.isEdited, initial: true) { _, edited in isEdited = edited }
-        .task { model.start() }
+        .task {
+            closer.model = model
+            model.start()
+        }
         .task(id: model.phase) {
             switch model.phase {
             case .loading, .moving: break
@@ -722,6 +731,60 @@ private struct WindowEditedMarker: NSViewRepresentable {
             super.viewDidMoveToWindow()
             window?.isDocumentEdited = isEdited
         }
+    }
+}
+
+/// Decides whether the compose window may close. A draft that closing
+/// would store goes first, and the window closes once that worked. A store
+/// that fails keeps the window open with the error and the draft.
+@MainActor
+final class ComposeWindowCloser {
+    /// The model of the draft the window shows, which changes when the message moves to another account.
+    weak var model: ComposeModel?
+
+    func shouldClose() -> Bool {
+        guard let model, !model.closesAtOnce else { return true }
+        Task { await model.requestClose() }
+        return false
+    }
+}
+
+/// Asks `shouldClose` before the close button or File > Close closes the
+/// window. Every other delegate call still reaches the delegate SwiftUI installed.
+private struct ComposeWindowCloseGuard: NSViewRepresentable {
+    let shouldClose: @MainActor () -> Bool
+
+    func makeNSView(context: Context) -> GuardView { GuardView() }
+
+    func updateNSView(_ nsView: GuardView, context: Context) {
+        nsView.delegate.shouldClose = shouldClose
+    }
+
+    final class GuardView: NSView {
+        let delegate = ForwardingDelegate()
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, window.delegate !== delegate else { return }
+            delegate.next = window.delegate
+            window.delegate = delegate
+        }
+    }
+
+    final class ForwardingDelegate: NSObject, NSWindowDelegate {
+        weak var next: NSWindowDelegate?
+        var shouldClose: @MainActor () -> Bool = { true }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            guard shouldClose() else { return false }
+            return next?.windowShouldClose?(sender) ?? true
+        }
+
+        override func responds(to aSelector: Selector!) -> Bool {
+            super.responds(to: aSelector) || next?.responds(to: aSelector) == true
+        }
+
+        override func forwardingTarget(for aSelector: Selector!) -> Any? { next }
     }
 }
 

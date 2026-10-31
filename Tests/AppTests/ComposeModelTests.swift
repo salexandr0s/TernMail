@@ -44,12 +44,39 @@ import Testing
         model.start()
         try await waitUntil { model.phase == .open }
 
-        model.windowClosed()
+        // A normal close asks nothing.
+        await model.requestClose()
+        #expect(model.phase == .closed && model.alert == nil)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while try await cache.read({ try $0.localDraft(id: id) }) != nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await cache.read { try $0.localDraft(id: id) } == nil)
+        await mailbox.stop()
+    }
+
+    @Test func closingWaitsForTheStoreAndStaysOpenWhenItFails() async throws {
+        let file = CacheFile()
+        let (mailbox, cache) = try await makeMailbox(in: file)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        #expect(!model.closesAtOnce)
+
+        try file.refuse("UPDATE", on: "localDraft")
+        model.content.subject = "Plan"
+        await model.requestClose()
+        // Still open, showing the error, with the edit this Mac doesn't have.
+        #expect(model.phase == .open && model.isEditable && model.content.subject == "Plan")
+        #expect(model.alert?.title == "Can't Close Message" && model.status?.isError == true)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject != "Plan")
+
+        try file.allow("UPDATE", on: "localDraft")
+        model.alert = nil
+        await model.requestClose()
+        #expect(model.phase == .closed && model.alert == nil)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         await mailbox.stop()
     }
 
@@ -181,8 +208,9 @@ import Testing
         await mailbox.stop()
     }
 
-    private func makeMailbox() async throws -> (MailboxModel, MailCache) {
-        let cache = try MailCache.inMemory()
+    /// A mailbox whose cache is in memory, or in `file` for a test that breaks it.
+    private func makeMailbox(in file: CacheFile? = nil) async throws -> (MailboxModel, MailCache) {
+        let cache = try file.map { try MailCache.open(at: $0.url) } ?? MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
         let outgoing = FileManager.default.temporaryDirectory.appending(path: "TernComposeTests-\(UUID().uuidString)")
         let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing)

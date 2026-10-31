@@ -130,6 +130,8 @@ final class ComposeModel {
     private var changedSinceSave = false
     /// Files still being copied into the draft, which `attachments` doesn't list yet.
     private var attachmentsInProgress = 0
+    /// Storing the draft before the window closes, so nothing changes meanwhile.
+    private(set) var isClosing = false
     @ObservationIgnored private let attachmentFiles: OutgoingAttachmentFiles
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
@@ -183,7 +185,20 @@ final class ComposeModel {
     /// Only a new message can change accounts.
     var canChangeAccount: Bool { draft?.kind == .new }
 
-    var isEditable: Bool { phase == .open && draft?.state == .editing }
+    var isEditable: Bool { takesEdits && !isClosing }
+
+    /// Open, and not taken by a send or discard.
+    private var takesEdits: Bool { phase == .open && draft?.state == .editing }
+
+    /// Closing the window now loses nothing. Otherwise `requestClose()`
+    /// stores the draft first, and the window waits for it.
+    var closesAtOnce: Bool {
+        switch phase {
+        case .open: !takesEdits
+        case .moving: false
+        case .loading, .closed, .moved: true
+        }
+    }
 
     /// Gmail doesn't have the latest changes, so closing the window saves
     /// them. The window's close button shows a dot meanwhile.
@@ -198,6 +213,7 @@ final class ComposeModel {
     var canSendAndArchive: Bool { draft?.kind != .new && draft?.threadID != nil && isEditable }
 
     var progressText: String? {
+        if isClosing { return "Saving draft…" }
         if expandingGroups > 0 { return "Loading contact group…" }
         if phase == .moving { return "Changing sender account…" }
         if attachmentsInProgress > 0 { return "Attaching files…" }
@@ -449,7 +465,8 @@ final class ComposeModel {
                         let bytes = try await engine.outgoingAttachmentData(image)
                         inlineImageData[cid] = bytes
                         let reference = InlineImageReference(contentID: cid, altText: image.filename)
-                        if let editor { editor.insertImage(reference, data: bytes) }
+                        // A closing window's editor takes no edits, so the image goes in the content it stores.
+                        if let editor, isEditable { editor.insertImage(reference, data: bytes) }
                         else { content.body.blocks.append(.init(runs: [.init("", image: reference)])) }
                     }
                 } catch let error as ComposeError {
@@ -500,40 +517,80 @@ final class ComposeModel {
         saveNow()
     }
 
-    /// The window closed. An untouched draft that never reached Gmail goes
-    /// away; anything else stays in Drafts.
+    /// Closes the window once the draft is stored as closing leaves it: kept
+    /// in Drafts with the latest edits, or removed when blank or untouched.
+    /// A store that fails keeps the window open and says so. Asking again
+    /// while a close waits does nothing.
+    func requestClose() async {
+        guard isEditable, let draft else { return }
+        isClosing = true
+        cancelTimers()
+        let action = closingAction(for: draft)
+        let problem = await serially { [self] in await storeForClosing(action) }.value
+        isClosing = false
+        if let problem { alert = problem } else { close() }
+    }
+
+    /// The window went away. Its close button stored the draft already. Any
+    /// other way, such as signing out, keeps or discards the draft as closing
+    /// would, without waiting.
     func windowClosed() {
         observation?.cancel()
         integrationRefresh?.cancel()
         featureObservation?.cancel()
         recipientAccountTask?.cancel()
         attachmentFiles.removeAll()
-        guard isEditable else { return }
+        guard isEditable, let draft else { return }
+        let action = closingAction(for: draft)
         phase = .closed
-        keepOrDiscard()
+        cancelTimers()
+        serially { [self] in _ = await storeForClosing(action) }
     }
 
-    /// Before quitting: keeps or discards the draft as closing the window
-    /// would, then waits until that is stored. A kept draft goes to Gmail,
-    /// so it shows in Drafts even when its window isn't restored.
+    /// Before quitting: stores the draft as closing the window would, and
+    /// waits for that. A kept draft goes to Gmail, so it shows in Drafts even
+    /// when its window isn't restored.
     func prepareToQuit() async {
-        if isEditable { keepOrDiscard() }
-        await lastWrite?.value
+        guard takesEdits, let draft else {
+            await lastWrite?.value
+            return
+        }
+        cancelTimers()
+        let action = closingAction(for: draft)
+        _ = await serially { [self] in await storeForClosing(action) }.value
     }
 
-    private func keepOrDiscard() {
-        guard let draft else { return }
-        switch closingAction(for: draft) {
+    /// Stores the draft as `action` leaves it, after the edits and files
+    /// queued before. Callers decide `action` when the close is asked for,
+    /// while a file still being copied in counts: the attachment list shows
+    /// it only later. Returns what keeps the window open instead, or nil.
+    private func storeForClosing(_ action: ClosingAction) async -> Problem? {
+        guard let engine = owner?.engine else { return nil }
+        switch action {
         case .discard:
-            cancelTimers()
-            guard let engine = owner?.engine else { return }
-            let id = localDraftID
-            serially { _ = try? await engine.discardDraft(id, hold: 0) }
+            // Blank or untouched, so a discard that fails loses nothing.
+            _ = try? await engine.discardDraft(localDraftID, hold: 0)
         case .save:
-            saveNow()
+            do {
+                // Edits made while the store ran go too.
+                var stored: DraftContent
+                repeat {
+                    stored = content
+                    try await engine.saveDraft(localDraftID, content: stored)
+                } while content != stored
+                hasPendingEdits = false
+                changedSinceSave = false
+                unsavedSince = nil
+                storeError = nil
+            } catch {
+                storeError = "Tern couldn't save this draft on this Mac."
+                return Problem(title: "Can't Close Message",
+                               message: "Tern couldn't save this draft on this Mac, so the window stays open. Try closing it again.")
+            }
         case .keep:
             break
         }
+        return nil
     }
 
     private enum ClosingAction {
