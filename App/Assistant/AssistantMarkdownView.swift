@@ -55,11 +55,8 @@ struct AssistantMarkdownView: View {
                     Text(block.language == "mermaid" ? "Diagram source" : (block.language ?? "Code"))
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Copy code", systemImage: "doc.on.doc") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(String(block.text.characters), forType: .string)
-                    }
-                    .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy code")
+                    Button("Copy Code", systemImage: "doc.on.doc") { copyCode(block) }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy Code")
                 }
                 .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
                 Divider()
@@ -74,6 +71,9 @@ struct AssistantMarkdownView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: Tokens.Radius.md)
                     .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline).allowsHitTesting(false)
+            }
+            .contextMenu {
+                Button("Copy", systemImage: "doc.on.doc") { copyCode(block) }
             }
         case .heading:
             Text(block.text).font(headingFont(block.headingLevel))
@@ -120,6 +120,11 @@ struct AssistantMarkdownView: View {
 
     private var outlineColor: Color { contrast == .increased ? .primary : Tokens.Surface.border }
 
+    private func copyCode(_ block: AssistantMarkdown.Block) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(String(block.text.characters), forType: .string)
+    }
+
     private func spacing(before index: Int, in blocks: [AssistantMarkdown.Block]) -> CGFloat {
         guard index > 0 else { return 0 }
         let block = blocks[index], previous = blocks[index - 1]
@@ -152,8 +157,9 @@ enum AssistantMarkdown {
         var diagram: AssistantDiagram?
     }
 
-    static func parse(_ input: String) -> [Block] {
-        let bounded = String(input.prefix(131_072))
+    /// `isBounded: false` lifts the display limits, for copying a whole reply.
+    static func parse(_ input: String, isBounded: Bool = true) -> [Block] {
+        let bounded = isBounded ? String(input.prefix(131_072)) : input
         guard let document = try? AttributedString(markdown: bounded, options: .init(
             interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible
         )) else { return [Block(id: 0, text: AttributedString(bounded))] }
@@ -172,7 +178,7 @@ enum AssistantMarkdown {
                 piece.font = .system(.body, design: .monospaced)
             }
             if activeID != identity {
-                guard blocks.count < 512 else {
+                guard !isBounded || blocks.count < 512 else {
                     blocks.append(Block(id: -1, text: AttributedString("Response too long to format. Use Copy response to read the full text.")))
                     break
                 }

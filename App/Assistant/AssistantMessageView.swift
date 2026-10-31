@@ -32,6 +32,7 @@ struct AssistantMessageView: View {
                 bubble
                 footer
             }
+            .contextMenu { messageMenu }
             .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         }
         .padding(.top, startsGroup ? Tokens.Space.s5 : 0)
@@ -175,11 +176,7 @@ struct AssistantMessageView: View {
             if message.state == .cancelled { Text("Stopped") }
             if message.state == .failed { Label("Incomplete", systemImage: "exclamationmark.circle") }
             if !message.text.isEmpty {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.text, forType: .string)
-                    copied = true
-                } label: {
+                Button { copy(.formatted) } label: {
                     HStack(spacing: Tokens.Space.s1) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
                         if !message.isUser { Text(copied ? "Copied" : "Copy") }
@@ -193,13 +190,36 @@ struct AssistantMessageView: View {
                 .onChange(of: message.text) { copied = false }
             }
             if canRetry {
-                Button("Try again", systemImage: "arrow.clockwise", action: onRetry)
+                Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
                     .buttonStyle(.borderless)
             }
         }
         .font(.caption2).foregroundStyle(.secondary)
         .labelStyle(.titleAndIcon)
         .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
+    }
+
+    @ViewBuilder private var messageMenu: some View {
+        Group {
+            if !message.text.isEmpty {
+                Button("Copy", systemImage: "doc.on.doc") { copy(.formatted) }
+                if !message.isUser {
+                    Button("Copy as Markdown") { copy(.markdown) }
+                    Button("Copy as Plain Text") { copy(.plainText) }
+                }
+            }
+            if canRetry {
+                if !message.text.isEmpty { Divider() }
+                Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
+            }
+        }
+        .labelStyle(.titleAndIcon)
+    }
+
+    private func copy(_ format: AssistantMarkdown.CopyFormat) {
+        // User messages show as typed, never as Markdown, so they copy unchanged.
+        AssistantMarkdown.copy(message.text, as: message.isUser ? .markdown : format)
+        copied = true
     }
 
     private var bubbleColor: Color {
