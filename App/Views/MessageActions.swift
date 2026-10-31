@@ -82,6 +82,8 @@ struct MessageMenuItems: View {
             Button("Copy Gmail Link") { copy(url) }
             Button("Open in Gmail") { NSWorkspace.shared.open(url) }
         }
+        let file = MessageFileItem(message, mailbox: mailbox)
+        ShareLink(item: file, preview: file.preview) { Text("Share") }
     }
 
     private var link: MailLink { MailLink(accountID: message.record.accountID, threadID: message.record.threadID, messageID: message.id) }

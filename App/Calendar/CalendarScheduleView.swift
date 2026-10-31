@@ -82,11 +82,7 @@ struct CalendarScheduleView: View {
         .ternHover()
         .draggable(CalendarEventTransfer(event))
         .onTapGesture(count: 2) { edit(event) }
-        .contextMenu {
-            Button("Open Event") { edit(event) }
-            Button("Duplicate") { duplicate(event) }
-            Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
-        }
+        .contextMenu { CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { edit(event) }

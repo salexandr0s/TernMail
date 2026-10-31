@@ -274,9 +274,7 @@ struct CalendarTimeGrid: View {
             .help(action.isStartEdge ? "Drag to change the start time" : "Drag to change the end time")
     }
 
-    @ViewBuilder private func eventMenu(_ event: CalendarDisplayEvent) -> some View {
-        Button("Open Event") { edit(event) }
-        Button("Duplicate") { duplicate(event) }
-        Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
+    private func eventMenu(_ event: CalendarDisplayEvent) -> some View {
+        CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete)
     }
 }

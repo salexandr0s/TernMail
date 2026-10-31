@@ -240,6 +240,7 @@
 		BE8034EF718B842D206C9BF6 /* MailStore in Frameworks */ = {isa = PBXBuildFile; productRef = A29455DD1AA22ACDFD6E9A85 /* MailStore */; };
 		BF00AE8C152C8C3D07D0E48E /* AssistantNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCBF28FD4DA736BD7F07BB50 /* AssistantNavigation.swift */; };
 		BFD14AE48522C4506BB934D8 /* AccountProfileImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC065B40FE60E04F167878A /* AccountProfileImages.swift */; };
+		BFE43CA7502271CF39B17249 /* ShareActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9A4EF88EB6607EAF306BC69 /* ShareActions.swift */; };
 		C0D7959AB5FBA76225CF3B65 /* LabelSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07898683B01BE7A2DBB2E477 /* LabelSelectionTests.swift */; };
 		C28D79D3AD6A37EA0325DF23 /* CalendarNotificationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8399A5497A38FB22E26C15E /* CalendarNotificationRouter.swift */; };
 		C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */; };
@@ -563,6 +564,7 @@
 		D6A85371ECD408294E818F8C /* AssistantEmailResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEmailResult.swift; sourceTree = "<group>"; };
 		D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientField.swift; sourceTree = "<group>"; };
 		D8C7A830FA6D99D8E2F24A35 /* AccountMailboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMailboxTests.swift; sourceTree = "<group>"; };
+		D9A4EF88EB6607EAF306BC69 /* ShareActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareActions.swift; sourceTree = "<group>"; };
 		D9B5D1A48DD56DA0A39726A7 /* ProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesView.swift; sourceTree = "<group>"; };
 		DA124333B1DFA482713D8A81 /* AssistantWritingStyleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleModel.swift; sourceTree = "<group>"; };
 		DC15FBA92C4C43F3FF31B932 /* MessageListHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListHeader.swift; sourceTree = "<group>"; };
@@ -1009,6 +1011,7 @@
 				2B23A603470F6CFA546F4861 /* MainMailFeatures.swift */,
 				98E607AAF69792E8C5EBF666 /* MaintenanceSettingsView.swift */,
 				D424972BD8B6208837B7BFB5 /* ManagedAttachmentFiles.swift */,
+				D9A4EF88EB6607EAF306BC69 /* ShareActions.swift */,
 			);
 			path = Integration;
 			sourceTree = "<group>";
@@ -1461,6 +1464,7 @@
 				BBD5832EB0F99AF50D9DE0BE /* SettingsPanes.swift in Sources */,
 				24F66D88CC6E1913CBA4A4CC /* SettingsSnapshot.swift in Sources */,
 				1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */,
+				BFE43CA7502271CF39B17249 /* ShareActions.swift in Sources */,
 				FCB2F6AD3C28DE6BEA9B7276 /* ShortcutCatalog.swift in Sources */,
 				22D886A27E9AA061307613F2 /* ShortcutMonitor.swift in Sources */,
 				472F55A7C6973F61690CF807 /* SidebarSettingsView.swift in Sources */,
