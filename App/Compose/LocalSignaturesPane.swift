@@ -38,6 +38,7 @@ struct LocalSignaturesPane: View {
                     Text("Name")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
                     TextField("Signature name", text: $name)
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                 }
                 .padding(.horizontal, Tokens.Space.s3)
