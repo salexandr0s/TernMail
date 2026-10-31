@@ -52,7 +52,8 @@ struct CalendarView: View {
         .onAppear { model.mode = storedMode }
         .onChange(of: model.mode) { _, mode in storedMode = mode }
         .onChange(of: currentGridIdentity, initial: true) { _, identity in
-            if isActive || heldGridIdentity == nil {
+            if isActive || heldGridIdentity == nil || identity.lifecycle != heldGridIdentity?.lifecycle
+                || identity.accessRevision != heldGridIdentity?.accessRevision {
                 heldGridIdentity = identity
                 heldPresentation = model.presentation
                 heldEvents = model.events
@@ -306,7 +307,8 @@ struct CalendarView: View {
 
     private var currentGridIdentity: CalendarGridIdentity {
         .init(mode: model.mode.rawValue, date: model.date, calendar: model.calendar,
-              selectedID: model.selectedEventID, revision: model.presentationRevision)
+              selectedID: model.selectedEventID, revision: model.presentationRevision,
+              lifecycle: model.lifecycleRevision, accessRevision: model.accessRevision)
     }
 
     private var searchRequest: [String] {

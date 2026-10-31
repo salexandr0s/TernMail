@@ -87,7 +87,9 @@ import Testing
             let range = CalendarInteraction.moving(source, to: source.start.addingTimeInterval(900), calendar: fixture.model.calendar)
             await #expect(throws: CalendarModelError.self) { try await fixture.model.change(locked, to: range) }
             fixture.model.events[index] = source
-            fixture.model.events[index].event.etag = "changed-elsewhere"
+            var changed = fixture.model.events[index].event
+            changed.etag = "changed-elsewhere"
+            fixture.model.events[index] = fixture.model.events[index].replacingEvent(changed)
             await #expect(throws: CalendarModelError.self) { try await fixture.model.change(source, to: range) }
             #expect(fixture.model.operations.isEmpty)
         }
@@ -179,10 +181,12 @@ import Testing
     @Test func duplicateFromReadOnlyRecurringCalendarIsAnIndependentWritableEvent() async throws {
         try await withFixture { fixture in
             var source = try fixture.event("focus")
-            source.event.recurrence = ["RRULE:FREQ=WEEKLY"]
-            source.event.recurringEventId = "source-series"
-            source.event.attendees = [CalendarAttendee(email: "guest@example.invalid")]
-            source.event.eventType = "focusTime"
+            var recurring = source.event
+            recurring.recurrence = ["RRULE:FREQ=WEEKLY"]
+            recurring.recurringEventId = "source-series"
+            recurring.attendees = [CalendarAttendee(email: "guest@example.invalid")]
+            recurring.eventType = "focusTime"
+            source = source.replacingEvent(recurring)
             source.event.rawValue["focusTimeProperties"] = .object(["autoDeclineMode": .string("declineAllConflictingInvitations")])
             fixture.model.duplicate(source)
             let draft = try #require(fixture.model.editor)

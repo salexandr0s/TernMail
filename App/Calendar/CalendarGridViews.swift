@@ -7,6 +7,8 @@ struct CalendarGridIdentity: Equatable, Sendable {
     let calendar: Calendar
     let selectedID: String?
     let revision: Int
+    let lifecycle: Int
+    let accessRevision: Int
 }
 
 struct CalendarGridViews: View, Equatable {
