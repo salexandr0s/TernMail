@@ -9,13 +9,14 @@ struct IntegrationSettingsView: View {
     @State private var selectedAccount = ""
 
     var body: some View {
-        Group {
-            if let accounts = app.mailbox?.accounts, !accounts.isEmpty {
-                if let owner = accounts.first(where: { $0.account.id == selectedAccount }) {
-                    IntegrationSettingsContent(accountID: owner.account.id, pane: pane, app: app,
-                        accounts: accounts.map(\.account), selectedAccount: $selectedAccount)
-                        .id(owner.account.id)
-                }
+        // A real container: modifiers on an empty Group never fire, so the
+        // first account would not be selected.
+        VStack(spacing: 0) {
+            if let accounts = app.mailbox?.accounts, let first = accounts.first {
+                let owner = accounts.first(where: { $0.account.id == selectedAccount }) ?? first
+                IntegrationSettingsContent(accountID: owner.account.id, pane: pane, app: app,
+                    accounts: accounts.map(\.account), selectedAccount: $selectedAccount)
+                    .id(owner.account.id)
             } else {
                 ContentUnavailableView("No Accounts", systemImage: "person.crop.circle.badge.plus",
                                        description: Text("Add a Google account in Connections."))
