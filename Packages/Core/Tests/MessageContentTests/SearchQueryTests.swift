@@ -7,9 +7,15 @@ import Testing
 
     private func word(_ text: String, prefix: Bool = false) -> Node { .term(.word(text, isPrefix: prefix)) }
 
-    @Test func quotedOperandsParseBackWhole() {
-        #expect(SearchQuery("label:" + SearchQuery.quoted("Project notes")).root == .term(.labelName("Project notes")))
-        #expect(SearchQuery("from:" + SearchQuery.quoted("ann@example.com")).root == .term(.field(.from, "ann@example.com")))
+    @Test func quotedOperandsParseBackWhole() throws {
+        let label = try #require(SearchQuery.quoted("Project notes"))
+        #expect(SearchQuery("label:" + label).root == .term(.labelName("Project notes")))
+        let address = try #require(SearchQuery.quoted("ann@example.com"))
+        #expect(SearchQuery("from:" + address).root == .term(.field(.from, "ann@example.com")))
+        // Quotes take no escapes, so a backslash stays as it is.
+        let backslash = try #require(SearchQuery.quoted(#"Q3\Q4"#))
+        #expect(SearchQuery("label:" + backslash).root == .term(.labelName(#"Q3\Q4"#)))
+        #expect(SearchQuery.quoted(#"The "big" project"#) == nil)
     }
 
     @Test func orBindsTighterThanTheImpliedAnd() {

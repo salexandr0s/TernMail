@@ -22,7 +22,8 @@ extension MailboxModel {
         }
         for owner in presentedAccounts {
             for label in owner.labels where label.name.lowercased().contains(query) && !label.isSystem {
-                result.append(.init(title: label.name, query: "label:" + SearchQuery.quoted(label.name), symbol: "tag"))
+                guard let name = SearchQuery.quoted(label.name) else { continue }
+                result.append(.init(title: label.name, query: "label:" + name, symbol: "tag"))
             }
             let account = try? await accountStore?.accounts().first { $0.id == owner.account.id }
             let includeContacts = account.map { $0.enabledFeatures.contains(AccountFeature.contacts.rawValue) && GoogleScopes.isCovered(.contacts, by: $0.grantedScopes) } ?? false
@@ -36,7 +37,8 @@ extension MailboxModel {
                 }
             }
             for address in addresses {
-                result.append(.init(title: address.displayString, query: "from:" + SearchQuery.quoted(address.address), symbol: "person"))
+                guard let operand = SearchQuery.quoted(address.address) else { continue }
+                result.append(.init(title: address.displayString, query: "from:" + operand, symbol: "person"))
             }
         }
         var seen = Set<String>()

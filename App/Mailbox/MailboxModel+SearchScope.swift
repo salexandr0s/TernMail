@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import MessageContent
 
 /// A mailbox that search can stay inside: its name, and the Gmail operator
 /// that limits a query to it.
@@ -79,8 +80,7 @@ extension MailboxModel {
         if let category = InboxCategory.allCases.first(where: { $0.labelID == id }) {
             return "category:" + category.rawValue
         }
-        // Gmail's syntax has no escapes, so a quote would end the quoted name.
-        guard let label = label(id: id), !label.isSystem, !label.name.contains("\"") else { return nil }
-        return "label:\"\(label.name)\""
+        guard let label = label(id: id), !label.isSystem, let name = SearchQuery.quoted(label.name) else { return nil }
+        return "label:" + name
     }
 }
