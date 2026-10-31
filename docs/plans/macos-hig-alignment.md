@@ -215,7 +215,6 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 
 ## Follow-ups
 
-- Double-clicking or pasting "Doe, Jane" into a recipient field splits it at the comma. `9d671a2` fixed the token Edit path, not the field's own parsing.
 - `HTMLImporter` in Core collapses the whitespace inside `pre` elements, so a styled code block pasted as HTML loses its indentation.
 - Confirm Spotlight indexing with a signed build before relying on it. The setting stays off by default.
 - Moving a conversation out of Trash through `LabelQueue.move` removes INBOX rather than TRASH. Drop-to-Inbox works around it with `editLabels`.

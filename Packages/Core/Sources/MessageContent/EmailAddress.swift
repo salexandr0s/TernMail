@@ -44,6 +44,31 @@ public struct EmailAddress: Sendable, Hashable, Codable {
         parser.finishEntry()
         return parser.results
     }
+
+    /// Splits recipients someone typed or pasted into entries, at the commas
+    /// and semicolons `parseList` separates on. One inside quotes, a comment
+    /// or angle brackets stays in its entry. A new line always ends an entry.
+    /// Entries keep their spacing, and the last is empty when the text ends
+    /// with a separator.
+    public static func splitList(_ text: String) -> [Substring] {
+        var parser = AddressListParser()
+        var entries: [Substring] = []
+        var start = text.startIndex
+        for index in text.indices {
+            let ends: Bool
+            if text[index].isNewline {
+                parser.finishEntry()
+                ends = true
+            } else {
+                ends = parser.consume(text[index])
+            }
+            guard ends else { continue }
+            entries.append(text[start..<index])
+            start = text.index(after: index)
+        }
+        entries.append(text[start...])
+        return entries
+    }
 }
 
 /// A small state machine over RFC 5322 address syntax: quoted strings,
@@ -59,7 +84,9 @@ private struct AddressListParser {
     private var commentDepth = 0
     private var escaped = false
 
-    mutating func consume(_ character: Character) {
+    /// Takes the next character, and says whether it was a separator that ended an entry.
+    @discardableResult
+    mutating func consume(_ character: Character) -> Bool {
         if escaped {
             append(character)
             escaped = false
@@ -94,12 +121,15 @@ private struct AddressListParser {
             case "<":
                 inAngle = true
                 angle = ""
-            case ",", ";": finishEntry()
+            case ",", ";":
+                finishEntry()
+                return true
             // A group's name ends at the colon; its members follow.
             case ":" where angle == nil: phrase = ""
             default: phrase.append(character)
             }
         }
+        return false
     }
 
     private mutating func append(_ character: Character) {
