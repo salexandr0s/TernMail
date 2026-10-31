@@ -84,8 +84,8 @@ import Testing
     @Test func applyingRangeRetainsMetadataAndUsesCivilDatesOnConversion() throws {
         let calendar = try calendar()
         var original = event(start: try date(30, hour: 9, calendar: calendar), end: try date(30, hour: 10, calendar: calendar), allDay: false, calendar: calendar)
-        original.event.rawValue["futureField"] = .object(["keep": .bool(true)])
         var recurring = original.event
+        recurring.rawValue["futureField"] = .object(["keep": .bool(true)])
         recurring.attendees = [CalendarAttendee(email: "guest@example.invalid")]
         recurring.recurrence = ["RRULE:FREQ=WEEKLY"]
         original = original.replacingEvent(recurring)

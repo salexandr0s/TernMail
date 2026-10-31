@@ -82,7 +82,9 @@ import Testing
             #expect(fixture.model.operations.isEmpty)
 
             let index = try #require(fixture.model.events.firstIndex(where: { $0.id == source.id }))
-            fixture.model.events[index].event.rawValue["locked"] = .bool(true)
+            var lockedEvent = fixture.model.events[index].event
+            lockedEvent.rawValue["locked"] = .bool(true)
+            fixture.model.events[index] = fixture.model.events[index].replacingEvent(lockedEvent)
             let locked = fixture.model.events[index]
             let range = CalendarInteraction.moving(source, to: source.start.addingTimeInterval(900), calendar: fixture.model.calendar)
             await #expect(throws: CalendarModelError.self) { try await fixture.model.change(locked, to: range) }
@@ -186,8 +188,8 @@ import Testing
             recurring.recurringEventId = "source-series"
             recurring.attendees = [CalendarAttendee(email: "guest@example.invalid")]
             recurring.eventType = "focusTime"
+            recurring.rawValue["focusTimeProperties"] = .object(["autoDeclineMode": .string("declineAllConflictingInvitations")])
             source = source.replacingEvent(recurring)
-            source.event.rawValue["focusTimeProperties"] = .object(["autoDeclineMode": .string("declineAllConflictingInvitations")])
             fixture.model.duplicate(source)
             let draft = try #require(fixture.model.editor)
             #expect(draft.isNew)
