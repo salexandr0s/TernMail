@@ -8,6 +8,8 @@ struct AssistantView: View {
     var onExpand: (() -> Void)?
     var onDetach: (() -> Void)?
     var onClose: (() -> Void)?
+    /// The Assistant window shows the header's actions in its toolbar instead.
+    var isDetached = false
 
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorSchemeContrast) private var contrast
@@ -20,9 +22,10 @@ struct AssistantView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                header
+                if !isDetached { header }
                 scopePicker
             }
+            .padding(.top, isDetached ? Tokens.Space.s3 : 0)
             .background(Tokens.Surface.muted)
             Divider()
             AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
@@ -53,6 +56,8 @@ struct AssistantView: View {
         .sheet(isPresented: $showsSettings) {
             AssistantSettingsView(model: model, showsIntroduction: false, isSheet: true)
         }
+        .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: modelName,
+                                         onNewChat: startNewChat, onSettings: { showsSettings = true }))
     }
 
     private var header: some View {
@@ -70,11 +75,7 @@ struct AssistantView: View {
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s0_5) {
-                iconButton("New chat", symbol: "plus") {
-                    model.newChat()
-                    scrollRequest = UUID()
-                    isComposerFocused = true
-                }
+                iconButton("New chat", symbol: "plus", action: startNewChat)
                 Menu {
                     Button("Assistant settings", systemImage: "gearshape") { showsSettings = true }
                     if let onDetach { Button("Open in a window", systemImage: "macwindow", action: onDetach) }
@@ -236,6 +237,12 @@ struct AssistantView: View {
         isComposerFocused = true
     }
 
+    private func startNewChat() {
+        model.newChat()
+        scrollRequest = UUID()
+        isComposerFocused = true
+    }
+
     private func openSource(_ source: AssistantSource) {
         onOpenSource(source)
         openWindow(id: "main")
@@ -271,5 +278,31 @@ private struct AssistantToolbarButtonStyle: ButtonStyle {
                 }
             }
             .onHover { isHovered = $0 }
+    }
+}
+
+/// The Assistant window's toolbar holds what the sidebar header shows. The
+/// sidebar sits in the main window, whose customizable toolbar it must not join.
+private struct AssistantWindowToolbar: ViewModifier {
+    let isEnabled: Bool
+    let subtitle: String
+    let onNewChat: () -> Void
+    let onSettings: () -> Void
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .navigationSubtitle(subtitle)
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        Button("New Chat", systemImage: "plus.bubble", action: onNewChat)
+                            .help("New Chat")
+                        Button("Assistant Settings", systemImage: "gearshape", action: onSettings)
+                            .help("Assistant Settings")
+                    }
+                }
+        } else {
+            content
+        }
     }
 }
