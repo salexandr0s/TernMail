@@ -108,7 +108,7 @@ Deviations: `legibilityWeight` was skipped because macOS has no Bold Text settin
 
 ## Merges with main
 
-Other sessions refactored SwiftUI views and fixed defects on `main` while this work ran. `main` fast-forwarded to this branch once, at Phase 10 (`58101df`). After that the branch merged `main` back in 11 times, each by exact hash.
+Other sessions refactored SwiftUI views and fixed defects on `main` while this work ran. `main` fast-forwarded to this branch once, at Phase 10 (`58101df`). After that the branch merged `main` back in 12 times, each by exact hash.
 
 - `7f64b2f` merged `main` at `a7801f2`. Shared views moved to their own files and `SettingsGroup` was deleted, so the assistant settings panes use `Section`. `AssistantMarkdown` keeps the unbounded parse that copying a reply uses, and `AttachmentStrip` keeps its drag item and the imports it needs.
 - `b34ea5e` merged `main` at `e3b9935`. Binding helpers and `isPresent()` replaced hand-built bindings, and `SidebarExpansion` replaced `SidebarView.expandedKey`. The library's source sheet, which `main` had rebound, stays removed in favor of Open Conversation in New Window, and the compose alert keeps its title and message. `e3b9935` left `SidebarLayoutTests` writing to the removed key, so the merge points the test at `SidebarExpansion.storageKey`; the stored format did not change.
@@ -121,6 +121,7 @@ Other sessions refactored SwiftUI views and fixed defects on `main` while this w
 - `d1b6ae1` merged `main` at `e384712`. Pane sizing restores only the divider positions it saved.
 - `3f0859b` merged `main` at `16d0572`. The mail column probe moved to `MailColumnProbe`, XcodeGen regenerated the conflicting project file, and this branch's narrow-window test now looks for the renamed probe.
 - `623124d` merged `main` at `d3c5136`, which only adds notes to the SwiftUI plan and the handoff log.
+- `7fef621` merged `main` at `8360797`. `e0410b9` aligns the mail content to the leading edge of its frame, so a split wider than the mail area runs under the assistant or off the trailing edge, never off the leading edge. `SidebarLayoutTests` keeps this branch's sidebar collapse checks at 720 points and adds `main`'s leading-edge checks there and, with the assistant open, at 960 and 720 points.
 
 ## UI design review
 
@@ -197,8 +198,8 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 ## Verification
 
 - Core: 516 tests in 87 suites with `swift test --package-path Packages/Core`, run after the `2cd0c5a` merge. No later commit changes `Packages/`.
-- Hosted: 349 tests in 58 suites on the final tree.
-- The Debug build succeeded after every merge and fix. The universal Release build covers arm64 and x86_64, passes `codesign --verify --deep --strict` and reports no app warnings. Its three Core warnings predate this work.
+- Hosted: 349 tests in 58 suites at `e877fdc`, and again at `7fef621` after the last merge with `main`.
+- The Debug build succeeded after every merge and fix. The universal Release build covers arm64 and x86_64, passes `codesign --verify --deep --strict` and reports no app warnings. Its three Core warnings predate this work. It was built from `e877fdc`, before the last merge with `main`.
 - Native checks used the Debug `--ui-audit` app with synthetic accounts: light and dark captures at 720, 960 and 1280 points, sidebar symbols at Small, Medium and Large through a per-process `NSTableViewDefaultSizeMode` override, the menu bar read through accessibility, and Window ▸ Tern reopening a closed main window.
 - Two full hosted runs were disturbed by other sessions. In one, another session quit the shared test host. The other ran 40 to 50 times slower while other sessions built and tested, and seven suites failed on timed waits. Each rerun on a quiet machine passed.
 - `SESSION_HANDOFF.md` records the install of the Release build and its first launch.
