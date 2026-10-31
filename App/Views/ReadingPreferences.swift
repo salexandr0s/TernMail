@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum ReadingPreferences {
@@ -8,6 +9,7 @@ enum ReadingPreferences {
     static let readDelayKey = "markMailReadDelay"
     static let textScaleKey = "mailTextScale"
     static let sizeKey = "showMessageSize"
+    static let lightBackgroundSendersKey = "lightBackgroundSenders"
     static let imagePermissionChanged = Notification.Name("TernImageSenderPermissionChanged")
 
     enum Order: String, CaseIterable { case oldestFirst, newestFirst }
@@ -24,6 +26,31 @@ enum ReadingPreferences {
         if let newest = ids.last { expanded.insert(newest) }
         if let selected { expanded.insert(selected) }
         return expanded
+    }
+}
+
+/// Senders whose mail shows on a light background in Dark Mode. The
+/// preference keeps a SHA-256 digest of each lowercased address, so the
+/// defaults file holds no addresses.
+struct LightBackgroundSenders {
+    private var digests: Set<String>
+
+    init(storage: String) {
+        digests = Set(storage.split(separator: "\n").map(String.init))
+    }
+
+    /// The value to store under `ReadingPreferences.lightBackgroundSendersKey`.
+    var storage: String { digests.sorted().joined(separator: "\n") }
+
+    func contains(_ address: String) -> Bool { digests.contains(Self.digest(address)) }
+
+    mutating func set(_ isOn: Bool, for address: String) {
+        if isOn { digests.insert(Self.digest(address)) } else { digests.remove(Self.digest(address)) }
+    }
+
+    private static func digest(_ address: String) -> String {
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return SHA256.hash(data: Data(normalized.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

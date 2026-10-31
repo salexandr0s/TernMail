@@ -32,4 +32,16 @@ import Testing
         // A message list opens an older, read message on its own.
         #expect(ReadingPreferences.initiallyExpanded(ids: ids, unread: [], selected: "a") == ["a", "d"])
     }
+
+    @Test func lightBackgroundSendersMatchAnyCaseAndStoreNoAddresses() {
+        var senders = LightBackgroundSenders(storage: "")
+        senders.set(true, for: "News@Example.com")
+        #expect(senders.contains("news@example.com"))
+        #expect(!senders.storage.contains("example"))
+        let restored = LightBackgroundSenders(storage: senders.storage)
+        #expect(restored.contains(" NEWS@example.com "))
+        var cleared = restored
+        cleared.set(false, for: "news@example.com")
+        #expect(cleared.storage.isEmpty)
+    }
 }

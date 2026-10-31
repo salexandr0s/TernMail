@@ -33,13 +33,19 @@ struct ThreadView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var paging = ReaderPaging()
     @State private var finder = ReaderFindModel()
+    /// Blocked content and trackers that the open messages report, by message ID.
+    @State private var privacy: [String: MessagePrivacy] = [:]
+    @State private var loadsImages = false
     @FocusState private var readerFocused: Bool
     @AppStorage(ReadingPreferences.orderKey) private var messageOrder = ReadingPreferences.Order.oldestFirst.rawValue
     @AppStorage(ReadingPreferences.markReadKey) private var markReadPolicy = ReadingPreferences.MarkRead.immediately.rawValue
     @AppStorage(ReadingPreferences.readDelayKey) private var readDelay = 3.0
+    @AppStorage(ReadingPreferences.adaptDarkKey) private var adaptsDark = true
+    @AppStorage(ReadingPreferences.lightBackgroundSendersKey) private var lightBackgroundSenders = ""
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     private struct LoadIdentity: Equatable {
         let key: ThreadKey
@@ -101,6 +107,19 @@ struct ThreadView: View {
         )
     }
 
+    /// View ▸ Show with Light Background turns the choice on or off for every
+    /// sender in the conversation. It's offered while Dark Mode adapts mail.
+    private var readerAppearance: ReaderAppearance? {
+        guard adaptsDark, colorScheme == .dark, let detail = readingDetail, !detail.messages.isEmpty else { return nil }
+        let senders = Set(detail.messages.map(\.senderAddress))
+        let isOn = senders.allSatisfy(LightBackgroundSenders(storage: lightBackgroundSenders).contains)
+        return ReaderAppearance(showsLightBackground: isOn) {
+            var stored = LightBackgroundSenders(storage: lightBackgroundSenders)
+            for sender in senders { stored.set(!isOn, for: sender) }
+            lightBackgroundSenders = stored.storage
+        }
+    }
+
     var body: some View {
         Group {
             if let detail = readingDetail {
@@ -149,6 +168,10 @@ struct ThreadView: View {
                                 }
                             }
                             }
+                            ThreadPrivacyNotice(reports: messages.compactMap { privacy[$0.id] },
+                                onLoadImages: { loadsImages = true }) { address, allowed in
+                                mailbox.setImageSenderAllowed(allowed, address: address, accountID: key.accountID)
+                            }
                             VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                                 ForEach(messages) { message in
                                     MessageView(
@@ -158,6 +181,7 @@ struct ThreadView: View {
                                         isFocused: readerFocused && focusedMessageID == message.id,
                                         resourceRevision: resourceRevision,
                                         bodyLoadFailed: bodyLoadFailed,
+                                        loadsImages: loadsImages,
                                         mailbox: mailbox,
                                         finder: finder,
                                         compose: compose,
@@ -179,7 +203,8 @@ struct ThreadView: View {
                                             // This message and every later one, whichever way the list reads.
                                             mailbox.markUnread(messageIDs: detail.messages.drop { $0.id != message.id }.map(\.id),
                                                                accountID: key.accountID)
-                                        }
+                                        },
+                                        onPrivacyChange: { privacy[message.id] = $0 }
                                     ) {
                                         if expanded.contains(message.id) {
                                             expanded.remove(message.id)
@@ -255,12 +280,19 @@ struct ThreadView: View {
         .background(Tokens.Surface.canvas)
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
+        .focusedSceneValue(\.readerAppearance, isReaderActive ? readerAppearance : nil)
         .onChange(of: key) { _, _ in
             selectedMailQuote = nil
             finder.hide()
         }
         .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
+        // Blocking a sender's images ends Load Images for the conversation too.
+        .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
+            if change.userInfo?["account"] as? String == key.accountID, change.userInfo?["allowed"] as? Bool == false {
+                loadsImages = false
+            }
+        }
         .task {
             blocker = await RemoteContentBlocker.ruleList()
         }
@@ -574,6 +606,8 @@ private struct MessageView: View {
     let isFocused: Bool
     let resourceRevision: Int
     let bodyLoadFailed: Bool
+    /// Load Images was chosen for the whole conversation.
+    let loadsImages: Bool
     let mailbox: MailboxModel
     let finder: ReaderFindModel
     let compose: (MailboxModel.ComposeStart) -> Void
@@ -581,21 +615,21 @@ private struct MessageView: View {
     let reportSelection: (String) -> Void
     let onHoverLink: (String?) -> Void
     let onMarkUnreadFromHere: () -> Void
+    let onPrivacyChange: (MessagePrivacy?) -> Void
     let onToggle: () -> Void
 
     @State private var rendered: RenderedMessage?
     @State private var hasNoText = false
     @State private var height: CGFloat = 0
     @State private var inlineResources = InlineResourceMap()
-    @State private var allowsImagesOnce = false
     @State private var allowsSenderImages = false
-    @State private var showsLightBackground = false
     @State private var selectedText = ""
     @State private var activeBlocker: WKContentRuleList?
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(ReadingPreferences.blockImagesKey) private var blocksImages = true
     @AppStorage(ReadingPreferences.adaptDarkKey) private var adaptsDark = true
+    @AppStorage(ReadingPreferences.lightBackgroundSendersKey) private var lightBackgroundSenders = ""
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @AppStorage(ReadingPreferences.sizeKey) private var showsSize = false
 
@@ -611,7 +645,7 @@ private struct MessageView: View {
         let isExpanded: Bool
     }
 
-    private var allowsImages: Bool { allowsImagesOnce || allowsSenderImages || !blocksImages }
+    private var allowsImages: Bool { loadsImages || allowsSenderImages || !blocksImages }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -654,14 +688,14 @@ private struct MessageView: View {
         }
         .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; onHoverLink(nil) } }
         .onChange(of: selectedText) { _, text in reportSelection(text) }
-        .onDisappear { reportSelection(""); onHoverLink(nil) }
+        .onChange(of: privacyReport, initial: true) { _, report in onPrivacyChange(report) }
+        .onDisappear { reportSelection(""); onHoverLink(nil); onPrivacyChange(nil) }
         .onChange(of: allowsImages) { _, _ in rendered = nil; selectedText = ""; onHoverLink(nil) }
         .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
             guard change.userInfo?["account"] as? String == message.record.accountID,
                   change.userInfo?["sender"] as? String == senderAddress.lowercased(),
                   let allowed = change.userInfo?["allowed"] as? Bool else { return }
             allowsSenderImages = allowed
-            if !allowed { allowsImagesOnce = false }
         }
     }
 
@@ -690,6 +724,7 @@ private struct MessageView: View {
         .contextMenu {
             MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText,
                              markUnreadFromHere: onMarkUnreadFromHere, showsStar: true)
+            senderMenuItems
         }
     }
 
@@ -804,35 +839,6 @@ private struct MessageView: View {
     @ViewBuilder
     private var content: some View {
         if let rendered {
-            if rendered.blockedRemoteContent > 0 {
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    Label("Remote content blocked for privacy", systemImage: "eye.slash")
-                    if !allowsImages {
-                        HStack {
-                            Button("Load Images") { allowsImagesOnce = true }
-                            Button("Always Load for Sender") { allowSenderImages() }
-                        }.buttonStyle(.borderless)
-                    }
-                }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(Tokens.Space.s2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            }
-            if rendered.blockedTrackers > 0 {
-                Label("\(rendered.blockedTrackers) tracking \(rendered.blockedTrackers == 1 ? "image" : "images") blocked", systemImage: "hand.raised")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if allowsSenderImages {
-                Button("Block Images for Sender") { allowSenderImages(false) }
-                    .font(.callout).buttonStyle(.borderless)
-            }
-            // Light mail already reads as the sender made it; the switch matters in Dark.
-            if adaptsDark, colorScheme == .dark {
-                Button(showsLightBackground ? "Use Dark Mode" : "Show with Light Background") { showsLightBackground.toggle() }
-                    .font(.callout).buttonStyle(.borderless)
-            }
             MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
                 adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
                 forcesLightAppearance: showsLightBackground,
@@ -867,21 +873,37 @@ private struct MessageView: View {
         return name.isEmpty ? sender : name
     }
 
-    private var senderAddress: String {
-        EmailAddress.parseList(message.record.sender).first?.address ?? message.record.sender
+    private var senderAddress: String { message.senderAddress }
+
+    /// Light mail already reads as the sender made it; the choice matters in Dark.
+    private var offersLightBackground: Bool { adaptsDark && colorScheme == .dark }
+
+    private var showsLightBackground: Bool {
+        offersLightBackground && LightBackgroundSenders(storage: lightBackgroundSenders).contains(senderAddress)
     }
 
-    private func allowSenderImages(_ allowed: Bool = true) {
-        Task {
-            do {
-                guard let store = mailbox.accountStore else {
-                    mailbox.notice = .init(message: "This sender's image preference could not be saved.", isError: true)
-                    return
-                }
-                try await store.setImageSenderAllowed(allowed, address: senderAddress, accountID: message.record.accountID)
-                NotificationCenter.default.post(name: ReadingPreferences.imagePermissionChanged, object: nil,
-                    userInfo: ["account": message.record.accountID, "sender": senderAddress.lowercased(), "allowed": allowed])
-            } catch { mailbox.notice = .init(message: "This sender's image preference could not be saved.", isError: true) }
+    /// What the conversation's privacy line counts for this message while it's open.
+    private var privacyReport: MessagePrivacy? {
+        rendered.map {
+            MessagePrivacy(blockedRemoteContent: $0.blockedRemoteContent, blockedTrackers: $0.blockedTrackers,
+                sender: senderAddress, allowsImages: allowsImages, allowsSenderImages: allowsSenderImages)
+        }
+    }
+
+    /// The sender's reading choices, after the message commands.
+    @ViewBuilder private var senderMenuItems: some View {
+        if offersLightBackground || allowsSenderImages { Divider() }
+        if offersLightBackground {
+            Toggle("Show with Light Background", isOn: Binding(showsLightBackground) { isOn in
+                var senders = LightBackgroundSenders(storage: lightBackgroundSenders)
+                senders.set(isOn, for: senderAddress)
+                lightBackgroundSenders = senders.storage
+            })
+        }
+        if allowsSenderImages {
+            Button("Block Images for Sender") {
+                mailbox.setImageSenderAllowed(false, address: senderAddress, accountID: message.record.accountID)
+            }
         }
     }
 
@@ -917,5 +939,102 @@ private struct MessageView: View {
         guard !Task.isCancelled else { return }
         rendered = result
         hasNoText = result == nil
+    }
+}
+
+private extension MessageDetail {
+    /// The address that the sender's image and background choices are kept under.
+    var senderAddress: String { EmailAddress.parseList(record.sender).first?.address ?? record.sender }
+}
+
+/// What an open message tells the conversation's privacy line.
+private struct MessagePrivacy: Equatable {
+    let blockedRemoteContent: Int
+    let blockedTrackers: Int
+    let sender: String
+    let allowsImages: Bool
+    let allowsSenderImages: Bool
+}
+
+/// One line for the whole conversation: the remote content and tracking
+/// images its open messages blocked, Load Images for all of them, and the
+/// sender image choices.
+private struct ThreadPrivacyNotice: View {
+    let reports: [MessagePrivacy]
+    let onLoadImages: () -> Void
+    let onSetSenderImages: (_ address: String, _ allowed: Bool) -> Void
+
+    private var blocked: Int { reports.reduce(0) { $0 + $1.blockedRemoteContent } }
+    private var trackers: Int { reports.reduce(0) { $0 + $1.blockedTrackers } }
+    /// Senders with blocked content that Load Images or Always Load would show.
+    private var blockedSenders: [String] { senders(where: { $0.blockedRemoteContent > 0 && !$0.allowsImages }) }
+    private var allowedSenders: [String] { senders(where: \.allowsSenderImages) }
+
+    var body: some View {
+        if blocked > 0 || trackers > 0 {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s3) {
+                    summary
+                    Spacer(minLength: 0)
+                    actions
+                }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    summary
+                    HStack(spacing: Tokens.Space.s3) { actions }
+                }
+            }
+            .buttonStyle(.borderless)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, Tokens.Space.s3)
+            .padding(.vertical, Tokens.Space.s2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        }
+    }
+
+    private var summary: some View {
+        Label {
+            if blocked > 0, trackers > 0 {
+                Text("Remote content and ^[\(trackers) tracking image](inflect: true) blocked for privacy")
+            } else if blocked > 0 {
+                Text("Remote content blocked for privacy")
+            } else {
+                Text("^[\(trackers) tracking image](inflect: true) blocked")
+            }
+        } icon: {
+            Image(systemName: blocked > 0 ? "eye.slash" : "hand.raised")
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        if !blockedSenders.isEmpty {
+            Button("Load Images", action: onLoadImages)
+            senderButton("Always Load for Sender", senders: blockedSenders, allowed: true)
+        }
+        senderButton("Block Images for Sender", senders: allowedSenders, allowed: false)
+    }
+
+    /// A button for one sender, or a menu of their addresses for several.
+    @ViewBuilder
+    private func senderButton(_ title: String, senders: [String], allowed: Bool) -> some View {
+        if senders.count == 1, let sender = senders.first {
+            Button(title) { onSetSenderImages(sender, allowed) }
+                .help(sender)
+        } else if senders.count > 1 {
+            Menu(title) {
+                ForEach(senders, id: \.self) { sender in
+                    Button(sender) { onSetSenderImages(sender, allowed) }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    /// Each sender once, in the order their messages appear.
+    private func senders(where include: (MessagePrivacy) -> Bool) -> [String] {
+        var seen = Set<String>()
+        return reports.filter(include).map(\.sender).filter { seen.insert($0.lowercased()).inserted }
     }
 }
