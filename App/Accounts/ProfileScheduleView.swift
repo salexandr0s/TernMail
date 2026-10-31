@@ -3,23 +3,14 @@ import SwiftUI
 
 struct ProfileScheduleView: View {
     @Binding var schedule: ProfileNotificationSchedule
-    private enum Mode: String, CaseIterable { case unrestricted, off, everyDay, weekdays, custom }
+    private typealias Mode = ProfileNotificationSchedule.Mode
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s3) {
                 Text("Notifications")
                     .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
-                Picker("Notification schedule", selection: Binding(get: { mode }, set: { mode in
-                    let hours = [DailyTimeRange(startMinute: 9 * 60, endMinute: 17 * 60)]
-                    schedule = switch mode {
-                    case .unrestricted: .unrestricted
-                    case .off: .off
-                    case .everyDay: .everyDay(hours)
-                    case .weekdays: .weekdays(hours)
-                    case .custom: .custom(Dictionary(uniqueKeysWithValues: ISOWeekday.allCases.map { ($0, hours) }))
-                    }
-                })) {
+                Picker("Notification schedule", selection: $schedule.mode) {
                     Text("Any time").tag(Mode.unrestricted)
                     Text("Off").tag(Mode.off)
                     Text("Every day").tag(Mode.everyDay)
@@ -30,13 +21,13 @@ struct ProfileScheduleView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if mode == .custom {
+            if schedule.mode == .custom {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     ForEach(ISOWeekday.allCases, id: \.rawValue) { day in
                         rangeEditor(title: weekdayName(day), day: day)
                     }
                 }
-            } else if mode == .everyDay || mode == .weekdays {
+            } else if schedule.mode == .everyDay || schedule.mode == .weekdays {
                 rangeEditor(title: "Hours", day: nil)
             }
 
@@ -48,7 +39,7 @@ struct ProfileScheduleView: View {
     }
 
     private var scheduleHelp: String {
-        switch mode {
+        switch schedule.mode {
         case .unrestricted: "Notify at any time."
         case .off: "Mail still syncs. Notifications are off."
         default: "Uses this Mac's time zone. Split overnight hours at midnight."
@@ -56,13 +47,13 @@ struct ProfileScheduleView: View {
     }
 
     private func rangeEditor(title: String, day: ISOWeekday?) -> some View {
-        let accessibilityDay = day == nil ? (mode == .weekdays ? "weekdays" : "every day") : title
+        let accessibilityDay = day == nil ? (schedule.mode == .weekdays ? "weekdays" : "every day") : title
         return HStack(alignment: .top, spacing: Tokens.Space.s3) {
             Text(title)
                 .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
                 .padding(.top, Tokens.Space.s1)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                if ranges(day).isEmpty {
+                if schedule.ranges(day).isEmpty {
                     HStack {
                         Text("No notifications").foregroundStyle(.secondary)
                         Spacer(minLength: Tokens.Space.s2)
@@ -70,21 +61,22 @@ struct ProfileScheduleView: View {
                     }
                     .frame(minHeight: Tokens.Settings.rowHeight)
                 }
-                ForEach(Array(ranges(day).enumerated()), id: \.offset) { index, _ in
+                ForEach(schedule.ranges(day).indices, id: \.self) { index in
+                    // Dot syntax on a binding can't reach a subscript, so these pass the key path.
                     HStack(spacing: Tokens.Space.s2) {
-                        DatePicker("From", selection: timeBinding(day: day, index: index, end: false), displayedComponents: .hourAndMinute)
+                        DatePicker("From", selection: $schedule[dynamicMember: \.[day, range: index].startTime], displayedComponents: .hourAndMinute)
                             .labelsHidden()
                             .accessibilityLabel("Start time for \(accessibilityDay), range \(index + 1)")
                         Text("–").foregroundStyle(.secondary)
                             .accessibilityHidden(true)
-                        DatePicker("To", selection: timeBinding(day: day, index: index, end: true), displayedComponents: .hourAndMinute)
+                        DatePicker("To", selection: $schedule[dynamicMember: \.[day, range: index].endTime], displayedComponents: .hourAndMinute)
                             .labelsHidden()
                             .accessibilityLabel("End time for \(accessibilityDay), range \(index + 1)")
                         Spacer(minLength: 0)
                         Button {
-                            var values = ranges(day)
+                            var values = schedule.ranges(day)
                             values.remove(at: index)
-                            setRanges(values, day: day)
+                            schedule.setRanges(values, day: day)
                         } label: {
                             Image(systemName: "minus.circle")
                         }
@@ -102,9 +94,9 @@ struct ProfileScheduleView: View {
 
     private func addHoursButton(title: String, day: ISOWeekday?) -> some View {
         Button {
-            var values = ranges(day)
+            var values = schedule.ranges(day)
             values.append(DailyTimeRange(startMinute: 9 * 60, endMinute: 17 * 60))
-            setRanges(values, day: day)
+            schedule.setRanges(values, day: day)
         } label: {
             Image(systemName: "plus.circle")
         }
@@ -113,47 +105,6 @@ struct ProfileScheduleView: View {
         .accessibilityLabel("Add hours for \(title)")
     }
 
-    private var mode: Mode {
-        switch schedule {
-        case .unrestricted: .unrestricted
-        case .off: .off
-        case .everyDay: .everyDay
-        case .weekdays: .weekdays
-        case .custom: .custom
-        }
-    }
-    private func ranges(_ day: ISOWeekday?) -> [DailyTimeRange] {
-        switch schedule {
-        case .everyDay(let values), .weekdays(let values): values
-        case .custom(let days): day.flatMap { days[$0] } ?? []
-        default: []
-        }
-    }
-    private func setRanges(_ values: [DailyTimeRange], day: ISOWeekday?) {
-        switch schedule {
-        case .everyDay: schedule = .everyDay(values)
-        case .weekdays: schedule = .weekdays(values)
-        case .custom(var days): if let day { days[day] = values }; schedule = .custom(days)
-        default: break
-        }
-    }
-    private func timeBinding(day: ISOWeekday?, index: Int, end: Bool) -> Binding<Date> {
-        Binding(get: {
-            let values = ranges(day)
-            guard values.indices.contains(index) else { return .now }
-            let minute = end ? values[index].endMinute : values[index].startMinute
-            return Calendar.autoupdatingCurrent.date(from: DateComponents(year: 2001, month: 1, day: 15,
-                hour: (minute / 60) % 24, minute: minute % 60)) ?? .now
-        }, set: { date in
-            var values = ranges(day)
-            guard values.indices.contains(index) else { return }
-            let parts = Calendar.autoupdatingCurrent.dateComponents([.hour, .minute], from: date)
-            let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
-            if end { values[index].endMinute = minute == 0 ? 1440 : minute }
-            else { values[index].startMinute = minute }
-            setRanges(values, day: day)
-        })
-    }
     private func weekdayName(_ day: ISOWeekday) -> String {
         let names = Calendar.autoupdatingCurrent.weekdaySymbols
         return names[day.rawValue % 7]

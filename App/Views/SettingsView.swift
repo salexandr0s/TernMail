@@ -15,7 +15,7 @@ struct SettingsView: View {
     /// The sidebar follows the stored pane, so another window can land Settings
     /// on a pane by writing the key before it opens Settings.
     private var selection: Binding<SettingsDestination?> {
-        Binding(get: { destination }, set: { leave(for: .destination($0 ?? .general)) })
+        Binding(destination, set: { leave(for: .destination($0 ?? .general)) })
     }
 
     var body: some View {

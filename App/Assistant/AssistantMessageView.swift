@@ -94,13 +94,7 @@ struct AssistantMessageView: View {
                         .font(.callout.weight(.medium))
                         .padding(Tokens.Space.s3)
                         .background(Tokens.Assistant.userBubble, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                        .overlay {
-                            if contrast == .increased {
-                                RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                                    .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
-                                    .allowsHitTesting(false)
-                            }
-                        }
+                        .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
                     }
                     .buttonStyle(.borderless)
@@ -134,13 +128,7 @@ struct AssistantMessageView: View {
                 }
                 .padding(Tokens.Space.s3)
                 .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                .overlay {
-                    if contrast == .increased {
-                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                            .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
-                            .allowsHitTesting(false)
-                    }
-                }
+                .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
             }
             if let error = message.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -149,13 +137,7 @@ struct AssistantMessageView: View {
                     .padding(Tokens.Space.s3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                    .overlay {
-                        if contrast == .increased {
-                            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                                .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
-                                .allowsHitTesting(false)
-                        }
-                    }
+                    .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
             }
         }
         .padding(message.isUser ? Tokens.Space.s3 : 0)

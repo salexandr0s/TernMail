@@ -58,7 +58,6 @@ struct ComposeView: View {
     /// views, which `focus` can't reach.
     @State private var recipientFocus: Field?
     @State private var focusedRecipient: Field?
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.dismiss) private var dismiss
     /// Mirrors `model.isEdited` for the window's close button.
     @Binding private var isEdited: Bool
@@ -311,7 +310,7 @@ struct ComposeView: View {
         .controlSize(.regular)
         .focused($focus, equals: .from)
         .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay { fieldOutline(isFocused: focus == .from) }
+        .ternOutline(radius: Tokens.Radius.sm, focus: focus == .from ? .accentColor : nil)
         .help(model.canChangeAccount ? "Choose a sending address." : "Choose a sending address from this conversation’s account.")
         .accessibilityLabel("From")
         .accessibilityValue(model.fromEmail)
@@ -338,16 +337,7 @@ struct ComposeView: View {
                 .onTapGesture { focusField(field) }
                 .accessibilityHidden(true)
         }
-        .overlay { fieldOutline(isFocused: isFocused) }
-    }
-
-    private func fieldOutline(isFocused: Bool) -> some View {
-        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-            .strokeBorder(
-                isFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
-                lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline
-            )
-            .allowsHitTesting(false)
+        .ternOutline(radius: Tokens.Radius.sm, focus: isFocused ? .accentColor : nil)
     }
 
     private func fieldLabel(_ text: String) -> some View {

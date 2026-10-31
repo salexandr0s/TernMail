@@ -68,10 +68,7 @@ struct AssistantMarkdownView: View {
                 }
             }
             .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                    .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline).allowsHitTesting(false)
-            }
+            .ternOutline(radius: Tokens.Radius.md)
             .contextMenu {
                 Button("Copy", systemImage: "doc.on.doc") { copyCode(block) }
             }
@@ -104,10 +101,7 @@ struct AssistantMarkdownView: View {
             .padding(Tokens.Space.s3)
         }
         .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline).allowsHitTesting(false)
-        }
+        .ternOutline(radius: Tokens.Radius.md)
     }
 
     private func headingFont(_ level: Int) -> Font {
@@ -118,11 +112,8 @@ struct AssistantMarkdownView: View {
         }
     }
 
-    private var outlineColor: Color { contrast == .increased ? .primary : Tokens.Surface.border }
-
     private func copyCode(_ block: AssistantMarkdown.Block) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(String(block.text.characters), forType: .string)
+        NSPasteboard.general.replaceContents(with: String(block.text.characters))
     }
 
     private func spacing(before index: Int, in blocks: [AssistantMarkdown.Block]) -> CGFloat {

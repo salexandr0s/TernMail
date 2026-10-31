@@ -20,8 +20,7 @@ struct AssistantDiagramView: View {
                 .labelStyle(.iconOnly).buttonStyle(.borderless)
                 .help(showsSource ? "Show diagram" : "Show source")
                 Button("Copy diagram source", systemImage: "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(source, forType: .string)
+                    NSPasteboard.general.replaceContents(with: source)
                 }
                 .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy diagram source")
             }
@@ -48,12 +47,7 @@ struct AssistantDiagramView: View {
         .lineSpacing(0)
         .padding(Tokens.Space.s3)
         .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                              lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
+        .ternOutline(radius: Tokens.Radius.md)
     }
 
     private func graph(_ layout: AssistantDiagramLayout) -> some View {
@@ -96,10 +90,6 @@ struct AssistantDiagramView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(node.shape == .decision ? Tokens.Assistant.userBubble : Tokens.Surface.primary,
                     in: RoundedRectangle(cornerRadius: node.shape == .rounded ? Tokens.Radius.lg : Tokens.Radius.sm))
-        .overlay {
-            RoundedRectangle(cornerRadius: node.shape == .rounded ? Tokens.Radius.lg : Tokens.Radius.sm)
-                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                              lineWidth: Tokens.Border.hairline)
-        }
+        .ternOutline(radius: node.shape == .rounded ? Tokens.Radius.lg : Tokens.Radius.sm)
     }
 }

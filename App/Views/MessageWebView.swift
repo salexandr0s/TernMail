@@ -303,8 +303,7 @@ final class ContentSizedWebView: WKWebView {
 
     @objc private func copyLink() {
         guard let hoveredLink else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(hoveredLink.absoluteString, forType: .string)
+        NSPasteboard.general.replaceContents(with: hoveredLink.absoluteString)
     }
 
     override func scrollWheel(with event: NSEvent) {

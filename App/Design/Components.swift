@@ -105,18 +105,58 @@ struct TernEmptyState: View {
     }
 }
 
-private struct TernSurface: ViewModifier {
+/// How an outline shows at normal contrast. Under Increase Contrast every
+/// outline draws in `Color.primary`.
+enum TernOutlineStyle {
+    /// A separator-colored hairline.
+    case hairline
+    /// Nothing, for filled shapes that already stand apart.
+    case contrastOnly
+}
+
+private struct TernOutline: ViewModifier {
+    let radius: CGFloat
+    let style: TernOutlineStyle
+    let focus: Color?
     @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
-        content
-            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-            .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                    .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                                  lineWidth: Tokens.Border.hairline)
+        content.overlay {
+            if let color {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(color, lineWidth: focus == nil ? Tokens.Border.hairline : Tokens.Border.focus)
                     .allowsHitTesting(false)
             }
+        }
+    }
+
+    private var color: Color? {
+        if let focus { return focus }
+        if contrast == .increased { return .primary }
+        return style == .hairline ? Tokens.Surface.border : nil
+    }
+}
+
+/// `.content` panels sit on window backgrounds. `.grouped` panels match the
+/// sections of a grouped form, so they tint in dark mode and outline only
+/// under Increase Contrast.
+enum TernSurfaceStyle {
+    case content, grouped
+}
+
+private struct TernSurface: ViewModifier {
+    let radius: CGFloat
+    let style: TernSurfaceStyle
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .background(fill, in: RoundedRectangle(cornerRadius: radius))
+            .ternOutline(radius: radius, style: style == .grouped ? .contrastOnly : .hairline)
+    }
+
+    private var fill: Color {
+        style == .grouped && colorScheme == .dark ? Color.primary.opacity(Tokens.Settings.groupTint) : Tokens.Surface.primary
     }
 }
 
@@ -149,7 +189,15 @@ private struct TernHover: ViewModifier {
 
 extension View {
     /// Adds a card surface without clipping controls or their focus rings.
-    func ternSurface() -> some View { modifier(TernSurface()) }
+    func ternSurface(radius: CGFloat = Tokens.Radius.lg, style: TernSurfaceStyle = .content) -> some View {
+        modifier(TernSurface(radius: radius, style: style))
+    }
+
+    /// A rounded outline that follows Increase Contrast. A `focus` color, when
+    /// set, replaces it at focus width.
+    func ternOutline(radius: CGFloat, style: TernOutlineStyle = .hairline, focus: Color? = nil) -> some View {
+        modifier(TernOutline(radius: radius, style: style, focus: focus))
+    }
 
     func ternAnimation<Value: Equatable>(value: Value) -> some View {
         modifier(TernAnimation(value: value))

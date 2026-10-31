@@ -50,7 +50,6 @@ struct SettingsMessageEditor: View {
     @Bindable var draft: SettingsMessageDraft
     let isEditable: Bool
     @State private var linkText = ""
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -67,13 +66,7 @@ struct SettingsMessageEditor: View {
             } onAttach: { _ in } onFocusChange: { draft.isFocused = $0 }
             .frame(minHeight: Tokens.Layout.quoteMaxHeight)
         }
-        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                              lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
+        .ternSurface(radius: Tokens.Radius.sm)
         .focusedValue(\.settingsEditor, focusedEditor)
         .popover(isPresented: $draft.showsLink) {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {

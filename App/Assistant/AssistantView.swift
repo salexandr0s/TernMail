@@ -12,7 +12,6 @@ struct AssistantView: View {
     var isDetached = false
 
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.colorSchemeContrast) private var contrast
     @FocusState private var isComposerFocused: Bool
     @State private var hasPlacedInitialFocus = false
     @State private var showsSettings = false
@@ -125,12 +124,7 @@ struct AssistantView: View {
         }
         .font(.caption)
         .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s1)
-        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
+        .ternSurface(radius: Tokens.Radius.md)
         .padding(.horizontal, Tokens.Space.s4).padding(.bottom, Tokens.Space.s3)
     }
 
@@ -183,11 +177,7 @@ struct AssistantView: View {
             }
             .padding(Tokens.Space.s3)
             .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-            .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                    .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline)
-                    .allowsHitTesting(false)
-            }
+            .ternOutline(radius: Tokens.Radius.lg)
             .padding(Tokens.Space.s3)
             .frame(maxWidth: Tokens.Assistant.contentWidth)
             .frame(maxWidth: .infinity)
@@ -208,8 +198,6 @@ struct AssistantView: View {
     private var modelName: String {
         model.models.first(where: { $0.id == model.selectedModelID })?.displayName ?? "ChatGPT"
     }
-
-    private var outlineColor: Color { contrast == .increased ? .primary : Tokens.Surface.border }
 
     private var setupPrompt: AssistantSetupPrompt? {
         if !model.connection.canUsePlan {

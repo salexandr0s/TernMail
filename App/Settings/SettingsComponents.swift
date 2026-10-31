@@ -196,27 +196,3 @@ struct SettingsNote: View {
         .foregroundStyle(.secondary)
     }
 }
-
-private struct SettingsSurface: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                colorScheme == .dark ? Color.primary.opacity(Tokens.Settings.groupTint) : Color(nsColor: .controlBackgroundColor),
-                in: RoundedRectangle(cornerRadius: Tokens.Radius.md)
-            )
-            .overlay {
-                if contrast == .increased {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                        .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
-                        .allowsHitTesting(false)
-                }
-            }
-    }
-}
-
-extension View {
-    func settingsSurface() -> some View { modifier(SettingsSurface()) }
-}
