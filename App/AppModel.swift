@@ -99,6 +99,7 @@ final class AppModel {
             await closeMailbox()
             do {
                 try await cache.resetDisposableCache()
+                await DomainLogoImages.shared.removeAll()
                 if let downloadedAttachments { try? FileManager.default.removeItem(at: downloadedAttachments) }
                 try? await cache.compactDisposableCache()
                 inboxUpdatesAreStopped = false

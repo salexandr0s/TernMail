@@ -8,6 +8,7 @@ struct ReadingSettingsView: View {
     @AppStorage(ReadingPreferences.readDelayKey) private var delay = 3.0
     @AppStorage(ReadingPreferences.textScaleKey) private var scale = 1.0
     @AppStorage(ReadingPreferences.sizeKey) private var showsSize = false
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
 
     var body: some View {
         SettingsPage {
@@ -62,6 +63,8 @@ struct ReadingSettingsView: View {
 
             SettingsGroup("Privacy", systemImage: "hand.raised") {
                 SettingsToggleRow("Block remote images", detail: "Choose Load Images to allow HTTPS images in one message. Known tracking images stay blocked.", isOn: $blocksImages)
+                Divider().padding(.horizontal, Tokens.Space.s4)
+                SettingsToggleRow("Show company logos", detail: "When a sender has no photo, look for an icon on their website. Websites receive your IP address, but no email address or message content.", isOn: $showsLogos)
             }
         }
     }

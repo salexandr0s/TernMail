@@ -95,7 +95,9 @@ struct AssistantEmailCard: View {
             Image(nsImage: image).resizable().scaledToFill()
                 .frame(width: Tokens.Control.avatar, height: Tokens.Control.avatar)
                 .clipShape(Circle()).accessibilityHidden(true)
-        } else { TernAvatar(name: sender) }
+        } else {
+            DomainLogoAvatar(address: email.senderEmail) { TernAvatar(name: sender) }
+        }
     }
 
     private var sender: String {

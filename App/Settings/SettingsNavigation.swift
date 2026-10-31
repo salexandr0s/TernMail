@@ -82,7 +82,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .accounts: "google login sign in sync nickname color order connections calendar permissions"
         case .profiles: "work personal groups focus notification schedule hours"
         case .notifications: "alerts sound badge dock menu bar permission"
-        case .reading: "remote images privacy tracking dark mode conversation order mark read delay text size"
+        case .reading: "remote images privacy tracking company business bank logos sender photos website icons dark mode conversation order mark read delay text size"
         case .messageList: "density compact comfortable preview swipe sidebar mailbox count badges importance"
         case .composing: "font reply format templates local signatures suggestions recipients"
         case .signatures: "gmail send as identity footer"
