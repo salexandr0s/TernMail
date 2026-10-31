@@ -57,7 +57,7 @@ extension CalendarModel {
             touchRange(key)
             if let checked = saved.checkedAt, Date.now.timeIntervalSince(checked) < 60 { return }
         }
-        if let activeRangeTask, activeRangeTask.key == key {
+        if let activeRangeTask, activeRangeTask.key == key, !activeRangeTask.task.isCancelled {
             await activeRangeTask.task.value
             return
         }

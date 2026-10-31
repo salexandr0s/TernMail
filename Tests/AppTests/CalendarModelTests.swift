@@ -123,6 +123,31 @@ import Testing
         }
     }
 
+    @Test func rapidReactivationReplacesCanceledRefreshWhileItsRequestFinishes() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "reactivated")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let first = Task { await fixture.model.activateRange() }
+            #expect(await fixture.waitForSuspendedRange())
+            first.cancel()
+
+            let second = Task { await fixture.model.activateRange() }
+            for _ in 0..<200 {
+                if await fixture.service.rangeRequestCount == 2 { break }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(await fixture.service.rangeRequestCount == 2)
+            await fixture.service.resumeRange()
+            await first.value
+            await second.value
+
+            #expect(fixture.model.events.map(\.event) == [event])
+        }
+    }
+
     @Test func rangeRetentionIsBoundedAndRevocationDropsPreparedContent() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "bounded")
