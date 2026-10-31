@@ -36,6 +36,9 @@ struct CalendarToolbar: CustomizableToolbarContent {
             } label: {
                 Text(model.mode.title)
             }
+            // Toolbars hide menu titles by default; the current mode is the whole point here.
+            .labelStyle(.titleOnly)
+            .fixedSize()
             .help("Day, Week, Month, Year or Schedule")
             .accessibilityLabel("Calendar view")
             .accessibilityValue(model.mode.title)
