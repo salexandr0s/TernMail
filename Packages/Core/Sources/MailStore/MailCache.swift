@@ -273,13 +273,15 @@ public struct CacheTransaction {
     }
 
     /// Deletes every message not in `kept`, except messages a pending action
-    /// still targets and messages in held conversations. Used after a full
-    /// resync. Returns the affected thread IDs.
+    /// still targets, messages in held conversations and provisional sends,
+    /// which Gmail can't list yet. Used after a full resync. Returns the
+    /// affected thread IDs.
     @discardableResult
     public func deleteMessages(notIn kept: Set<String>, accountID: String, through historyID: Int64? = nil) throws -> Set<String> {
         let protected = try messageIDsTargetedByPendingActions(accountID: accountID)
             .union(messageIDsInHeldThreads(accountID: accountID))
         var stale = try cachedMessageIDs(accountID: accountID).subtracting(kept).subtracting(protected)
+            .filter { !LocalSend.isProvisional($0) }
         if let historyID {
             // A thread load can ingest new mail while the resync awaits its
             // listings. Those revisions postdate the held profile snapshot.
@@ -415,6 +417,8 @@ public struct CacheTransaction {
     /// is never a no-op. Nor is a `compensating` change: it makes Gmail match
     /// the cache after a change Gmail may have applied, such as the inverse
     /// of an undone row, so it is queued whatever the cache shows.
+    /// Provisional sends are left out, since Gmail doesn't know them yet
+    /// (`LocalSend`), and a change that names only those is nil too.
     public func enqueue(
         _ kind: PendingAction.Kind,
         accountID: String,
@@ -426,6 +430,10 @@ public struct CacheTransaction {
         notBefore: Date,
         compensating: Bool = false
     ) throws -> PendingAction? {
+        let named = threadIDs.count + messageIDs.count
+        let threadIDs = threadIDs.filter { !LocalSend.isProvisional($0) }
+        let messageIDs = messageIDs.filter { !LocalSend.isProvisional($0) }
+        if named > 0, threadIDs.isEmpty, messageIDs.isEmpty { return nil }
         let existing = try pendingActions(accountID: accountID)
         var affectedThreads = Set(threadIDs)
         if !messageIDs.isEmpty {
@@ -437,7 +445,9 @@ public struct CacheTransaction {
         var alreadyTrashed: [String] = []
         for threadID in affectedThreads {
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: existing)
-            let targets = messageScoped ? messageIDs.filter { labels[$0] != nil } : Array(labels.keys)
+            let targets = messageScoped
+                ? messageIDs.filter { labels[$0] != nil }
+                : labels.keys.filter { !LocalSend.isProvisional($0) }
             for messageID in targets {
                 let current = labels[messageID] ?? []
                 if kind == .trashThreads, current.contains(SystemLabel.trash) { alreadyTrashed.append(messageID) }
@@ -580,7 +590,8 @@ public struct CacheTransaction {
     /// Recovers rows a quit or crash left mid-send. `sending` rows go back in
     /// the queue (resending a label change is harmless) and `undone` rows are
     /// dropped, since their inverse is already queued, along with any unread
-    /// deltas left for changes that no longer apply.
+    /// deltas left for changes that no longer apply and any provisional send
+    /// whose draft no longer sends.
     public func requeueInterruptedActions(accountID: String) throws {
         try db.execute(
             sql: "DELETE FROM pendingAction WHERE accountID = ? AND state = ?",
@@ -591,6 +602,7 @@ public struct CacheTransaction {
             arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
         )
         try forgetStaleUnreadDeltas(accountID: accountID)
+        try deleteOrphanedLocalSends(accountID: accountID)
     }
 
     /// Puts back the rows of `lane` whose send ended without recording an

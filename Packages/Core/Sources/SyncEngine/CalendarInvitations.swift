@@ -59,6 +59,7 @@ extension SyncEngine {
         let accountID = accountID
         let addresses = try await calendarReplyAddresses()
         let timestamp = now()
+        let rendering = await provisionalRendering(at: timestamp)
         let receipt = try await write { tx in
             guard let message = try tx.message(id: messageID, accountID: accountID),
                   let source = try tx.calendarInvitations(accountID: accountID).first(where: {
@@ -90,7 +91,9 @@ extension SyncEngine {
             let receipt = InvitationReplyRecord(accountID: accountID, uid: uid, recurrenceKey: recurrenceKey,
                 participationStatus: status, localDraftID: draft.id, queuedAt: timestamp)
             try tx.saveInvitationReply(receipt)
-            guard try tx.enqueueSend(localDraftID: draft.id, now: timestamp, notBefore: timestamp.addingTimeInterval(max(0, delay))) != nil else {
+            guard try tx.enqueueSend(
+                localDraftID: draft.id, now: timestamp, notBefore: timestamp.addingTimeInterval(max(0, delay)), rendering: rendering
+            ) != nil else {
                 throw CalendarInvitationError.responsePending
             }
             return receipt

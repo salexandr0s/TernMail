@@ -431,9 +431,15 @@ extension CacheTransaction {
     /// Queues a send for `notBefore`, the end of the undo send delay, first
     /// storing `content` when given. The draft stops taking edits, waiting
     /// saves go since the send uploads the newest revision, and the draft's
-    /// message leaves its thread.
-    public func enqueueSend(localDraftID: String, content: DraftContent? = nil, now: Date, notBefore: Date) throws -> PendingAction? {
-        try enqueueExit(.sendDraft, state: .sending, localDraftID: localDraftID, content: content, now: now, notBefore: notBefore)
+    /// message leaves its thread. A provisional message from `rendering`
+    /// takes its place there and in Sent until Gmail's copy arrives (`LocalSend`).
+    public func enqueueSend(
+        localDraftID: String, content: DraftContent? = nil, now: Date, notBefore: Date,
+        rendering: (LocalDraft) -> LocalSend.Rendering
+    ) throws -> PendingAction? {
+        try enqueueExit(.sendDraft, state: .sending, localDraftID: localDraftID, content: content, now: now, notBefore: notBefore) {
+            try insertLocalSend(for: $0, rendering: rendering($0), now: now)
+        }
     }
 
     /// Queues a discard for `notBefore`, while its notice offers undo.
@@ -441,9 +447,12 @@ extension CacheTransaction {
         try enqueueExit(.discardDraft, state: .discarding, localDraftID: localDraftID, content: content, now: now, notBefore: notBefore)
     }
 
+    /// `standIn` stores what shows in place of the draft's message while it
+    /// leaves, if anything, and returns the thread that holds it.
     private func enqueueExit(
         _ kind: PendingAction.Kind, state: LocalDraft.State, localDraftID: String,
-        content: DraftContent?, now: Date, notBefore: Date
+        content: DraftContent?, now: Date, notBefore: Date,
+        standIn: (LocalDraft) throws -> String? = { _ in nil }
     ) throws -> PendingAction? {
         if let content { try updateLocalDraft(id: localDraftID, content: content, now: now) }
         guard var draft = try localDraft(id: localDraftID), draft.state == .editing else { return nil }
@@ -455,7 +464,9 @@ extension CacheTransaction {
         draft.sendError = nil
         try draft.update(db)
         let row = try insertComposeRow(kind, for: draft, now: now, notBefore: notBefore)
-        try rebuildThreads(try threadIDs(of: draft), accountID: draft.accountID)
+        var threads = try threadIDs(of: draft)
+        if let thread = try standIn(draft) { threads.insert(thread) }
+        try rebuildThreads(threads, accountID: draft.accountID)
         return row
     }
 
@@ -476,12 +487,13 @@ extension CacheTransaction {
     }
 
     /// Returns a draft whose send or discard didn't happen to editing, so its
-    /// message shows in its thread again. `sendError` is Gmail's reason, if
-    /// any. `forgettingGmailDraft` drops a Gmail draft that no longer exists,
-    /// so the next save creates one.
+    /// message shows in its thread again in place of its provisional send.
+    /// `sendError` is Gmail's reason, if any. `forgettingGmailDraft` drops a
+    /// Gmail draft that no longer exists, so the next save creates one.
     public func returnToEditing(localDraftID: String, sendError: String? = nil, forgettingGmailDraft: Bool = false) throws {
         guard var draft = try localDraft(id: localDraftID) else { return }
-        let threads = try threadIDs(of: draft)
+        var threads = try threadIDs(of: draft)
+        threads.formUnion(try deleteLocalSend(localDraftID: localDraftID, accountID: draft.accountID))
         draft.state = .editing
         draft.sendError = sendError
         // The send didn't happen, so a later one that finds the draft gone
@@ -498,10 +510,11 @@ extension CacheTransaction {
     }
 
     /// Removes a draft that has left Gmail, by sending or discarding: the local
-    /// draft and its rows, its Gmail draft and its message. `sentMessage` is
-    /// the sent message's metadata, when it could be fetched. Returns the
-    /// outgoing attachments, whose files the caller removes, and the removed
-    /// message IDs, which the caller keeps slow loads from restoring.
+    /// draft and its rows, its Gmail draft, its message and its provisional
+    /// send. `sentMessage` is the sent message's metadata, when it could be
+    /// fetched, and takes the provisional message's place in this same write.
+    /// Returns the outgoing attachments, whose files the caller removes, and
+    /// the removed message IDs, which the caller keeps slow loads from restoring.
     public func removeFinishedDraft(
         localDraftID: String,
         sentMessage: MessageUpdate?
@@ -516,6 +529,7 @@ extension CacheTransaction {
         try PendingAction.filter(Column("localDraftID") == localDraftID).deleteAll(db)
         let attachments = try deleteLocalDraft(id: localDraftID)
         var threads = try deleteMessages(ids: removed, accountID: draft.accountID)
+        threads.formUnion(try deleteLocalSend(localDraftID: localDraftID, accountID: draft.accountID))
         if let sentMessage { threads.formUnion(try upsertMessages([sentMessage])) }
         try rebuildThreads(threads, accountID: draft.accountID)
         return (attachments, removed)

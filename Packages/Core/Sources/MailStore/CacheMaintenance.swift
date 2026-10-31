@@ -142,13 +142,15 @@ extension CacheTransaction {
 enum CacheMaintenanceSQL {
     static func protectedThreads(tx: CacheTransaction, keeping: Set<CacheThreadReference>) throws -> Set<CacheThreadReference> {
         var protected = keeping
+        // The last line keeps provisional sends: Gmail can't refetch their bodies.
         for row in try Row.fetchAll(tx.db, sql: """
             SELECT accountID,threadID FROM cacheHold
             UNION SELECT accountID,threadID FROM messageSnoozeHold
             UNION SELECT accountID,threadID FROM localDraft WHERE threadID IS NOT NULL
             UNION SELECT m.accountID,m.threadID FROM message m JOIN localDraft d
                 ON m.accountID=d.accountID AND m.id IN (d.sourceMessageID,d.savedMessageID)
-            """) {
+            UNION SELECT accountID,threadID FROM message WHERE id GLOB ?
+            """, arguments: [LocalSend.idPrefix + "*"]) {
             protected.insert(CacheThreadReference(accountID: row["accountID"], threadID: row["threadID"]))
         }
         // Failed intent is recoverable too, even though it no longer contributes an optimistic overlay.
