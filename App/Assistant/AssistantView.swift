@@ -141,7 +141,19 @@ struct AssistantView: View {
                           text: $model.composerText, axis: .vertical)
                     .font(.body).textFieldStyle(.plain).lineLimit(2...6)
                     .focused($isComposerFocused)
-                    .onSubmit(submitComposer)
+                    .onKeyPress(.return, phases: .down) { press in
+                        if let editor = NSApp.keyWindow?.firstResponder as? NSTextInputClient,
+                           editor.hasMarkedText() { return .ignored }
+                        if press.modifiers.contains(.shift) {
+                            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
+                            editor.insertNewlineIgnoringFieldEditor(nil)
+                            return .handled
+                        }
+                        guard !press.modifiers.contains(.option),
+                              !press.modifiers.contains(.control) else { return .ignored }
+                        submit()
+                        return .handled
+                    }
                     .accessibilityLabel("Message to assistant")
                     .accessibilityHint("Return to send. Shift-Return for a new line.")
                 HStack(spacing: Tokens.Space.s2) {
@@ -214,16 +226,6 @@ struct AssistantView: View {
 
     private var canSubmit: Bool {
         setupPrompt == nil && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func submitComposer() {
-        if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift),
-           let editor = event.window?.firstResponder as? NSTextView {
-            // Keep the native selection and undo behavior when inserting a line.
-            editor.insertNewlineIgnoringFieldEditor(nil)
-            return
-        }
-        submit()
     }
 
     private func submit() {
