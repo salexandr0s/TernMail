@@ -398,6 +398,11 @@ final class ComposeModel {
         move(to: change.previousAccountID, sender: previous)
     }
 
+    /// The previous account may have signed out since the window moved the message.
+    var canUndoSenderChange: Bool {
+        senderChange.map { mailbox.account(id: $0.previousAccountID) != nil } ?? false
+    }
+
     /// Copies the files into the draft, one at a time, in order.
     func attach(_ items: [Attachable], inlineImages: Bool = false) {
         guard isEditable, !items.isEmpty else { return }

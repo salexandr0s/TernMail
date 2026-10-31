@@ -57,6 +57,13 @@ private struct ComposeWindowCascade: NSViewRepresentable {
             guard let window, !Self.placed.contains(window) else { return }
             let others = Self.placed.allObjects.filter(\.isVisible)
             Self.placed.add(window)
+            // A window that opens as a tab takes its group's frame, so it has nowhere to step.
+            let opensAsTab = switch NSWindow.userTabbingPreference {
+            case .always: true
+            case .inFullScreen: others.contains { $0.styleMask.contains(.fullScreen) }
+            default: false
+            }
+            guard !opensAsTab, !window.styleMask.contains(.fullScreen) else { return }
             func covers(_ other: NSWindow) -> Bool {
                 abs(other.frame.minX - window.frame.minX) < 1 && abs(other.frame.maxY - window.frame.maxY) < 1
             }
@@ -397,9 +404,11 @@ struct ComposeView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Undo") { model.undoSenderChange() }
-                .controlSize(.small)
-                .help("Send from \(change.previousAccountName) instead")
+            if model.canUndoSenderChange {
+                Button("Undo") { model.undoSenderChange() }
+                    .controlSize(.small)
+                    .help("Send from \(change.previousAccountName) instead")
+            }
         }
         // Lines up with the From value above.
         .padding(.leading, Tokens.Space.s2 + Tokens.Layout.composeLabelWidth + Tokens.Space.s2)
