@@ -187,7 +187,7 @@ struct ComposeView: View {
     }
 
     private var header: some View {
-        VStack(spacing: Tokens.Space.s1) {
+        VStack(spacing: 0) {
             fieldRow("To:", field: .to) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                     recipientField("To", addresses: $model.content.to, field: .to)
@@ -213,15 +213,18 @@ struct ComposeView: View {
                 .buttonStyle(.borderless)
             }
             if model.showsCc {
+                rowDivider
                 fieldRow("Cc:", field: .cc) {
                     recipientField("Cc", addresses: $model.content.cc, field: .cc)
                 }
             }
             if model.showsBcc {
+                rowDivider
                 fieldRow("Bcc:", field: .bcc) {
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
                 }
             }
+            rowDivider
             fieldRow("Subject:", field: .subject) {
                 TextField("", text: $model.content.subject)
                     .textFieldStyle(.plain)
@@ -231,15 +234,31 @@ struct ComposeView: View {
                     .focused($focus, equals: .subject)
             }
             if model.showsFrom {
+                rowDivider
                 fromField
             }
         }
         .disabled(!model.isEditable)
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1)
         .background(Tokens.Surface.primary)
         .ternAnimation(value: focus)
         .ternAnimation(value: focusedRecipient)
+    }
+
+    /// A hairline between header rows, aligned with their labels.
+    private var rowDivider: some View {
+        Divider()
+            .padding(.horizontal, Tokens.Space.s2)
+    }
+
+    /// Rows have no border. Focus outlines the whole row, label included.
+    private func focusRing(_ isFocused: Bool) -> some View {
+        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+            .strokeBorder(isFocused ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus)
+            // Keeps the ring off the dividers above and below.
+            .padding(.vertical, Tokens.Space.s0_5)
+            .allowsHitTesting(false)
     }
 
     /// Replies keep their account while allowing any of its verified From addresses.
@@ -263,18 +282,20 @@ struct ComposeView: View {
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                 fieldLabel("From:")
-                if let sender = model.selectedSender {
-                    SenderAccountLabel(account: sender.account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text(model.fromEmail).lineLimit(1).truncationMode(.middle)
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
+                    if let sender = model.selectedSender {
+                        SenderAccountLabel(account: sender.account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text(model.fromEmail).lineLimit(1).truncationMode(.middle)
+                    }
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
             }
             .font(.body)
             .padding(.horizontal, Tokens.Space.s2)
@@ -287,8 +308,7 @@ struct ComposeView: View {
         .menuIndicator(.hidden)
         .controlSize(.regular)
         .focused($focus, equals: .from)
-        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .ternOutline(radius: Tokens.Radius.sm, focus: focus == .from ? .accentColor : nil)
+        .overlay { focusRing(focus == .from) }
         .help(model.canChangeAccount ? "Choose a sending address." : "Choose a sending address from this conversation’s account.")
         .accessibilityLabel("From")
         .accessibilityValue(model.fromEmail)
@@ -309,13 +329,12 @@ struct ComposeView: View {
         .background {
             // Only the background handles blank space. Native editors keep their
             // own mouse events for cursor placement, token selection and dragging.
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .fill(Tokens.Surface.primary)
+            Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { focusField(field) }
                 .accessibilityHidden(true)
         }
-        .ternOutline(radius: Tokens.Radius.sm, focus: isFocused ? .accentColor : nil)
+        .overlay { focusRing(isFocused) }
     }
 
     private func fieldLabel(_ text: String) -> some View {
