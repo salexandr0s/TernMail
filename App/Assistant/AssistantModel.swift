@@ -174,7 +174,7 @@ final class AssistantModel {
         }
         readerSummaryCache.updateAccess(.init(
             accountInstances: current.accountInstances.filter { enabledAccountIDs.contains($0.key) },
-            connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan, modelID: selectedModelID))
+            connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan, modelID: summaryModelID))
         let snapshot = scope(in: current)
         if observedScope?.connectionRevision != current.connectionRevision { modelErrorMessage = nil }
         if let previous = observedScope {
@@ -381,6 +381,11 @@ final class AssistantModel {
         }
     }
 
+    private var summaryModelID: String {
+        ["gpt-6-luna", "gpt-5.4-mini", selectedModelID]
+            .first { candidate in models.contains(where: { $0.id == candidate }) } ?? ""
+    }
+
     func summarize(thread: ThreadKey) async throws -> AssistantSummary {
         try await summaryService(for: thread).summarize(thread: thread)
     }
@@ -399,7 +404,7 @@ final class AssistantModel {
         guard snapshot.accountIDs.contains(thread.accountID), snapshot.threadIDs?.contains(thread) ?? true else {
             return .unavailable(reason: "This conversation is outside the assistant’s scope.", action: "Choose scope")
         }
-        if catalogueRevision == current.connectionRevision, models.contains(where: { $0.id == selectedModelID }) {
+        if catalogueRevision == current.connectionRevision, !summaryModelID.isEmpty {
             return .ready
         }
         if isLoadingModels { return .loading }
@@ -412,7 +417,7 @@ final class AssistantModel {
         let snapshot = scope(in: context())
         guard let instance = snapshot.accountInstances[thread.accountID] else { throw AssistantError.accessChanged }
         let key = ThreadSummaryCache.Key(thread: thread, accountInstance: instance,
-            connectionRevision: snapshot.connectionRevision, modelID: selectedModelID, sourceRevision: revision)
+            connectionRevision: snapshot.connectionRevision, modelID: service.model, sourceRevision: revision)
         // Building the service validates current permissions before any cache hit.
         if !forceRefresh, let cached = readerSummaryCache.report(for: key) {
             try cached.validateMessages(expectedMessageIDs)
@@ -430,15 +435,15 @@ final class AssistantModel {
         refreshAccess()
         try Task.checkCancellation()
         let snapshot = scope(in: context())
-        try validateStart(snapshot)
+        let model = summaryModelID
+        try validateStart(snapshot, modelID: model)
         guard snapshot.accountIDs.contains(thread.accountID),
               snapshot.threadIDs?.contains(thread) ?? true else { throw AssistantError.accessChanged }
         let revision = summaryAccessRevision
-        let model = selectedModelID
         let isValid: @MainActor @Sendable () -> Bool = { [weak self] in
             guard let self else { return false }
             return summaryAccessRevision == revision && scope(in: context()) == snapshot
-                && selectedModelID == model && catalogueRevision == snapshot.connectionRevision
+                && summaryModelID == model && catalogueRevision == snapshot.connectionRevision
                 && models.contains(where: { $0.id == model })
         }
         // A reader owns only this read session. Chat keeps its independent source
@@ -489,12 +494,14 @@ final class AssistantModel {
             calendarScope: current.calendarScope)
     }
 
-    private func validateStart(_ snapshot: AssistantScopeSnapshot, selection: AssistantScope? = nil) throws {
+    private func validateStart(_ snapshot: AssistantScopeSnapshot, selection: AssistantScope? = nil,
+                               modelID: String? = nil) throws {
         guard snapshot.canUsePlan else { throw AIProviderError.signInRequired }
         if !snapshot.calendarScope.hasAccess, (selection ?? selectedScope) == .selectedThreads,
            snapshot.threadIDs?.isEmpty != false { throw AssistantError.noSelection }
         guard !snapshot.accountIDs.isEmpty || snapshot.calendarScope.hasAccess else { throw AssistantError.noAccounts }
-        guard !selectedModelID.isEmpty, models.contains(where: { $0.id == selectedModelID }),
+        let model = modelID ?? selectedModelID
+        guard !model.isEmpty, models.contains(where: { $0.id == model }),
               catalogueRevision == snapshot.connectionRevision else { throw AssistantError.noModel }
     }
 

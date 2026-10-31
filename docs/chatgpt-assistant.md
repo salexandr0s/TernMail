@@ -19,6 +19,8 @@ Broad requests review a bounded selection of conversations. Tern reserves the en
 
 Opening a conversation generates a short AI summary below its event cards when ChatGPT, a model, and the account’s assistant access are ready. The current assistant scope still applies. The summary sits in a subtle translucent card matching the events above it and shows up to three lines; **Details** reveals the full text, decisions, open tasks, and supporting messages. Source links expand and scroll to the original message. Tasks are extracted from the conversation and do not change mail or create reminders.
 
+Summaries automatically use GPT-6 Luna when the connected account lists it, then GPT-5.4 mini, then the selected chat model. This preference keeps summaries on a small, efficient model when one is available. Chat, calendar interpretation, and writing-style learning use the model selected in Assistant settings.
+
 Use **Summary options → Refresh summary** to generate it again, or **Retry** after a failure. New messages trigger a fresh summary. Reading, starring, labeling, and loading message bodies do not regenerate an unchanged conversation. Up to 16 summaries stay in memory for revisiting conversations; they are discarded on access loss, account replacement, connection or model changes, and app exit. Summaries do not enter chat history or persist to disk.
 
 The reader shows a coverage note when the mail read omitted messages or content. If Gmail returns a different message set from the open reader, sync mail and retry. Generated source references must match the retrieved messages before Tern displays the result.

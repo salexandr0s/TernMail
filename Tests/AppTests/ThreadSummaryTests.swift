@@ -161,8 +161,13 @@ import TernAI
         #expect(await provider.requests.count == 2)
     }
 
-    @Test func readerCreatesItsOwnSessionAlongsideChat() async throws {
-        let provider = SummaryProvider(replies: [.init(output: [], text: "Chat response", toolCalls: []), try Self.response("Reader summary")])
+    @Test(arguments: ["gpt-6-luna", "gpt-5.4-mini", "test"])
+    func readerUsesAvailableFastModelWithoutChangingChat(summaryModel: String) async throws {
+        let choices = summaryModel == "test" ? ["test"]
+            : summaryModel == "gpt-5.4-mini" ? ["test", "gpt-5.4-mini"]
+            : ["test", "gpt-5.4-mini", "gpt-6-luna"]
+        let provider = SummaryProvider(replies: [.init(output: [], text: "Chat response", toolCalls: []), try Self.response("Reader summary")],
+            modelIDs: choices)
         let fixture = Fixture(provider: provider)
         await fixture.model.refreshConnection()
         fixture.model.send("Question")
@@ -171,6 +176,45 @@ import TernAI
         _ = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
         #expect(fixture.context.sessions == 2)
         #expect(fixture.model.messages.map(\.id) == chatMessages)
+        #expect(fixture.model.selectedModelID == "test")
+        #expect(await provider.requests.map(\.model) == ["test", summaryModel])
+    }
+
+    @Test func summaryReadinessUsesFastModelWhenChatSelectionIsUnavailable() async throws {
+        let provider = SummaryProvider(replies: [try Self.response("Reader summary")], modelIDs: ["test", "gpt-6-luna"])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        fixture.model.selectedModelID = "unavailable"
+        #expect(fixture.model.summaryAvailability(for: Self.key) == .ready)
+        _ = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
+        #expect(await provider.requests.first?.model == "gpt-6-luna")
+        #expect(!fixture.model.canRun(.summarizeThread))
+    }
+
+    @Test func catalogueChangesInvalidateCachedAndInFlightSummaries() async throws {
+        let provider = SummaryProvider(replies: [try Self.response("Cached summary"), nil,
+            try Self.response("Fallback summary"), try Self.response("New fast summary")], modelIDs: ["test", "gpt-6-luna"])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        _ = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
+        let reader = ThreadSummaryModel()
+        let pending = Task {
+            await reader.load(key: Self.key, revision: "r1", assistant: fixture.model, forceRefresh: true)
+        }
+        await provider.waitForRequests(2)
+        await provider.setModelIDs(["test"])
+        await fixture.model.refreshConnection()
+        await provider.release(1, response: try Self.response("Late fast summary"))
+        await pending.value
+        #expect(reader.report == nil)
+        #expect(reader.errorMessage == nil)
+        let fallback = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
+        #expect(fallback.summary.summary == "Fallback summary")
+        await provider.setModelIDs(["test", "gpt-6-luna"])
+        await fixture.model.refreshConnection()
+        let refreshed = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
+        #expect(refreshed.summary.summary == "New fast summary")
+        #expect(await provider.requests.map(\.model) == ["gpt-6-luna", "gpt-6-luna", "test", "gpt-6-luna"])
     }
 
     private static func response(_ text: String) throws -> AIResponse {
@@ -218,13 +262,17 @@ import TernAI
 
 private actor SummaryProvider: AIProvider {
     private var replies: [AIResponse?]
+    private var modelIDs: [String]
     private(set) var requests: [AIRequest] = []
     private var suspended: [Int: AsyncThrowingStream<AIEvent, any Error>.Continuation] = [:]
     private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    init(replies: [AIResponse?]) { self.replies = replies }
-    func models() async throws -> [AIModel] {
-        [.init(id: "test", displayName: "Test"), .init(id: "alternate", displayName: "Alternate")]
+    init(replies: [AIResponse?], modelIDs: [String] = ["test", "alternate"]) {
+        self.replies = replies; self.modelIDs = modelIDs
     }
+    func models() async throws -> [AIModel] {
+        modelIDs.map { .init(id: $0, displayName: $0) }
+    }
+    func setModelIDs(_ values: [String]) { modelIDs = values }
     nonisolated func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task { await self.start(request, continuation: continuation) }
