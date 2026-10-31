@@ -443,9 +443,8 @@ private struct DetailView: View {
             )
         } else {
             TernEmptyState(
-                title: "Select a conversation",
-                systemImage: "envelope.open",
-                message: "Start a new message with ⌘N."
+                title: mailbox.listPreferences.conversations ? "No conversation selected" : "No message selected",
+                systemImage: "envelope.open"
             )
         }
     }

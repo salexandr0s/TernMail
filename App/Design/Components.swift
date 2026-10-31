@@ -65,7 +65,7 @@ struct TernAvatar: View {
 struct TernEmptyState: View {
     let title: String
     let systemImage: String
-    let message: String
+    var message: String?
     var fillsSpace = true
 
     var body: some View {
@@ -81,9 +81,11 @@ struct TernEmptyState: View {
                 Text(title)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.primary)
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                if let message {
+                    Text(message)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .multilineTextAlignment(.center)
