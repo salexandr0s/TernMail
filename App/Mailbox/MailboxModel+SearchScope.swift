@@ -15,7 +15,7 @@ struct MailboxSearchScope: Equatable {
 extension MailboxModel {
     /// The selected mailbox as a search scope. Nil for mailboxes that hold
     /// all mail or that Gmail's query syntax can't name: All Mail, Snoozed,
-    /// the Outbox and saved searches.
+    /// the Outbox, saved searches and labels with a quote in their name.
     var searchMailboxScope: MailboxSearchScope? {
         guard selectedSavedSearch == nil, let id = selectedLabelID,
               let restriction = searchRestriction(forLabel: id) else { return nil }
@@ -71,8 +71,8 @@ extension MailboxModel {
         if let category = InboxCategory.allCases.first(where: { $0.labelID == id }) {
             return "category:" + category.rawValue
         }
-        guard let label = label(id: id), !label.isSystem else { return nil }
-        let escaped = label.name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        return "label:\"\(escaped)\""
+        // Gmail's syntax has no escapes, so a quote would end the quoted name.
+        guard let label = label(id: id), !label.isSystem, !label.name.contains("\"") else { return nil }
+        return "label:\"\(label.name)\""
     }
 }

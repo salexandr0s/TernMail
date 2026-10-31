@@ -108,7 +108,7 @@ struct ThreadListView: View {
         guard !keys.isEmpty else { mailbox.listEntries = []; return }
         let threadsByAccount = Dictionary(grouping: keys, by: \.accountID).mapValues { $0.map(\.threadID) }
         do {
-            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? SearchQuery(mailbox.search.queryText) : nil
+            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? mailbox.search.query : nil
             for try await entries in mailbox.cache.messageListEntries(threadsByAccount: threadsByAccount, matching: query,
                                                                       includingMessageIDs: mailbox.search.matchingMessageIDs, snoozedOnly: mailbox.showsSnoozed) {
                 guard !Task.isCancelled else { return }

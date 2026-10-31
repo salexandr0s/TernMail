@@ -17,6 +17,19 @@ import Testing
         #expect(SearchQuery("a or b ").root == .all([word("a"), word("or"), word("b")]))
     }
 
+    @Test func aScopeLimitsTheWholeQuery() {
+        // Written into the text, the scope would join the OR: either Inbox or "lake".
+        #expect(SearchQuery("in:inbox OR lake tra").root == .all([
+            .any([.term(.labelID("INBOX")), word("lake")]), word("tra", prefix: true),
+        ]))
+        let scoped = SearchQuery("OR lake tra", scope: "in:inbox")
+        #expect(scoped.root == .all([.term(.labelID("INBOX")), .all([word("lake"), word("tra", prefix: true)])]))
+        #expect(scoped.gmailQuery(timeZone: .gmt) == "in:inbox (OR lake tra)")
+        #expect(SearchQuery("lake", scope: "in:trash").includesSpamAndTrash)
+        // Text with nothing to search locally stays that way.
+        #expect(SearchQuery("!!", scope: "in:inbox").root == nil)
+    }
+
     @Test func negationBracesAndGroups() {
         #expect(SearchQuery("-trail ").root == .not(word("trail")))
         #expect(SearchQuery("-\"lake map\"").root == .not(.term(.phrase("lake map"))))

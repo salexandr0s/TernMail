@@ -47,11 +47,11 @@ final class SearchModel {
         return Dictionary(activeSources.map { ($0.accountID, gmail?.messageIDs(in: $0.accountID) ?? []) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The query the cache and Gmail answer: the field's text, narrowed by
-    /// the scope bar's restriction.
+    /// The search as one query, the scope bar's restriction included, for
+    /// saving it. Parentheses keep the restriction on the whole text.
     var queryText: String {
         guard let restriction else { return text }
-        return "\(restriction) \(text)"
+        return "\(restriction) (\(text))"
     }
 
     /// Whether more results wait past the listed ones: another local page,
@@ -73,7 +73,9 @@ final class SearchModel {
 
     @ObservationIgnored private let cache: MailCache
     @ObservationIgnored private var sources: [Source]
-    @ObservationIgnored private var query = SearchQuery("")
+    /// The query the cache and Gmail answer: the field's text, limited by the
+    /// scope bar's restriction.
+    @ObservationIgnored private(set) var query = SearchQuery("")
     @ObservationIgnored private var limit = pageSize
     /// Each account's latest results for the current query.
     @ObservationIgnored private var found: [String: [ThreadRecord]] = [:]
@@ -171,7 +173,7 @@ final class SearchModel {
     }
 
     private func restart() {
-        query = SearchQuery(queryText)
+        query = SearchQuery(text, scope: restriction)
         highlights = SearchHighlights(query)
         limit = Self.pageSize
         delayTask?.cancel()
