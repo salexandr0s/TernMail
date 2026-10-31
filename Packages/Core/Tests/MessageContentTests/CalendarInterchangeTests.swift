@@ -129,13 +129,54 @@ import Testing
         #expect(source == first.sourceText)
     }
 
-    @Test func relativeDatesUseMessageDateAndIncompleteAbsoluteDatesNeedReview() throws {
+    @Test func datesResolveAgainstTheMessageDate() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
-        let relative = try #require(CalendarDetection.suggestions(in: "Let's meet tomorrow at 3 PM.", messageDate: try date("2020-01-05T10:00:00Z"), timeZone: utc).first)
-        #expect(relative.start == (try date("2020-01-06T15:00:00Z")))
-        let incomplete = try #require(CalendarDetection.suggestions(in: "Let's meet on July 15 at 3 PM.", messageDate: try date("2020-01-05T10:00:00Z"), timeZone: utc).first)
-        #expect(incomplete.start == nil)
-        #expect(incomplete.uncertainties.contains(.dateNeedsReview))
+        func first(_ text: String, sent: String = "2031-07-01T08:00:00Z") throws -> DetectedCalendarSuggestion {
+            try #require(CalendarDetection.suggestions(in: text, messageDate: try date(sent), timeZone: utc).first)
+        }
+        #expect(try first("Let's meet tomorrow at 3 PM.", sent: "2020-01-05T10:00:00Z").start == (try date("2020-01-06T15:00:00Z")))
+        let yearless = try first("Let's meet on July 15 at 3 PM.", sent: "2020-01-05T10:00:00Z")
+        #expect(yearless.start == (try date("2020-07-15T15:00:00Z")))
+        #expect(!yearless.uncertainties.contains(.dateNeedsReview))
+        #expect(try first("Wir sehen uns heute Morgen um 11 Uhr.").start == (try date("2031-07-01T11:00:00Z")))
+        #expect(try first("See you Friday at 3pm.").start == (try date("2031-07-04T15:00:00Z")))
+        let next = try first("How about next Friday at 3pm?")
+        #expect(next.start == (try date("2031-07-04T15:00:00Z")))
+        #expect(next.uncertainties.contains(.dateNeedsReview))
+        let lunch = try first("Lunch on Friday?")
+        #expect(lunch.start == (try date("2031-07-04T12:00:00Z")))
+        #expect(lunch.uncertainties.contains(.timeNeedsReview))
+    }
+
+    @Test func mentionsWithoutAnUpcomingDayAreNotEvents() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let sent = try date("2031-07-01T08:00:00Z")
+        for text in [
+            "The online sale is open. Open every day 12PM - 11PM. Book a 2-night stay.",
+            "We're open 24/7.", "Mon–Fri 9am–6pm", "Happy Friday!", "I'll send it tomorrow.",
+            "Every Monday at 10am", "Last Friday at 3pm was fun.", "We met on June 12.",
+            "Offer ends Sunday.", "Valid until 31/12/2031.", "Please reply by Friday, July 4.",
+            "Your order will be delivered on Tuesday, July 8.", "Payment will be charged on August 1, 2031.",
+            "Sent: Tuesday, July 1, 2031 11:00 AM",
+        ] {
+            #expect(CalendarDetection.suggestions(in: text, messageDate: sent, timeZone: utc).isEmpty, "\(text)")
+        }
+        let party = CalendarDetection.suggestions(in: "Please reply by Friday. The party is Saturday at 8pm.", messageDate: sent, timeZone: utc)
+        #expect(party.map(\.start) == [try date("2031-07-05T20:00:00Z")])
+    }
+
+    @Test func timesCompleteTheirDateAndRangesEndOnTheFollowingDay() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let sent = try date("2031-07-01T08:00:00Z")
+        func starts(_ text: String) -> [Date] { CalendarDetection.suggestions(in: text, messageDate: sent, timeZone: utc).map(\.start) }
+        #expect(starts("Date: Saturday, July 19, 2031\nTime: 7pm") == [try date("2031-07-19T19:00:00Z")])
+        #expect(starts("Treffen am 15.07.2031 um 14 Uhr") == [try date("2031-07-15T14:00:00Z")])
+        #expect(starts("Can we meet on Friday (18.07.) at 3pm?") == [try date("2031-07-18T15:00:00Z")])
+        #expect(starts("The workshop is on July 15, 2031. It starts July 15, 2031 at 10:00.") == [try date("2031-07-15T10:00:00Z")])
+        let conference = try #require(CalendarDetection.suggestions(in: "Conference Nov 3-5", messageDate: sent, timeZone: utc).first)
+        #expect(conference.isAllDay)
+        #expect(conference.start == (try date("2031-11-03T12:00:00Z")))
+        #expect(conference.end == (try date("2031-11-06T12:00:00Z")))
     }
 
     @Test func forwardedTextAndOversizedInputAreExcluded() throws {

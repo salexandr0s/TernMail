@@ -109,15 +109,13 @@ final class EmailCalendarModel {
             guard invitations.isEmpty else { continue }
             for suggestion in CalendarDetection.suggestions(in: message.text, messageDate: message.date, timeZone: timeZone) {
                 var event = GoogleCalendarEvent(summary: message.subject)
-                if let start = suggestion.start {
-                    event.start = CalendarDateTime(date: start, timeZone: timeZone, allDay: suggestion.isAllDay)
-                }
+                event.start = CalendarDateTime(date: suggestion.start, timeZone: timeZone, allDay: suggestion.isAllDay)
                 if let end = suggestion.end {
                     event.end = CalendarDateTime(date: end, timeZone: timeZone, allDay: suggestion.isAllDay)
                 }
                 let warnings = suggestion.uncertainties.map { uncertainty in
                     switch uncertainty {
-                    case .dateNeedsReview: "Choose the intended date."
+                    case .dateNeedsReview: "Check the intended date."
                     case .timeNeedsReview: "Check the intended time."
                     case .timeZoneMissing: "Check the time zone."
                     case .durationMissing: "Choose an event duration."
