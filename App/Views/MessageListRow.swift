@@ -129,7 +129,7 @@ struct MessageListRow: View {
         HStack(spacing: Tokens.Space.s1) {
             ForEach(Array(displayedLabels.prefix(2)), id: \.id) { label in
                 let icon = LabelAppearance.shared.icon(for: label)
-                TernBadge(text: label.name, systemImage: icon == "tag" ? "tag.fill" : icon,
+                TernBadge(text: label.title, systemImage: icon == "tag" ? "tag.fill" : icon,
                           tint: Color(gmailHex: label.backgroundColor) ?? .secondary)
             }
             if let attachment = item.attachments.first {
@@ -157,7 +157,7 @@ struct MessageListRow: View {
             date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? ThreadDate.short(thread.lastDate),
             messageCount: thread.messageCount, starred: thread.isStarred,
             important: mailbox.listPreferences.showsImportance && item.labels.contains(SystemLabel.important),
-            labels: displayedLabels.map(\.name), attachments: item.attachments.count, account: account)
+            labels: displayedLabels.map(\.title), attachments: item.attachments.count, account: account)
     }
 
     /// VoiceOver reads the row as one line: state first, then who, what and when.
