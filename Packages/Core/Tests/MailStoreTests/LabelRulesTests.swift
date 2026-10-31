@@ -22,7 +22,7 @@ private let blue = PendingAction.LabelChange.Color(textColor: "#ffffff", backgro
             _ = try tx.enqueueLabelChange(.deleteLabel, labelID: "Label_2", change: .init(deletedLabel: user("Label_2", "Bills")), accountID: acct, now: now, notBefore: now)
             // A listing fetched before the changes reached Gmail, committed after.
             try tx.replaceLabels(listing, accountID: acct)
-            try tx.dropSentActions(sentBefore: now, accountID: acct)
+            try tx.dropSentActions(confirmedThrough: 0, passStart: now, accountID: acct)
         }
         let shown = try await cache.read { tx in try tx.displayedLabels(accountID: acct) }
         #expect(shown.map(\.name) == [SystemLabel.inbox, "Plans", "Travel"])

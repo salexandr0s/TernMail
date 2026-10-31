@@ -148,7 +148,7 @@ private let hour: TimeInterval = 60 * 60
         clock.advance(3)
         await engine.sendDueActions()
         // The next pass brings Gmail's archived copy and a reply in the Inbox.
-        try await cache.write { tx in try tx.dropSentActions(sentBefore: .distantFuture, accountID: account) }
+        try await cache.write { tx in try tx.dropSentActions(confirmedThrough: 0, passStart: .distantFuture, accountID: account) }
         try await seed(cache, [("m1", "t1", []), ("m2", "t1", [SystemLabel.inbox])])
 
         await keeper.check()

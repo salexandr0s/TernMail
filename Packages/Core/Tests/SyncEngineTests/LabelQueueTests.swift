@@ -35,7 +35,7 @@ import Testing
         clock.advance(3)
         while await engine.sendDueActions() > 0 {}
         // A sync pass that started after the sends drops their rows.
-        try await cache.write { tx in try tx.dropSentActions(sentBefore: .distantFuture, accountID: account) }
+        try await cache.write { tx in try tx.dropSentActions(confirmedThrough: 0, passStart: .distantFuture, accountID: account) }
 
         try await engine.undo(edit)
         // A picker opened before Gmail answered still holds the temporary ID.
@@ -211,7 +211,7 @@ import Testing
         ])
         // A pass that fetched before the delete reached Gmail stores the label again.
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox, "Label_1"])])
-        try await cache.write { tx in try tx.dropSentActions(sentBefore: .distantFuture, accountID: account) }
+        try await cache.write { tx in try tx.dropSentActions(confirmedThrough: 0, passStart: .distantFuture, accountID: account) }
         #expect(try await rows(cache).isEmpty)
         #expect(try await labels(cache, "t1") == [SystemLabel.inbox])
         #expect(try await listed(cache, "Label_1").isEmpty)

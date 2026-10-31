@@ -569,6 +569,47 @@ private struct BudgetTestClock: Sendable {
     }
 }
 
+@Suite struct LabelChangeResultTests {
+    @Test func threadChangesReportTheHighestHistoryIDAndTheRefusedThreads() async throws {
+        let transport = RecordingTransport([batchResponse([
+            (0, 200, #"{"id":"t1","historyId":"150","messages":[{"id":"m1","threadId":"t1","labelIds":[]}]}"#),
+            (1, 200, #"{"id":"t2","historyId":"152"}"#),
+            (2, 404, #"{"error":{"code":404,"message":"Not Found"}}"#),
+            (3, 200, "not json"),
+        ])])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
+        let result = try await client.modifyThreads(ids: ["t1", "t2", "t3", "t4"], addLabelIDs: [], removeLabelIDs: ["INBOX"])
+        #expect(result.confirmedHistoryID == 152)
+        #expect(result.failures.keys.sorted() == ["t3"])
+        #expect(result.failures["t3"] == .notFound)
+    }
+
+    @Test func aMessageBatchReadsOneChangedMessageBackForItsHistoryID() async throws {
+        let transport = RecordingTransport([
+            .init(status: 204, body: ""),
+            .init(status: 200, body: #"{"id":"m2","threadId":"t1","historyId":"160"}"#),
+        ])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
+        let result = try await client.batchModifyMessages(ids: ["m1", "m2"], addLabelIDs: ["STARRED"], removeLabelIDs: [])
+        #expect(result == LabelChangeResult(confirmedHistoryID: 160))
+        let requests = await transport.requests
+        #expect(requests.map { $0.url?.path.hasSuffix("messages/batchModify") == true } == [true, false])
+        #expect(requests.last?.percentEncodedTarget == "/gmail/v1/users/me/messages/m2?format=minimal")
+    }
+
+    @Test func aFailedReadBackLeavesTheChangeAppliedButUnconfirmed() async throws {
+        // The message went between the change and the read-back.
+        let transport = RecordingTransport([
+            .init(status: 204, body: ""),
+            .init(status: 404, body: #"{"error":{"code":404,"message":"Not Found"}}"#),
+        ])
+        let client = GmailClient(tokens: CountingTokens(), transport: transport)
+        let result = try await client.batchModifyMessages(ids: ["m1"], addLabelIDs: [], removeLabelIDs: ["UNREAD"])
+        #expect(result == LabelChangeResult())
+        #expect(await transport.requests.count == 2)
+    }
+}
+
 private func failure<T>(_ result: Result<T, GmailError>) -> GmailError? {
     if case .failure(let error) = result { return error }
     return nil

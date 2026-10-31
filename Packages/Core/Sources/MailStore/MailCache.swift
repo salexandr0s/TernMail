@@ -520,15 +520,24 @@ public struct CacheTransaction {
         try rebuildThreads(try threadIDs(of: action), accountID: action.accountID)
     }
 
-    /// Drops sent actions whose send finished before `date`, the start of a
-    /// history pass that has since brought their effect into server state.
-    /// A deleted label also comes off its messages again, since a pass that
-    /// fetched before the delete reached Gmail may have stored it back.
-    public func dropSentActions(sentBefore date: Date, accountID: String) throws {
+    /// A confirmed change the cursor hasn't reached this long after its send
+    /// goes anyway, so a stalled confirmation can't hold an overlay forever.
+    public static let confirmationGrace: TimeInterval = 60
+
+    /// Drops sent actions a history pass has brought into server state: those
+    /// Gmail confirmed at a history ID the committed `cursor` has reached, and
+    /// those Gmail confirmed no history for whose send finished before
+    /// `passStart`. A deleted label also comes off its messages again, since a
+    /// pass that fetched before the delete reached Gmail may have stored it back.
+    public func dropSentActions(confirmedThrough cursor: Int64, passStart: Date, accountID: String) throws {
         let sent = try PendingAction
             .filter(Column("accountID") == accountID && Column("state") == PendingAction.State.sent.rawValue)
             .fetchAll(db)
-            .filter { ($0.sentAt ?? .distantFuture) < date }
+            .filter { action in
+                let sentAt = action.sentAt ?? .distantFuture
+                guard let confirmed = action.confirmedHistoryID else { return sentAt < passStart }
+                return confirmed <= cursor || sentAt < passStart.addingTimeInterval(-Self.confirmationGrace)
+            }
         var threads = Set<String>()
         for action in sent {
             threads.formUnion(try threadIDs(of: action))

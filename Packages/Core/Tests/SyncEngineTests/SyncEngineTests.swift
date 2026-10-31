@@ -288,6 +288,69 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
     }
 }
 
+@Suite struct ConfirmedChangeTests {
+    @Test func aSentChangeStaysInViewUntilTheCursorReachesItsConfirmation() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.confirmChanges(at: 150)
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.confirmedHistoryID) == [150])
+
+        // A pass whose history stops short of the change keeps it in view,
+        // though it started after the send.
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId": "120"}"#))
+        clock.advance(3)
+        try await engine.sync()
+        #expect(try await pendingActions(cache).map(\.state) == [.sent])
+        #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
+
+        // The pass that reaches it drops it; Gmail's own record now holds the change.
+        await gmail.queueHistory(try decode(HistoryPage.self, """
+            {"historyId": "160", "history": [
+              {"id": "150", "labelsRemoved": [{"message": {"id": "m1", "threadId": "t1"}, "labelIds": ["INBOX"]}]}
+            ]}
+            """))
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+        #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
+    }
+
+    @Test func aConfirmationTheCursorNeverReachesGoesAfterAMinute() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        await gmail.confirmChanges(at: 150)
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        clock.advance(3)
+        await engine.sendDueActions()
+
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId": "120"}"#))
+        clock.advance(CacheTransaction.confirmationGrace - 1)
+        try await engine.sync()
+        #expect(try await pendingActions(cache).map(\.state) == [.sent])
+
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId": "121"}"#))
+        clock.advance(2)
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func anUnconfirmedChangeStillGoesWithTheFirstPassAfterItsSend() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        clock.advance(3)
+        await engine.sendDueActions()
+        #expect(try await pendingActions(cache).map(\.confirmedHistoryID) == [nil])
+
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId": "120"}"#))
+        clock.advance(1)
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+}
+
 @Suite struct SyncPassTests {
     @Test func resyncDoesNotPruneNewerMessagesLoadedAfterItsListings() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
@@ -1282,6 +1345,9 @@ actor FakeGmail: GmailService {
     private var heldAttachment: CheckedContinuation<Void, Never>?
     private var nextChangeError: GmailError?
     private var changeErrors: [String: GmailError] = [:]
+    /// The history ID every change is confirmed at. Nil answers like a call
+    /// that reports none, so the wall-clock rule drops the sent row.
+    private var confirmedHistoryID: Int64?
     private var holdsNextChange = false
     private var held: CheckedContinuation<Void, Never>?
     private var holdsMetadata = false
@@ -1326,6 +1392,7 @@ actor FakeGmail: GmailService {
     /// The next change is recorded, as if Gmail applied it, then fails with `error`.
     func failNextChange(with error: GmailError) { nextChangeError = error }
     func setChangeErrors(_ errors: [String: GmailError]) { changeErrors = errors }
+    func confirmChanges(at historyID: Int64?) { confirmedHistoryID = historyID }
     func holdNextMetadata() { holdsMetadata = true }
     func holdNextThread() { holdsThread = true }
     var isHoldingThread: Bool { heldThread != nil }
@@ -1470,23 +1537,24 @@ actor FakeGmail: GmailService {
         return historyPages.removeFirst()
     }
 
-    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError] {
+    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> LabelChangeResult {
         try await record(Change("modifyThreads", ids, add: addLabelIDs, remove: removeLabelIDs))
-        return changeErrors.filter { ids.contains($0.key) }
+        return LabelChangeResult(failures: changeErrors.filter { ids.contains($0.key) }, confirmedHistoryID: confirmedHistoryID)
     }
 
-    func trashThreads(ids: [String]) async throws -> [String: GmailError] {
+    func trashThreads(ids: [String]) async throws -> LabelChangeResult {
         try await record(Change("trash", ids))
-        return [:]
+        return LabelChangeResult(confirmedHistoryID: confirmedHistoryID)
     }
 
-    func untrashThreads(ids: [String]) async throws -> [String: GmailError] {
+    func untrashThreads(ids: [String]) async throws -> LabelChangeResult {
         try await record(Change("untrash", ids))
-        return [:]
+        return LabelChangeResult(confirmedHistoryID: confirmedHistoryID)
     }
 
-    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws {
+    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> LabelChangeResult {
         try await record(Change("batchModify", ids, add: addLabelIDs, remove: removeLabelIDs))
+        return LabelChangeResult(confirmedHistoryID: confirmedHistoryID)
     }
 
     // MARK: Labels

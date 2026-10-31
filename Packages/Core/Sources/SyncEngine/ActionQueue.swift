@@ -418,15 +418,15 @@ extension SyncEngine {
         combined.threadIDs = ready.flatMap(\.threadIDs).removingDuplicates().sorted()
         combined.messageIDs = ready.flatMap(\.messageIDs).removingDuplicates().sorted()
         do {
-            let failures = try await deliver(combined)
+            let result = try await deliver(combined)
             for action in ready {
                 let ids = Set(action.threadIDs + action.messageIDs)
-                let errors = failures.filter { ids.contains($0.key) }.map(\.value).filter { $0 != .notFound }
+                let errors = result.failures.filter { ids.contains($0.key) }.map(\.value).filter { $0 != .notFound }
                 let outcome: Outcome
                 if errors.isEmpty { outcome = .sent }
                 else if errors.allSatisfy(Self.shouldRetry) { outcome = .retry(String(describing: errors[0])) }
                 else { outcome = .failed(String(describing: errors[0])) }
-                await finish(action, outcome: outcome)
+                await finish(action, outcome: outcome, confirmedHistoryID: result.confirmedHistoryID)
             }
         } catch {
             for action in ready { await finish(action, outcome: Self.outcome(for: error)) }
@@ -449,7 +449,9 @@ extension SyncEngine {
         }
     }
 
-    func finish(_ current: PendingAction, outcome: Outcome) async {
+    /// `confirmedHistoryID` is where Gmail said its history stood after a sent
+    /// change; the pass that reaches it drops the row.
+    func finish(_ current: PendingAction, outcome: Outcome, confirmedHistoryID: Int64? = nil) async {
         guard let id = current.id else { return }
         var row = current
         let now = now()
@@ -458,6 +460,7 @@ extension SyncEngine {
             row.state = .sent
             row.sentAt = now
             row.lastError = nil
+            row.confirmedHistoryID = confirmedHistoryID
         case .retry(let reason):
             row.state = .queued
             row.lastError = reason
@@ -492,7 +495,7 @@ extension SyncEngine {
         }
     }
 
-    private func deliver(_ action: PendingAction) async throws -> [String: GmailError] {
+    private func deliver(_ action: PendingAction) async throws -> LabelChangeResult {
         switch action.kind {
         case .modifyThreads:
             return try await gmail.modifyThreads(
@@ -504,28 +507,27 @@ extension SyncEngine {
             return try await gmail.untrashThreads(ids: action.threadIDs)
         case .trashMessages:
             guard let triage else { throw GmailError.invalidRequest("Message trash unavailable") }
-            return try await triage.trashMessages(ids: action.messageIDs)
+            return LabelChangeResult(failures: try await triage.trashMessages(ids: action.messageIDs))
         case .untrashMessages:
             guard let triage else { throw GmailError.invalidRequest("Message trash unavailable") }
-            return try await triage.untrashMessages(ids: action.messageIDs)
+            return LabelChangeResult(failures: try await triage.untrashMessages(ids: action.messageIDs))
         case .deleteMessages:
             try await deliverPermanentDeletion(action)
-            return [:]
+            return LabelChangeResult()
         case .modifyMessages:
-            guard !action.messageIDs.isEmpty else { return [:] }
-            try await gmail.batchModifyMessages(
+            guard !action.messageIDs.isEmpty else { return LabelChangeResult() }
+            return try await gmail.batchModifyMessages(
                 ids: action.messageIDs, addLabelIDs: action.addLabelIDs, removeLabelIDs: action.removeLabelIDs
             )
-            return [:]
         case .saveDraft, .sendDraft, .discardDraft:
             // Claimed only by the compose lane, never batched with label changes.
-            return [:]
+            return LabelChangeResult()
         case .createLabel, .updateLabel, .deleteLabel:
             // Sent one at a time by `sendLabelChange(_:)`.
-            return [:]
+            return LabelChangeResult()
         case .createFilter, .deleteFilter, .replaceFilter, .updateVacation, .updateSignature:
             // Claimed only by the settings lane.
-            return [:]
+            return LabelChangeResult()
         }
     }
 }

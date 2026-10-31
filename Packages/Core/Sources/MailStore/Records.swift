@@ -359,6 +359,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     public var labelID: String? = nil
     public var labelChange: LabelChange? = nil
     public var settingsChange: SettingsChange? = nil
+    /// The history ID Gmail reported for the delivered change. A pass drops the
+    /// sent row once its committed cursor reaches it.
+    public var confirmedHistoryID: Int64? = nil
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID

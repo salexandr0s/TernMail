@@ -516,7 +516,7 @@ public actor SyncEngine {
                 var threads = try tx.upsertMessages(live)
                 threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
                 threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID, through: historyID))
-                try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+                try tx.dropSentActions(confirmedThrough: historyID, passStart: passStart, accountID: accountID)
                 try tx.rebuildThreads(threads, accountID: accountID)
                 try tx.saveCursor(historyID: historyID, accountID: accountID, fullSyncAt: finishedAt, reset: reset)
                 return []
@@ -587,12 +587,14 @@ public actor SyncEngine {
                 threads.formUnion(try tx.upsertMessages(live))
                 // Store the cursor even when nothing changed, so the next pass starts later.
                 try tx.saveCursor(historyID: pageCursor, accountID: accountID)
-                // A sent change leaves the overlay once Gmail's history has moved
-                // past the cursor, which is when its own record of the change can
-                // be in the cache. `history.list` can lag the write's response by
-                // a moment; a pass that saw nothing new keeps the change in view.
+                // A sent change leaves the overlay once the cursor reaches the
+                // history ID Gmail confirmed it at, which is when its own record
+                // of the change is in the cache. One confirmed at no history ID
+                // waits for a pass that started after its send; `history.list`
+                // can lag the write's response by a moment, so a pass that saw
+                // nothing new keeps it in view.
                 if isLast, pageCursor > cursor {
-                    try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+                    try tx.dropSentActions(confirmedThrough: pageCursor, passStart: passStart, accountID: accountID)
                 }
                 try tx.rebuildThreads(threads, accountID: accountID)
                 return touched

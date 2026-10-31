@@ -406,6 +406,14 @@ enum Schema {
                 t.add(column: "enrichedAt", .datetime)
             }
         }
+        migrator.registerMigration("actions-v2") { db in
+            // The history ID Gmail reported for a delivered change. A pass drops
+            // the sent row once its committed cursor reaches it, instead of
+            // guessing from the clock. Null for changes Gmail reports none for.
+            try db.alter(table: "pendingAction") { t in
+                t.add(column: "confirmedHistoryID", .integer)
+            }
+        }
         return migrator
     }
 
