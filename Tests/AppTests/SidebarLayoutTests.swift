@@ -46,6 +46,13 @@ import Testing
             try await settleMail(in: controller.view, window: window)
             try await expectMailVisible(in: controller.view, window: window)
         }
+        // Below the three column minimums the sidebar steps aside, and it comes back with the room.
+        window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
+        try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: true)
+        window.setContentSize(NSSize(width: 1_280, height: 760))
+        try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: false)
+        try await settleMail(in: controller.view, window: window)
+        try await expectMailVisible(in: controller.view, window: window)
         app.destination = .calendar
         try await settle()
         app.destination = .mail
@@ -96,6 +103,35 @@ import Testing
         }
     }
 
+    /// Waits for the sidebar column to reach the expected state, then checks
+    /// that every visible column lies inside the window.
+    private func expectColumnsFit(in rootView: NSView, window: NSWindow, sidebarCollapsed: Bool) async throws {
+        let width = window.frame.width
+        let probe = try #require(descendants(in: rootView)
+            .compactMap { $0 as? AssistantMailPaneProbe.ProbeView }
+            .first { $0.pane == .navigation })
+        var sidebar: NSView = probe
+        var split: NSSplitView?
+        while let parent = sidebar.superview {
+            if let parent = parent as? NSSplitView, parent.isVertical {
+                split = parent
+                break
+            }
+            sidebar = parent
+        }
+        let columns = try #require(split)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while columns.isSubviewCollapsed(sidebar) != sidebarCollapsed, ContinuousClock.now < deadline {
+            try await settle()
+        }
+        #expect(columns.isSubviewCollapsed(sidebar) == sidebarCollapsed, "Sidebar collapsed state at width \(width)")
+        try await settle()
+        for column in columns.arrangedSubviews where !columns.isSubviewCollapsed(column) {
+            let frame = column.convert(column.bounds, to: nil)
+            #expect(frame.minX >= -1 && frame.maxX <= width + 1, "A column runs past the window at width \(width)")
+        }
+    }
+
     /// The first layout fills the lists and reserves the toolbar inset a few
     /// hundred milliseconds after the window appears, later under load.
     private func settleMail(in rootView: NSView, window: NSWindow) async throws {
@@ -141,6 +177,8 @@ import Testing
         window.toolbar = toolbar
         window.toolbarStyle = .unified
         window.contentViewController = controller
+        // The controller sizes the window to the view's minimum; three columns need more.
+        window.setContentSize(NSSize(width: 1_200, height: 760))
         window.orderFront(nil)
         defer { window.close() }
         try await settle()

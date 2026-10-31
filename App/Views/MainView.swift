@@ -16,6 +16,9 @@ struct MainView: View {
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @AppStorage("mailColumnVisibility") private var storedColumnVisibility = ""
+    /// Set while the sidebar is hidden only because three columns don't fit.
+    @State private var collapsedForWidth = false
+    @State private var columnFit: ColumnFit?
     /// Kept with the window, so it follows the system setting for reopening
     /// windows after a quit.
     @SceneStorage("selectedMailbox") private var storedMailbox = ""
@@ -47,7 +50,38 @@ struct MainView: View {
     }
 
     private func toggleSidebar() {
+        collapsedForWidth = false
         columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
+    }
+
+    /// Whether the window is too narrow for the sidebar, list and reader
+    /// minimums, and whether that matters: the assistant manages the sidebar
+    /// itself, and the sidebar and list alone always fit.
+    private struct ColumnFit: Equatable {
+        let isNarrow: Bool
+        let isManaged: Bool
+    }
+
+    /// Below the three column minimums the reader would run past the window's
+    /// edge, so the sidebar steps aside until the window is wide enough again.
+    /// A sidebar the user showed or hid stays as they left it.
+    private func fitSidebar(_ fit: ColumnFit) {
+        guard fit.isManaged else {
+            // Without the reader, the sidebar and list always fit.
+            if hidesReader, collapsedForWidth {
+                collapsedForWidth = false
+                columnVisibility = .all
+            }
+            return
+        }
+        if fit.isNarrow {
+            guard columnVisibility == .all else { return }
+            collapsedForWidth = true
+            columnVisibility = .doubleColumn
+        } else if collapsedForWidth {
+            collapsedForWidth = false
+            if columnVisibility == .doubleColumn { columnVisibility = .all }
+        }
     }
 
     private var section: WorkspaceSection {
@@ -106,6 +140,11 @@ struct MainView: View {
                 isCompactWindow = width < Tokens.Layout.compactToolbarWidth
                 paneSizing.requestApply()
             }
+            .onChange(of: ColumnFit(isNarrow: layout.mailWidth < AssistantSidebarLayout.threeColumnMinimum,
+                                    isManaged: !showsAssistant && !hidesReader), initial: true) { _, fit in
+                columnFit = fit
+                fitSidebar(fit)
+            }
             .onChange(of: geometry.size.height, initial: true) { _, _ in
                 paneSizing.refreshWindowSafeArea()
             }
@@ -119,13 +158,18 @@ struct MainView: View {
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
         .onAppear {
             mailbox.undoManager = undoManager
-            if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) { columnVisibility = stored }
+            if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) {
+                collapsedForWidth = false
+                columnVisibility = stored
+            }
+            // The first layout may have run before the stored choice came back.
+            if let columnFit { fitSidebar(columnFit) }
             if let stored = MailboxID(restorationValue: storedMailbox) { mailbox.restoreMailbox(stored) }
         }
         .onChange(of: mailbox.selectedMailbox) { _, box in storedMailbox = box?.restorationValue ?? "" }
         .onChange(of: columnVisibility) { _, visibility in
-            // The assistant narrows the columns for a while; keep the user's own choice.
-            if !showsAssistant { storedColumnVisibility = visibility.storageValue }
+            // The assistant and a narrow window hide columns for a while; keep the user's own choice.
+            if !showsAssistant, !collapsedForWidth { storedColumnVisibility = visibility.storageValue }
         }
         .modifier(AssistantAccessRefresh(mailbox: mailbox))
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
