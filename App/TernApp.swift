@@ -1,3 +1,4 @@
+import AppIntents
 import AppKit
 import MailStore
 import MessageContent
@@ -84,6 +85,12 @@ struct TernApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+
+    override init() {
+        super.init()
+        // Shortcuts actions reach the mailbox through this dependency.
+        AppDependencyManager.shared.add { [model = self.model] in model }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MailNotificationRouter.shared.install()
