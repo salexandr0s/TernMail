@@ -13,6 +13,9 @@ struct AssistantView: View {
     @FocusState private var isComposerFocused: Bool
     @FocusState private var focusedToolbarButton: String?
     @State private var hasPlacedInitialFocus = false
+    /// Where focus was as the panel appeared, so a composer that turns on
+    /// later leaves alone focus the user has moved since.
+    @State private var responderAtAppear: ObjectIdentifier?
     @State private var showsSettings = false
     @State private var scrollRequest = UUID()
 
@@ -37,13 +40,16 @@ struct AssistantView: View {
         .background(Tokens.Surface.primary)
         .task {
             guard !hasPlacedInitialFocus else { return }
+            responderAtAppear = NSApp.keyWindow?.firstResponder.map(ObjectIdentifier.init)
             // Let the native field join the window before assigning focus.
             await Task.yield()
             guard !Task.isCancelled else { return }
             placeInitialFocus()
         }
-        // A restored connection or finished setup turns the composer on later.
-        .onChange(of: setupPrompt == nil) { placeInitialFocus() }
+        // A restored connection turns the composer on later.
+        .onChange(of: setupPrompt == nil) { if isFocusUnmoved { placeInitialFocus() } }
+        // Setup finished in the settings sheet hands focus to the composer.
+        .onChange(of: showsSettings) { if !showsSettings { placeInitialFocus() } }
         .task { await model.refreshConnection() }
         .onChange(of: model.connection.connectionRevision) {
             model.refreshAccess()
@@ -225,6 +231,12 @@ struct AssistantView: View {
         guard !hasPlacedInitialFocus, !showsSettings, setupPrompt == nil else { return }
         hasPlacedInitialFocus = true
         isComposerFocused = true
+    }
+
+    /// Nothing has focus, or what had it as the panel appeared still does.
+    private var isFocusUnmoved: Bool {
+        guard let window = NSApp.keyWindow, let responder = window.firstResponder else { return true }
+        return responder === window || ObjectIdentifier(responder) == responderAtAppear
     }
 
     private func submit() {
