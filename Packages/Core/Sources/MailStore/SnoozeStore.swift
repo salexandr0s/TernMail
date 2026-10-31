@@ -83,8 +83,11 @@ extension CacheTransaction {
         )
     }
 
+    /// Every rebuild of a conversation outside the Inbox calls this, so the
+    /// list rows are touched only when a wake was actually forgotten.
     func forgetWake(threadID: String, accountID: String) throws {
         try db.execute(sql: "DELETE FROM wokenThread WHERE accountID = ? AND threadID = ?", arguments: [accountID, threadID])
+        guard db.changesCount > 0 else { return }
         try db.execute(
             sql: "UPDATE threadLabel SET listDate = lastDate WHERE accountID = ? AND threadID = ?",
             arguments: [accountID, threadID]

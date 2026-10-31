@@ -566,10 +566,26 @@ extension CacheTransaction {
     }
 
     /// Replaces the attachments listed for one message.
+    /// Stores a message's attachment parts, writing only the rows that differ.
+    /// A thread fetch brings the same parts again, with new attachment IDs at
+    /// most, so this keeps the reader's observers quiet.
     public func replaceAttachments(_ attachments: [AttachmentRecord], messageID: String, accountID: String) throws {
-        try AttachmentRecord.filter(Column("accountID") == accountID && Column("messageID") == messageID).deleteAll(db)
+        let stored = Dictionary(
+            try AttachmentRecord.filter(Column("accountID") == accountID && Column("messageID") == messageID).fetchAll(db)
+                .map { ($0.partID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var kept = Set<String>()
         for attachment in attachments {
-            try attachment.insert(db)
+            kept.insert(attachment.partID)
+            if let old = stored[attachment.partID] {
+                if !attachment.databaseEquals(old) { try attachment.update(db) }
+            } else {
+                try attachment.upsert(db)
+            }
+        }
+        for (partID, old) in stored where !kept.contains(partID) {
+            try old.delete(db)
         }
     }
 }

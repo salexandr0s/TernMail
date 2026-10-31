@@ -60,15 +60,25 @@ public struct CacheTransaction {
 
     // MARK: Labels
 
-    /// Replaces the account's labels with `labels`.
+    /// Replaces the account's labels with `labels`, writing only the rows that
+    /// differ, so a refresh whose counts did not move wakes no observer.
     public func replaceLabels(_ labels: [LabelRecord], accountID: String) throws {
+        let stored = Dictionary(
+            try LabelRecord.filter(Column("accountID") == accountID).fetchAll(db).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var kept = Set<String>()
         for label in labels {
-            try label.upsert(db)
+            kept.insert(label.id)
+            if let old = stored[label.id] {
+                if !label.databaseEquals(old) { try label.update(db) }
+            } else {
+                try label.upsert(db)
+            }
         }
-        let kept = labels.map(\.id)
-        try LabelRecord
-            .filter(Column("accountID") == accountID && !kept.contains(Column("id")))
-            .deleteAll(db)
+        for (id, old) in stored where !kept.contains(id) {
+            try old.delete(db)
+        }
     }
 
     // MARK: Messages
@@ -83,24 +93,32 @@ public struct CacheTransaction {
         }
     }
 
-    /// Stores messages with their server labels and returns the affected thread IDs.
-    /// An update older than the stored copy (lower history ID) is ignored.
+    /// Stores messages with their server labels and returns the IDs of the
+    /// threads that changed. An update older than the stored copy (lower
+    /// history ID) is ignored, and one identical to it writes nothing, so a
+    /// pass or a thread fetch that brings no news leaves every observer quiet.
     @discardableResult
     public func upsertMessages(_ updates: [MessageUpdate]) throws -> Set<String> {
         var threads = Set<String>()
         for update in updates {
             let record = update.record
+            let labelIDs = Set(update.labelIDs)
+            var storedLabels = Set<String>()
             if let stored = try MessageRecord.fetchOne(db, key: ["accountID": record.accountID, "id": record.id]) {
                 guard stored.historyID <= record.historyID else { continue }
+                storedLabels = try messageLabelIDs(messageID: record.id, accountID: record.accountID)
+                if record.databaseEquals(stored), storedLabels == labelIDs { continue }
                 threads.insert(stored.threadID)
             }
             try record.upsert(db)
             try updateLibraryMetadata(record, labelIDs: update.labelIDs)
-            try db.execute(
-                sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ?",
-                arguments: [record.accountID, record.id]
-            )
-            for labelID in Set(update.labelIDs) {
+            for labelID in storedLabels.subtracting(labelIDs) {
+                try db.execute(
+                    sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ? AND labelID = ?",
+                    arguments: [record.accountID, record.id, labelID]
+                )
+            }
+            for labelID in labelIDs.subtracting(storedLabels) {
                 try db.execute(
                     sql: "INSERT INTO messageLabel (accountID, messageID, labelID) VALUES (?, ?, ?)",
                     arguments: [record.accountID, record.id, labelID]
@@ -109,6 +127,12 @@ public struct CacheTransaction {
             threads.insert(record.threadID)
         }
         return threads
+    }
+
+    func messageLabelIDs(messageID: String, accountID: String) throws -> Set<String> {
+        try String.fetchSet(
+            db, sql: "SELECT labelID FROM messageLabel WHERE accountID = ? AND messageID = ?", arguments: [accountID, messageID]
+        )
     }
 
     /// Applies a history label change to a cached message and raises its stored
@@ -494,15 +518,19 @@ public struct CacheTransaction {
     // MARK: Threads
 
     /// Rebuilds the derived `thread` and `threadLabel` rows from server labels
-    /// with pending actions overlaid. Draft messages on their way out are left out.
+    /// with pending actions overlaid. Draft messages on their way out are left
+    /// out. Rows are updated in place and only when they differ: deleting and
+    /// recreating them would wake every list observer and cascade away the
+    /// conversation's opened mark, even when nothing about it changed.
     public func rebuildThreads(_ threadIDs: some Collection<String>, accountID: String) throws {
         guard !threadIDs.isEmpty else { return }
         let actions = try pendingActions(accountID: accountID)
         let hidden = try hiddenDraftMessageIDs(accountID: accountID)
         for threadID in Set(threadIDs) {
             let messages = try messages(threadID: threadID, accountID: accountID).filter { !hidden.contains($0.id) }
-            try ThreadRecord.deleteOne(db, key: ["accountID": accountID, "id": threadID])
             guard let first = messages.first, let last = messages.last else {
+                // Cascades to the list rows and the opened mark.
+                try ThreadRecord.deleteOne(db, key: ["accountID": accountID, "id": threadID])
                 try forgetWake(threadID: threadID, accountID: accountID)
                 continue
             }
@@ -522,7 +550,11 @@ public struct CacheTransaction {
                 isUnread: allLabels.contains(SystemLabel.unread),
                 isStarred: allLabels.contains(SystemLabel.starred)
             )
-            try thread.insert(db)
+            if let stored = try ThreadRecord.fetchOne(db, key: ["accountID": accountID, "id": threadID]) {
+                if !thread.databaseEquals(stored) { try thread.update(db) }
+            } else {
+                try thread.insert(db)
+            }
             // A conversation a snooze brought back sorts by its wake time
             // until it leaves the Inbox.
             let wokeAt: Date?
@@ -533,10 +565,23 @@ public struct CacheTransaction {
                 wokeAt = nil
             }
             let listDate = max(last.date, wokeAt ?? last.date)
+            let storedRows = Dictionary(
+                try ThreadLabelRecord.filter(Column("accountID") == accountID && Column("threadID") == threadID).fetchAll(db)
+                    .map { ($0.labelID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            for (labelID, row) in storedRows where !threadLabels.contains(labelID) {
+                try row.delete(db)
+            }
             for labelID in threadLabels {
-                try ThreadLabelRecord(
+                let row = ThreadLabelRecord(
                     accountID: accountID, threadID: threadID, labelID: labelID, lastDate: last.date, listDate: listDate
-                ).insert(db)
+                )
+                if let stored = storedRows[labelID] {
+                    if !row.databaseEquals(stored) { try row.update(db) }
+                } else {
+                    try row.insert(db)
+                }
             }
         }
     }
