@@ -188,7 +188,7 @@ struct AssistantSettingsView: View {
     }
 
     private var modelSection: some View {
-        SettingsGroup("Model", systemImage: "slider.horizontal.3") {
+        Section("Model") {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 HStack(spacing: Tokens.Space.s3) {
                     if !model.models.isEmpty {
@@ -234,7 +234,7 @@ struct AssistantSettingsView: View {
     }
 
     private var accountsSection: some View {
-        SettingsGroup("Mail access", systemImage: "envelope") {
+        Section("Mail access") {
             VStack(alignment: .leading, spacing: 0) {
                 if model.availableAccounts.isEmpty {
                     Label("Add a mail account in Accounts settings.", systemImage: "person.crop.circle.badge.plus")
@@ -296,7 +296,7 @@ struct AssistantSettingsView: View {
     }
 
     private var privacySection: some View {
-        SettingsGroup("Privacy", systemImage: "lock") {
+        Section("Privacy") {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 Text("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.")
                     .font(.caption)

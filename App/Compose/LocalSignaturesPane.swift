@@ -19,7 +19,7 @@ struct LocalSignaturesPane: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("Local signatures", systemImage: "signature") {
+            Section("Local signatures") {
                 HStack(spacing: Tokens.Space.s3) {
                     Text("Signature")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
@@ -55,7 +55,7 @@ struct LocalSignaturesPane: View {
                 .padding(.vertical, Tokens.Space.s2)
             }
 
-            SettingsGroup("Signature defaults", systemImage: "envelope") {
+            Section("Signature defaults") {
                 SettingsControlRow("Account") {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)

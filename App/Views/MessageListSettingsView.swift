@@ -5,7 +5,7 @@ struct MessageListSettingsView: View {
     @Bindable var preferences = MessageListPreferences.shared
     var body: some View {
         SettingsPage {
-            SettingsGroup("Appearance", systemImage: "list.bullet.rectangle") {
+            Section("Appearance") {
                 SettingsControlRow("Density") {
                     Picker("Density", selection: $preferences.density) {
                         ForEach(MailListDensity.allCases) { Text($0.title).tag($0) }
@@ -20,7 +20,7 @@ struct MessageListSettingsView: View {
                 SettingsToggleRow("Show quick filters", isOn: $preferences.showsQuickFilters)
             }
 
-            SettingsGroup("Selection", systemImage: "cursorarrow") {
+            Section("Selection") {
                 SettingsToggleRow("Group messages into conversations", isOn: $preferences.conversations)
                 SettingsControlRow("After archiving or moving to Trash") {
                     Picker("Select next message", selection: $preferences.nextSelection) {
@@ -32,7 +32,7 @@ struct MessageListSettingsView: View {
                 }
             }
 
-            SettingsGroup("Swipe actions", systemImage: "hand.draw") {
+            Section("Swipe actions") {
                 Grid(alignment: .leading, horizontalSpacing: Tokens.Space.s3, verticalSpacing: Tokens.Space.s2) {
                     GridRow {
                         Text("")
@@ -55,7 +55,7 @@ struct MessageListSettingsView: View {
                 .padding(.vertical, Tokens.Space.s2)
             }
 
-            SettingsGroup("Sidebar", systemImage: "sidebar.left") {
+            Section("Sidebar") {
                 SettingsToggleRow("Show More mailboxes", isOn: $preferences.showsMore)
                 SettingsToggleRow("Total count for Starred", isOn: $preferences.starredTotal)
                 SettingsToggleRow("Total count for Drafts", isOn: $preferences.draftsTotal)
