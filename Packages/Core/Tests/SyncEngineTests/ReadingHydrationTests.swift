@@ -90,7 +90,8 @@ import Testing
         await engine.prefetchTask?.value
         await engine.prefetchThreads(ids)
         await engine.prefetchTask?.value
-        #expect(await gmail.fullThreadRequests == Array(ids.prefix(4)))
+        #expect(await gmail.fullThreadRequests.count == 4)
+        #expect(await Set(gmail.fullThreadRequests) == Set(ids.prefix(4)))
         #expect(await gmail.fullThreadPriorities.allSatisfy { $0 == .background })
         #expect(try await cache.read { try $0.allActions(accountID: account).isEmpty })
         #expect(try await cache.read { try $0.thread(id: "t1", accountID: account)?.isUnread } == true)
@@ -98,6 +99,18 @@ import Testing
         try await engine.openThread("t1", markRead: false)
         try await engine.refreshCalendarInvitations(threadID: "t1")
         #expect(await gmail.fullThreadRequests.count == 4)
+    }
+
+    @Test func speculativePreparationNeverWaitsForOptionalRemoteImages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread])])
+        await gmail.setThread(try readableThread(image: true))
+        await gmail.holdNextAttachment()
+        try await engine.prepareReadingThread("t1")
+        #expect(await !gmail.isHoldingAttachment)
+        #expect(try await cache.read { try $0.body(messageID: "m1", accountID: account)?.plainText } == "Hello")
+        #expect(try await cache.read { try $0.allActions(accountID: account).isEmpty })
+        #expect(try await cache.evictionCandidates(keeping: [], now: baseDate).allSatisfy { $0.lastOpenedAt == nil })
     }
 
     @Test func aReaderPromotesBackgroundHydrationAndCancellationLeavesNoLateBody() async throws {

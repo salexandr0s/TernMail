@@ -25,13 +25,23 @@ extension SyncEngine {
         guard !targets.isEmpty else { prefetchTask = nil; return }
         prefetchTask = Task {
             defer { if prefetchGeneration == generation { prefetchTask = nil } }
-            for threadID in targets {
-                guard !Task.isCancelled, !isStopped else { return }
-                do { try await loadReadingThread(threadID, enrichCached: false, foreground: false) }
-                catch is CancellationError { if Task.isCancelled { return } }
-                catch { /* An explicit open can retry a failed warmup. */ }
+            await withTaskGroup(of: Void.self) { group in
+                var remaining = targets.makeIterator()
+                for _ in 0..<2 {
+                    if let id = remaining.next() { group.addTask { try? await self.prepareReadingThread(id) } }
+                }
+                for await _ in group {
+                    guard !Task.isCancelled, !isStopped else { group.cancelAll(); return }
+                    if let id = remaining.next() { group.addTask { try? await self.prepareReadingThread(id) } }
+                }
             }
         }
+    }
+
+    /// A UI prefetch may join the engine's hydration without recording an
+    /// open or changing read state. Required text is enough for preparation.
+    public func prepareReadingThread(_ threadID: String) async throws {
+        try await loadReadingThread(threadID, enrichCached: false, foreground: false)
     }
 
     /// Callers share one fetch. A reader replaces a queued background fetch
@@ -54,7 +64,7 @@ extension SyncEngine {
             let task = Task {
                 defer { finishReadingLoad(threadID, id: id) }
                 try await GmailRequestBudget.$priority.withValue(foreground ? .interactive : .background) {
-                    try await hydrateReadingThread(threadID, enrichCached: enrichCached)
+                    try await hydrateReadingThread(threadID, enrichCached: enrichCached, includesOptionalImages: foreground)
                 }
             }
             load = ReadingLoad(id: id, task: task, foreground: foreground, enrichCached: enrichCached, waiters: [waiter])
@@ -91,7 +101,7 @@ extension SyncEngine {
     /// One full fetch serves every gap in a conversation: bodies the cache
     /// lacks, and cached bodies whose inline pictures and invitation were never
     /// read. A conversation with neither costs no request.
-    private func hydrateReadingThread(_ threadID: String, enrichCached: Bool) async throws {
+    private func hydrateReadingThread(_ threadID: String, enrichCached: Bool, includesOptionalImages: Bool) async throws {
         let accountID = accountID
         let snapshot = try await cache.read { tx in
             (missing: Set(try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)),
@@ -187,7 +197,10 @@ extension SyncEngine {
             return versions
         }
         // The cache observation can now display text while optional pictures load.
-        try await hydrateReadingImages(messages.filter { versions[$0.id] != nil }, versions: versions)
+        let readyForImages = messages.filter { message in
+            versions[message.id] != nil && (includesOptionalImages || InlineMIMEResources.parts(of: message).allSatisfy { $0.inlineData != nil })
+        }
+        try await hydrateReadingImages(readyForImages, versions: versions)
     }
 
     /// Stores a message's inline pictures and marks its body enriched in one

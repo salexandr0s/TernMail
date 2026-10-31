@@ -5,6 +5,19 @@ import Testing
 @testable import MessageContent
 
 @Suite struct ReadingPrivacyTests {
+    @Test func readerFindIncludesQuotedRepliesAndTextBeyondTheMailIndexLimit() {
+        let html = "<head><style>privateStyle</style></head><p>" + String(repeating: "long message ", count: 10_000)
+            + "</p><blockquote>quoted reply needle</blockquote><script>privateScript</script>"
+        let prepared = MessageDocument.render(html: html)
+        let indexed = MessageDocument.searchableText(.init(html: html))
+        for text in [prepared.searchableText, indexed] {
+            #expect(text.contains("quoted reply needle"))
+            #expect(!text.contains("privateScript"))
+            #expect(!text.contains("privateStyle"))
+            #expect(text.utf8.count > 100_000)
+        }
+    }
+
     @Test func remoteImageConsentAllowsOnlyHTTPSAndKeepsTrackersBlocked() throws {
         let html = """
         <style>.x{background:url(https://images.example.com/background.png)}</style>
