@@ -9,7 +9,9 @@ struct SidebarView: View {
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
 
     var body: some View {
-        List(selection: $mailbox.selectedMailbox) {
+        // During a search the sidebar shows no selection, since results can
+        // come from outside the selected mailbox.
+        List(selection: $mailbox.sidebarSelection) {
             Section("Library") {
                 Button { app.destination = .calendar } label: {
                     Label("Calendar", systemImage: "calendar")
@@ -145,13 +147,13 @@ struct SidebarView: View {
     /// Right Arrow shows a mailbox's account rows and Left Arrow hides them,
     /// or moves from an account row up to its mailbox, as in an outline.
     private func expandOrCollapse(_ key: KeyEquivalent) -> KeyPress.Result {
-        guard mailbox.presentedAccounts.count > 1, let selected = mailbox.selectedMailbox,
+        guard mailbox.presentedAccounts.count > 1, let selected = mailbox.sidebarSelection,
               (SystemMailbox.all + [.outbox]).contains(where: { $0.id == selected.id })
         else { return .ignored }
         switch (selected, key) {
         case (.combined(let id), .rightArrow): expansion(of: id).wrappedValue = true
         case (.combined(let id), .leftArrow): expansion(of: id).wrappedValue = false
-        case (.account(_, let id), .leftArrow): mailbox.selectedMailbox = .combined(id)
+        case (.account(_, let id), .leftArrow): mailbox.sidebarSelection = .combined(id)
         default: return .ignored
         }
         return .handled
@@ -298,7 +300,7 @@ private struct CombinedMailboxRows: View {
     }
 
     private func selectAndToggle() {
-        mailbox.selectedMailbox = .combined(box.id)
+        mailbox.sidebarSelection = .combined(box.id)
         // Keep the disclosure animation local to the chevron, outside List layout.
         isExpanded.toggle()
     }

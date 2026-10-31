@@ -43,7 +43,7 @@ struct FavoritesView: View {
         .conversationDropTarget(box, mailbox: mailbox)
         .tag(box)
         .onTapGesture {
-            mailbox.selectedMailbox = box
+            mailbox.sidebarSelection = box
             if canExpand {
                 if isExpanded { expanded.ids.remove(box.id) } else { expanded.ids.insert(box.id) }
             }
