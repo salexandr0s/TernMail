@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The main window's toolbar over the conversation: triage actions, then
 /// replies, in the order mail apps on the Mac use. The window's search
-/// field follows them (`WorkspaceSearch`).
+/// field follows them (`WorkspaceSearch`). Fixed spacers split the actions
+/// into groups, since adjacent items otherwise share one glass capsule.
 struct MailToolbar: CustomizableToolbarContent {
     @Bindable var mailbox: MailboxModel
     let reply: (ReplyKind) -> Void
@@ -27,6 +28,8 @@ struct MailToolbar: CustomizableToolbarContent {
                 .help("Move to Trash").disabled(!mailbox.canTrash)
         }
         .mailToolbarVisible(isVisible)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+            .mailToolbarVisible(isVisible)
         standardTriage
         ToolbarItem(id: "mail.compactActions", placement: .primaryAction) {
             Menu {
@@ -43,7 +46,11 @@ struct MailToolbar: CustomizableToolbarContent {
                 .popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
         }
         .mailToolbarVisible(showsCompact)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+            .mailToolbarVisible(isVisible)
         replies
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+            .mailToolbarVisible(showsStandard)
         ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
             .mailToolbarVisible(showsStandard)
     }

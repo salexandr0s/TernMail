@@ -15,6 +15,8 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     var isCompact = false
 
     var body: some CustomizableToolbarContent {
+        // Keeps the field out of the capsule of the actions before it.
+        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(id: "workspace.search", placement: .primaryAction) {
             WorkspaceSearchField(
                 placeholder: placeholder, text: text, focusRequest: focusRequest,
