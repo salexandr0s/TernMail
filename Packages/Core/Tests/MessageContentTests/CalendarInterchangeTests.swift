@@ -179,6 +179,19 @@ import Testing
         #expect(conference.end == (try date("2031-11-06T12:00:00Z")))
     }
 
+    @Test func onlyAnEndWrittenInTheTextGivesADuration() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let sent = try date("2031-07-01T08:00:00Z")
+        func first(_ text: String) throws -> DetectedCalendarSuggestion {
+            try #require(CalendarDetection.suggestions(in: text, messageDate: sent, timeZone: utc).first)
+        }
+        // The detector gives a match with "starts" an hour of its own.
+        let kickoff = try first("The kickoff starts July 15, 2031 at 10am.")
+        #expect(kickoff.end == nil)
+        #expect(kickoff.uncertainties.contains(.durationMissing))
+        #expect(try first("Starts 9am-11am on July 15, 2031.").end == (try date("2031-07-15T11:00:00Z")))
+    }
+
     @Test func forwardedTextAndOversizedInputAreExcluded() throws {
         let text = "Thanks.\n---------- Forwarded message ---------\nMeet July 15, 2031 at 14:00."
         #expect(CalendarDetection.suggestions(in: text, messageDate: try date("2031-07-01T10:00:00Z")).isEmpty)

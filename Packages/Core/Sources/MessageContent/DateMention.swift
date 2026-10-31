@@ -44,7 +44,7 @@ struct DateMention {
         self.hasTime = hasTime
         timeNeedsReview = !hasTime && Self.vagueTime.matches(source)
         clock = DateComponents(hour: detected.hour, minute: detected.minute, second: detected.second)
-        duration = match.duration
+        duration = Self.inventsDuration(source) ? 0 : match.duration
         timeZone = match.timeZone
 
         if let numeric {
@@ -192,6 +192,8 @@ struct DateMention {
     private static let bareTime = Pattern(#"(?<![\d.:/])(\d{1,2})\.(\d{2})(?![\d.])"#)
     /// "at 7" or "lunch on Friday" give a time the reader should still check.
     private static let vagueTime = Pattern(#"\b(?:at|um|à|alle|ore)\s+\d{1,2}(?:[.:]\d{2})?(?!\d)|\b(?:breakfast|brunch|lunch|dinner|supper|frühstück|mittagessen|abendessen|déjeuner|dîner|desayuno|almuerzo|cena|colazione|pranzo)\b"#)
+    private static let startWord = Pattern(#"\b(?:start(?:s|ing)?|begin(?:s|ning)?)\b"#)
+    private static let writtenEnd = Pattern(#"\d\s*[-–—]|[-–—]\s*\d|\s[-–—]\s|\b(?:to|until|till|through|thru|between)\b"#)
     private static let isoDate = Pattern(#"(?<![\d.:/])(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)"#)
     private static let shortDate = Pattern(#"(?<![\d.:/])(\d{1,2})([./-])(\d{1,2})(?:\2(\d{4}|\d{2}))?(?![\d:/-])"#)
     private static let dayNumber = Pattern(#"(?<!\d)\d{1,2}(?!\d)"#)
@@ -280,6 +282,12 @@ struct DateMention {
     private static func isBareTime(in text: String, hour: Int?, minute: Int?) -> Bool {
         guard let parts = bareTime.captures(in: text) else { return false }
         return Int(parts[1]) == hour && Int(parts[2]) == minute
+    }
+
+    /// The detector gives a match with "starts" or "begins" an hour of its own,
+    /// unless the text writes an end as in "9am-11am" or "until noon".
+    private static func inventsDuration(_ source: String) -> Bool {
+        startWord.matches(source) && !writtenEnd.matches(isoDate.blanking(source))
     }
 
     // MARK: - Context
