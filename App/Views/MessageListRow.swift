@@ -147,17 +147,31 @@ struct MessageListRow: View {
     }
 
     private var accessibilitySummary: String {
+        let account = mailbox.listMixesAccounts
+            ? mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } : nil
+        return Self.accessibilitySummary(
+            unread: thread.isUnread, sender: senderText, subject: thread.subject,
+            date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? ThreadDate.short(thread.lastDate),
+            messageCount: thread.messageCount, starred: thread.isStarred,
+            important: mailbox.listPreferences.showsImportance && item.labels.contains(SystemLabel.important),
+            labels: displayedLabels.map(\.name), attachments: item.attachments.count, account: account)
+    }
+
+    /// VoiceOver reads the row as one line: state first, then who, what and when.
+    static func accessibilitySummary(unread: Bool, sender: String, subject: String, date: String,
+                                     messageCount: Int, starred: Bool, important: Bool = false,
+                                     labels: [String] = [], attachments: Int = 0, account: String? = nil) -> String {
         var parts: [String] = []
-        if thread.isUnread { parts.append("Unread") }
-        parts.append(senderText)
-        parts.append(thread.subject.isEmpty ? "No Subject" : thread.subject)
-        parts.append(ThreadDate.short(thread.lastDate))
-        if thread.messageCount > 1 { parts.append("\(thread.messageCount) messages") }
-        if thread.isStarred { parts.append("Starred") }
-        if let wake = wakeTime { parts.append("Returns \(ThreadDate.wake(wake))") }
-        if !item.attachments.isEmpty {
-            parts.append(item.attachments.count == 1 ? "1 attachment" : "\(item.attachments.count) attachments")
-        }
+        if unread { parts.append("Unread") }
+        parts.append(sender)
+        parts.append(subject.isEmpty ? "No Subject" : subject)
+        parts.append(date)
+        if messageCount > 1 { parts.append("\(messageCount) messages") }
+        if starred { parts.append("starred") }
+        if important { parts.append("important") }
+        if attachments == 1 { parts.append("1 attachment") } else if attachments > 1 { parts.append("\(attachments) attachments") }
+        if !labels.isEmpty { parts.append("labels " + labels.joined(separator: ", ")) }
+        if let account { parts.append("in \(account)") }
         return parts.joined(separator: ", ")
     }
 
