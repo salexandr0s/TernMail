@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CalendarTimelineEvent: View {
+    @Environment(\.colorSchemeContrast) private var contrast
     let event: CalendarDisplayEvent
     let selected: Bool
     let height: CGFloat
@@ -11,7 +12,7 @@ struct CalendarTimelineEvent: View {
         styledCard
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityDescription)
-            .accessibilityValue(selected ? "Selected" : "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
             .help(tooltip)
     }
 
@@ -45,7 +46,7 @@ struct CalendarTimelineEvent: View {
 
     private var outlineColor: Color { selected ? Color.accentColor : Color.clear }
     private var fillColor: Color {
-        event.color.opacity(selected ? Tokens.Calendar.selectedTint : Tokens.Calendar.allDayTint)
+        event.color.opacity(CalendarColor.tint(selected ? Tokens.Calendar.selectedTint : Tokens.Calendar.allDayTint, contrast: contrast))
     }
     private var accessibilityDescription: String { event.title + ", " + timeDescription }
     private var tooltip: String { event.title + "\n" + timeDescription }

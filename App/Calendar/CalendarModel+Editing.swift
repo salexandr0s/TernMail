@@ -170,8 +170,10 @@ extension CalendarModel {
         proposedEditors[draft.id] = nil
         if case .create = change {
             undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: owner.accountID, calendarID: targetCalendarID))
+            registerUndo(named: draft.isImport ? "Import Event" : "Add Event")
         } else if let before {
             undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: owner.accountID, calendarID: targetCalendarID, before: before))
+            registerUndo(named: draft.isDeletion ? "Delete Event" : "Change Event")
         }
         if let sourceID = draft.sourceID {
             do { try await recordAcceptedSuggestion(sourceID: sourceID, event: event, operation: operation) }
@@ -260,6 +262,7 @@ extension CalendarModel {
         if scope == .occurrence, !display.isRecurring {
             undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: display.accountID,
                 calendarID: display.calendarID, before: original))
+            registerUndo(named: "Delete Event")
         }
         await reloadOperations()
         projectPendingEvents()

@@ -42,6 +42,17 @@ struct CalendarCommands: Commands {
             Button("Export Displayed Events…", systemImage: "square.and.arrow.up") { actions?.exportEvents() }
                 .labelStyle(.titleAndIcon)
                 .disabled(actions == nil || calendar?.events.isEmpty != false)
+            Menu("Export Calendar") {
+                ForEach(exportableCalendars) { owner in
+                    Button("\(owner.accountName) · \(owner.title)") { actions?.exportCalendar(owner) }
+                }
+            }
+            .disabled(actions == nil || exportableCalendars.isEmpty)
         }
+    }
+
+    /// Calendars whose events the account may read in full.
+    private var exportableCalendars: [CalendarDisplayCalendar] {
+        calendar?.calendars.filter { $0.entry.canReadDetails } ?? []
     }
 }

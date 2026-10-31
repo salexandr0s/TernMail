@@ -92,6 +92,8 @@ enum Tokens {
         static let allDayTint = 0.18
         static let selectedTint = 0.24
         static let todayTint = 0.04
+        /// Sheets grow with their content; this keeps the editor and reviews usable when nearly empty.
+        static let sheetMinHeight: CGFloat = 400
     }
 
     enum Settings {

@@ -1,3 +1,4 @@
+import MessageContent
 import SwiftUI
 
 struct CalendarGridViews: View {
@@ -11,17 +12,19 @@ struct CalendarGridViews: View {
     let change: (CalendarDisplayEvent, CalendarEventRange) -> Void
     let delete: (CalendarDisplayEvent) -> Void
     let duplicate: (CalendarDisplayEvent) -> Void
+    /// A conversation dropped on the grid, with the slot it landed on.
+    let dropMail: (MailLink, CalendarEventRange) -> Void
 
     var body: some View {
         switch mode {
         case .day, .week:
             CalendarTimeGrid(date: date, isWeek: mode == .week, calendar: calendar, events: events,
                              selectedID: $selectedID, create: create, edit: edit, change: change,
-                             delete: delete, duplicate: duplicate)
+                             delete: delete, duplicate: duplicate, dropMail: dropMail)
         case .month:
             CalendarMonthGrid(date: $date, calendar: calendar, events: events, selectedID: $selectedID,
                               create: create, edit: edit, change: change, delete: delete, duplicate: duplicate,
-                              openDay: { date = $0; mode = .day })
+                              dropMail: dropMail, openDay: { date = $0; mode = .day })
         case .schedule:
             CalendarScheduleView(date: date, calendar: calendar, events: events, selectedID: $selectedID,
                                  create: create, edit: edit, delete: delete, duplicate: duplicate)
@@ -59,28 +62,30 @@ struct CalendarGridViews: View {
             }.padding(Tokens.Space.s4)
         }.background(Tokens.Surface.canvas)
     }
-
-
 }
 
 struct CalendarEventChip: View {
     @Environment(\.timeZone) private var timeZone
+    @Environment(\.colorSchemeContrast) private var contrast
     let event: CalendarDisplayEvent
     var selected = false
     var showsTime = true
+    /// The grab pointer while the chip can be moved; nil keeps the arrow.
+    var pointer: PointerStyle?
 
     var body: some View {
         content
             .padding(.horizontal, Tokens.Space.s1_5)
             .frame(height: Tokens.Space.s6)
             .foregroundStyle(Color.primary)
-            .background(event.color.opacity(tint), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .background(event.color.opacity(CalendarColor.tint(tint, contrast: contrast)), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(outlineColor, lineWidth: Tokens.Border.focus) }
             .contentShape(Rectangle())
+            .ternHover(pointer: pointer)
             .help(event.title + "\n" + dateDescription)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(event.title + ", " + dateDescription)
-            .accessibilityValue(selected ? "Selected" : "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var content: some View {
@@ -132,6 +137,11 @@ struct CalendarMiniMonth: View {
     var events: [CalendarDisplayEvent] = []
     var select: ((Date) -> Void)?
 
+    private static let cellHeight = Tokens.Space.s6 + Tokens.Space.s0_5 + Tokens.Space.s1
+    private static let gridHeight = Tokens.Space.s8 + 6 * (cellHeight + Tokens.Space.s1)
+    /// The month with its title row, for callers that size a container to it.
+    static let height = Tokens.Space.s6 + Tokens.Space.s1 + gridHeight
+
     var body: some View {
         let month = fixedMonth ?? date
         VStack(spacing: Tokens.Space.s1) {
@@ -145,7 +155,7 @@ struct CalendarMiniMonth: View {
                     Button { shift(1) } label: { Image(systemName: "chevron.right") }
                         .accessibilityLabel("Next month")
                         .help("Next month")
-                }.buttonStyle(.borderless)
+                }.buttonStyle(.borderless).frame(height: Tokens.Space.s6)
             }
             dateGrid(month: month)
         }
@@ -153,7 +163,6 @@ struct CalendarMiniMonth: View {
 
     private func dateGrid(month: Date) -> some View {
         let days = CalendarLayout.monthDays(containing: month, calendar: calendar)
-        let cellHeight = Tokens.Space.s6 + Tokens.Space.s0_5 + Tokens.Space.s1
         return GeometryReader { geometry in
             let columnWidth = geometry.size.width / 7
             VStack(spacing: Tokens.Space.s1) {
@@ -165,7 +174,7 @@ struct CalendarMiniMonth: View {
                                 let index = row * 7 + column
                                 if index < days.count {
                                     dayButton(days[index], month: month)
-                                        .frame(width: columnWidth, height: cellHeight)
+                                        .frame(width: columnWidth, height: Self.cellHeight)
                                 }
                             }
                         }
@@ -173,7 +182,7 @@ struct CalendarMiniMonth: View {
                 }
             }
         }
-        .frame(height: Tokens.Space.s8 + 6 * (cellHeight + Tokens.Space.s1))
+        .frame(height: Self.gridHeight)
     }
 
     private func dayButton(_ day: Date, month: Date) -> some View {
@@ -193,6 +202,7 @@ struct CalendarMiniMonth: View {
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }.buttonStyle(.plain)
+            .ternHover()
             .accessibilityLabel(CalendarLayout.format(day, style: .dateTime.weekday(.wide).month().day().year(), calendar: calendar))
             .accessibilityValue(calendar.isDate(day, inSameDayAs: date) ? "Selected" : calendar.isDateInToday(day) ? "Today" : "")
     }
@@ -247,13 +257,15 @@ struct CalendarSearchResults: View {
                 }
                 .padding(.vertical, Tokens.Space.s2).tag(event.id)
                 .contentShape(Rectangle())
+                .ternHover()
+                .draggable(CalendarEventTransfer(event))
                 .onTapGesture(count: 2) { edit(event) }
                 .help(event.title)
                 .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
+                .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
                 .accessibilityAction { edit(event) }
                 .contextMenu {
-                    Button("Open event") { edit(event) }
+                    Button("Open Event") { edit(event) }
                     Button("Duplicate") { duplicate(event) }
                     Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
                 }

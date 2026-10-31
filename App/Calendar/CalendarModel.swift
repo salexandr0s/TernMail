@@ -26,6 +26,8 @@ final class CalendarModel {
     var editor: CalendarEditorDraft?
     var selectedEventID: String?
     var undoConfirmation: [String]?
+    /// The window's undo manager, so Edit ▸ Undo names and reverts calendar changes.
+    @ObservationIgnored weak var undoManager: UndoManager?
     var isVisible = false {
         didSet { if oldValue != isVisible { schedulePolling() } }
     }
@@ -82,9 +84,7 @@ final class CalendarModel {
 
     init(app: AppModel?, defaults: UserDefaults? = nil) {
         self.app = app
-        let isAudit = ProcessInfo.processInfo.arguments.contains("--ui-audit")
-            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar")
-        let defaults = defaults ?? (isAudit ? UserDefaults(suiteName: "tern.calendar.audit") ?? .standard : .standard)
+        let defaults = defaults ?? CalendarDefaults.store
         self.defaults = defaults
         workingHours = defaults.data(forKey: "calendarWorkingHours")
             .flatMap { try? JSONDecoder().decode(CalendarWorkingHours.self, from: $0) } ?? CalendarWorkingHours()

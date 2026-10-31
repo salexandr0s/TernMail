@@ -3,6 +3,41 @@ import GmailAPI
 import MailStore
 
 extension CalendarModel {
+    /// Moves the shown period: a day, week, month or year depending on the mode.
+    func shift(periods: Int) {
+        date = calendar.date(byAdding: mode.component, value: periods, to: date) ?? date
+    }
+
+    /// Moves the date inside the view: by day in Day and Week, by week in Month, by month in Year.
+    func shift(steps: Int) {
+        date = calendar.date(byAdding: mode.stepComponent, value: steps, to: date) ?? date
+    }
+
+    /// Selects the event before or after the current one on its day. Without a
+    /// selection, ↓ takes the day's first event and ↑ its last.
+    @discardableResult
+    func selectAdjacentEvent(_ offset: Int) -> Bool {
+        let selected = events.first { $0.id == selectedEventID }
+        let day = selected?.start ?? date
+        let candidates = CalendarLayout.events(events, on: day, calendar: calendar)
+        guard !candidates.isEmpty else { return false }
+        guard let selected, let index = candidates.firstIndex(where: { $0.id == selected.id }) else {
+            selectedEventID = (offset > 0 ? candidates.first : candidates.last)?.id
+            return true
+        }
+        let next = min(candidates.count - 1, max(0, index + offset))
+        selectedEventID = candidates[next].id
+        return true
+    }
+
+    /// Puts the change on the window's undo stack, so Edit ▸ Undo shows `name`.
+    /// Undo goes through `undo()`, which still asks before notifying guests.
+    func registerUndo(named name: String) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { model in Task { await model.undo() } }
+        undoManager.setActionName(name)
+    }
+
     func beginNew(in range: CalendarEventRange) {
         guard range.start.timeIntervalSinceReferenceDate.isFinite,
               range.end.timeIntervalSinceReferenceDate.isFinite, range.end > range.start else {

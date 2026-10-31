@@ -1,3 +1,4 @@
+import MessageContent
 import SwiftUI
 
 /// Month gestures use the whole six-week canvas, so a drag can cross row boundaries.
@@ -11,6 +12,7 @@ struct CalendarMonthGrid: View {
     let change: (CalendarDisplayEvent, CalendarEventRange) -> Void
     let delete: (CalendarDisplayEvent) -> Void
     let duplicate: (CalendarDisplayEvent) -> Void
+    let dropMail: (MailLink, CalendarEventRange) -> Void
     let openDay: (Date) -> Void
     @Namespace private var canvas
     @State private var drag: MonthDrag?
@@ -49,6 +51,11 @@ struct CalendarMonthGrid: View {
             }
         }
         .coordinateSpace(name: canvas)
+        .dropDestination(for: ConversationDragItem.self) { items, location in
+            guard let item = items.first, let day = day(at: location) else { return false }
+            dropMail(item.link, dayRange(day))
+            return true
+        }
         .onPreferenceChange(CalendarMonthFrames.self) { value in
             frames = value
             if let drag { updateDrag(at: drag.pointer) }
@@ -73,10 +80,11 @@ struct CalendarMonthGrid: View {
         let currentMonth = calendar.isDate(day, equalTo: date, toGranularity: .month)
         let selectedDay = calendar.isDate(day, inSameDayAs: date)
         return ZStack(alignment: .topLeading) {
-            (currentMonth && !calendar.isDateInWeekend(day) ? Tokens.Surface.primary : Tokens.Surface.muted)
+            Rectangle().fill(Color.clear)
                 .contentShape(Rectangle())
+                .ternHover(radius: 0)
                 .gesture(gesture(.create, day: day).exclusively(before: TapGesture().onEnded { create(dayRange(day)) }))
-                .contextMenu { Button("New all-day event") { create(dayRange(day)) } }
+                .contextMenu { Button("New All-Day Event") { create(dayRange(day)) } }
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 HStack {
                     if calendar.component(.day, from: day) == 1 {
@@ -114,6 +122,7 @@ struct CalendarMonthGrid: View {
             }
         }
         .frame(height: height)
+        .background(currentMonth && !calendar.isDateInWeekend(day) ? Tokens.Surface.primary : Tokens.Surface.muted)
         .overlay { if selectedDay { Rectangle().strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus).allowsHitTesting(false) } }
         .overlay(alignment: .bottom) { Divider().allowsHitTesting(false) }
         .overlay(alignment: .trailing) { Rectangle().fill(Tokens.Surface.border).frame(width: Tokens.Border.hairline).allowsHitTesting(false) }
@@ -123,7 +132,7 @@ struct CalendarMonthGrid: View {
     }
 
     private func eventChip(_ event: CalendarDisplayEvent, on day: Date) -> some View {
-        CalendarEventChip(event: event, selected: selectedID == event.id, showsTime: !event.isAllDay)
+        CalendarEventChip(event: event, selected: selectedID == event.id, showsTime: !event.isAllDay, pointer: movePointer(for: event))
             .onTapGesture(count: 2) { edit(event) }
             .onTapGesture { selectedID = event.id }
             .gesture(gesture(.move, event: event, day: day), including: event.canEdit ? .all : .subviews)
@@ -139,7 +148,7 @@ struct CalendarMonthGrid: View {
                 }
             }
             .contextMenu {
-                Button("Open event") { edit(event) }
+                Button("Open Event") { edit(event) }
                 Button("Duplicate") { duplicate(event) }
                 Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
             }
@@ -147,9 +156,17 @@ struct CalendarMonthGrid: View {
             .accessibilityAction(named: "Duplicate") { duplicate(event) }
     }
 
+    /// Editable events show the open hand, and the closed hand while they move.
+    private func movePointer(for event: CalendarDisplayEvent) -> PointerStyle? {
+        guard event.canEdit else { return nil }
+        if let drag, drag.action == .move, drag.event?.id == event.id, !cancelled { return .grabActive }
+        return .grabIdle
+    }
+
     private func resizeGrip(_ action: Action, event: CalendarDisplayEvent, day: Date) -> some View {
         Capsule().fill(Color.accentColor).frame(width: Tokens.Space.s0_5, height: Tokens.Space.s3)
             .frame(width: Tokens.Space.s2, height: Tokens.Space.s6).contentShape(Rectangle())
+            .ternResizeCursor(.horizontal)
             .highPriorityGesture(gesture(action, event: event, day: day))
             .help(action == .start ? "Drag to change the first day" : "Drag to change the last day")
     }
@@ -195,13 +212,17 @@ struct CalendarMonthGrid: View {
     private func updateDrag(at point: CGPoint) {
         guard !cancelled, var active = drag else { return }
         active.pointer = point
-        if let viewport = frames[.viewport], viewport.contains(point), let content = frames[.content],
-           let index = CalendarMonthHitTesting.index(at: CGPoint(x: point.x - content.minX, y: point.y - content.minY),
-                                                     width: content.width, rowHeight: content.height / 6),
-           days.indices.contains(index) {
-            active.range = range(for: active, target: days[index])
-        } else { active.range = nil }
+        active.range = day(at: point).map { range(for: active, target: $0) }
         drag = active
+    }
+
+    /// The day under a point in the canvas, while it is inside the visible grid.
+    private func day(at point: CGPoint) -> Date? {
+        guard let viewport = frames[.viewport], viewport.contains(point), let content = frames[.content],
+              let index = CalendarMonthHitTesting.index(at: CGPoint(x: point.x - content.minX, y: point.y - content.minY),
+                                                        width: content.width, rowHeight: content.height / 6),
+              days.indices.contains(index) else { return nil }
+        return days[index]
     }
 
     private func range(for drag: MonthDrag, target: Date) -> CalendarEventRange {

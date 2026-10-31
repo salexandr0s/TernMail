@@ -311,3 +311,62 @@ private enum EmailCalendarLinkError: Error, LocalizedError {
     case ambiguous
     var errorDescription: String? { "Several saved events match this correction. Open Calendar to choose the intended event." }
 }
+
+extension CalendarModel {
+    /// A conversation dropped on the grid. The editor opens prefilled from the
+    /// email at the slot where it landed; nothing is saved until the user does.
+    func beginNew(from link: MailLink, in range: CalendarEventRange) async {
+        guard range.start.timeIntervalSinceReferenceDate.isFinite,
+              range.end.timeIntervalSinceReferenceDate.isFinite, range.end > range.start else {
+            errorMessage = CalendarModelError.invalidEvent.localizedDescription; return
+        }
+        guard let owner = calendars.first(where: { $0.accountID == link.accountID && $0.canWrite && $0.isVisible })
+                ?? calendars.first(where: { $0.accountID == link.accountID && $0.canWrite })
+                ?? calendars.first(where: { $0.canWrite && $0.isVisible }) ?? calendars.first(where: \.canWrite) else {
+            errorMessage = "Connect a writable Google calendar before adding an event."; return
+        }
+        let key = ThreadKey(accountID: link.accountID, threadID: link.threadID)
+        let revision = lifecycleRevision
+        editRevision += 1
+        let edit = editRevision
+        var draft = CalendarEditorDraft(event: range.applying(to: GoogleCalendarEvent(summary: ""), calendar: calendar), calendarKey: owner.id)
+        draft.sourceTitle = "From a conversation. Check the title and time before saving."
+        statusText = "Reading the conversation…"
+        do {
+            if let detail = try await droppedThreadDetail(key) {
+                let suggestions = EmailCalendarModel()
+                await loadEmailSuggestions(suggestions, detail: detail, key: key)
+                if let service = try? app?.assistant.calendarExtractionService(for: key) {
+                    await interpretEmailSuggestions(suggestions, key: key, service: service)
+                }
+                try validateEmailLifetime(revision, accountID: link.accountID)
+                guard edit == editRevision else { return }
+                let items = suggestions.visibleItems.filter(\.canReview)
+                let item = items.first { $0.messageID == link.messageID && $0.event != nil }
+                    ?? items.first { $0.event != nil } ?? items.first
+                var event = item?.event ?? GoogleCalendarEvent(summary: "")
+                // The drop decides when; a personal copy never invites the sender's guests.
+                event.summary = item.map(\.title).flatMap { $0.isEmpty ? nil : $0 } ?? detail.thread.subject
+                event.attendees = nil
+                event.organizer = nil
+                draft.event = range.applying(to: event, calendar: calendar)
+                if let item { draft.sourceID = key.accountID + ":" + item.id }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = "The conversation could not be read. Fill in the event by hand."
+        }
+        guard edit == editRevision else { return }
+        statusText = "Review the event, then save it."
+        editor = draft
+    }
+
+    /// The thread as the mailbox has it, with bodies loaded so dates can be read.
+    private func droppedThreadDetail(_ key: ThreadKey) async throws -> ThreadDetail? {
+        guard let mailbox = app?.mailbox else { return nil }
+        _ = await mailbox.open(key, markRead: false)
+        for try await detail in mailbox.threadDetail(key) { return detail }
+        return nil
+    }
+}

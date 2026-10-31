@@ -1,3 +1,4 @@
+import MessageContent
 import SwiftUI
 
 struct CalendarTimeGrid: View {
@@ -11,6 +12,7 @@ struct CalendarTimeGrid: View {
     let change: (CalendarDisplayEvent, CalendarEventRange) -> Void
     let delete: (CalendarDisplayEvent) -> Void
     let duplicate: (CalendarDisplayEvent) -> Void
+    let dropMail: (MailLink, CalendarEventRange) -> Void
     let hourHeight = Tokens.Space.s16
     let gutter = Tokens.Space.s16
     static let coordinateSpace = "calendarTimeline"
@@ -36,6 +38,11 @@ struct CalendarTimeGrid: View {
             .calendarTimelineFrame(.canvas)
         }
         .coordinateSpace(name: Self.coordinateSpace)
+        .dropDestination(for: ConversationDragItem.self) { items, location in
+            guard let item = items.first, let range = dropRange(at: location) else { return false }
+            dropMail(item.link, range)
+            return true
+        }
         .onPreferenceChange(CalendarTimelineFrames.self) { value in
             frames = value
             if let drag, !dragCancelled { updateDrag(at: drag.pointer) }
@@ -52,6 +59,17 @@ struct CalendarTimeGrid: View {
         .onChange(of: calendar.timeZone.identifier) { _, _ in cancelDrag() }
         .onChange(of: calendar.firstWeekday) { _, _ in cancelDrag() }
         .onDisappear { drag = nil; dragCancelled = false }
+    }
+
+    /// A drop in the hours lane starts a half-hour event there; in the all-day lane, an all-day one.
+    private func dropRange(at point: CGPoint) -> CalendarEventRange? {
+        if let start = timedDate(at: point) {
+            return CalendarEventRange(start: start, end: start.addingTimeInterval(1800), isAllDay: false)
+        }
+        if let day = allDayDate(at: point) {
+            return CalendarInteraction.selection(from: day, to: day, allDay: true, calendar: calendar)
+        }
+        return nil
     }
 
     private func timeline(columnWidth: CGFloat) -> some View {
@@ -144,7 +162,7 @@ struct CalendarTimeGrid: View {
     }
 
     private func allDayChip(_ event: CalendarDisplayEvent, day: Date) -> some View {
-        CalendarEventChip(event: event, selected: selectedID == event.id, showsTime: false)
+        CalendarEventChip(event: event, selected: selectedID == event.id, showsTime: false, pointer: movePointer(for: event))
             .onTapGesture(count: 2) { edit(event) }.onTapGesture { selectedID = event.id }
             .gesture(pointerGesture(.move(event, day)), including: event.canEdit ? .all : .subviews)
             .overlay(alignment: .leading) {
@@ -162,9 +180,17 @@ struct CalendarTimeGrid: View {
             .contextMenu { eventMenu(event) }
     }
 
+    /// Editable events show the open hand, and the closed hand while they move.
+    private func movePointer(for event: CalendarDisplayEvent) -> PointerStyle? {
+        guard event.canEdit else { return nil }
+        if case .move(let moving, _) = drag?.action, moving.id == event.id, !dragCancelled { return .grabActive }
+        return .grabIdle
+    }
+
     private func allDayHandle(_ action: CalendarTimelineAction) -> some View {
         Capsule().fill(Color.accentColor).frame(width: Tokens.Space.s1, height: Tokens.Space.s3)
             .frame(width: Tokens.Space.s2, height: Tokens.Space.s6).contentShape(Rectangle())
+            .ternResizeCursor(.horizontal)
             .highPriorityGesture(pointerGesture(action))
             .help(action.isStartEdge ? "Drag to change the first day" : "Drag to change the last day")
     }
@@ -224,6 +250,7 @@ struct CalendarTimeGrid: View {
         return CalendarTimelineEvent(event: event, selected: selectedID == event.id,
                                      height: max(Tokens.Space.s6, CGFloat(placement.endMinute - placement.startMinute) / 60 * hourHeight), calendar: calendar)
             .contentShape(Rectangle())
+            .ternHover(pointer: movePointer(for: event))
             .onTapGesture(count: 2) { edit(event) }.onTapGesture { selectedID = event.id }
             .gesture(pointerGesture(.move(event, day)), including: event.canEdit ? .all : .subviews)
             .overlay(alignment: .top) {
@@ -242,12 +269,13 @@ struct CalendarTimeGrid: View {
     private func timedHandle(_ action: CalendarTimelineAction) -> some View {
         Capsule().fill(Color.accentColor).frame(width: Tokens.Space.s6, height: Tokens.Space.s1)
             .frame(maxWidth: .infinity).frame(height: Tokens.Space.s2).contentShape(Rectangle())
+            .ternResizeCursor(.vertical)
             .highPriorityGesture(pointerGesture(action))
             .help(action.isStartEdge ? "Drag to change the start time" : "Drag to change the end time")
     }
 
     @ViewBuilder private func eventMenu(_ event: CalendarDisplayEvent) -> some View {
-        Button("Open event") { edit(event) }
+        Button("Open Event") { edit(event) }
         Button("Duplicate") { duplicate(event) }
         Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
     }

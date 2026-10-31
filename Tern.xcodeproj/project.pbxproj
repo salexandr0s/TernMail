@@ -31,6 +31,7 @@
 		1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B124379B5808528D2CE7BC /* SettingsView.swift */; };
 		115CF9859B4D2A8AD8752D38 /* MailboxSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C59EE09046A89AC26C291FE /* MailboxSwitcher.swift */; };
 		1167C766EE6834C48D66D2BB /* DestructiveMailReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F6B544CDB786AF85558EA9 /* DestructiveMailReview.swift */; };
+		1294A1D4AF5805FF276C47B1 /* CalendarToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A63CD87405C2C0A5B589C15 /* CalendarToolbar.swift */; };
 		12F2FABAA9CA6CCEC2B70389 /* MailBadgeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83F18CC050F3E7055CB2FFC2 /* MailBadgeController.swift */; };
 		138BF9A1E3C38250DB455AAF /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B58851480C2185F8DD3A87A4 /* AppAuth */; };
 		13C61620FC78DF39AB175B88 /* AIKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EFA2021825E119521E4EBA5 /* AIKeychainStore.swift */; };
@@ -425,6 +426,7 @@
 		76B124379B5808528D2CE7BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		79DAD2C1B0EF8F5161349C1D /* CalendarTimeGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimeGrid.swift; sourceTree = "<group>"; };
 		7A418838990827BF86B0361C /* CalendarManagementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarManagementTests.swift; sourceTree = "<group>"; };
+		7A63CD87405C2C0A5B589C15 /* CalendarToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarToolbar.swift; sourceTree = "<group>"; };
 		7CF04D6C37D66853CB27A33F /* SettingsMessageEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsMessageEditor.swift; sourceTree = "<group>"; };
 		7D04742F4614FDDF6998200A /* AttachmentLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibraryView.swift; sourceTree = "<group>"; };
 		7E47EA73E603E9DB223512AD /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
@@ -962,6 +964,7 @@
 				E47D7CA9AF8FF3339190A56B /* CalendarTimelineEvent.swift */,
 				43E34E2A10414C1BCFF3620D /* CalendarTimelineGesture.swift */,
 				F4F4F942D1C093DBBE2538BF /* CalendarTimelinePlacement.swift */,
+				7A63CD87405C2C0A5B589C15 /* CalendarToolbar.swift */,
 				D026BAB4695A62CECFCFBD9A /* CalendarView.swift */,
 				C7B0EB5313F474DF18231F04 /* EmailCalendarExtractionService.swift */,
 				A30C9DFB438128EA517F2F3E /* EmailCalendarModel.swift */,
@@ -1313,6 +1316,7 @@
 				C982739DD9153827225BA800 /* CalendarTimelineEvent.swift in Sources */,
 				33E1D1752F90F6CA909EA992 /* CalendarTimelineGesture.swift in Sources */,
 				93FD4744D1FF24F1388A2485 /* CalendarTimelinePlacement.swift in Sources */,
+				1294A1D4AF5805FF276C47B1 /* CalendarToolbar.swift in Sources */,
 				04AE8D7B736B5049479F9385 /* CalendarView.swift in Sources */,
 				3191529761F2ADE45BF9E8A7 /* ChatGPTBrand.swift in Sources */,
 				C87E44DAF2E8A974EAAD2D78 /* ChatGPTConnection.swift in Sources */,

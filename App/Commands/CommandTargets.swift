@@ -15,9 +15,11 @@ struct ReaderActions {
 /// this while it is the main window's active destination.
 struct CalendarActions {
     let showActivity: @MainActor () -> Void
+    /// Opens Settings on the Calendar pane.
     let showManagement: @MainActor () -> Void
     let importEvents: @MainActor () -> Void
     let exportEvents: @MainActor () -> Void
+    let exportCalendar: @MainActor (CalendarDisplayCalendar) -> Void
     let goToDate: @MainActor () -> Void
     let find: @MainActor () -> Void
     let print: @MainActor () -> Void

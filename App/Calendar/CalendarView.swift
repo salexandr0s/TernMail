@@ -1,12 +1,14 @@
 import AppKit
+import MessageContent
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct CalendarView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.undoManager) private var undoManager
     @Bindable var model: CalendarModel
     var isActive = true
-    @State private var showManagement = false
     @State private var showActivity = false
     @State private var showImport = false
     @State private var importEvents: [CalendarImportItem] = []
@@ -14,8 +16,8 @@ struct CalendarView: View {
     @State private var deleteTarget: CalendarDisplayEvent?
     @State private var showDatePicker = false
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
+    @AppStorage(CalendarDisplayMode.storageKey, store: CalendarDefaults.store) private var storedMode = CalendarDisplayMode.week
     @State private var showCalendarList = false
-    @FocusState private var searchHasFocus: Bool
     @FocusState private var hasKeyboardFocus: Bool
 
     var body: some View {
@@ -34,8 +36,10 @@ struct CalendarView: View {
             }
         }
         .background(Tokens.Surface.primary)
-        .background { undoShortcutMonitor }
         .environment(\.timeZone, model.calendar.timeZone)
+        .onAppear { model.mode = storedMode }
+        .onChange(of: model.mode) { _, mode in storedMode = mode }
+        .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
         .task(id: rangeRequest) { if isActive { await model.reloadOccurrences() } }
         .task(id: searchRequest) {
             guard isActive else { return }
@@ -49,7 +53,6 @@ struct CalendarView: View {
             }
         }
         .sheet(isPresented: $showActivity) { CalendarActivityView(model: model) }
-        .sheet(isPresented: $showManagement) { CalendarManagementView(model: model) }
         .sheet(isPresented: $showImportReview) {
             CalendarImportReview(events: importEvents, calendars: model.calendars) { events, calendarKey in
                 for item in events {
@@ -66,21 +69,25 @@ struct CalendarView: View {
                 showImportReview = true
             } catch { model.errorMessage = error.localizedDescription }
         }
-        .confirmationDialog("Delete event?", isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), presenting: deleteTarget) { event in
-            Button("Delete this event", role: .destructive) { perform { try await model.delete(event, scope: .occurrence) } }
-            if event.isRecurring {
-                Button("Delete this and following events", role: .destructive) { perform { try await model.delete(event, scope: .following) } }
-                Button("Delete all events", role: .destructive) { perform { try await model.delete(event, scope: .series) } }
-            }
+        .confirmationDialog("Delete this repeating event?", isPresented: Binding(
+            get: { recurringDeleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } }
+        ), titleVisibility: .visible, presenting: recurringDeleteTarget) { event in
+            Button("Delete This Event", role: .destructive) { perform { try await model.delete(event, scope: .occurrence) } }
+            Button("Delete This and Following Events", role: .destructive) { perform { try await model.delete(event, scope: .following) } }
+            Button("Delete All Events", role: .destructive) { perform { try await model.delete(event, scope: .series) } }
         } message: { event in
-            let recipients = Array(Set((event.event.attendees ?? []).map(\.email))).sorted()
-            Text(recipients.isEmpty ? "Delete “\(event.title)”?" : "Delete “\(event.title)”? Google Calendar will notify: \(recipients.joined(separator: ", ")).")
+            Text(deleteMessage(for: event))
+        }
+        .ternConfirm("Delete “\(deleteTarget?.title ?? "")”?", item: guestDeleteTarget,
+                     actionTitle: "Delete and Notify Guests", message: deleteTarget.map(deleteMessage) ?? "") { event in
+            perform { try await model.delete(event, scope: .occurrence) }
         }
         .confirmationDialog("Undo the last calendar change?", isPresented: Binding(
             get: { model.undoConfirmation != nil },
             set: { if !$0 { model.cancelUndo() } }
         ), presenting: model.undoConfirmation) { _ in
-            Button("Undo and notify guests") { Task { await model.confirmUndo() } }
+            Button("Undo and Notify Guests") { Task { await model.confirmUndo() } }
             Button("Cancel", role: .cancel) { model.cancelUndo() }
         } message: { recipients in
             Text("Google Calendar will send an update to: " + recipients.joined(separator: ", ") + ".")
@@ -90,21 +97,29 @@ struct CalendarView: View {
         .focusedSceneValue(\.calendarActions, isActive ? calendarActions : nil)
     }
 
-    /// What the Calendar and File menus can open while this view is active.
+    /// What the Calendar, File and Edit menus can open while this view is active.
     private var calendarActions: CalendarActions {
         CalendarActions(
             showActivity: { showActivity = true },
-            showManagement: { showManagement = true },
+            showManagement: { manageCalendars() },
             importEvents: { showImport = true },
             exportEvents: { exportEvents() },
+            exportCalendar: { exportCalendar($0) },
             goToDate: { showDatePicker = true },
-            find: { searchHasFocus = true },
+            find: { model.searchFocusRequest += 1 },
             print: { printEvents() }
         )
     }
 
+    /// Calendar settings live in the Settings window; this lands on its pane.
+    private func manageCalendars() {
+        UserDefaults.standard.set("calendar", forKey: SettingsDestination.storageKey)
+        openSettings()
+    }
+
     private func printEvents() {
-        CalendarImportExport.printEvents(model.events, title: CalendarLayout.format(model.date, style: .dateTime.month(.wide).year(), calendar: model.calendar))
+        CalendarImportExport.printEvents(model.events, title: CalendarLayout.format(model.date, style: .dateTime.month(.wide).year(), calendar: model.calendar),
+                                         in: NSApp.keyWindow)
     }
 
     private func calendarPane(compact: Bool) -> some View {
@@ -115,55 +130,34 @@ struct CalendarView: View {
         }
     }
 
+    /// The period title above the grid, as Apple Calendar shows it. Navigation
+    /// and the view switcher sit in the window toolbar.
     private func header(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            HStack(spacing: Tokens.Space.s2) {
-                if compact {
-                    Button { showCalendarList.toggle() } label: {
-                        Image(systemName: "sidebar.left").frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                    }
-                    .buttonStyle(.borderless).help("Show calendars").accessibilityLabel("Show calendars")
-                    .popover(isPresented: $showCalendarList) {
-                        sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: Tokens.Calendar.activityHeight)
-                    }
+        HStack(spacing: Tokens.Space.s2) {
+            if compact {
+                Button { showCalendarList.toggle() } label: {
+                    Image(systemName: "sidebar.left").frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 }
-                Button { showDatePicker.toggle() } label: {
-                    HStack(spacing: Tokens.Space.s2) {
-                        Text(periodTitle).font(.title2.weight(.semibold)).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain).help("Go to date").accessibilityLabel("Go to date, \(periodTitle)")
-                .popover(isPresented: $showDatePicker) {
-                    DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
-                        .datePickerStyle(.graphical).padding(Tokens.Space.s4)
-                }
-                Spacer(minLength: Tokens.Space.s2)
-                dateNavigation
-                Button { model.beginNew(on: model.date) } label: {
-                    ViewThatFits(in: .horizontal) {
-                        Label("New event", systemImage: "plus")
-                        Image(systemName: "plus")
-                    }
-                }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .help("New event (\(ShortcutCatalog.newEvent.label))").accessibilityLabel("New event")
-                .disabled(!isActive || !model.calendars.contains(where: \.canWrite))
-                actions
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s4) {
-                    viewPicker.frame(width: Tokens.Calendar.viewPickerWidth + Tokens.Space.s16)
-                    Spacer(minLength: 0)
-                    searchField.frame(width: Tokens.Layout.sidebarWidth)
-                }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    viewPicker
-                    searchField
+                .buttonStyle(.borderless).help("Show calendars").accessibilityLabel("Show calendars")
+                .popover(isPresented: $showCalendarList) {
+                    sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: CalendarSidebar.popoverHeight(for: model))
                 }
             }
+            Button { showDatePicker.toggle() } label: {
+                HStack(spacing: Tokens.Space.s2) {
+                    Text(periodTitle).font(.title2.weight(.semibold)).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain).help("Go to Date (\(ShortcutCatalog.goToDate.label))").accessibilityLabel("Go to date, \(periodTitle)")
+            .popover(isPresented: $showDatePicker) {
+                DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
+                    .datePickerStyle(.graphical).padding(Tokens.Space.s4)
+            }
+            Spacer(minLength: Tokens.Space.s2)
         }
-        .padding(Tokens.Space.s4)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
     }
 
@@ -184,75 +178,8 @@ struct CalendarView: View {
         return CalendarLayout.format(model.date, style: style, calendar: model.calendar)
     }
 
-    private var viewPicker: some View {
-        Picker("View", selection: $model.mode) {
-            ForEach(CalendarDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
-        }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("Calendar view")
-    }
-
-    private var dateNavigation: some View {
-        HStack(spacing: Tokens.Space.s1) {
-            Button { navigate(-1) } label: {
-                Image(systemName: "chevron.left").frame(width: Tokens.Space.s6, height: Tokens.Space.s8)
-            }
-            .help("Previous \(model.mode.title.lowercased())").accessibilityLabel("Previous \(model.mode.title.lowercased())")
-            Button("Today") { model.date = .now }
-                .help("Today (\(ShortcutCatalog.today.label))")
-                .padding(.horizontal, Tokens.Space.s1)
-            Button { navigate(1) } label: {
-                Image(systemName: "chevron.right").frame(width: Tokens.Space.s6, height: Tokens.Space.s8)
-            }
-            .help("Next \(model.mode.title.lowercased())").accessibilityLabel("Next \(model.mode.title.lowercased())")
-        }.buttonStyle(.borderless).disabled(!isActive)
-            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-    }
-
-    private var searchField: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search events", text: $model.searchText)
-                .textFieldStyle(.plain).focused($searchHasFocus)
-                .accessibilityLabel("Search calendar events")
-                .onExitCommand { model.searchText = ""; searchHasFocus = false }
-            if !model.searchText.isEmpty {
-                Button { model.searchText = ""; searchHasFocus = true } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }.buttonStyle(.plain).help("Clear search").accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, Tokens.Space.s3).frame(height: Tokens.Control.iconButton)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .strokeBorder(searchHasFocus ? Color.accentColor : Tokens.Surface.border,
-                              lineWidth: searchHasFocus ? Tokens.Border.focus : Tokens.Border.hairline)
-        }
-    }
-
-    private var actions: some View {
-        Menu {
-                Button("Calendar activity…") { showActivity = true }
-                Button("Manage calendars…") { showManagement = true }
-                Button("Import calendar…") { showImport = true }
-                Button("Export displayed events…") { exportEvents() }
-                Menu("Export calendar") {
-                    ForEach(model.calendars.filter { $0.entry.canReadDetails }) { calendar in
-                        Button("\(calendar.accountName) · \(calendar.title)") {
-                            perform { try CalendarImportExport.save(try await model.exportCalendar(calendar)) }
-                        }
-                    }
-                }
-                Button("Print…") { printEvents() }
-                Divider()
-                Button("Refresh") { Task { await model.refresh() } }
-                Button("Undo last calendar change") { Task { if isActive { await model.undo() } } }
-                    .disabled(!isActive || !model.canUndo)
-            } label: { Image(systemName: "ellipsis.circle") }
-            .menuStyle(.borderlessButton).fixedSize().help("Calendar actions").accessibilityLabel("Calendar actions")
-    }
-
     private var sidebar: some View {
-        CalendarSidebar(model: model, manage: { showManagement = true }, connect: connect)
+        CalendarSidebar(model: model, manage: manageCalendars, connect: connect)
     }
 
     @ViewBuilder private var calendarContent: some View {
@@ -261,7 +188,7 @@ struct CalendarView: View {
         } else if !model.calendars.isEmpty, !model.calendars.contains(where: \.isVisible) {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No calendars selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
-                Button("Show all calendars") {
+                Button("Show All Calendars") {
                     for calendar in model.calendars { model.setVisible(id: calendar.id, visible: true) }
                 }.buttonStyle(.bordered)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -274,20 +201,27 @@ struct CalendarView: View {
                 }.padding(Tokens.Space.s4)
                 Divider()
                 CalendarSearchResults(events: model.searchResults, calendar: model.calendar, selectedID: $model.selectedEventID,
-                                      edit: model.edit, delete: { deleteTarget = $0 }, duplicate: model.duplicate)
+                                      edit: model.edit, delete: requestDelete, duplicate: model.duplicate)
             }
         } else {
             CalendarGridViews(mode: $model.mode, date: $model.date, calendar: model.calendar, events: model.events,
                               selectedID: $model.selectedEventID, create: model.beginNew(in:), edit: model.edit,
-                              change: prepareChange,
-                              delete: { deleteTarget = $0 }, duplicate: model.duplicate)
+                              change: prepareChange, delete: requestDelete, duplicate: model.duplicate, dropMail: dropMail)
                 .focusable().focused($hasKeyboardFocus)
-                .onDeleteCommand { if isActive, let selected, selected.canEdit { deleteTarget = selected } }
+                .onDeleteCommand { if isActive, let selected, selected.canEdit { requestDelete(selected) } }
                 .onCopyCommand { copyProviders() }
                 .onPasteCommand(of: [.plainText]) { providers in paste(providers) }
                 .onKeyPress(.return) { guard isActive, let selected else { return .ignored }; model.edit(selected); return .handled }
-                .onKeyPress(.leftArrow) { guard isActive else { return .ignored }; navigate(-1); return .handled }
-                .onKeyPress(.rightArrow) { guard isActive else { return .ignored }; navigate(1); return .handled }
+                .onKeyPress(keys: [.leftArrow, .rightArrow], phases: .down) { press in
+                    guard isActive else { return .ignored }
+                    let direction = press.key == .leftArrow ? -1 : 1
+                    if press.modifiers.contains(.option) { model.shift(periods: direction) } else { model.shift(steps: direction) }
+                    return .handled
+                }
+                .onKeyPress(keys: [.upArrow, .downArrow], phases: .down) { press in
+                    guard isActive else { return .ignored }
+                    return model.selectAdjacentEvent(press.key == .upArrow ? -1 : 1) ? .handled : .ignored
+                }
                 .onKeyPress(characters: CharacterSet(charactersIn: "cdwmyatg/e12345"), phases: .down, action: calendarShortcut)
         }
     }
@@ -297,8 +231,8 @@ struct CalendarView: View {
         return ScrollView {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: hasConnection ? "No calendars to show" : "Your calendars in Tern",
-                              systemImage: "calendar",
-                              message: hasConnection ? "Check the account status below to load your calendars."
+                               systemImage: "calendar",
+                               message: hasConnection ? "Check the account status below to load your calendars."
                                 : "Connect Google Calendar to see your schedule and add events.", fillsSpace: false)
                 ForEach(model.accounts) { account in
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -308,6 +242,9 @@ struct CalendarView: View {
                     .padding(Tokens.Space.s4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                }
+                if hasConnection {
+                    Button("Manage Calendars…", action: manageCalendars).buttonStyle(.bordered)
                 }
             }
             .padding(Tokens.Space.s4)
@@ -320,7 +257,7 @@ struct CalendarView: View {
         HStack(spacing: Tokens.Space.s2) {
             if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Refreshing calendars") }
             if let error = model.errorMessage {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Tokens.Status.warning)
                 Text(error).lineLimit(2)
                 Button("Dismiss") { model.errorMessage = nil }.buttonStyle(.link)
             } else { Text(model.statusText).foregroundStyle(.secondary).lineLimit(1).help(model.statusText) }
@@ -343,29 +280,47 @@ struct CalendarView: View {
     }
 
     private var selected: CalendarDisplayEvent? { (model.events + model.searchResults).first { $0.id == model.selectedEventID } }
-    private var undoShortcutMonitor: some View {
-        let callback: (() -> Bool)?
-        if canHandleCalendarUndo {
-            callback = { undoCalendarShortcut() }
-        } else {
-            callback = nil
-        }
-        return ShortcutMonitor(isEnabled: false, perform: { _ in false }, commandUndo: callback)
-    }
-    private var canHandleCalendarUndo: Bool {
+
+    /// Single keys and arrows act only while no sheet or popover owns the keyboard.
+    private var canHandleKeys: Bool {
         isActive && model.editor == nil && model.undoConfirmation == nil && deleteTarget == nil
-            && !showActivity && !showManagement && !showImport && !showImportReview && !showDatePicker && !showCalendarList
+            && !showActivity && !showImport && !showImportReview && !showDatePicker && !showCalendarList
     }
-    private func undoCalendarShortcut() -> Bool {
-        guard canHandleCalendarUndo else { return false }
-        // The active Calendar canvas owns Command-Z even with no calendar
-        // history, so the hidden mailbox cannot receive the same shortcut.
-        if model.canUndo { Task { await model.undo() } }
-        return true
+
+    // MARK: Deleting
+
+    /// Repeating events choose a scope and events with guests send cancellations,
+    /// so both ask first. A plain event goes straight away; Edit ▸ Undo brings it back.
+    private func requestDelete(_ event: CalendarDisplayEvent) {
+        guard isActive, event.canEdit else { return }
+        if event.isRecurring || !guests(of: event).isEmpty {
+            deleteTarget = event
+        } else {
+            perform {
+                try await model.delete(event, scope: .occurrence)
+                model.statusText = "Deleted “\(event.title)”. Edit ▸ Undo restores it."
+            }
+        }
     }
-    private func navigate(_ amount: Int) {
-        model.date = model.calendar.date(byAdding: model.mode.component, value: amount, to: model.date) ?? model.date
+
+    private var recurringDeleteTarget: CalendarDisplayEvent? { deleteTarget.flatMap { $0.isRecurring ? $0 : nil } }
+
+    private var guestDeleteTarget: Binding<CalendarDisplayEvent?> {
+        Binding(get: { deleteTarget.flatMap { $0.isRecurring ? nil : $0 } }, set: { if $0 == nil { deleteTarget = nil } })
     }
+
+    private func guests(of event: CalendarDisplayEvent) -> [String] {
+        Array(Set((event.event.attendees ?? []).map(\.email))).sorted()
+    }
+
+    private func deleteMessage(for event: CalendarDisplayEvent) -> String {
+        let recipients = guests(of: event)
+        if recipients.isEmpty { return "“\(event.title)” is removed from your calendar." }
+        return "Google Calendar sends a cancellation to: \(recipients.joined(separator: ", "))."
+    }
+
+    // MARK: Actions
+
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         Task { do { try await operation() } catch { model.errorMessage = error.localizedDescription } }
     }
@@ -388,14 +343,23 @@ struct CalendarView: View {
         }
     }
     private func exportEvents() {
-        do { try CalendarImportExport.save(model.events.map { CalendarImportExport.standaloneOccurrence($0.event) }) } catch { model.errorMessage = error.localizedDescription }
+        let events = model.events.map { CalendarImportExport.standaloneOccurrence($0.event) }
+        perform { try await CalendarImportExport.save(events, in: NSApp.keyWindow) }
+    }
+    private func exportCalendar(_ owner: CalendarDisplayCalendar) {
+        perform { try await CalendarImportExport.save(try await model.exportCalendar(owner), in: NSApp.keyWindow) }
     }
     private func prepareChange(_ event: CalendarDisplayEvent, range: CalendarEventRange) {
         perform { try await model.change(event, to: range) }
     }
+    /// A conversation dropped on the grid opens the editor prefilled; nothing is saved yet.
+    private func dropMail(_ link: MailLink, in range: CalendarEventRange) {
+        guard isActive else { return }
+        Task { await model.beginNew(from: link, in: range) }
+    }
     /// Single keys follow the same Settings switch as the mail list.
     private func calendarShortcut(_ key: KeyPress) -> KeyPress.Result {
-        guard usesSingleKeys, hasKeyboardFocus, canHandleCalendarUndo,
+        guard usesSingleKeys, hasKeyboardFocus, canHandleKeys,
               key.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
         switch key.characters.lowercased() {
         case "c": model.beginNew(on: CalendarLayout.date(at: 9 * 60, on: model.date, calendar: model.calendar))
@@ -406,7 +370,7 @@ struct CalendarView: View {
         case "a", "5": model.mode = .schedule
         case "t": model.date = .now
         case "g": showDatePicker = true
-        case "/": searchHasFocus = true
+        case "/": model.searchFocusRequest += 1
         case "e":
             guard let selected else { return .ignored }
             model.edit(selected)

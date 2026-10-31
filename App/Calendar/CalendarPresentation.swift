@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GmailAPI
 import SwiftUI
@@ -6,9 +7,26 @@ enum CalendarDisplayMode: String, CaseIterable, Identifiable {
     case day, week, month, year, schedule
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+    /// The `UserDefaults` key under which the view keeps the last chosen mode.
+    static let storageKey = "calendarDisplayMode"
+    /// The span ⌥← and ⌥→ move by.
     var component: Calendar.Component {
         switch self { case .day: .day; case .week: .weekOfYear; case .month, .schedule: .month; case .year: .year }
     }
+    /// The span bare ← and → move by: a day in Day and Week, a week in Month, a month in Year.
+    var stepComponent: Calendar.Component {
+        switch self { case .day, .week, .schedule: .day; case .month: .weekOfYear; case .year: .month }
+    }
+}
+
+/// Where the calendar keeps its view preferences. The UI audit uses its own
+/// suite so a preview run never changes the user's settings.
+enum CalendarDefaults {
+    @MainActor static let store: UserDefaults = {
+        let arguments = ProcessInfo.processInfo.arguments
+        let isAudit = arguments.contains("--ui-audit") || arguments.contains("--ui-audit-calendar")
+        return isAudit ? UserDefaults(suiteName: "tern.calendar.audit") ?? .standard : .standard
+    }()
 }
 
 enum CalendarAIAccess: String, CaseIterable, Identifiable {
@@ -104,11 +122,57 @@ struct CalendarShare: Identifiable, Equatable {
 }
 
 extension Color {
+    /// Google's calendar hue, resolved per appearance: Dark lifts the luminance
+    /// so chips stay readable on dark surfaces, Increase Contrast deepens the hue.
     init(calendarHex: String) {
-        let value = calendarHex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
-        guard value.count == 6, let rgb = UInt32(value, radix: 16) else { self = .accentColor; return }
-        self.init(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255,
-                  blue: Double(rgb & 255) / 255)
+        guard let components = CalendarColor.components(hex: calendarHex) else { self = .accentColor; return }
+        self.init(nsColor: NSColor(name: nil) { appearance in CalendarColor.resolve(components, for: appearance) })
+    }
+}
+
+enum CalendarColor {
+    struct Components: Equatable {
+        var red: CGFloat
+        var green: CGFloat
+        var blue: CGFloat
+    }
+
+    /// How much Dark lifts a calendar hue's brightness.
+    private static let darkLift: CGFloat = 1.25
+    /// The brightness floor Dark starts from, so near-black hues still read.
+    private static let darkFloor: CGFloat = 0.55
+    /// How much Increase Contrast deepens the saturation.
+    private static let contrastSaturation: CGFloat = 1.2
+
+    static func components(hex: String) -> Components? {
+        let value = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard value.count == 6, let rgb = UInt32(value, radix: 16) else { return nil }
+        return Components(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255,
+                          blue: CGFloat(rgb & 255) / 255)
+    }
+
+    static func resolve(_ components: Components, for appearance: NSAppearance) -> NSColor {
+        let match = appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua,
+                                               .accessibilityHighContrastDarkAqua])
+        let isDark = match == .darkAqua || match == .accessibilityHighContrastDarkAqua
+        let isContrast = match == .accessibilityHighContrastAqua || match == .accessibilityHighContrastDarkAqua
+        return adjusted(components, dark: isDark, contrast: isContrast)
+    }
+
+    static func adjusted(_ components: Components, dark: Bool, contrast: Bool) -> NSColor {
+        let base = NSColor(srgbRed: components.red, green: components.green, blue: components.blue, alpha: 1)
+        guard dark || contrast else { return base }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        base.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        if dark { brightness = min(1, max(brightness, darkFloor) * darkLift) }
+        if contrast { saturation = min(1, saturation * contrastSaturation) }
+        return NSColor(colorSpace: .sRGB, hue: hue, saturation: saturation, brightness: brightness, alpha: 1)
+    }
+
+    /// The tint behind an event's text. Increase Contrast strengthens it so the
+    /// calendar hue stays distinguishable from the surface.
+    static func tint(_ base: Double, contrast: ColorSchemeContrast) -> Double {
+        contrast == .increased ? min(1, base * 2) : base
     }
 }
 

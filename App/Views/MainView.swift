@@ -195,6 +195,8 @@ struct MainView: View {
             // Calendar has no mail sidebar, so its toolbar offers the way back.
             WorkspaceSectionToolbar(section: section, onSelect: show)
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
+            CalendarToolbar(model: app.calendar)
+                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
                     .help("New Message")
