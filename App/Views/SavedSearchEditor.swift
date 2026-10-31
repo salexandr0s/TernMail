@@ -53,9 +53,11 @@ struct SavedSearchEditor: View {
         .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             name = existing?.name ?? ""
-            query = existing?.query ?? mailbox.search.text
+            // A new search keeps the results bar's mailbox and account scope.
+            query = existing?.query ?? mailbox.search.queryText
             if case .accounts(let ids)? = existing?.scope, ids.count == 1 { selectedAccount = ids[0] }
             else if case .accounts(let ids)? = existing?.scope, ids.count > 1 { selectedAccount = "__subset" }
+            else if existing == nil, let id = mailbox.search.accountID { selectedAccount = id }
             isNameFocused = true
         }
     }
