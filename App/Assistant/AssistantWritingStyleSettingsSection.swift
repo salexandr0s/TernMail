@@ -41,7 +41,7 @@ struct AssistantWritingStyleSettingsSection: View {
                     .padding(Tokens.Space.s3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .settingsSurface()
+            .ternSurface(radius: Tokens.Radius.md, style: .grouped)
         }
     }
 
