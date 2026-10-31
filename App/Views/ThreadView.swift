@@ -420,7 +420,7 @@ struct ThreadView: View {
                 .padding(.horizontal, Tokens.Space.s2)
                 .padding(.vertical, Tokens.Space.s1)
                 .background(.bar, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline))
+                .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
                 .padding(Tokens.Space.s2)
                 .allowsHitTesting(false)
                 .accessibilityLabel("Link destination: \(url)")
@@ -555,7 +555,7 @@ private struct LabelChip: View {
         .padding(.leading, Tokens.Space.s2)
         .padding(.trailing, Tokens.Space.s0_5)
         .background(Tokens.Surface.primary, in: Capsule())
-        .overlay(Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline))
+        .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
         .contextMenu {
             Button(removeHelp, action: onRemove)
             Button(showTitle, action: onShow)

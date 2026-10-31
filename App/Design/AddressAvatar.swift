@@ -1,15 +1,8 @@
 import MailStore
 import SwiftUI
 
-private struct AddressAvatarContextKey: EnvironmentKey {
-    static let defaultValue = AddressAvatarContext.empty
-}
-
 extension EnvironmentValues {
-    var addressAvatarContext: AddressAvatarContext {
-        get { self[AddressAvatarContextKey.self] }
-        set { self[AddressAvatarContextKey.self] = newValue }
-    }
+    @Entry var addressAvatarContext = AddressAvatarContext.empty
 }
 
 /// Scene roots supply photo access without making standalone avatars depend on AppModel.

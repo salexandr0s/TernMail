@@ -32,9 +32,9 @@ protocol RichTextEditing: AnyObject {
     func insertImage(_ reference: InlineImageReference, data: Data)
 }
 
-/// The message body editor: an `NSTextView`, since SwiftUI's rich text
-/// editing needs macOS 26. It edits a `ComposeDocument` and keeps only the
-/// formatting the document can hold.
+/// The message body editor: an `NSTextView`, because `TextEditor` has no list
+/// editing, inline images or hooks for paste, drops and typed text. It edits a
+/// `ComposeDocument` and keeps only the formatting the document can hold.
 struct RichTextEditor: NSViewRepresentable {
     @Binding var document: ComposeDocument
     @Binding var format: TextFormat
