@@ -49,10 +49,29 @@ import Testing
         // Below the three column minimums the sidebar steps aside, and it comes back with the room.
         window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
         try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: true)
+        try expectLeadingEdgeVisible(in: controller.view, label: "\(Int(Tokens.Layout.windowMinWidth)) points")
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: false)
         try await settleMail(in: controller.view, window: window)
         try await expectMailVisible(in: controller.view, window: window)
+        // Beside the assistant the list and reader can need more than the mail area.
+        // The split then runs under the assistant or off the trailing edge, never off
+        // the leading edge. Narrower windows can move the assistant button into the
+        // toolbar overflow, so it is clicked at 1,280 points.
+        try await toggleAssistant(in: window)
+        try await settle()
+        #expect(try mailSplit(in: controller.view).frame.width <= 1_280 - Tokens.Assistant.sidebarMinWidth)
+        for width in [CGFloat(960), Tokens.Layout.windowMinWidth] {
+            window.setContentSize(NSSize(width: width, height: 760))
+            try await settle()
+            try await settle()
+            try expectLeadingEdgeVisible(in: controller.view, label: "\(Int(width)) points with the assistant")
+        }
+        window.setContentSize(NSSize(width: 1_280, height: 760))
+        try await settle()
+        try await toggleAssistant(in: window)
+        try await settle()
+        #expect(try mailSplit(in: controller.view).frame.width > 1_280 - Tokens.Assistant.sidebarMinWidth)
         app.destination = .calendar
         try await settle()
         app.destination = .mail
@@ -146,6 +165,47 @@ import Testing
             }
             if filled, inset { return }
         } while ContinuousClock.now < deadline
+    }
+
+    private func mailSplit(in rootView: NSView) throws -> NSSplitView {
+        let probe = try #require(descendants(in: rootView).first { $0 is MailColumnProbe.ProbeView })
+        return try #require(EnclosingSplitDivider(of: probe)?.split)
+    }
+
+    private func expectLeadingEdgeVisible(in rootView: NSView, label: String) throws {
+        let split = try mailSplit(in: rootView)
+        #expect(split.convert(split.bounds, to: nil).minX >= -1, "The mail split starts off screen at \(label)")
+        let panes = split.arrangedSubviews.filter { !$0.isHidden && !split.isSubviewCollapsed($0) }
+        for table in panes.flatMap(tables(in:)) where table.numberOfRows > 0 {
+            #expect(table.convert(table.rect(ofRow: 0), to: nil).minX >= -1, "A first row starts off screen at \(label)")
+        }
+    }
+
+    private func toggleAssistant(in window: NSWindow) async throws {
+        let item = try #require(window.toolbar?.items.first { $0.itemIdentifier.rawValue.hasSuffix("workspace.assistant") })
+        // After a resize the toolbar lays its items out a little later.
+        var target: NSPoint?
+        var seen = ""
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while target == nil, ContinuousClock.now < deadline {
+            if let view = item.view, view.window === window {
+                let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+                let hit = window.contentView?.superview?.hitTest(point)
+                if hit?.isDescendant(of: view) == true { target = point }
+                seen = "visible \(item.isVisible) point \(point) hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")"
+            } else {
+                seen = "visible \(item.isVisible) view in window \(item.view?.window === window)"
+            }
+            if target == nil { try await settle() }
+        }
+        let point = try #require(target, "The assistant button can't be clicked: \(seen)")
+        // SwiftUI draws the button itself, so click the middle of its item.
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            window.sendEvent(event)
+        }
     }
 
     private func descendants(in view: NSView) -> [NSView] {
