@@ -89,11 +89,11 @@ struct AttachmentLibraryView: View {
 
     @ViewBuilder private var emptyState: some View {
         if model.isLoading {
-            TernEmptyState(title: "Finding your files", systemImage: "doc.text.magnifyingglass",
+            TernEmptyState(title: "Finding Your Files", systemImage: "doc.text.magnifyingglass",
                 message: "Loading attachments from your mail library.")
         } else if hasFilters {
             VStack(spacing: 0) {
-                TernEmptyState(title: "No matching attachments", systemImage: "doc.text.magnifyingglass",
+                TernEmptyState(title: "No Matching Attachments", systemImage: "doc.text.magnifyingglass",
                     message: model.category == nil
                         ? "Try a different filename, sender or filter."
                         : "Try another category or clear your filters. Categories appear as attachments are indexed and read. You can correct a category from an attachment's menu.",
@@ -103,7 +103,7 @@ struct AttachmentLibraryView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            TernEmptyState(title: "Your files, together", systemImage: "paperclip",
+            TernEmptyState(title: "No Attachments Yet", systemImage: "paperclip",
                 message: "Attachments from your email will appear here, including archived mail. Inline images and email logos are left out.")
         }
     }

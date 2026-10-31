@@ -76,7 +76,7 @@ struct ComposeView: View {
             if model.phase == .loading {
                 if let error = model.storeError {
                     VStack(spacing: Tokens.Space.s4) {
-                        TernEmptyState(title: "Couldn't open this draft", systemImage: "exclamationmark.triangle",
+                        TernEmptyState(title: "Couldn't Open This Draft", systemImage: "exclamationmark.triangle",
                                        message: error, fillsSpace: false)
                         Button("Close") { dismiss() }
                             .keyboardShortcut(.cancelAction)
@@ -592,7 +592,7 @@ private struct Banner: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
             Image(systemName: systemImage)
-                .foregroundStyle(isError ? Color(nsColor: .systemRed) : Color(nsColor: .systemOrange))
+                .foregroundStyle(isError ? Tokens.Status.error : Tokens.Status.warning)
                 .accessibilityHidden(true)
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)

@@ -429,12 +429,12 @@ private struct DetailView: View {
         let ids = mailbox.selectedThreadIDs
         if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
             TernEmptyState(
-                title: "Outgoing messages",
+                title: "Outgoing Messages",
                 systemImage: "tray.and.arrow.up",
                 message: "Messages wait here until Gmail receives them. Double-click to open."
             )
         } else if !mailbox.listPreferences.conversations, mailbox.selectedMessageRows.count > 1 {
-            TernEmptyState(title: "\(mailbox.selectedMessageRows.count) messages selected", systemImage: "square.stack",
+            TernEmptyState(title: "\(mailbox.selectedMessageRows.count) Messages Selected", systemImage: "square.stack",
                 message: "Use the toolbar to organize your selection.")
         } else if ids.count == 1, let key = ids.first {
             let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
@@ -442,13 +442,13 @@ private struct DetailView: View {
                 .id(ReaderIdentity(key: key, messageID: messageID))
         } else if ids.count > 1 {
             TernEmptyState(
-                title: "\(ids.count) conversations selected",
+                title: "\(ids.count) Conversations Selected",
                 systemImage: "square.stack",
                 message: "Use the toolbar to organize your selection."
             )
         } else {
             TernEmptyState(
-                title: "Select a conversation",
+                title: "No Conversation Selected",
                 systemImage: "envelope.open",
                 message: "Start a new message with ⌘N."
             )

@@ -219,7 +219,7 @@ struct CalendarSearchResults: View {
     let duplicate: (CalendarDisplayEvent) -> Void
     var body: some View {
         if events.isEmpty {
-            TernEmptyState(title: "No matching events", systemImage: "magnifyingglass", message: "Try another title or location, or choose a different date window.")
+            TernEmptyState(title: "No Matching Events", systemImage: "magnifyingglass", message: "Try another title or location, or choose a different date window.")
         } else {
             List(events, selection: $selectedID) { event in
                 HStack(spacing: Tokens.Space.s3) {

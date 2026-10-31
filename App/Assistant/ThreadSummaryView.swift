@@ -102,16 +102,16 @@ struct ThreadSummaryView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(isExpanded ? "Collapse AI summary" : "Show summary details")
                 Menu {
-                    Button("Refresh summary", systemImage: "arrow.clockwise") { attempt += 1 }
-                    Button("Assistant settings", systemImage: "gearshape") { showsSettings = true }
+                    Button("Refresh Summary", systemImage: "arrow.clockwise") { attempt += 1 }
+                    Button("Assistant Settings…", systemImage: "gearshape") { showsSettings = true }
                 } label: {
-                    Label("Summary options", systemImage: "ellipsis")
+                    Label("Summary Options", systemImage: "ellipsis")
                         .labelStyle(.iconOnly).frame(width: Tokens.Space.s4, height: Tokens.Space.s4)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .accessibilityLabel("Summary options")
+                .accessibilityLabel("Summary Options")
                 .help("Summary options")
             }
             Text(report.summary.summary)

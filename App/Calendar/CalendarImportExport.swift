@@ -208,7 +208,7 @@ struct CalendarImportReview: View {
             }.listStyle(.inset)
                 .overlay {
                     if events.isEmpty {
-                        TernEmptyState(title: "No events to import", systemImage: "calendar", message: "This file contains no events.")
+                        TernEmptyState(title: "No Events to Import", systemImage: "calendar", message: "This file contains no events.")
                     }
                 }
             Divider()

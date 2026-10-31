@@ -10,7 +10,7 @@ struct CalendarActivityView: View {
             CalendarSheetHeading(title: "Calendar Activity", subtitle: "Review proposals and follow saved changes.", systemImage: "clock.arrow.circlepath")
             Divider()
             if model.operations.isEmpty {
-                TernEmptyState(title: "No calendar changes", systemImage: "checkmark.circle", message: "Proposals and saved changes appear here.")
+                TernEmptyState(title: "No Calendar Changes", systemImage: "checkmark.circle", message: "Proposals and saved changes appear here.")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(model.operations.reversed()) { operation in

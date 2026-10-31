@@ -193,7 +193,7 @@ struct CalendarView: View {
             emptyCalendars
         } else if !model.calendars.isEmpty, !model.calendars.contains(where: \.isVisible) {
             VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "No calendars selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
+                TernEmptyState(title: "No Calendars Selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
                 Button("Show All Calendars") {
                     for calendar in model.calendars { model.setVisible(id: calendar.id, visible: true) }
                 }.buttonStyle(.bordered)

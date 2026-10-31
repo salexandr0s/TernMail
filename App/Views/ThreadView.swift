@@ -231,7 +231,7 @@ struct ThreadView: View {
             } else if loadFailed {
                 VStack(spacing: Tokens.Space.s4) {
                     TernEmptyState(
-                        title: "Couldn't open this conversation",
+                        title: "Couldn't Open This Conversation",
                         systemImage: "exclamationmark.bubble",
                         message: "Try again, or select another conversation.",
                         fillsSpace: false
@@ -242,7 +242,7 @@ struct ThreadView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if hasLoaded, readingDetail == nil {
                 TernEmptyState(
-                    title: "Conversation unavailable",
+                    title: "Conversation Unavailable",
                     systemImage: "envelope.badge",
                     message: "No longer available in this mailbox. Select another conversation."
                 )
