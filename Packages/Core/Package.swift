@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "SyncEngine", targets: ["SyncEngine"]),
         .library(name: "TernAI", targets: ["TernAI"]),
         .library(name: "IMAPIdle", targets: ["IMAPIdle"]),
+        .library(name: "Diagnostics", targets: ["Diagnostics"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.11.1"),
@@ -18,12 +19,14 @@ let package = Package(
     ],
     targets: [
         .target(name: "GmailAPI"),
+        .target(name: "Diagnostics"),
         .target(name: "TernAI"),
         .target(name: "IMAPIdle", dependencies: ["GmailAPI"]),
         .target(name: "MailStore", dependencies: [.product(name: "GRDB", package: "GRDB.swift"), "GmailAPI", "MessageContent"]),
         .target(name: "MessageContent", dependencies: ["GmailAPI", "SwiftSoup"]),
         .target(name: "SyncEngine", dependencies: ["GmailAPI", "MailStore", "MessageContent"]),
         .testTarget(name: "GmailAPITests", dependencies: ["GmailAPI"]),
+        .testTarget(name: "DiagnosticsTests", dependencies: ["Diagnostics"]),
         .testTarget(name: "TernAITests", dependencies: ["TernAI"]),
         .testTarget(name: "IMAPIdleTests", dependencies: ["IMAPIdle"]),
         .testTarget(name: "MailStoreTests", dependencies: ["MailStore", "GmailAPI", "MessageContent"]),

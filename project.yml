@@ -79,6 +79,8 @@ targets:
         product: TernAI
       - package: Core
         product: IMAPIdle
+      - package: Core
+        product: Diagnostics
       - package: AppAuth
         product: AppAuth
   TernTests:
