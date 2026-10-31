@@ -30,15 +30,14 @@ extension MailboxModel {
         return accounts.count > 1 ? accounts : []
     }
 
-    /// The query and how many results the list shows: "12 results for “trail”".
-    var searchResultsTitle: String {
-        let query = "“\(search.text.trimmingCharacters(in: .whitespacesAndNewlines))”"
+    /// How many results the list shows: "12 results". The query stays out of
+    /// the window's title and subtitle, which the Window menu and Mission
+    /// Control show and saved window state can keep. The field shows it.
+    var searchResultsSubtitle: String {
         let count = listItems.count
-        guard count > 0 else {
-            return search.gmail?.state == .loading ? "Searching for \(query)…" : "No results for \(query)"
-        }
-        if search.hasMoreResults { return "\(count.formatted())+ results for \(query)" }
-        return count == 1 ? "1 result for \(query)" : "\(count.formatted()) results for \(query)"
+        guard count > 0 else { return search.gmail?.state == .loading ? "Searching…" : "No results" }
+        if search.hasMoreResults { return "\(count.formatted())+ results" }
+        return count == 1 ? "1 result" : "\(count.formatted()) results"
     }
 
     /// The sidebar's selection. Empty during a search, except for a saved
