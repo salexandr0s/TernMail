@@ -104,6 +104,7 @@
 		48CDEED00128D82B78C617CF /* ScrollDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50D8640A75BF90F28C982DBD /* ScrollDirection.swift */; };
 		49809F22EF1A2AF4455D23C5 /* CalendarModel+Proposals.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC896DA885599F5AEE09C5F6 /* CalendarModel+Proposals.swift */; };
 		4A6C6558972C16860BA917DF /* CalendarInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F540E94507B02B1906D059BD /* CalendarInteraction.swift */; };
+		4AC06E77EB4112A3982245A5 /* ProfilePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343B734DBABE9CC61089A281 /* ProfilePicker.swift */; };
 		4B20118A95316BC74E36653B /* RecipientField.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */; };
 		4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */; };
 		4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2664304C0271DB6260097A /* MessageWebViewTests.swift */; };
@@ -377,6 +378,7 @@
 		3160DB72492003E42099D739 /* Tern.sdef */ = {isa = PBXFileReference; path = Tern.sdef; sourceTree = "<group>"; };
 		3252143356B0A34447719E42 /* CalendarNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarNotifications.swift; sourceTree = "<group>"; };
 		32814C9B58258A5205DAF811 /* CalendarGridViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarGridViews.swift; sourceTree = "<group>"; };
+		343B734DBABE9CC61089A281 /* ProfilePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePicker.swift; sourceTree = "<group>"; };
 		34CAD881F5F6678BF14AC6CB /* AttachmentStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStrip.swift; sourceTree = "<group>"; };
 		385FCE01E0C1134EB8B624BF /* CalendarImportExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarImportExport.swift; sourceTree = "<group>"; };
 		3880AFFD0559D125D19C4525 /* ThreadSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadSummaryView.swift; sourceTree = "<group>"; };
@@ -969,6 +971,7 @@
 				173B0F77FBAB74E108DD247F /* MailNotificationScheduler.swift */,
 				BA99ABC2C2D0B4B9748D3663 /* NotificationPolicy.swift */,
 				DDEC532495FD2A3C794B4C77 /* NotificationSettingsView.swift */,
+				343B734DBABE9CC61089A281 /* ProfilePicker.swift */,
 				68A8029216538E839A412218 /* ProfileScheduleView.swift */,
 				D9B5D1A48DD56DA0A39726A7 /* ProfilesView.swift */,
 			);
@@ -1475,6 +1478,7 @@
 				90E051D6B61CF4614A336DC3 /* OriginalMessageView.swift in Sources */,
 				58CECF42FB80ADDFC0A9E044 /* OutboxView.swift in Sources */,
 				EE147FCD58CB103F66634BC4 /* PopupComponents.swift in Sources */,
+				4AC06E77EB4112A3982245A5 /* ProfilePicker.swift in Sources */,
 				5840EA4BF86FE556597B4A0D /* ProfileScheduleView.swift in Sources */,
 				C8C1036B7D524C6CBABAF655 /* ProfilesView.swift in Sources */,
 				97158050EEF68C1A3D6265F8 /* PublicSuffix.swift in Sources */,
