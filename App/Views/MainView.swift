@@ -473,8 +473,6 @@ private struct DetailView: View {
     let mailbox: MailboxModel
     @Environment(AppModel.self) private var app
 
-    private struct ReaderIdentity: Hashable { let key: ThreadKey; let messageID: String? }
-
     var body: some View {
         let ids = mailbox.selectedThreadIDs
         if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
@@ -488,8 +486,8 @@ private struct DetailView: View {
                 message: "Use the toolbar to organize your selection.")
         } else if ids.count == 1, let key = ids.first {
             let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
-            ThreadView(key: key, mailbox: mailbox, selectedMessageID: messageID, isReaderActive: app.destination == .mail)
-                .id(ReaderIdentity(key: key, messageID: messageID))
+            ReaderSessionContainer(key: key, messageID: messageID, mailbox: mailbox, isActive: app.destination == .mail)
+                .id(ReaderCacheLifecycle.shared.revision)
         } else if ids.count > 1 {
             TernEmptyState(
                 title: "\(ids.count) Conversations Selected",
