@@ -71,10 +71,7 @@ struct AssistantMarkdownView: View {
                 }
             }
             .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                    .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline).allowsHitTesting(false)
-            }
+            .ternOutline(radius: Tokens.Radius.md)
         case .heading:
             Text(block.text).font(headingFont(block.headingLevel))
                 .accessibilityAddTraits(.isHeader)
@@ -104,10 +101,7 @@ struct AssistantMarkdownView: View {
             .padding(Tokens.Space.s3)
         }
         .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .strokeBorder(outlineColor, lineWidth: Tokens.Border.hairline).allowsHitTesting(false)
-        }
+        .ternOutline(radius: Tokens.Radius.md)
     }
 
     private func headingFont(_ level: Int) -> Font {
@@ -117,8 +111,6 @@ struct AssistantMarkdownView: View {
         default: .headline
         }
     }
-
-    private var outlineColor: Color { contrast == .increased ? .primary : Tokens.Surface.border }
 
     private func spacing(before index: Int, in blocks: [AssistantMarkdown.Block]) -> CGFloat {
         guard index > 0 else { return 0 }

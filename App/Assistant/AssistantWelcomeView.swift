@@ -12,7 +12,6 @@ struct AssistantWelcomeView: View {
     let setup: AssistantSetupPrompt?
     let onSettings: () -> Void
     let onSuggestion: (AssistantSuggestion) -> Void
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s6) {
@@ -76,12 +75,7 @@ struct AssistantWelcomeView: View {
         .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                .strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                              lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
+        .ternOutline(radius: Tokens.Radius.lg)
     }
 
     private func detail(for suggestion: AssistantSuggestion) -> String {
@@ -100,7 +94,6 @@ private struct AssistantSuggestionRow: View {
     let systemImage: String
     let requirement: String?
     let action: () -> Void
-    @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
 
@@ -136,12 +129,7 @@ private struct AssistantSuggestionRow: View {
         }
         .buttonStyle(.plain).disabled(requirement != nil)
         .focused($isFocused)
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                .strokeBorder(isFocused ? Color.accentColor : (contrast == .increased ? .primary : Tokens.Surface.border),
-                              lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
-                .allowsHitTesting(false)
-        }
+        .ternOutline(radius: Tokens.Radius.lg, focus: isFocused ? .accentColor : nil)
         .onHover { isHovered = $0 }
         .help(requirement ?? "Ask the assistant now")
         .accessibilityHint(requirement ?? "Ask the assistant now")
