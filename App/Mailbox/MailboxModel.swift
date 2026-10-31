@@ -90,10 +90,12 @@ final class MailboxModel {
     var selectedThreadIDs: Set<ThreadKey> = []
     var selectedMessageRows: Set<MailListRowID> = []
     var conversationWindowRequest: MailLink?
-    var listEntries: [MessageListEntry] = []
+    var listEntries: [MessageListEntry] = [] { didSet { listDataRevision &+= 1 } }
+    private(set) var listDataRevision: UInt64 = 0
+    private(set) var listContextRevision: UInt64 = 0
     @ObservationIgnored let listProjection = MessageListProjection()
-    var listOwnAddresses: [String: Set<String>] = [:]
-    var accountPresentation: [String: AccountMailPreferences] = [:]
+    var listOwnAddresses: [String: Set<String>] = [:] { didSet { listContextRevision &+= 1 } }
+    var accountPresentation: [String: AccountMailPreferences] = [:] { didSet { listContextRevision &+= 1 } }
     var visibleAccountIDs: Set<String>?
     let listPreferences: MessageListPreferences
     @ObservationIgnored lazy var triage = MailTriageModel(mailbox: self)
@@ -103,7 +105,7 @@ final class MailboxModel {
     /// The newest send still inside its undo delay, for Edit > Undo Send.
     private(set) var undoableSendID: String?
 
-    private(set) var threads: [ThreadRecord] = []
+    private(set) var threads: [ThreadRecord] = [] { didSet { listDataRevision &+= 1 } }
     /// Gmail's older pages of the selected mailbox, after Load Older Conversations.
     private(set) var older: GmailPager?
 
@@ -930,6 +932,7 @@ final class MailboxModel {
 
     /// Leaves a label that's gone for its account's Inbox.
     private func labelsChanged() {
+        listContextRevision &+= 1
         guard !isStopped, case .account(let accountID, let id)? = selectedMailbox, id != Self.outboxID,
               id != AttachmentLibraryModel.mailboxID,
               !id.hasPrefix(MailNavigationModel.searchPrefix),
@@ -972,6 +975,7 @@ final class MailboxModel {
 
     /// Keeps search and a combined mailbox's list in step with the accounts.
     private func accountsChanged() {
+        listContextRevision &+= 1
         updateSearchSources()
         if case .combined? = selectedMailbox { observeThreads() }
         if case .scoped? = selectedMailbox { observeThreads() }

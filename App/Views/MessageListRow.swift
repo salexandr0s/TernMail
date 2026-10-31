@@ -17,10 +17,7 @@ struct MessageListRow: View {
     private let avatarSize = Tokens.Control.listAvatar
     private var scale: Double { ReadingPreferences.textScale(textScale) }
     private var thread: ThreadRecord { item.thread }
-    private var displayedLabels: [LabelRecord] {
-        let labels = mailbox.account(id: item.id.accountID)?.labels ?? []
-        return item.displayedLabels(from: labels, mailboxID: mailbox.selectedLabelID)
-    }
+    private var displayedLabels: [LabelRecord] { item.visibleLabels }
     /// Text starts past the unread dot and the avatar; the separator starts with it.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s1_5 * 3 + Tokens.Space.s0_5 + avatarSize }
     private var showsStar: Bool { thread.isStarred || isHovered || isSelected }
@@ -32,7 +29,7 @@ struct MessageListRow: View {
 
     /// Row text follows the reader's text size, so dates and counts keep pace with the subject.
     private func scaledFont(_ style: NSFont.TextStyle, weight: Font.Weight = .regular) -> Font {
-        .system(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale, weight: weight)
+        .system(size: MessageListFontMetrics.size(for: style) * scale, weight: weight)
     }
 
     var body: some View {
@@ -62,7 +59,7 @@ struct MessageListRow: View {
     }
 
     @ViewBuilder private var avatar: some View {
-        if let sender = EmailAddress.parseList(item.messages.first?.message.sender ?? thread.participants).first {
+        if let sender = item.sender {
             ContactAvatar(accountID: item.id.accountID, address: sender.address, name: sender.name ?? "",
                           cache: mailbox.cache, accounts: mailbox.accountStore, size: avatarSize)
         } else {
@@ -184,6 +181,20 @@ struct MessageListRow: View {
         if type.hasPrefix("video/") { return "film" }
         if type.hasPrefix("audio/") { return "waveform" }
         return "paperclip"
+    }
+}
+
+/// Native font lookup can invoke AppKit layout/font machinery. Every row uses
+/// the same metrics; the reader's text scale remains a live per-view setting.
+@MainActor
+private enum MessageListFontMetrics {
+    private static var sizes: [NSFont.TextStyle: CGFloat] = [:]
+
+    static func size(for style: NSFont.TextStyle) -> CGFloat {
+        if let value = sizes[style] { return value }
+        let value = NSFont.preferredFont(forTextStyle: style).pointSize
+        sizes[style] = value
+        return value
     }
 }
 

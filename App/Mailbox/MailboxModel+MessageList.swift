@@ -18,14 +18,31 @@ extension MailboxModel {
     }
 
     var listItems: [MessageListItem] {
+        let key = listProjectionKey
+        if let rows = listProjection.cached(for: key) { return rows }
+        // Direct preference edits and model-only callers stay synchronous.
+        // Database snapshots are normally prepared off-main before publication.
+        let rows = MessageListProjection.prepare(listProjectionInput(threads: listedThreads, entries: listEntries))
+        listProjection.store(rows, for: key)
+        return rows
+    }
+
+    var listProjectionKey: MessageListProjection.Key {
+        .init(dataRevision: listDataRevision, contextRevision: listContextRevision,
+              conversations: listPreferences.conversations, filters: listPreferences.filters,
+              mailboxID: search.isActive ? nil : selectedLabelID)
+    }
+
+    func listProjectionInput(threads: [ThreadRecord], entries: [MessageListEntry]) -> MessageListProjection.Input {
         let categories = accountPresentation.mapValues { preferences in
             Set(preferences.inboxCategories.map { "CATEGORY_" + $0.rawValue.uppercased() })
         }
         var addresses = listOwnAddresses
         for account in accounts { addresses[account.account.id, default: []].insert(account.account.email.lowercased()) }
-        return listProjection.items(for: .init(threads: listedThreads, entries: listEntries,
+        return .init(threads: threads, entries: entries,
             conversations: listPreferences.conversations, filters: listPreferences.filters,
-            mailboxID: search.isActive ? nil : selectedLabelID, categories: categories, addresses: addresses))
+            mailboxID: search.isActive ? nil : selectedLabelID, categories: categories, addresses: addresses,
+            availableLabels: Dictionary(accounts.map { ($0.account.id, $0.labels) }, uniquingKeysWith: { first, _ in first }))
     }
 
     /// The list's selection. Setting it keeps only rows the list shows.
