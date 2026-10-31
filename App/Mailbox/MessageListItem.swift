@@ -47,10 +47,10 @@ final class MessageListProjection {
         preparationCount += 1
     }
 
-    static func prepare(_ input: Input) -> [MessageListItem] {
+    static func prepare(_ input: Input, reusing previous: [MessageListItem] = []) -> [MessageListItem] {
         MessageListItem.project(threads: input.threads, entries: input.entries,
             conversations: input.conversations, filters: input.filters, mailboxID: input.mailboxID,
-            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels)
+            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels, reusing: previous)
     }
 }
 
@@ -95,7 +95,14 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
 
     static func project(threads: [ThreadRecord], entries: [MessageListEntry], conversations: Bool,
                         filters: Set<MailQuickFilter>, mailboxID: String?, categories: [String: Set<String>],
-                        addresses: [String: Set<String>], availableLabels: [String: [LabelRecord]] = [:]) -> [MessageListItem] {
+                        addresses: [String: Set<String>], availableLabels: [String: [LabelRecord]] = [:],
+                        reusing previous: [MessageListItem] = []) -> [MessageListItem] {
+        let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func row(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry]) -> MessageListItem {
+            if let previous = previousByID[id], previous.thread == thread, previous.messages == messages { return previous }
+            return MessageListItem(id: id, thread: thread, messages: messages,
+                                   availableLabels: availableLabels[id.accountID] ?? [], mailboxID: mailboxID)
+        }
         let threadMap = Dictionary(threads.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         let filtered = entries.filter { entry in
             guard threadMap[ThreadKey(accountID: entry.message.accountID, threadID: entry.message.threadID)] != nil else { return false }
@@ -121,9 +128,8 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
         }
         if !conversations {
             return filtered.map { entry in
-                MessageListItem(id: .init(accountID: entry.message.accountID, threadID: entry.message.threadID, messageID: entry.message.id),
-                                thread: entry.rowThread, messages: [entry],
-                                availableLabels: availableLabels[entry.message.accountID] ?? [], mailboxID: mailboxID)
+                row(id: .init(accountID: entry.message.accountID, threadID: entry.message.threadID, messageID: entry.message.id),
+                    thread: entry.rowThread, messages: [entry])
             }
         }
         let groups = Dictionary(grouping: filtered) { ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID) }
@@ -133,8 +139,7 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
             displayed.isUnread = messages.contains { $0.labels.contains(SystemLabel.unread) }
             displayed.isStarred = messages.contains { $0.labels.contains(SystemLabel.starred) }
             displayed.lastDate = messages.map(\.message.date).max() ?? thread.lastDate
-            return MessageListItem(id: .init(accountID: thread.accountID, threadID: thread.id), thread: displayed, messages: messages,
-                                   availableLabels: availableLabels[thread.accountID] ?? [], mailboxID: mailboxID)
+            return row(id: .init(accountID: thread.accountID, threadID: thread.id), thread: displayed, messages: messages)
         }
     }
 }

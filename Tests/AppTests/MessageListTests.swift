@@ -246,6 +246,77 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func selectionReusesPreparedRowsWithoutComparingOrRebuildingThePage() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let rows = mailbox.listItems
+        let count = mailbox.listProjection.preparationCount
+        for _ in 0..<100 {
+            mailbox.selectListRows(Set(rows.map(\.id)))
+            _ = mailbox.listItems
+            mailbox.selectListRows([])
+            _ = mailbox.listItems
+        }
+        #expect(mailbox.listProjection.preparationCount == count)
+        #expect(mailbox.listItems.first?.sender?.address == "sender@example.com")
+    }
+
+    @Test func databaseChangesPublishThreadsAndMessagesTogetherWithoutAListView() async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        // No SwiftUI view or second message observation is mounted in this test.
+        try await cache.write { tx in
+            let removed = try tx.deleteMessages(ids: ["m1"], accountID: "a")
+            try tx.rebuildThreads(removed, accountID: "a")
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while mailbox.threads.first?.messageCount != 1, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(mailbox.threads.first?.messageCount == 1)
+        #expect(mailbox.listEntries.map(\.message.id) == ["m2"])
+        #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m2"])
+        #expect(mailbox.isListPresentationReady)
+    }
+
+    @Test func returningToAnObservedMailboxReusesItsCompletePage() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let inbox = mailbox.listItems
+        mailbox.selectedMailbox = .account("a", SystemLabel.starred)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !mailbox.isListPresentationReady, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m1"])
+        mailbox.selectedMailbox = .account("a", SystemLabel.inbox)
+        // No yield: returning publishes the retained transaction and rows now.
+        #expect(mailbox.isListPresentationReady)
+        #expect(mailbox.listItems == inbox)
+    }
+
+    @Test func localActionsInvalidateRetainedPagesBeforeReturningToThem() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.selectedMailbox = .account("a", SystemLabel.starred)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !mailbox.isListPresentationReady, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        mailbox.selectedMailbox = .account("a", SystemLabel.inbox)
+        let key = try #require(mailbox.threads.first?.key)
+        await mailbox.perform(.unstar, on: [key])?.value
+        mailbox.selectedMailbox = .account("a", SystemLabel.starred)
+        // The old starred row must never be replayed while a new read is pending.
+        #expect(mailbox.listItems.isEmpty)
+        let finish = ContinuousClock.now.advanced(by: .seconds(2))
+        while !mailbox.isListPresentationReady, ContinuousClock.now < finish {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(mailbox.isListPresentationReady)
+        #expect(mailbox.listItems.isEmpty)
+    }
+
     private func fixture(withStore: Bool = false) async throws -> (MailboxModel, MailCache) {
         let cache = try MailCache.inMemory()
         try await cache.write { tx in
@@ -270,8 +341,8 @@ import Testing
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while mailbox.threads.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         try #require(!mailbox.threads.isEmpty)
-        var iterator = cache.messageListEntries(threadsByAccount: ["a": ["t"]]).makeAsyncIterator()
-        mailbox.listEntries = try #require(try await iterator.next())
+        #expect(mailbox.isListPresentationReady)
+        #expect(mailbox.listEntries.count == 2)
         return (mailbox, cache)
     }
 }
