@@ -51,7 +51,6 @@ import Testing
         window.setContentSize(NSSize(width: 720, height: 760))
         try await settleMail(in: controller.view, window: window)
         try expectLeadingEdgeVisible(in: controller.view, label: "720 points")
-        // Below 1,120 points the assistant button moves into the toolbar overflow.
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await settleMail(in: controller.view, window: window)
         try await toggleAssistant(in: window)
