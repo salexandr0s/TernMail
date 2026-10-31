@@ -229,16 +229,23 @@ struct MailCommands: Commands {
                 .keyboardShortcut(ShortcutCatalog.moveTo.shortcut)
                 .disabled(!hasSelection)
             Divider()
-            Menu {
-                SnoozeMenuItems(
-                    onSnooze: { focusedMailbox?.snooze(until: $0) },
-                    onChooseDate: { focusedMailbox?.showSnoozeDate() }
-                )
-            } label: {
-                Label("Snooze", systemImage: "clock")
+            // A disabled submenu still opens from the menu bar, so with nothing
+            // to act on, Snooze and Share are plain disabled items.
+            if canSnooze {
+                Menu {
+                    SnoozeMenuItems(
+                        onSnooze: { focusedMailbox?.snooze(until: $0) },
+                        onChooseDate: { focusedMailbox?.showSnoozeDate() }
+                    )
+                } label: {
+                    Label("Snooze", systemImage: "clock")
+                        .labelStyle(.titleAndIcon)
+                }
+            } else {
+                Button("Snooze", systemImage: "clock") {}
                     .labelStyle(.titleAndIcon)
+                    .disabled(true)
             }
-            .disabled(!canSnooze)
             // A shortcut can't open the submenu, so it opens Choose Date & Time.
             Button("Snooze…", systemImage: "clock") { focusedMailbox?.showSnoozeDate() }
                 .labelStyle(.titleAndIcon)
@@ -256,13 +263,13 @@ struct MailCommands: Commands {
             Button("Open in Gmail", systemImage: "safari") { if let gmailURL { NSWorkspace.shared.open(gmailURL) } }
                 .labelStyle(.titleAndIcon)
                 .disabled(gmailURL == nil)
+            // Share opens the share picker, so its title ends in an ellipsis.
             if let shareFile {
                 ShareLink(item: shareFile, preview: shareFile.preview) {
-                    Label("Share", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon)
+                    Label("Share…", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon)
                 }
             } else {
-                // A menu bar submenu stays enabled even when disabled, so the placeholder is a button.
-                Button("Share", systemImage: "square.and.arrow.up") {}
+                Button("Share…", systemImage: "square.and.arrow.up") {}
                     .labelStyle(.titleAndIcon)
                     .disabled(true)
             }
