@@ -261,8 +261,6 @@ struct MainView: View {
             .mailToolbarVisible(sidebarToggle != nil)
             WorkspaceSectionToolbar(section: section, isCompact: !isWideToolbar, onSelect: show)
                 .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
-            CalendarToolbar(model: app.calendar)
-                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
                     .help("New Message (\(ShortcutCatalog.newMessage.label))")
@@ -273,8 +271,12 @@ struct MainView: View {
             }
             .mailToolbarVisible(showsProfilePicker)
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
-            // After the mail items: toolbar spaces ignore hidden(_:), and this
-            // keeps the mail spaces out of the library's group.
+            // Toolbar spaces ignore hidden(_:), so the mail spaces stay while
+            // Calendar or the library shows. Declaring those items after the
+            // mail items puts the spaces ahead of them, in the toolbar's open
+            // stretch, instead of between their controls and Search.
+            CalendarToolbar(model: app.calendar)
+                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             AttachmentLibraryToolbar(state: libraryToolbar, isCompact: isCompactWindow, isVisible: isActive && showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
@@ -284,9 +286,12 @@ struct MainView: View {
             WorkspaceAssistantToolbar(
                 isAssistantPresented: isActive ? showsAssistant : isCalendarAssistantPresented,
                 onToggleAssistant: { if isActive { toggleAssistant() } else { onCalendarAssistantToggle?() } },
-                isAssistantAvailable: !isActive || mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
+                // Both conditions go in this one value: an inner hidden(false)
+                // would win over a hidden(true) applied around this content.
+                isAssistantAvailable: isActive
+                    ? mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
+                    : onCalendarAssistantToggle != nil
             )
-            .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)

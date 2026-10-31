@@ -83,18 +83,23 @@ final class EmailCalendarModel {
         self.invitationState = invitationState
         self.dismissedIDs.formUnion(dismissedIDs)
         let fingerprint = Self.fingerprint(messages, timeZone: timeZone)
-        guard fingerprint != revision || addressesChanged else {
+        let revisionChanged = fingerprint != revision
+        guard revisionChanged || addressesChanged else {
             refreshInvitationState()
             return
         }
-        generation += 1
+        // Reply addresses only decide which attendee replies show, so a reading
+        // of the same messages, finished or still running, stays in place.
+        if revisionChanged {
+            generation += 1
+            revision = fingerprint
+            interpretationError = nil
+            isInterpreting = false
+            interpretedItems = nil
+        }
         self.messages = messages
         self.timeZone = timeZone
         referenceDate = now
-        revision = fingerprint
-        interpretationError = nil
-        isInterpreting = false
-        interpretedItems = nil
         var next: [EmailCalendarItem] = []
         for message in messages {
             let invitations = message.invitations.flatMap { [$0] + ($0.additionalEvents ?? []) }
@@ -152,6 +157,7 @@ final class EmailCalendarModel {
             }
         }
         items = next.filter(isCurrent)
+        if let interpretation = cachedInterpretation { mergeInterpretation(interpretation) }
         refreshInvitationState()
     }
 
@@ -216,15 +222,19 @@ final class EmailCalendarModel {
                   messages.contains { $0.id == item.messageID && CalendarDetection.unquotedText($0.text).contains(item.evidence) } &&
                   item.relatedMessageIDs.allSatisfy { id in messages.contains { $0.id == id } }
               }) else { return false }
+        mergeInterpretation(interpreted)
+        interpretedRevision = sourceRevision
+        interpretedItems = interpreted
+        return true
+    }
+
+    private func mergeInterpretation(_ interpreted: [EmailCalendarItem]) {
         let structuredMessageIDs = Set(items.filter { $0.invitation != nil }.map(\.messageID))
         let useful = interpreted.filter { !structuredMessageIDs.contains($0.messageID) && isCurrent($0) }
         // The interpretation reads the whole conversation, so it replaces every
         // text detection, including the dates it found not to be events.
         items.removeAll { $0.invitation == nil }
         items.append(contentsOf: useful)
-        interpretedRevision = sourceRevision
-        interpretedItems = interpreted
-        return true
     }
 
     func markAmbiguous(itemID: String) {

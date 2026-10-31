@@ -9,7 +9,6 @@ struct WorkspaceAssistantToolbar: CustomizableToolbarContent {
 
     var body: some CustomizableToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
-            .mailToolbarVisible(isAssistantAvailable)
         ToolbarItem(id: "workspace.assistant", placement: .primaryAction) {
             AssistantLauncher(isPresented: isAssistantPresented, onToggle: onToggleAssistant)
         }

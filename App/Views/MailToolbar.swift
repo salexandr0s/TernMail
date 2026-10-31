@@ -29,7 +29,6 @@ struct MailToolbar: CustomizableToolbarContent {
         }
         .mailToolbarVisible(isVisible)
         ToolbarSpacer(.fixed, placement: .primaryAction)
-            .mailToolbarVisible(isVisible)
         standardTriage
         ToolbarItem(id: "mail.compactActions", placement: .primaryAction) {
             Menu {
@@ -47,14 +46,12 @@ struct MailToolbar: CustomizableToolbarContent {
         }
         .mailToolbarVisible(showsCompact)
         ToolbarSpacer(.fixed, placement: .primaryAction)
-            .mailToolbarVisible(isVisible)
         replies
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-            .mailToolbarVisible(showsStandard)
-        ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
-            .mailToolbarVisible(showsStandard)
     }
 
+    /// More closes this group because compact windows fold the whole group
+    /// into one menu. Both layouts then use the same spaces, which matters
+    /// since `ToolbarSpacer` ignores `hidden(_:)`.
     private var standardTriage: some CustomizableToolbarContent {
         Group {
             ToolbarItem(id: "mail.read", placement: .primaryAction) { readAction }
@@ -65,6 +62,7 @@ struct MailToolbar: CustomizableToolbarContent {
                 editLabelsAction.popover(isPresented: isEditingLabels, arrowEdge: .bottom) { labelPicker }
             }
             ToolbarItem(id: "mail.snooze", placement: .primaryAction) { snoozeMenu }
+            ToolbarItem(id: "mail.more", placement: .primaryAction) { TriageControls(mailbox: mailbox) }
         }
         .mailToolbarVisible(showsStandard)
     }
@@ -171,6 +169,9 @@ struct MailToolbar: CustomizableToolbarContent {
 }
 
 /// Suppresses an item without removing its customization definition.
+/// `ToolbarSpacer` ignores it, so spacers stay in every section. Spacers
+/// can't go in an `if` either: AppKit repeats each insert in the other
+/// toolbars that share the identifier, and a repeated Search item throws.
 extension CustomizableToolbarContent {
     func mailToolbarVisible(_ visible: Bool) -> some CustomizableToolbarContent {
         hidden(!visible)

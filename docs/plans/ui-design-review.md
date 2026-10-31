@@ -14,7 +14,7 @@ Implemented on `feat/ui-design-review` on 2026-10-31. Item 4 did not reproduce i
 | 2. Columns overflow narrow windows | Done, differs | `0b1477e` |
 | 3. Tab skips Subject after the From account switches | Done, differs | `09b8af7` |
 | 4. A message body clipped after the reader narrowed | Not reproduced | |
-| 5. Toolbar items merge into one capsule | Done | `7103144` |
+| 5. Toolbar items merge into one capsule | Done, differs | `7103144`, `4dd0059` |
 | 6. The Assistant button lands in the overflow menu | Done, differs | `1346d8d` |
 | 7. Moving between sections | Done, differs | `1346d8d`, `e84f73e` |
 | 8. Unlabeled toolbar menus | Done, differs | `8d6f9b6` |
@@ -42,6 +42,7 @@ Implemented on `feat/ui-design-review` on 2026-10-31. Item 4 did not reproduce i
 - Item 1: the footer sits in a safe-area bar with a hard scroll edge effect, in place of `.background(.bar)` and a `Divider()`. The edge effect separates it from the rows that scroll under it.
 - Item 2: below the three-column minimum the sidebar hides on its own. It returns once the window fits the sidebar beside the 720-point window minimum (949 points with the default sidebar), because AppKit widens the window when a sidebar opens with less room. The sidebar button clears the automatic state.
 - Item 3: when the sender switches by itself, the cursor goes back to where it was instead of moving to Subject.
+- Item 5: More ends the triage group, [Read, Move, Labels, Snooze, More], instead of standing alone. Narrow windows fold that group into one menu, and toolbar spaces ignore `hidden(_:)`, so the space before a separate More stayed there and doubled the gap before Search.
 - Item 6: the tiers follow the room the toolbar has after the sidebar, or after the window controls while the sidebar is hidden, instead of the window width. Below 1080 points of room the section switcher becomes a pop-up menu and the profile picker drops its name. Below 1020 the mail actions fold into menus. Below 760 an idle search field folds into a button that opens it. With the sidebar shown, search folds in windows narrower than about 988 points, where the review suggested about 900. Search and the assistant stay in the toolbar down to the 720-point minimum.
 - Item 7: the switcher shows segments when the toolbar has room and a pop-up menu when it doesn't. With the sidebar shown, the segments appear from a window about 1308 points wide.
 - Item 8: done here rather than in Phase 5 of `docs/plans/swiftui-improvements.md`. The profile picker shows the profile name only in the widest tier and stays hidden when there are no profiles.
