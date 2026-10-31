@@ -186,7 +186,7 @@ struct ThreadListView: View {
                     accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
                 )
                     .tag(row.id)
-                    .listRowInsets(EdgeInsets(top: 0, leading: Tokens.Space.s1_5, bottom: 0, trailing: Tokens.Space.s1_5))
+                    .listRowInsets(EdgeInsets())
                     .onTapGesture(count: 2) { mailbox.requestConversationWindow(for: row.id) }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row.id)
@@ -217,7 +217,8 @@ struct ThreadListView: View {
                 }
             }
         }
-        .listStyle(.inset)
+        .listStyle(.plain)
+        .contentMargins(.horizontal, 0, for: .scrollContent)
         .contextMenu(forSelectionType: MailListRowID.self) { ids in
             MessageListMenu(mailbox: mailbox, rows: ids)
         }

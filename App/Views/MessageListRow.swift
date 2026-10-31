@@ -12,6 +12,7 @@ struct MessageListRow: View {
     @AppStorage("mailTextScale") private var textScale = 1.0
 
     private var compact: Bool { mailbox.listPreferences.density == .compact }
+    private let avatarSize = Tokens.Space.s5
     private var scale: Double { min(1.5, max(0.85, textScale)) }
     private var thread: ThreadRecord { item.thread }
     private var displayedLabels: [LabelRecord] {
@@ -20,27 +21,28 @@ struct MessageListRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+        HStack(alignment: .top, spacing: Tokens.Space.s1) {
             Circle().fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
-                .frame(width: Tokens.Space.s2).padding(.top, Tokens.Space.s1)
+                .padding(.top, Tokens.Space.s1)
                 .opacity(thread.isUnread ? 1 : 0)
             if let sender = EmailAddress.parseList(item.messages.first?.message.sender ?? thread.participants).first {
                 ContactAvatar(accountID: item.id.accountID, address: sender.address, name: sender.name ?? "",
                               cache: mailbox.cache, accounts: mailbox.accountStore,
-                              size: compact ? Tokens.Space.s6 : Tokens.Control.avatar)
+                              size: avatarSize)
             }
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                     Text(senderText).font(.system(size: NSFont.preferredFont(forTextStyle: .body).pointSize * scale))
                         .fontWeight(thread.isUnread ? .semibold : .regular).lineLimit(1)
-                    if thread.messageCount > 1 { Text("\(thread.messageCount)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
+                    if thread.messageCount > 1 { Text("\(thread.messageCount)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary).fixedSize() }
                     Spacer(minLength: Tokens.Space.s1)
                     if mailbox.listPreferences.showsImportance, item.labels.contains(SystemLabel.important) {
                         Image(systemName: "exclamationmark").foregroundStyle(.orange).accessibilityLabel("Important")
                     }
                     Button { mailbox.toggleListStar([item.id]) } label: {
                         Image(systemName: thread.isStarred ? "star.fill" : "star")
+                            .font(.caption)
                             .foregroundStyle(thread.isStarred ? Color.yellow : Color.secondary)
                     }
                     .buttonStyle(.borderless).help(thread.isStarred ? "Remove Star" : "Star")
@@ -51,6 +53,7 @@ struct MessageListRow: View {
                             .frame(minWidth: Tokens.Space.s5, minHeight: Tokens.Space.s4)
                             .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                             .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(accountColor, lineWidth: Tokens.Border.hairline) }
+                            .fixedSize()
                             .help(mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } ?? item.id.accountID)
                     }
                 }
@@ -87,8 +90,9 @@ struct MessageListRow: View {
                 }
             }
         }
-        .padding(.vertical, compact ? Tokens.Space.s1 : Tokens.Space.s1_5)
-        .alignmentGuide(.listRowSeparatorLeading) { _ in Tokens.Space.s2 + Tokens.Space.s1_5 }
+        .padding(.vertical, Tokens.Space.s0_5)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in Tokens.Space.s1_5 + avatarSize + Tokens.Space.s1 * 2 }
+        .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
         .accessibilityElement(children: .contain)
     }
 
