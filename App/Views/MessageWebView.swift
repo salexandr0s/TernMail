@@ -1,4 +1,5 @@
 import AppKit
+import Diagnostics
 import MessageContent
 import SwiftUI
 import WebKit
@@ -14,6 +15,9 @@ struct MessageWebView: NSViewRepresentable {
     var resources = InlineResourceMap()
     var adaptsDarkMode = true
     var forcesLightAppearance = false
+    /// Hidden retained readers keep their document, but stop remote loads.
+    var isActive = true
+    var onReadable: (_ retained: Bool) -> Void = { _ in }
     var onHover: (String?) -> Void = { _ in }
     var onSelectionChange: (String) -> Void = { _ in }
     /// `mailto:` and `tern:` links stay in Tern; the app's router opens them.
@@ -38,6 +42,7 @@ struct MessageWebView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(height: $height, onHover: onHover, onSelectionChange: onSelectionChange, onOpenMailLink: onOpenMailLink)
         coordinator.onDismantle = onDismantle
+        coordinator.onReadable = onReadable
         return coordinator
     }
 
@@ -53,6 +58,7 @@ struct MessageWebView: NSViewRepresentable {
             configuration.userContentController.add(blocker)
         }
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
+        NavigationPerformance.shared.increment(.webViewCreated)
         MessageWebViewWarmup.messageViewCreated()
         if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
         view.navigationDelegate = context.coordinator
@@ -62,6 +68,7 @@ struct MessageWebView: NSViewRepresentable {
             coordinator?.measure(view)
         }
         view.onOpenLink = { [weak coordinator = context.coordinator] url, behind in coordinator?.open(url, behind: behind) }
+        context.coordinator.setActive(isActive, in: view)
         context.coordinator.load(html, in: view)
         onCreate(view)
         return view
@@ -73,6 +80,8 @@ struct MessageWebView: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onOpenMailLink = onOpenMailLink
         context.coordinator.onDismantle = onDismantle
+        context.coordinator.onReadable = onReadable
+        context.coordinator.setActive(isActive, in: view)
         if context.coordinator.needsLoad(html) {
             view.configuration.userContentController.removeAllContentRuleLists()
             if let blocker { view.configuration.userContentController.add(blocker) }
@@ -82,6 +91,8 @@ struct MessageWebView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: ContentSizedWebView, coordinator: Coordinator) {
+        NavigationPerformance.shared.increment(.webViewDestroyed)
+        coordinator.setActive(false, in: view)
         coordinator.onDismantle(view)
         view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternHeight", contentWorld: .defaultClient)
@@ -116,8 +127,18 @@ struct MessageWebView: NSViewRepresentable {
               range.getBoundingClientRect().bottom - body.getBoundingClientRect().top)
               + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
           };
+          let scheduled = false;
+          let lastHeight = -1;
           const report = () => {
-            webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
+            if (scheduled) return;
+            scheduled = true;
+            requestAnimationFrame(() => {
+              scheduled = false;
+              const height = measure();
+              if (height === lastHeight) return;
+              lastHeight = height;
+              webkit.messageHandlers.ternHeight.postMessage({height, revision: \(revision)});
+            });
           };
           const observer = new ResizeObserver(report);
           observer.observe(document.body);
@@ -132,10 +153,12 @@ struct MessageWebView: NSViewRepresentable {
     private static func readingScript(revision: Int) -> String { """
         (() => {
           const send = value => webkit.messageHandlers.ternReading.postMessage({...value, revision: \(revision)});
+          let lastHover = '';
+          const hover = value => { if (value !== lastHover) { lastHover = value; send({hover: value}); } };
           document.addEventListener('mouseover', event => {
-            const link = event.target.closest?.('a[href]'); send({hover: link?.href ?? ''});
+            const link = event.target.closest?.('a[href]'); hover(link?.href ?? '');
           });
-          document.addEventListener('mouseleave', () => send({hover: ''}));
+          document.addEventListener('mouseleave', () => hover(''));
           document.addEventListener('selectionchange', () => {
             send({selection: (getSelection()?.toString() ?? '').slice(0, 100000)});
           });
@@ -149,8 +172,40 @@ struct MessageWebView: NSViewRepresentable {
         var onSelectionChange: (String) -> Void
         var onOpenMailLink: (URL) -> Void
         var onDismantle: (WKWebView) -> Void = { _ in }
+        var onReadable: (_ retained: Bool) -> Void = { _ in }
         private var loadedHTML: String?
         private var revision = 0
+        private var reportedReadable = false
+        private var isActive = true
+        private var isMeasuring = false
+        private var measureAgain = false
+        private var interruptedLoad = false
+
+        func setActive(_ active: Bool, in view: WKWebView) {
+            guard active != isActive else { return }
+            isActive = active
+            if !active {
+                interruptedLoad = view.isLoading
+                view.stopLoading()
+            } else {
+                if reportedReadable {
+                    let currentRevision = revision
+                    Task { [weak self] in
+                        guard let self, self.isActive, self.revision == currentRevision else { return }
+                        self.onReadable(true)
+                    }
+                }
+                if interruptedLoad {
+                    interruptedLoad = false
+                    if !reportedReadable, let loadedHTML { view.loadHTMLString(loadedHTML, baseURL: nil) }
+                    else {
+                        view.evaluateJavaScript("document.querySelectorAll('img').forEach(i => { if (!i.complete || !i.naturalWidth) { const s = i.getAttribute('src'); if (s) i.src = s; } })",
+                            in: nil, in: .defaultClient) { _ in }
+                    }
+                }
+                measure(view)
+            }
+        }
 
         init(height: Binding<CGFloat>, onHover: @escaping (String?) -> Void = { _ in }, onSelectionChange: @escaping (String) -> Void = { _ in },
              onOpenMailLink: @escaping (URL) -> Void = { _ in }) {
@@ -165,8 +220,10 @@ struct MessageWebView: NSViewRepresentable {
 
         func load(_ html: String, in view: WKWebView) {
             guard html != loadedHTML else { return }
+            guard isActive else { return }
             loadedHTML = html
             revision += 1
+            reportedReadable = false
             let current = revision
             Task { [weak self] in
                 guard let self, self.revision == current else { return }
@@ -205,12 +262,22 @@ struct MessageWebView: NSViewRepresentable {
         }
 
         func measure(_ webView: WKWebView) {
+            guard isActive else { return }
+            guard !isMeasuring else { measureAgain = true; return }
+            isMeasuring = true
             // Runs in Tern's own script world, which page JavaScript settings don't affect.
             let revision = revision
             let script = """
                 globalThis.__ternSizing?.revision === \(revision) ? globalThis.__ternSizing.measure() : 0
                 """
             Task { [weak self] in
+                defer {
+                    if let self {
+                        self.isMeasuring = false
+                        if self.measureAgain { self.measureAgain = false; self.measure(webView) }
+                    }
+                }
+                guard self?.isActive == true else { return }
                 guard let value = try? await webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient),
                       let self, self.revision == revision,
                       let measured = (value as? NSNumber)?.doubleValue
@@ -220,6 +287,7 @@ struct MessageWebView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard isActive else { return }
             if message.name == "ternReading", message.frameInfo.isMainFrame,
                let value = message.body as? [String: Any], (value["revision"] as? NSNumber)?.intValue == revision {
                 if let hover = value["hover"] as? String {
@@ -238,8 +306,13 @@ struct MessageWebView: NSViewRepresentable {
         }
 
         private func acceptHeight(_ measured: Double) {
-            guard measured.isFinite, measured > 0 else { return }
+            guard isActive, measured.isFinite, measured > 0 else { return }
+            NavigationPerformance.shared.increment(.heightReport)
             if abs(height.wrappedValue - measured) >= 1 { height.wrappedValue = measured }
+            if !reportedReadable {
+                reportedReadable = true
+                if isActive { onReadable(false) }
+            }
         }
     }
 }
@@ -320,7 +393,8 @@ final class ContentSizedWebView: WKWebView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
-        let widthChanged = newSize.width != frame.width
+        let scale = window?.backingScaleFactor ?? 2
+        let widthChanged = (newSize.width * scale).rounded() != (frame.width * scale).rounded()
         super.setFrameSize(newSize)
         if widthChanged { onWidthChange?() }
     }

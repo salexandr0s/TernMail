@@ -6,6 +6,21 @@ import WebKit
 @testable import Tern
 
 @Suite @MainActor struct MessageWebViewTests {
+    @Test func anInactiveRetainedRendererDoesNotLoadOrMeasureChangedContent() async throws {
+        let height = HeightValue()
+        let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 100), configuration: configuration)
+        coordinator.setActive(false, in: view)
+        coordinator.load("<p>Hidden replacement</p>", in: view)
+        coordinator.measure(view)
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(view.url == nil)
+        #expect(height.value == 0)
+        #expect(coordinator.needsLoad("<p>Hidden replacement</p>"))
+    }
+
     @Test func mailLinksStayInTernAndWebLinksGoToTheBrowser() throws {
         #expect(MessageWebView.linkAction(for: try #require(URL(string: "mailto:friend@example.com"))) == .mail)
         #expect(MessageWebView.linkAction(for: try #require(URL(string: "tern://conversation?account=a&thread=t"))) == .mail)
