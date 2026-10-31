@@ -27,26 +27,25 @@ actor NativeMailNotificationScheduler: MailNotificationScheduling {
     }
 
     func schedule(_ delivery: MailNotificationDelivery) async throws {
-        let categories = Set(MailNotificationAction.allCases.map { action in
-            UNNotificationCategory(identifier: "tern.mail." + action.rawValue,
-                actions: [UNNotificationAction(identifier: "tern.mail.action." + action.rawValue, title: action.title)],
-                intentIdentifiers: [], options: [])
-        })
-        let existing = await center.notificationCategories()
-        center.setNotificationCategories(existing.union(categories))
         let content = UNMutableNotificationContent()
         content.title = delivery.sender
         content.subtitle = delivery.subject
         content.body = delivery.snippet
         content.threadIdentifier = delivery.groupID
-        content.categoryIdentifier = "tern.mail." + delivery.action.rawValue
+        content.categoryIdentifier = MailNotificationCategories.identifier(for: delivery.action)
         content.filterCriteria = "tern.mail.profile:" + (delivery.profileID ?? "all")
         content.userInfo = ["mailAccountID": delivery.accountID, "mailThreadID": delivery.threadID, "mailMessageID": delivery.messageID]
         let effectsEnabled = await MainActor.run { UserDefaults.standard.bool(forKey: MailSounds.enabledKey) }
         let usesEffect = delivery.playsSound && effectsEnabled
         if delivery.playsSound && !usesEffect { content.sound = .default }
         try await center.add(UNNotificationRequest(identifier: delivery.id, content: content, trigger: nil))
-        if usesEffect { await MainActor.run { MailSounds.play(.newMail) } }
+        if usesEffect {
+            await MainActor.run {
+                // The system mutes alerts for a conversation on screen; Tern's own sound does too.
+                guard !MailNotificationRouter.shared.isShowing(accountID: delivery.accountID, threadID: delivery.threadID) else { return }
+                MailSounds.play(.newMail)
+            }
+        }
     }
 
     func removeNotifications(accountID: String) async {

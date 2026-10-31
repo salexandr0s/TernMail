@@ -53,7 +53,7 @@ struct NotificationSettingsView: View {
             }
 
             Section("Sounds and actions") {
-                SettingsControlRow("Notification action") {
+                SettingsControlRow("Notification action", detail: "Listed first on new-mail notifications. Reply and the other actions follow.") {
                     Picker("Notification action", selection: $action) {
                         ForEach(MailNotificationAction.allCases, id: \.rawValue) { action in Text(action.title).tag(action.rawValue) }
                     }

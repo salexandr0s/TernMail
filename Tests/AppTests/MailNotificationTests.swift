@@ -127,6 +127,21 @@ import Testing
         #expect(NotificationPolicy.identifier(accountID: "a", value: "same", kind: "thread") != NotificationPolicy.identifier(accountID: "a", value: "same", kind: "message"))
     }
 
+    @Test func everyNotificationActionLeadsWithTheChoiceAndRoutesBack() {
+        let categories = MailNotificationCategories.all
+        #expect(categories.count == MailNotificationAction.allCases.count)
+        for primary in MailNotificationAction.allCases {
+            let category = categories.first { $0.identifier == MailNotificationCategories.identifier(for: primary) }
+            let actions = category?.actions ?? []
+            #expect(actions.first.flatMap { MailNotificationCategories.response(for: $0.identifier) } == .perform(primary))
+            #expect(actions.last?.identifier == MailNotificationCategories.replyIdentifier)
+            #expect(actions.allSatisfy { MailNotificationCategories.response(for: $0.identifier) != nil })
+            #expect(Set(actions.map(\.identifier)).count == actions.count)
+        }
+        #expect(MailNotificationCategories.response(for: MailNotificationCategories.replyIdentifier) == .reply)
+        #expect(MailNotificationCategories.response(for: "tern.mail.action.unknown") == nil)
+    }
+
     @Test func profilePresentationUsesNicknameOrderAndClearsDeletedProfileAssignments() async throws {
         let store = try await makeStore()
         try await store.save(AccountRecord(id: "b", email: "other@example.com", displayName: nil, grantedScopes: [], addedAt: .now))

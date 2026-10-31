@@ -36,7 +36,6 @@ extension MailboxModel {
                 for (accountID, target) in targets {
                     try await account(id: accountID)?.snoozeKeeper?.unsnooze(target: target)
                 }
-                notice = Notice(message: "Mail moved to the Inbox")
             } catch { notice = Notice(message: "Couldn't return this mail to the Inbox. Try again.", isError: true) }
         }
     }

@@ -1001,11 +1001,9 @@ final class MailboxModel {
         case .draftCopied:
             notice = Notice(message: "This draft changed elsewhere. Both versions were kept.")
         case .draftSent(let id):
+            // The send sound confirms it. A newer send keeps its notice and its Undo Send.
             MailSounds.play(.send)
             finishSend(id)
-            // A newer send keeps its notice and its Undo Send.
-            if case .send = sendNotice?.undo { return }
-            sendNotice = Notice(message: "Message sent")
         }
     }
 

@@ -136,19 +136,25 @@ final class AppModel {
         accountPreferences = preferences
         mailNotifications = MailNotificationCoordinator(store: store, cache: cache, preferences: preferences, defaults: defaults)
         let badges = MailBadgeController(defaults: defaults)
-        badges.onOpenMailbox = { [weak self] in
-            guard let self else { return }
-            destination = .mail
-            mailbox?.selectedMailbox = .combined(SystemLabel.inbox)
-            mailURLs.openMainWindow?()
-        }
+        badges.onOpenInbox = { [weak self] accountID in self?.showInbox(accountID: accountID) }
+        badges.onCheckForNewMail = { [weak self] in self?.mailbox?.syncNow() }
+        badges.onNewMessage = { [weak self] in self?.composeFromDock() }
+        badges.onOpenApp = { [weak self] in self?.showMainWindow() }
         mailBadges = badges
         preferences.onChange = { [weak self] in self?.schedulePreferenceReconciliation() }
         await preferences.start()
     }
 
     private func bindMailNotificationRoutes() {
+        MailNotificationRouter.shared.isOnScreen = { [weak self] key in self?.isConversationOnScreen(key) ?? false }
         MailNotificationRouter.shared.bind { [weak self] target in await self?.routeMailNotification(target) }
+    }
+
+    /// A conversation window has it open, or the mailbox shows it selected.
+    private func isConversationOnScreen(_ key: ThreadKey) -> Bool {
+        if visibleConversationKeys.contains(key) { return true }
+        guard destination == .mail, let mailbox else { return false }
+        return mailbox.selectedThreadIDs.contains(key)
     }
 
     private func configureMailRuntime(_ owner: AccountMailbox) {
@@ -179,17 +185,41 @@ final class AppModel {
     }
 
     private func refreshMailBadges() {
-        guard let mailbox else { mailBadges?.update(unreadCount: 0); return }
-        let visible = accountPreferences?.visibleAccountIDs ?? Set(mailbox.accounts.map(\.account.id))
-        let count = mailbox.accounts.filter { visible.contains($0.account.id) }.reduce(0) { total, owner in
-            total + (owner.labels.first { $0.id == SystemLabel.inbox }?.threadsUnread ?? 0)
+        guard let mailbox else { mailBadges?.update(accounts: []); return }
+        let records = accountPreferences?.orderedRecords ?? mailbox.accounts.map(\.account)
+        let visible = accountPreferences?.visibleAccountIDs ?? Set(records.map(\.id))
+        let accounts = records.filter { visible.contains($0.id) }.compactMap { record -> MailBadgeController.AccountUnread? in
+            guard let owner = mailbox.account(id: record.id) else { return nil }
+            return .init(id: record.id, title: accountPreferences?.displayName(for: record) ?? record.email,
+                         count: owner.labels.first { $0.id == SystemLabel.inbox }?.threadsUnread ?? 0)
         }
-        mailBadges?.update(unreadCount: count)
+        mailBadges?.update(accounts: accounts)
+    }
+
+    /// The menu bar item's Inbox rows: every account's Inbox, or one account's.
+    private func showInbox(accountID: String?) {
+        showMainWindow()
+        destination = .mail
+        guard let mailbox else { return }
+        if let accountID {
+            mailbox.search.clear()
+            mailbox.selectedMailbox = .account(accountID, SystemLabel.inbox)
+        } else {
+            mailbox.go(to: SystemLabel.inbox)
+        }
     }
 
     private func routeMailNotification(_ target: MailNotificationRouter.Target) async {
         guard let mailbox, let owner = mailbox.account(id: target.accountID) else { return }
-        if let action = target.action {
+        switch target.response {
+        case .open:
+            mailURLs.openConversation(.init(accountID: target.accountID, threadID: target.threadID, messageID: target.messageID))
+        case .reply:
+            // The main window opens the reply's own window, as the Dock's New Message does.
+            showMainWindow()
+            guard let id = await mailbox.requestReply(.reply, messageID: target.messageID, accountID: target.accountID, selectedText: nil) else { return }
+            mailbox.draftToReopen = id
+        case .perform(let action):
             do {
                 switch action {
                 case .archive: _ = try await owner.engine.perform(.archive, target: .messages([target.messageID]))
@@ -198,8 +228,6 @@ final class AppModel {
                 case .star: _ = try await owner.engine.perform(.star, target: .messages([target.messageID]))
                 }
             } catch { mailbox.notice = .init(message: "Couldn't apply the notification action. Try again in Tern.", isError: true) }
-        } else {
-            mailURLs.openConversation(.init(accountID: target.accountID, threadID: target.threadID, messageID: target.messageID))
         }
     }
 
