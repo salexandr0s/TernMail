@@ -159,7 +159,7 @@ struct AttachmentLibraryView: View {
                 TernEmptyState(title: "No matching attachments", systemImage: "doc.text.magnifyingglass",
                     message: model.category == nil
                         ? "Try a different filename, sender or filter."
-                        : "Try another category or clear your filters. To assign a category, use an attachment's menu.",
+                        : "Try another category or clear your filters. Categories appear as attachments are indexed and read. You can correct a category from an attachment's menu.",
                     fillsSpace: false)
                 Button("Clear all filters") { model.clearFilters(); searchFocused = true }
                     .buttonStyle(.borderedProminent)

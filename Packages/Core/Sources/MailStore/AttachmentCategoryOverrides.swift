@@ -71,8 +71,8 @@ extension AccountStore {
 extension MailCache {
     public func attachmentCategorySnapshot(accountID: String? = nil) async throws -> [AttachmentCategoryOverride] {
         try await read { tx in
-            var sql = "SELECT accountID,messageID,partID,category,0 AS revision FROM attachmentLibrary WHERE category != ?"
-            var arguments: StatementArguments = [AttachmentCategory.uncategorized.rawValue]
+            var sql = "SELECT accountID,messageID,partID,category,0 AS revision FROM attachmentLibrary WHERE categorySource = ?"
+            var arguments: StatementArguments = [AttachmentCategorySource.manual.rawValue]
             if let accountID { sql += " AND accountID = ?"; arguments += [accountID] }
             sql += " ORDER BY accountID,messageID,partID"
             return try Row.fetchAll(tx.db, sql: sql, arguments: arguments).map(AttachmentCategorySQL.record)

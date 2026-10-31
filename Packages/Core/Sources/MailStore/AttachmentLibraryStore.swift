@@ -39,10 +39,20 @@ extension CacheTransaction {
             .filter(!parts.contains(Column("partID"))).deleteAll(db)
         for attachment in eligible {
             let previous = old[attachment.partID]
-            try AttachmentLibraryItem(attachment: attachment, threadID: message.threadID, sender: message.sender,
+            var item = AttachmentLibraryItem(attachment: attachment, threadID: message.threadID, sender: message.sender,
                 subject: message.subject, date: message.date, labelIDs: labelIDs,
-                category: previous?.category ?? .uncategorized, historyID: message.historyID,
-                generation: generation ?? previous?.generation).upsert(db)
+                historyID: message.historyID, generation: generation ?? previous?.generation)
+            if let previous {
+                if previous.categorySource == .manual || previous.matchesClassificationInput(item) {
+                    item.category = previous.category
+                    item.categorySource = previous.categorySource
+                }
+                if previous.matchesClassificationInput(item) {
+                    item.contentClassificationVersion = previous.contentClassificationVersion
+                    item.classificationRetryAfter = previous.classificationRetryAfter
+                }
+            }
+            try item.upsert(db)
         }
         try replaceLibraryLabels(eligible.isEmpty ? [] : labelIDs, messageID: message.id, accountID: message.accountID)
     }
@@ -65,7 +75,7 @@ extension CacheTransaction {
     }
 
     public func setAttachmentCategory(_ category: AttachmentCategory, accountID: String, messageID: String, partID: String) throws {
-        try db.execute(sql: "UPDATE attachmentLibrary SET category = ? WHERE accountID = ? AND messageID = ? AND partID = ?",
+        try db.execute(sql: "UPDATE attachmentLibrary SET category = ?, categorySource = 'manual', classificationRetryAfter = NULL WHERE accountID = ? AND messageID = ? AND partID = ?",
             arguments: [category.rawValue, accountID, messageID, partID])
     }
 

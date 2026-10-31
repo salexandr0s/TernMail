@@ -370,6 +370,7 @@ enum Schema {
         AttachmentLibrarySchema.register(in: &migrator)
         Milestone5CacheSchema.register(in: &migrator)
         MessageSnoozeSchema.registerCache(in: &migrator)
+        AttachmentClassificationSchema.register(in: &migrator)
         return migrator
     }
 

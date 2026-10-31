@@ -29,12 +29,18 @@ extension SyncEngine {
                 guard let self else { return }
                 let state = try? await self.indexAttachments(retryNow: first)
                 first = false
+                let classified: Int
+                if let state, state.lastError == nil {
+                    classified = (try? await self.classifyAttachments()) ?? 0
+                } else {
+                    classified = 0
+                }
                 let delay: Duration
                 if let retry = state?.retryAfter, retry > Date() {
                     delay = .seconds(min(60, max(3, retry.timeIntervalSinceNow)))
                 } else {
                     let caughtUp = state?.isComplete == true && state?.historyPageToken == nil && state?.pendingMessageIDs.isEmpty == true
-                    delay = caughtUp ? .seconds(60) : .seconds(3)
+                    delay = caughtUp && classified == 0 ? .seconds(60) : .seconds(3)
                 }
                 do { try await Task.sleep(for: delay) } catch { return }
             }

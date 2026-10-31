@@ -46,6 +46,36 @@ import Testing
         #expect(model.query == AttachmentLibraryQuery(accountIDs: ["audit"]))
     }
 
+    @Test func detectedCategoriesReachFiltersAndManualCorrectionSurvivesRefresh() async throws {
+        let mailbox = try mailbox()
+        let message = MessageRecord(accountID: "audit", id: "categorized", threadID: "categorized",
+            historyID: 1, date: .now, snippet: "", sender: "Example Travel",
+            recipients: "", cc: nil, subject: "Your travel documents", sizeEstimate: 100)
+        let files = ["Fahrkarte-4821.pdf", "Receipt-4821.pdf", "Rechnung-4821.pdf"].enumerated().map { index, name in
+            AttachmentRecord(accountID: "audit", messageID: message.id, partID: String(index), attachmentID: nil,
+                filename: name, mimeType: "application/pdf", size: 32, isInline: false)
+        }
+        try await mailbox.cache.write { try $0.replaceLibraryAttachments(files, message: message, labelIDs: []) }
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        for category in [AttachmentCategory.ticket, .receipt, .invoice] {
+            model.category = category
+            let observing = Task { await model.reload() }
+            try await waitUntil { model.items.count == 1 && model.items.first?.category == category }
+            #expect(model.totalCount == 1)
+            observing.cancel()
+        }
+        let invoice = try #require(model.items.first)
+        await model.setCategory(.uncategorized, for: invoice)
+        #expect(model.errorMessage == nil)
+        try await mailbox.cache.write { try $0.replaceLibraryAttachments(files, message: message, labelIDs: ["updated"]) }
+        model.category = .uncategorized
+        let corrected = Task { await model.reload() }
+        defer { corrected.cancel() }
+        try await waitUntil { model.items.count == 1 && model.items.first?.category == .uncategorized }
+        #expect(model.items.first?.id == invoice.id)
+        await mailbox.stop()
+    }
+
     @Test func sourceOpensOutsideCurrentMailboxAndRevokedAccessRejectsFiles() async throws {
         let mailbox = try mailbox()
         let model = AttachmentLibraryModel(mailbox: mailbox)

@@ -81,6 +81,16 @@ actor AuditGmail: GmailService {
                     ageDays: index == 124 ? 730 : index)
             }
         }
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit-attachment-categories") {
+            mail += [
+                Message(id: "category-ticket", thread: "category-ticket", subject: "Your journey",
+                    text: "Synthetic travel document.", html: false, labels: ["INBOX"], attachment: "Fahrkarte-4821.txt"),
+                Message(id: "category-receipt", thread: "category-receipt", subject: "Payment received",
+                    text: "Synthetic payment document.", html: false, labels: ["INBOX"], attachment: "Receipt-4821.txt"),
+                Message(id: "category-invoice", thread: "category-invoice", subject: "Your documents",
+                    text: "Synthetic document with a generic filename.", html: false, labels: ["INBOX"], attachment: "Document-4821.pdf"),
+            ]
+        }
         if ProcessInfo.processInfo.arguments.contains("--ui-audit-writing-style") {
             mail += (0..<100).map { index in
                 Message(id: "writing-\(index)", thread: "writing-thread-\(index)",

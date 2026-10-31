@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// A document's purpose, separate from its file format. Categories are set by the user.
+/// A document's purpose, separate from its file format.
 public enum AttachmentCategory: String, CaseIterable, Codable, Sendable {
     case uncategorized, invoice, receipt, contract, ticket, other
 
@@ -15,6 +15,10 @@ public enum AttachmentCategory: String, CaseIterable, Codable, Sendable {
         case .other: "Other"
         }
     }
+}
+
+public enum AttachmentCategorySource: String, Codable, Sendable {
+    case metadata, subject, content, manual
 }
 
 public enum AttachmentLibrarySort: String, CaseIterable, Codable, Sendable {
@@ -49,6 +53,10 @@ public struct AttachmentLibraryItem: Codable, Sendable, Equatable, Identifiable,
     public var date: Date
     public var labelIDs: [String]
     public var category: AttachmentCategory
+    public var categorySource: AttachmentCategorySource
+    public var classificationVersion: Int
+    public var contentClassificationVersion: Int
+    public var classificationRetryAfter: Date?
     public var historyID: Int64
     public var generation: String?
     public private(set) var fileExtension: String
@@ -64,7 +72,7 @@ public struct AttachmentLibraryItem: Codable, Sendable, Equatable, Identifiable,
     }
 
     public init(attachment: AttachmentRecord, threadID: String, sender: String, subject: String,
-                date: Date, labelIDs: [String] = [], category: AttachmentCategory = .uncategorized,
+                date: Date, labelIDs: [String] = [], category: AttachmentCategory? = nil,
                 historyID: Int64 = 0, generation: String? = nil) {
         accountID = attachment.accountID
         messageID = attachment.messageID
@@ -78,7 +86,18 @@ public struct AttachmentLibraryItem: Codable, Sendable, Equatable, Identifiable,
         self.subject = subject
         self.date = date
         self.labelIDs = Array(Set(labelIDs)).sorted()
-        self.category = category
+        if let category {
+            self.category = category
+            categorySource = .manual
+        } else {
+            let inferred = AttachmentClassification.metadataClassification(filename: attachment.filename,
+                mimeType: attachment.mimeType, subject: subject)
+            self.category = inferred.category
+            categorySource = inferred.source
+        }
+        classificationVersion = AttachmentClassification.version
+        contentClassificationVersion = 0
+        classificationRetryAfter = nil
         self.historyID = historyID
         self.generation = generation
         fileExtension = Self.normalizedExtension(filename: attachment.filename, mimeType: attachment.mimeType)

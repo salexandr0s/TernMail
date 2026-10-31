@@ -38,7 +38,7 @@ struct AttachmentLibraryFilters: View {
                                 Text(category.title).tag(category as AttachmentCategory?)
                             }
                         }
-                        Text("Assign categories from an attachment's menu. File format uses the extension, such as pdf or docx.")
+                        Text("Categories are detected automatically on this Mac. You can correct them from an attachment's menu. File format uses the extension, such as pdf or docx.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Section("Email date") {
@@ -195,7 +195,7 @@ struct AttachmentActiveFilters: View {
     }
 }
 
-/// These shortcuts filter user-assigned categories, using the same state as the popover.
+/// These shortcuts filter detected and corrected categories, using the same state as the popover.
 struct AttachmentCategoryShortcuts: View {
     @Bindable var model: AttachmentLibraryModel
     @Environment(\.colorSchemeContrast) private var contrast
@@ -215,7 +215,7 @@ struct AttachmentCategoryShortcuts: View {
             }
             .frame(maxWidth: Tokens.Popover.width, alignment: .leading)
         }
-        .help("Filter categories you assign from an attachment's menu")
+        .help("Filter automatically detected categories and your corrections")
     }
 
     private func categoryButton(_ category: AttachmentCategory?) -> some View {

@@ -4,8 +4,7 @@ import MailStore
 import Observation
 import SyncEngine
 
-/// Window state for the persistent metadata index. File bytes are fetched only
-/// for an explicit preview, open, or save action.
+/// Window state for the persistent attachment index and its detected categories.
 @MainActor
 @Observable
 final class AttachmentLibraryModel {
@@ -90,6 +89,7 @@ final class AttachmentLibraryModel {
         let states = scopedStates
         let checked = states.reduce(0) { $0 + $1.indexedMessageCount }
         var detail = "\(checked.formatted()) attachment-bearing emails checked. Includes archived mail, Spam, and Trash."
+        detail += " Categories are detected on this Mac from filenames, email subjects, and readable documents. Document checks can continue after indexing finishes. Your corrections take priority."
         if states.count < scopedAccountIDs.count || states.contains(where: { !$0.isComplete || $0.historyPageToken != nil || !$0.pendingMessageIDs.isEmpty }) {
             detail += " Results are partial while indexing continues. You can leave this view."
         }

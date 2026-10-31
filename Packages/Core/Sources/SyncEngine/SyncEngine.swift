@@ -81,6 +81,7 @@ public actor SyncEngine {
     private var peopleTask: Task<Void, Never>?
     var attachmentIndexTask: Task<Void, Never>?
     var attachmentIndexPass: Task<AttachmentIndexState, any Error>?
+    var attachmentClassificationPass: Task<Int, any Error>?
     /// Runs the passes `requestSync()` asks for, then clears itself.
     private(set) var requestedPasses: Task<Void, Never>?
     /// Set by `requestSync()`, cleared as a requested pass starts.
@@ -224,6 +225,8 @@ public actor SyncEngine {
         background.forEach { $0.cancel() }
         let attachmentPass = attachmentIndexPass
         attachmentPass?.cancel()
+        let classificationPass = attachmentClassificationPass
+        classificationPass?.cancel()
         let contacts = contactSyncTask
         contacts?.cancel()
         let drains = Array(drainTasks.values)
@@ -236,6 +239,7 @@ public actor SyncEngine {
         _ = try? await contacts?.value
         _ = try? await running?.value
         _ = try? await attachmentPass?.value
+        _ = try? await classificationPass?.value
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
         }
