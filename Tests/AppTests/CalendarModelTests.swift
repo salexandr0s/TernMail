@@ -6,6 +6,29 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func deniedRangeCannotRestoreAnotherRetainedRangeFromThatCalendar() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "private")
+            let firstDay = try #require(event.startDate)
+            fixture.model.mode = .day
+            fixture.model.date = firstDay
+            await fixture.service.put(event)
+            await fixture.model.activateRange()
+            fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: 1, to: firstDay))
+            await fixture.model.activateRange()
+            #expect(fixture.model.rangeSnapshots.count == 2)
+
+            await fixture.service.setRangeFailure(.http(status: 403, reason: nil))
+            await fixture.model.reloadOccurrences()
+            fixture.model.date = firstDay
+            await fixture.model.activateRange()
+
+            #expect(fixture.model.calendars.isEmpty)
+            #expect(fixture.model.events.isEmpty)
+            #expect(fixture.model.rangeSnapshots.values.allSatisfy { $0.presentation.events.isEmpty })
+        }
+    }
+
     @Test func oneHundredWarmActivationsReusePreparedRangeWithoutRequestsOrPublication() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "warm")
@@ -471,6 +494,7 @@ import Testing
         static let entry = GoogleCalendarEntry(id: "work", summary: "Work", timeZone: "Europe/Vienna", accessRole: "owner")
         private var remote: [String: GoogleCalendarEvent] = [:]
         private var offline = false
+        private var rangeFailure: GmailError?
         private var shouldSuspendRange = false
         private var rangeContinuation: CheckedContinuation<Void, Never>?
         private(set) var rangeRequestCount = 0
@@ -478,6 +502,7 @@ import Testing
         private(set) var patchETags: [String?] = []
 
         func setOffline(_ value: Bool) { offline = value }
+        func setRangeFailure(_ value: GmailError?) { rangeFailure = value }
         func put(_ event: GoogleCalendarEvent) { remote[event.id] = event }
         var hasSuspendedRange: Bool { rangeContinuation != nil }
         func suspendNextRange() { shouldSuspendRange = true }
@@ -493,6 +518,7 @@ import Testing
 
         func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
             if offline { throw GmailError.transport(.notConnectedToInternet) }
+            if query.singleEvents, let rangeFailure { throw rangeFailure }
             var events = Array(remote.values)
             if query.singleEvents {
                 rangeRequestCount += 1

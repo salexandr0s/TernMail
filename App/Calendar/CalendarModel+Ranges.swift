@@ -37,6 +37,7 @@ struct CalendarRangeSnapshot: Sendable {
 private struct CalendarOwnerRange: Sendable {
     let owner: CalendarDisplayCalendar
     let result: CalendarOccurrenceResult?
+    var accessDenied = false
 }
 
 extension CalendarModel {
@@ -115,6 +116,15 @@ extension CalendarModel {
             if shouldRefresh && !needsRefresh { break }
             let loaded = await Self.readRange(sources, interval: interval, refresh: shouldRefresh)
             guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
+            let denied = loaded.filter(\.accessDenied)
+            if !denied.isEmpty {
+                for item in denied {
+                    handleCalendarAccessFailure(CalendarEngineError.permissionDenied,
+                        accountID: item.owner.accountID, calendarID: item.owner.calendarID)
+                }
+                await reloadOccurrences(refresh: false)
+                return
+            }
             let stale = loaded.contains { $0.result?.isStale != false || $0.result?.isComplete != true }
             if refreshIfIncomplete, loaded.contains(where: { $0.result?.isComplete != true }) { needsRefresh = true }
             let checkedAt = stale ? nil : loaded.compactMap { $0.result?.fetchedAt }.min() ?? Date.now
@@ -166,9 +176,18 @@ extension CalendarModel {
                     guard let engine = source.1, !Task.isCancelled else {
                         return CalendarOwnerRange(owner: source.0, result: nil)
                     }
-                    let result = try? await engine.occurrences(calendarID: source.0.calendarID,
-                        start: interval.start, end: interval.end, refresh: refresh)
-                    return CalendarOwnerRange(owner: source.0, result: result)
+                    do {
+                        let result = try await engine.occurrences(calendarID: source.0.calendarID,
+                            start: interval.start, end: interval.end, refresh: refresh)
+                        return CalendarOwnerRange(owner: source.0, result: result)
+                    } catch {
+                        let denied: Bool
+                        if let google = error as? GmailError {
+                            if case .http(status: 403, reason: _) = google { denied = true }
+                            else { denied = google == .unauthorized }
+                        } else { denied = error as? CalendarEngineError == .permissionDenied }
+                        return CalendarOwnerRange(owner: source.0, result: nil, accessDenied: denied)
+                    }
                 }
             }
             while next < min(4, sources.count) { enqueue(sources[next]); next += 1 }
