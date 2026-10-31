@@ -80,6 +80,7 @@ final class MailboxModel {
             threads = []
             mailboxPage = .empty
             mailboxPageReady = false
+            isListPresentationReady = false
             listEntries = []
             threadLimit = Self.pageSize
             older?.cancel()
@@ -1034,6 +1035,7 @@ final class MailboxModel {
             listEntries = []
             isListPresentationReady = search.hasLocalAnswer
             listChanged()
+            if isListPresentationReady { NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .local) }
             return
         }
         let stream = cache.listPage(.searchResults(search.results,
@@ -1048,6 +1050,7 @@ final class MailboxModel {
                     guard !Task.isCancelled, searchPageGeneration == generation else { return }
                     searchPage = page
                     publishListPage(prepared)
+                    NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .local)
                 }
             } catch {
                 guard let self, !Task.isCancelled, searchPageGeneration == generation else { return }
