@@ -110,8 +110,9 @@ struct ThreadView: View {
     /// View ▸ Show with Light Background turns the choice on or off for every
     /// sender in the conversation. It's offered while Dark Mode adapts mail.
     private var readerAppearance: ReaderAppearance? {
-        guard adaptsDark, colorScheme == .dark, let detail = readingDetail, !detail.messages.isEmpty else { return nil }
-        let senders = Set(detail.messages.map(\.senderAddress))
+        guard adaptsDark, colorScheme == .dark, let detail = readingDetail else { return nil }
+        let senders = Set(detail.messages.compactMap(\.parsedSenderAddress))
+        guard !senders.isEmpty else { return nil }
         let isOn = senders.allSatisfy(LightBackgroundSenders(storage: lightBackgroundSenders).contains)
         return ReaderAppearance(showsLightBackground: isOn) {
             var stored = LightBackgroundSenders(storage: lightBackgroundSenders)
@@ -876,8 +877,9 @@ private struct MessageView: View {
 
     private var senderAddress: String { message.senderAddress }
 
-    /// Light mail already reads as the sender made it; the choice matters in Dark.
-    private var offersLightBackground: Bool { adaptsDark && colorScheme == .dark }
+    /// Light mail already reads as the sender made it; the choice matters in
+    /// Dark. It's kept by address, so a sender without one isn't offered it.
+    private var offersLightBackground: Bool { adaptsDark && colorScheme == .dark && message.parsedSenderAddress != nil }
 
     private var showsLightBackground: Bool {
         offersLightBackground && LightBackgroundSenders(storage: lightBackgroundSenders).contains(senderAddress)
@@ -945,7 +947,10 @@ private struct MessageView: View {
 
 private extension MessageDetail {
     /// The address that the sender's image and background choices are kept under.
-    var senderAddress: String { EmailAddress.parseList(record.sender).first?.address ?? record.sender }
+    var senderAddress: String { parsedSenderAddress ?? record.sender }
+
+    /// The From header's address, when it has one.
+    var parsedSenderAddress: String? { EmailAddress.parseList(record.sender).first?.address }
 }
 
 /// What an open message tells the conversation's privacy line.
