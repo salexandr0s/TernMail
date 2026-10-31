@@ -160,7 +160,8 @@ struct CalendarSidebar: View {
 
 /// An account's calendar status and the action that fixes it. In the sidebar
 /// the section header names the account; the main area's prompt shows it as
-/// a row with the account's name and address.
+/// a row with the account's name and address, and keeps one Retry and one
+/// Cancel Sign-In below its rows, since both act on every account.
 struct CalendarConnectionControl: View {
     let model: CalendarModel
     let account: CalendarAccountOption
@@ -205,16 +206,19 @@ struct CalendarConnectionControl: View {
 
     @ViewBuilder private var action: some View {
         let state = model.connectionState(for: account.id)
-        if app.isSigningIn {
+        if app.isSigningIn, !showsAccount {
             Button("Cancel Sign-In") { app.auth.cancelSignIn() }
                 .buttonStyle(.bordered)
         } else if state.needsAuthorization {
             let verb = state.issue == nil ? "Connect" : "Reconnect"
             Button(showsAccount ? verb : "\(verb) Google Calendar") { connect(account.id) }
                 .buttonStyle(.bordered)
-                .disabled(model.isLoading)
-                .accessibilityLabel("\(verb) Google Calendar for \(account.title)")
-        } else {
+                .disabled(model.isLoading || app.isSigningIn)
+                // The address tells apart accounts that share a display name.
+                .accessibilityLabel("\(verb) Google Calendar for \(account.email.isEmpty ? account.title : account.email)")
+                // Voice Control users say the words on the button.
+                .accessibilityInputLabels([verb, "\(verb) Google Calendar"])
+        } else if !showsAccount {
             Button("Retry", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                 .buttonStyle(.bordered)
                 .disabled(model.isLoading)
