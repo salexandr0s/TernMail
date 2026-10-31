@@ -185,9 +185,6 @@ struct MainView: View {
         }
         .onChange(of: hidesReader) { _, _ in fitColumns(to: mailWidth) }
         .modifier(AssistantAccessRefresh(mailbox: mailbox))
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            mailbox.syncNow()
-        }
         .modifier(SignOutDialogs())
         .onChange(of: mailbox.draftToReopen) { _, id in
             guard let id else { return }

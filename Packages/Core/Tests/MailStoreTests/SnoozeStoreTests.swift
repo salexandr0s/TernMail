@@ -18,9 +18,9 @@ private let hour: TimeInterval = 60 * 60
         #expect(try await first(cache.wokenThreadIDs(accountID: acct)) == ["t1"])
 
         // Archived, then back: it sorts by its own date again.
-        let archive = try await cache.write { tx in
+        let archive = try #require(try await cache.write { tx in
             try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: now, notBefore: now)
-        }
+        })
         #expect(try await first(cache.wokenThreadIDs(accountID: acct)).isEmpty)
         try await cache.write { tx in try tx.deleteAction(id: try #require(archive.id)) }
         #expect(try await inbox(cache) == ["t2", "t1"])

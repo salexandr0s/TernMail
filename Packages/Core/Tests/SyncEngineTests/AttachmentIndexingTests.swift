@@ -294,10 +294,10 @@ private actor LibraryGmail: GmailService {
     }
     func thread(id: String, format: MessageFormat) async throws -> GmailThread { try await base.thread(id: id, format: format) }
     func listThreads(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) async throws -> ThreadListPage { try await base.listThreads(query: query, labelIDs: labelIDs, includeSpamTrash: includeSpamTrash, pageToken: pageToken, maxResults: maxResults) }
-    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError] { try await base.modifyThreads(ids: ids, addLabelIDs: addLabelIDs, removeLabelIDs: removeLabelIDs) }
-    func trashThreads(ids: [String]) async throws -> [String: GmailError] { try await base.trashThreads(ids: ids) }
-    func untrashThreads(ids: [String]) async throws -> [String: GmailError] { try await base.untrashThreads(ids: ids) }
-    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws { try await base.batchModifyMessages(ids: ids, addLabelIDs: addLabelIDs, removeLabelIDs: removeLabelIDs) }
+    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> LabelChangeResult { try await base.modifyThreads(ids: ids, addLabelIDs: addLabelIDs, removeLabelIDs: removeLabelIDs) }
+    func trashThreads(ids: [String]) async throws -> LabelChangeResult { try await base.trashThreads(ids: ids) }
+    func untrashThreads(ids: [String]) async throws -> LabelChangeResult { try await base.untrashThreads(ids: ids) }
+    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> LabelChangeResult { try await base.batchModifyMessages(ids: ids, addLabelIDs: addLabelIDs, removeLabelIDs: removeLabelIDs) }
     func createLabel(name: String, color: LabelColor?) async throws -> GmailLabel { try await base.createLabel(name: name, color: color) }
     func patchLabel(id: String, name: String?, color: LabelColorChange?) async throws -> GmailLabel { try await base.patchLabel(id: id, name: name, color: color) }
     func deleteLabel(id: String) async throws { try await base.deleteLabel(id: id) }

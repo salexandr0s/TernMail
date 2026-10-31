@@ -208,21 +208,22 @@ actor AuditGmail: GmailService {
         }])
     }
 
-    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) -> [String: GmailError] {
+    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) -> LabelChangeResult {
         change(ids: mail.filter { ids.contains($0.thread) }.map(\.id), add: addLabelIDs, remove: removeLabelIDs)
-        return [:]
+        return LabelChangeResult(confirmedHistoryID: Int64(version))
     }
 
-    func trashThreads(ids: [String]) -> [String: GmailError] {
+    func trashThreads(ids: [String]) -> LabelChangeResult {
         modifyThreads(ids: ids, addLabelIDs: ["TRASH"], removeLabelIDs: [])
     }
 
-    func untrashThreads(ids: [String]) -> [String: GmailError] {
+    func untrashThreads(ids: [String]) -> LabelChangeResult {
         modifyThreads(ids: ids, addLabelIDs: [], removeLabelIDs: ["TRASH"])
     }
 
-    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) {
+    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) -> LabelChangeResult {
         change(ids: ids, add: addLabelIDs, remove: removeLabelIDs)
+        return LabelChangeResult(confirmedHistoryID: Int64(version))
     }
 
     // MARK: Labels

@@ -26,10 +26,13 @@ extension SyncEngine {
     /// and stored; every returned conversation is held for a day.
     public func searchGmail(_ query: SearchQuery, timeZone: TimeZone, pageToken: String? = nil) async throws -> GmailResultPage {
         guard query.root != nil else { return GmailResultPage(threadIDs: [], nextPageToken: nil) }
-        return try await listAndHold(
-            query: query.gmailQuery(timeZone: timeZone), labelIDs: [],
-            includeSpamTrash: query.includesSpamAndTrash, pageToken: pageToken
-        )
+        // The user is waiting on the results, so they go ahead of sync and background work.
+        return try await GmailRequestBudget.$priority.withValue(.interactive) {
+            try await listAndHold(
+                query: query.gmailQuery(timeZone: timeZone), labelIDs: [],
+                includeSpamTrash: query.includesSpamAndTrash, pageToken: pageToken
+            )
+        }
     }
 
     /// Message mode must ask messages.list: threads.list does not identify
@@ -37,6 +40,12 @@ extension SyncEngine {
     public func searchGmailMessages(_ query: SearchQuery, timeZone: TimeZone, pageToken: String? = nil) async throws -> GmailResultPage {
         guard !isStopped, !Task.isCancelled else { throw CancellationError() }
         guard query.root != nil else { return GmailResultPage(threadIDs: [], nextPageToken: nil) }
+        return try await GmailRequestBudget.$priority.withValue(.interactive) {
+            try await listMessagesAndHold(query, timeZone: timeZone, pageToken: pageToken)
+        }
+    }
+
+    private func listMessagesAndHold(_ query: SearchQuery, timeZone: TimeZone, pageToken: String?) async throws -> GmailResultPage {
         let page = try await gmail.listMessages(query: query.gmailQuery(timeZone: timeZone), labelIDs: [],
             includeSpamTrash: query.includesSpamAndTrash, pageToken: pageToken, maxResults: Self.resultPageSize)
         var references: [String: String] = [:]
@@ -76,7 +85,9 @@ extension SyncEngine {
     public func loadOlder(labelID: String, before: Date? = nil, pageToken: String? = nil) async throws -> GmailResultPage {
         let spamOrTrash = labelID == SystemLabel.spam || labelID == SystemLabel.trash
         let query = before.map { "before:\(Int($0.timeIntervalSince1970.rounded(.up)))" }
-        return try await listAndHold(query: query, labelIDs: [labelID], includeSpamTrash: spamOrTrash, pageToken: pageToken)
+        return try await GmailRequestBudget.$priority.withValue(.interactive) {
+            try await listAndHold(query: query, labelIDs: [labelID], includeSpamTrash: spamOrTrash, pageToken: pageToken)
+        }
     }
 
     /// Conversations an open search or list shows. Releasing expired holds

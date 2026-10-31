@@ -54,7 +54,7 @@ public struct LabelRecord: Codable, Sendable, Equatable, FetchableRecord, Persis
 }
 
 /// Message metadata as Gmail last reported it. Label membership lives in `message_label`.
-public struct MessageRecord: Codable, Sendable, Equatable, FetchableRecord, PersistableRecord {
+public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "message"
 
     public var accountID: String
@@ -73,11 +73,16 @@ public struct MessageRecord: Codable, Sendable, Equatable, FetchableRecord, Pers
     public var inReplyTo: String?
     public var referencesHeader: String?
     public var replyTo: String?
+    /// Whether To or Cc names one of the account's own addresses. The cache
+    /// works it out when it stores the message (`upsertMessages`), so a
+    /// value given here is replaced.
+    public var addressedToMe: Bool
 
     public init(
         accountID: String, id: String, threadID: String, historyID: Int64, date: Date,
         snippet: String, sender: String, recipients: String, cc: String?, subject: String, sizeEstimate: Int,
-        rfcMessageID: String? = nil, inReplyTo: String? = nil, referencesHeader: String? = nil, replyTo: String? = nil
+        rfcMessageID: String? = nil, inReplyTo: String? = nil, referencesHeader: String? = nil, replyTo: String? = nil,
+        addressedToMe: Bool = false
     ) {
         self.accountID = accountID
         self.id = id
@@ -94,11 +99,12 @@ public struct MessageRecord: Codable, Sendable, Equatable, FetchableRecord, Pers
         self.inReplyTo = inReplyTo
         self.referencesHeader = referencesHeader
         self.replyTo = replyTo
+        self.addressedToMe = addressedToMe
     }
 }
 
 /// A conversation as the thread list shows it. Derived; see `CacheTransaction.rebuildThreads`.
-public struct ThreadRecord: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
+public struct ThreadRecord: Codable, Sendable, Hashable, Identifiable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "thread"
 
     public var accountID: String
@@ -119,6 +125,9 @@ struct ThreadLabelRecord: Codable, FetchableRecord, PersistableRecord {
     var threadID: String
     var labelID: String
     var lastDate: Date
+    /// What the list sorts by: `lastDate`, or the wake time of a conversation
+    /// a snooze brought back. Stored so `threadLabel_list` can serve the sort.
+    var listDate: Date
 }
 
 /// Decoded body parts of one message, stored raw and sanitized when rendered.
@@ -356,6 +365,9 @@ public struct PendingAction: Codable, Sendable, Equatable, Identifiable, Fetchab
     public var labelID: String? = nil
     public var labelChange: LabelChange? = nil
     public var settingsChange: SettingsChange? = nil
+    /// The history ID Gmail reported for the delivered change. A pass drops the
+    /// sent row once its committed cursor reaches it.
+    public var confirmedHistoryID: Int64? = nil
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID

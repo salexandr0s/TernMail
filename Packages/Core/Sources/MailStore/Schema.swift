@@ -371,7 +371,121 @@ enum Schema {
         Milestone5CacheSchema.register(in: &migrator)
         MessageSnoozeSchema.registerCache(in: &migrator)
         AttachmentClassificationSchema.register(in: &migrator)
+
+        migrator.registerMigration("list-performance-v1") { db in
+            // The list sorted on MAX(lastDate, wokeAt), which no index could
+            // serve. The value now lives on the row (see `rebuildThreads` and
+            // `recordWake`), and the index orders by it.
+            try db.alter(table: "threadLabel") { t in
+                t.add(column: "listDate", .datetime)
+            }
+            try db.execute(sql: """
+                UPDATE threadLabel SET listDate = COALESCE(
+                    (SELECT MAX(threadLabel.lastDate, wokenThread.wokeAt) FROM wokenThread
+                     WHERE wokenThread.accountID = threadLabel.accountID AND wokenThread.threadID = threadLabel.threadID),
+                    threadLabel.lastDate);
+                DROP INDEX threadLabel_list;
+                CREATE INDEX threadLabel_list ON threadLabel(accountID, labelID, listDate DESC, threadID);
+                CREATE INDEX thread_list ON thread(accountID, lastDate DESC, id);
+                CREATE INDEX message_date ON message(accountID, date);
+                -- With message_date present, a conversation's messages ordered
+                -- by date would otherwise be read off that index, scanning the
+                -- whole account. The thread index now serves the order too.
+                DROP INDEX message_thread;
+                CREATE INDEX message_thread ON message(accountID, threadID, date, id);
+                CREATE INDEX messageLabel_label ON messageLabel(accountID, labelID, messageID);
+                CREATE INDEX pendingAction_account ON pendingAction(accountID, state);
+                """)
+        }
+        migrator.registerMigration("reading-enrichment-v1") { db in
+            // Whether a body's inline pictures and invitation have been read
+            // from the full payload used to live in memory, so every launch
+            // fetched each opened conversation once more. Null means not yet;
+            // bodies cached before this get one such read on their next open.
+            try db.alter(table: "messageBody") { t in
+                t.add(column: "enrichedAt", .datetime)
+            }
+        }
+        migrator.registerMigration("actions-v2") { db in
+            // The history ID Gmail reported for a delivered change. A pass drops
+            // the sent row once its committed cursor reaches it, instead of
+            // guessing from the clock. Null for changes Gmail reports none for.
+            try db.alter(table: "pendingAction") { t in
+                t.add(column: "confirmedHistoryID", .integer)
+            }
+        }
+        migrator.registerMigration("effective-labels-v1") { db in
+            // Each message's labels as the user sees them: server labels with
+            // pending changes overlaid, kept by `rebuildThreads`. The reader and
+            // the list read these rows instead of overlaying the queue on every
+            // fetch, so a queued change going out wakes neither unless a label
+            // changes. The rows start as a copy of server labels;
+            // `migrateCache` then overlays the pending changes.
+            try db.create(table: "effectiveLabel") { t in
+                t.column("accountID", .text).notNull()
+                t.column("messageID", .text).notNull()
+                t.column("labelID", .text).notNull()
+                t.primaryKey(["accountID", "messageID", "labelID"])
+                t.foreignKey(["accountID", "messageID"], references: "message", onDelete: .cascade)
+            }
+            try db.execute(sql: """
+                INSERT INTO effectiveLabel (accountID, messageID, labelID)
+                SELECT accountID, messageID, labelID FROM messageLabel
+                """)
+        }
+        migrator.registerMigration("list-flags-v1") { db in
+            // Whether a message's To or Cc names one of the account's own
+            // addresses, for the list's Addressed to Me filter, and the
+            // addresses that decides it by. The engine stores those from the
+            // sign-in address and the send-as identities (`setOwnAddresses`),
+            // which marks the messages cached before then. Until it does, no
+            // message is marked.
+            try db.alter(table: "message") { t in
+                t.add(column: "addressedToMe", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "ownAddress") { t in
+                t.column("accountID", .text).notNull()
+                t.column("address", .text).notNull()
+                t.primaryKey(["accountID", "address"])
+            }
+        }
+        migrator.registerMigration("unread-deltas-v1") { db in
+            // How each local change moves unread counts until Gmail's own
+            // counts include it, per label, in conversations and messages
+            // (`UnreadCounts.swift`). `sentAt` is set once Gmail accepts the
+            // change, and the first label refresh counted after it deletes
+            // the row. Changes queued before this have no rows and count as
+            // Gmail reports them.
+            try db.create(table: "unreadDelta") { t in
+                t.column("accountID", .text).notNull()
+                t.column("actionID", .integer).notNull()
+                t.column("labelID", .text).notNull()
+                t.column("threads", .integer).notNull()
+                t.column("messages", .integer).notNull()
+                t.column("sentAt", .datetime)
+                t.primaryKey(["accountID", "actionID", "labelID"])
+            }
+        }
+        migrator.registerMigration("reply-import-v1") { db in
+            // Set while a reply or forward waits for its original's quote and
+            // files, so its window can open first. Drafts started before this
+            // were imported whole.
+            try db.alter(table: "localDraft") { t in
+                t.add(column: "importPending", .boolean).notNull().defaults(to: false)
+            }
+        }
         return migrator
+    }
+
+    /// Migrates the cache, then overlays pending changes on the effective
+    /// labels `effective-labels-v1` copied from server labels. The overlay runs
+    /// app code, which may rely on columns later migrations add, so it can't
+    /// live in the migration itself.
+    static func migrateCache(_ writer: some DatabaseWriter) throws {
+        let applied = try writer.read { db in try Schema.cacheMigrator.appliedIdentifiers(db) }
+        try cacheMigrator.migrate(writer)
+        guard !applied.contains("effective-labels-v1") else { return }
+        try writer.write { db in try CacheTransaction(db: db).rebuildThreadsReachedByPendingActions() }
     }
 
     static var configMigrator: DatabaseMigrator {

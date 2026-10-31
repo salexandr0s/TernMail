@@ -58,8 +58,28 @@ private let acct = "acct"
         let queue = try DatabaseQueue()
         try Schema.cacheMigrator.migrate(queue, upTo: "compose-v1")
         try await queue.write { db in
-            try CacheTransaction(db: db).upsertMessages([stored("m1", thread: "t1", subject: "Trail map")])
-            try CacheTransaction(db: db).rebuildThreads(["t1"], accountID: acct)
+            let message = stored("m1", thread: "t1", subject: "Trail map").record
+            // The rows as that schema stored them; `upsertMessages` and
+            // `rebuildThreads` now write columns later migrations add.
+            try db.execute(
+                sql: """
+                    INSERT INTO message (accountID, id, threadID, historyID, date, snippet, sender, recipients, subject, sizeEstimate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    acct, message.id, message.threadID, message.historyID, message.date, message.snippet,
+                    message.sender, message.recipients, message.subject, message.sizeEstimate,
+                ]
+            )
+            try db.execute(
+                sql: "INSERT INTO messageLabel (accountID, messageID, labelID) VALUES (?, ?, ?)",
+                arguments: [acct, message.id, SystemLabel.inbox]
+            )
+            try ThreadRecord(
+                accountID: acct, id: "t1", lastDate: message.date, subject: message.subject,
+                snippet: message.snippet, participants: message.sender, messageCount: 1,
+                isUnread: false, isStarred: false
+            ).insert(db)
             try MessageBodyRecord(accountID: acct, messageID: "m1", html: nil, plainText: "Bring the summit permit", fetchedAt: .now)
                 .insert(db)
         }

@@ -22,7 +22,7 @@ private let blue = PendingAction.LabelChange.Color(textColor: "#ffffff", backgro
             _ = try tx.enqueueLabelChange(.deleteLabel, labelID: "Label_2", change: .init(deletedLabel: user("Label_2", "Bills")), accountID: acct, now: now, notBefore: now)
             // A listing fetched before the changes reached Gmail, committed after.
             try tx.replaceLabels(listing, accountID: acct)
-            try tx.dropSentActions(sentBefore: now, accountID: acct)
+            try tx.dropSentActions(confirmedThrough: 0, passStart: now, accountID: acct)
         }
         let shown = try await cache.read { tx in try tx.displayedLabels(accountID: acct) }
         #expect(shown.map(\.name) == [SystemLabel.inbox, "Plans", "Travel"])
@@ -90,7 +90,7 @@ private let blue = PendingAction.LabelChange.Color(textColor: "#ffffff", backgro
                 try tx.enqueueLabelChange(kind, labelID: id, change: .init(newName: "x", parentLabelID: parent), accountID: acct, now: now, notBefore: now).id
             }
             func add(_ thread: String, _ labelID: String) throws -> Int64? {
-                try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: [thread], add: [labelID], now: now, notBefore: now).id
+                try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: [thread], add: [labelID], now: now, notBefore: now)?.id
             }
             let create = try label(.createLabel, pending)
             let useNew = try add("t1", pending)
@@ -118,8 +118,8 @@ private let blue = PendingAction.LabelChange.Color(textColor: "#ffffff", backgro
         try await cache.write { tx in try tx.replaceLabels([user("Label_1", "Trips")], accountID: acct) }
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox, "Label_1"]), ("m2", "t2", [SystemLabel.inbox])])
         let (onlyUse, move, deleteRow) = try await cache.write { tx in
-            let onlyUse = try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t2"], add: ["Label_1"], now: now, notBefore: now)
-            let move = try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t2"], add: ["Label_1"], remove: [SystemLabel.inbox], now: now, notBefore: now)
+            let onlyUse = try #require(try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t2"], add: ["Label_1"], now: now, notBefore: now))
+            let move = try #require(try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t2"], add: ["Label_1"], remove: [SystemLabel.inbox], now: now, notBefore: now))
             #expect(try listed(tx, "Label_1") == ["t1", "t2"])
             let deleteRow = try tx.enqueueLabelChange(.deleteLabel, labelID: "Label_1", change: .init(), accountID: acct, now: now, notBefore: now)
             return (onlyUse, move, deleteRow)
@@ -181,7 +181,7 @@ private let blue = PendingAction.LabelChange.Color(textColor: "#ffffff", backgro
             _ = try tx.enqueueLabelChange(.createLabel, labelID: pending, change: .init(newName: "Plans", newColor: .set(blue)), accountID: acct, now: now, notBefore: now)
             _ = try tx.enqueueLabelChange(.updateLabel, labelID: "Label_1", change: .init(newName: "Travel", newColor: .set(blue)), accountID: acct, now: now, notBefore: now)
             _ = try tx.enqueueLabelChange(.deleteLabel, labelID: "Label_2", change: .init(), accountID: acct, now: now, notBefore: now)
-            return try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t1"], add: [pending], remove: ["Label_1"], now: now, notBefore: now)
+            return try #require(try tx.enqueue(.modifyThreads, accountID: acct, threadIDs: ["t1"], add: [pending], remove: ["Label_1"], now: now, notBefore: now))
         }
         let changed = try #require(try await updates.next())
         let added = shownLabels(changed, accountID: acct, threadID: "t1")

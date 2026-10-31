@@ -4,14 +4,16 @@ import Testing
 @testable import GmailAPI
 
 @Suite(.timeLimit(.minutes(1))) struct GmailRequestPriorityTests {
-    @Test func interactiveReadStartsWhileBackgroundResponseIsPending() async throws {
+    @Test func interactiveReadStartsWhileASyncResponseIsPending() async throws {
         let budget = GmailRequestBudget()
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
-        let background = Task {
-            try await budget.perform(units: 380) {
-                started.continuation.yield(())
-                for await _ in release.stream { break }
+        let page = Task {
+            try await GmailRequestBudget.$priority.withValue(.sync) {
+                try await budget.perform(units: 380) {
+                    started.continuation.yield(())
+                    for await _ in release.stream { break }
+                }
             }
         }
         var iterator = started.stream.makeAsyncIterator()
@@ -21,29 +23,31 @@ import Testing
             try await budget.perform(units: 120) {}
         }
         release.continuation.finish()
-        try await background.value
+        try await page.value
     }
 
-    @Test func interactiveReadOvertakesABackgroundQuotaWait() async throws {
+    @Test func interactiveReadOvertakesASyncQuotaWait() async throws {
         let sleeping = AsyncStream<Void>.makeStream()
         let budget = GmailRequestBudget(sleep: { _ in
             sleeping.continuation.yield(())
             try await Task.sleep(for: .seconds(30))
         })
-        try await budget.perform(units: 380) {}
-        let background = Task {
-            try await budget.perform(units: 380) { Issue.record("Background batch bypassed its quota wait") }
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
+        let page = Task {
+            try await GmailRequestBudget.$priority.withValue(.sync) {
+                try await budget.perform(units: 380) { Issue.record("Sync batch bypassed its quota wait") }
+            }
         }
         var iterator = sleeping.stream.makeAsyncIterator()
         _ = await iterator.next()
         try await GmailRequestBudget.$priority.withValue(.interactive) {
             try await budget.perform(units: 120) {}
         }
-        background.cancel()
-        await #expect(throws: CancellationError.self) { try await background.value }
+        page.cancel()
+        await #expect(throws: CancellationError.self) { try await page.value }
     }
 
-    @Test func interactiveArrivalReplacesTheLongerBackgroundTimer() async throws {
+    @Test func interactiveArrivalReplacesTheLongerSyncTimer() async throws {
         let clock = PriorityClock()
         let sleeping = AsyncStream<Void>.makeStream()
         let calls = OSAllocatedUnfairLock(initialState: 0)
@@ -59,7 +63,9 @@ import Testing
         try await GmailRequestBudget.$priority.withValue(.interactive) {
             try await budget.perform(units: 500) {}
         }
-        let background = Task { try await budget.perform(units: 380) {} }
+        let page = Task {
+            try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
+        }
         var iterator = sleeping.stream.makeAsyncIterator()
         _ = await iterator.next()
         try await GmailRequestBudget.$priority.withValue(.interactive) {
@@ -67,18 +73,18 @@ import Testing
         }
         // A full thread needs 1.8 seconds of refill, not the batch's 7.5 seconds.
         #expect(abs(clock.instant - 1.8) < 0.001)
-        background.cancel()
-        await #expect(throws: CancellationError.self) { try await background.value }
+        page.cancel()
+        await #expect(throws: CancellationError.self) { try await page.value }
     }
 
     @Test func interactiveReadsHonorSharedCooldownAndTokenAccounting() async throws {
         let clock = PriorityClock()
         let budget = GmailRequestBudget(now: { clock.instant }, sleep: { clock.advance($0) })
-        try await budget.perform(units: 380) {}
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
         try await GmailRequestBudget.$priority.withValue(.interactive) {
             try await budget.perform(units: 120) {}
         }
-        try await budget.perform(units: 380) {}
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
         #expect(abs(clock.instant - 7.5) < 0.001)
         await budget.postpone(for: 23)
         try await GmailRequestBudget.$priority.withValue(.interactive) {
@@ -114,6 +120,72 @@ import Testing
             try await budget.perform(units: 500) {}
         }
         #expect(abs(clock.instant - 7.5) < 0.001)
+    }
+
+    @Test func eachLaneLeavesItsReserveForTheLanesAbove() async throws {
+        let clock = PriorityClock()
+        let budget = GmailRequestBudget(now: { clock.instant }, sleep: { clock.advance($0) })
+        // A background request may take at most 250 units, a sync batch 380.
+        await #expect(throws: GmailError.invalidRequest("Gmail request exceeds its quota budget")) {
+            try await budget.perform(units: 251) {}
+        }
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 380) {} }
+        // 120 units remain: the reader runs at once, the next history page refills first.
+        try await GmailRequestBudget.$priority.withValue(.interactive) { try await budget.perform(units: 120) {} }
+        #expect(clock.instant == 0)
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 2) {} }
+        #expect(abs(clock.instant - 1.83) < 0.001)
+    }
+
+    @Test func aServerFailureCoolsOnlyTheLaneThatSawIt() async throws {
+        let clock = PriorityClock()
+        let budget = GmailRequestBudget(now: { clock.instant }, sleep: { clock.advance($0) })
+        await budget.postpone(.lane(30), lane: .interactive)
+        #expect(await budget.snapshot().laneCooldowns[.interactive].map { abs($0 - 8) < 0.001 } == true)
+        // The history pass is unaffected.
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 2) {} }
+        #expect(clock.instant == 0)
+        // The reader waits, but no longer than the lane limit.
+        try await GmailRequestBudget.$priority.withValue(.interactive) { try await budget.perform(units: 120) {} }
+        #expect(abs(clock.instant - 8) < 0.001)
+    }
+
+    @Test func aCoolingLaneDoesNotHoldTheLanesBelowIt() async throws {
+        let clock = PriorityClock()
+        let sleeping = AsyncStream<Void>.makeStream()
+        let budget = GmailRequestBudget(now: { clock.instant }, sleep: { _ in
+            sleeping.continuation.yield(())
+            try await Task.sleep(for: .seconds(30))
+        })
+        await budget.postpone(.lane(8), lane: .interactive)
+        let reader = Task {
+            try await GmailRequestBudget.$priority.withValue(.interactive) {
+                try await budget.perform(units: 120) { Issue.record("Cooling read was dispatched") }
+            }
+        }
+        var iterator = sleeping.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        // The reader is first in line but cooling, so the page behind it runs.
+        try await GmailRequestBudget.$priority.withValue(.sync) { try await budget.perform(units: 2) {} }
+        reader.cancel()
+        await #expect(throws: CancellationError.self) { try await reader.value }
+    }
+
+    @Test func aRateLimitCoolsEveryLane() async throws {
+        let clock = PriorityClock()
+        let budget = GmailRequestBudget(now: { clock.instant }, sleep: { clock.advance($0) })
+        await budget.postpone(.shared(5), lane: .background)
+        try await GmailRequestBudget.$priority.withValue(.interactive) { try await budget.perform(units: 1) {} }
+        #expect(abs(clock.instant - 5) < 0.001)
+    }
+
+    @Test func cooldownsFollowTheKindOfFailure() {
+        #expect(GmailRequestBudget.cooldown(for: .rateLimited, retryAfter: nil, attempt: 0) == .shared(1))
+        #expect(GmailRequestBudget.cooldown(for: .rateLimited, retryAfter: nil, attempt: 3) == .shared(8))
+        #expect(GmailRequestBudget.cooldown(for: .server(status: 503), retryAfter: "30", attempt: 0) == .shared(30))
+        #expect(GmailRequestBudget.cooldown(for: .server(status: 503), retryAfter: nil, attempt: 1) == .lane(2))
+        #expect(GmailRequestBudget.cooldown(for: .transport(.timedOut), retryAfter: nil, attempt: 5) == .lane(8))
+        #expect(GmailRequestBudget.cooldown(for: .notFound, retryAfter: "30", attempt: 0) == nil)
     }
 }
 

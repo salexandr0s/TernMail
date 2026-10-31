@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GmailAPI
 import IMAPIdle
@@ -172,6 +173,37 @@ final class AppModel {
             await self?.mailNotifications?.process(snapshot)
         }
         owner.onUnreadCountChange = { [weak self] in self?.refreshMailBadges() }
+        owner.activityGuard = activityGuard
+        owner.setActivity(syncActivity)
+    }
+
+    /// In front, the app checks for mail every 15 seconds; behind another
+    /// window, every minute; while the Mac sleeps, not at all. Coming to the
+    /// front checks at once.
+    private func observeActivity() {
+        guard activityObservers.isEmpty else { return }
+        let application = NotificationCenter.default
+        let workspace = NSWorkspace.shared.notificationCenter
+        func observe(_ name: Notification.Name, in center: NotificationCenter, _ change: @escaping @MainActor (AppModel) -> Void) -> any NSObjectProtocol {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                // Delivered on the main queue, as requested above.
+                MainActor.assumeIsolated { if let self { change(self) } }
+            }
+        }
+        activityObservers = [
+            observe(NSApplication.didBecomeActiveNotification, in: application) { $0.updateSyncActivity() },
+            observe(NSApplication.didResignActiveNotification, in: application) { $0.updateSyncActivity() },
+            observe(NSWorkspace.willSleepNotification, in: workspace) { $0.isMacAsleep = true; $0.updateSyncActivity() },
+            observe(NSWorkspace.didWakeNotification, in: workspace) { $0.isMacAsleep = false; $0.updateSyncActivity() },
+        ]
+        updateSyncActivity()
+    }
+
+    private func updateSyncActivity() {
+        let activity: SyncActivity = isMacAsleep ? .suspended : NSApplication.shared.isActive ? .active : .inactive
+        guard activity != syncActivity else { return }
+        syncActivity = activity
+        for owner in mailbox?.accounts ?? [] { owner.setActivity(activity) }
     }
 
     private func schedulePreferenceReconciliation() {
@@ -296,6 +328,11 @@ final class AppModel {
     /// Each signed-in account's tokens, by account ID.
     private var sessions: [String: AccountSession] = [:]
     @ObservationIgnored private var inboxWatchers: [String: InboxWatcher] = [:]
+    @ObservationIgnored private var activityObservers: [any NSObjectProtocol] = []
+    @ObservationIgnored private var isMacAsleep = false
+    @ObservationIgnored private let activityGuard = SyncActivityGuard()
+    /// What the user is doing, which sets how often each account checks for mail.
+    private(set) var syncActivity: SyncActivity = .active
     @ObservationIgnored private var inboxUpdatesAreStopped = false
     @ObservationIgnored private var inboxReconciliationRevision = 0
 
@@ -340,7 +377,7 @@ final class AppModel {
                   let owner = mailbox?.account(id: record.id) else { continue }
             let engine = owner.engine
             let watcher = InboxWatcher(monitor: InboxMonitor(address: record.email, tokens: session)) {
-                await engine.requestSync()
+                await engine.requestSync(reason: .inboxSignal)
             }
             inboxWatchers[record.id] = watcher
             watcher.start()
@@ -364,6 +401,7 @@ final class AppModel {
     private var accountChange: Task<Void, Never>?
 
     func start() async {
+        observeActivity()
         await changeAccounts { [self] in await restoreAccounts() }
     }
 

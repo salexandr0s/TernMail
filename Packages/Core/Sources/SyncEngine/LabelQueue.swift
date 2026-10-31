@@ -25,7 +25,7 @@ extension SyncEngine {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let row = try await write { tx in
             if let problem = LabelRules.problem(with: name, among: try tx.displayedLabels(accountID: accountID)) {
                 throw LabelChangeError.name(problem)
@@ -46,7 +46,7 @@ extension SyncEngine {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let rows = try await write { tx -> [PendingAction] in
             let labels = try tx.displayedLabels(accountID: accountID)
             let label = try Self.userLabel(labelID, among: labels, accountID: accountID, in: tx)
@@ -88,7 +88,7 @@ extension SyncEngine {
     public func setLabelColor(_ labelID: String, to color: LabelColor?) async throws -> ActionReceipt? {
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let row = try await write { tx -> PendingAction? in
             let label = try Self.userLabel(labelID, among: try tx.displayedLabels(accountID: accountID), accountID: accountID, in: tx)
             let old = Self.color(of: label)
@@ -146,7 +146,7 @@ extension SyncEngine {
         guard !threadIDs.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.triage)
         let rows = try await write { tx -> [PendingAction] in
             let resolve = { (ids: [String]) throws -> [String] in
                 try ids.map { try tx.resolvedLabelID($0, accountID: accountID) }.removingDuplicates()
@@ -160,7 +160,7 @@ extension SyncEngine {
             }
             remove = remove.filter { !add.contains($0) }.removingDuplicates()
             guard !add.isEmpty || !remove.isEmpty else { return [] }
-            return try threadIDs.map { threadID in
+            return try threadIDs.compactMap { threadID in
                 try tx.enqueue(
                     .modifyThreads, accountID: accountID, threadIDs: [threadID],
                     add: add, remove: remove, now: now, notBefore: notBefore
@@ -340,16 +340,22 @@ extension SyncEngine {
                 do {
                     existing = try await existingLabelID(named: name)
                 } catch {
-                    return await finish(row, outcome: .retry(String(describing: error)))
+                    return await retryOrRefuseLabelChange(row, after: error)
                 }
                 if let existing { return await recordCreated(row, realID: existing, adopted: true) }
                 return await refuseLabelChange(row)
             }
-            if case .retry(let reason) = Self.outcome(for: error) {
-                await finish(row, outcome: .retry(reason))
-            } else {
-                await refuseLabelChange(row)
-            }
+            await retryOrRefuseLabelChange(row, after: error)
+        }
+    }
+
+    /// Queues `row` again while Gmail may still accept it, and refuses it once
+    /// Gmail won't or it has had its tries (`outcome(for:of:)`).
+    private func retryOrRefuseLabelChange(_ row: PendingAction, after error: any Error) async {
+        if case .retry = Self.outcome(for: error, of: row) {
+            await finish(row, outcome: .retry(error))
+        } else {
+            await refuseLabelChange(row)
         }
     }
 
@@ -374,6 +380,8 @@ extension SyncEngine {
     /// an undo queued while the request was out goes too.
     private func recordCreated(_ row: PendingAction, realID: String, adopted: Bool = false) async {
         guard let id = row.id, let temporaryID = row.labelID else { return }
+        // Gmail's copy of the label, with its color and visibility, comes with the next full listing.
+        labelsRefreshedAt = nil
         let accountID = accountID
         let now = now()
         let result = try? await write { tx -> (changed: [PendingAction], keptDeletes: [Int64]) in
@@ -415,6 +423,7 @@ extension SyncEngine {
     /// Marks a delete sent and takes the label out of the cache.
     private func recordDeleted(_ row: PendingAction) async {
         guard let id = row.id, let labelID = row.labelID else { return }
+        labelsRefreshedAt = nil
         let accountID = accountID
         let now = now()
         let dropped = try? await write { tx -> [Int64] in

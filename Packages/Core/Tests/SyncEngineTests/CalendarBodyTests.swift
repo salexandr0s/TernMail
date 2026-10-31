@@ -49,7 +49,9 @@ import Testing
 
         await gmail.setAttachment("invite", data: calendar())
         try await engine.openThread("t1")
-        #expect(try await cache.read { tx in try tx.body(messageID: "m1", accountID: account)?.plainText } == "Updated")
+        // Bodies are immutable, so the cached one stays even though the payload
+        // differs here; its invitation is still read from the fetch.
+        #expect(try await cache.read { tx in try tx.body(messageID: "m1", accountID: account)?.plainText } == "Original")
         #expect(try await cache.read { tx in try tx.messageCalendar(messageID: "m1", accountID: account) } == nil)
         #expect(try await cache.read { tx in try tx.messageCalendar(messageID: "m2", accountID: account)?.invitation } == original)
     }

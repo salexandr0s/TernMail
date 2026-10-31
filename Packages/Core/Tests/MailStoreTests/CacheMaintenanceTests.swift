@@ -16,9 +16,9 @@ import Testing
         await #expect(throws: CacheMaintenanceError.self) { try await cache.resetDisposableCache() }
         #expect(try await cache.read { try $0.body(messageID: "m", accountID: "a") } != nil)
         try await cache.write { tx in _ = try LocalDraft.deleteOne(tx.db, key: "draft") }
-        let row = try await cache.write { tx in
+        let row = try #require(try await cache.write { tx in
             try tx.enqueue(.modifyMessages, accountID: "a", messageIDs: ["m"], add: [SystemLabel.starred], now: date, notBefore: date)
-        }
+        })
         #expect(try await cache.cacheResetReadiness().activeActionCount == 1)
         try await cache.write { tx in
             var failed = row
@@ -49,7 +49,7 @@ import Testing
         try await seed(cache, id: "free", thread: "free", account: "b")
         try await cache.write { tx in
             try tx.holdSearchResults(["held"], until: date.addingTimeInterval(3600), accountID: "a")
-            var failed = try tx.enqueue(.modifyMessages, accountID: "a", messageIDs: ["failed"], add: [SystemLabel.starred], now: date, notBefore: date)
+            var failed = try #require(try tx.enqueue(.modifyMessages, accountID: "a", messageIDs: ["failed"], add: [SystemLabel.starred], now: date, notBefore: date))
             failed.state = .failed
             try tx.updateAction(failed)
             try tx.insertLocalDraft(LocalDraft(id: "draft", accountID: "a", kind: .reply, rfcMessageID: "<draft@example.test>",

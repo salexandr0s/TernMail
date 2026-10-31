@@ -40,10 +40,10 @@ public protocol GmailService: Sendable {
     /// A small history page reserved for the persistent attachment index.
     func attachmentHistory(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
     func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage
-    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> [String: GmailError]
-    func trashThreads(ids: [String]) async throws -> [String: GmailError]
-    func untrashThreads(ids: [String]) async throws -> [String: GmailError]
-    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws
+    func modifyThreads(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> LabelChangeResult
+    func trashThreads(ids: [String]) async throws -> LabelChangeResult
+    func untrashThreads(ids: [String]) async throws -> LabelChangeResult
+    func batchModifyMessages(ids: [String], addLabelIDs: [String], removeLabelIDs: [String]) async throws -> LabelChangeResult
     func createLabel(name: String, color: LabelColor?) async throws -> GmailLabel
     func patchLabel(id: String, name: String?, color: LabelColorChange?) async throws -> GmailLabel
     func deleteLabel(id: String) async throws

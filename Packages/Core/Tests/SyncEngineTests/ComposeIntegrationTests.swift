@@ -54,6 +54,30 @@ import Testing
         #expect(olderMessage.header("Reply-To") == nil)
     }
 
+    @Test func aQueuedSendShowsAtOnceFromItsIdentityUntilGmailsCopyReplacesIt() async throws {
+        let (engine, cache, gmail, clock, _) = try await makeIntegrationEngine()
+        let draft = integrationDraft()
+        try await engine.createDraft(draft)
+        try await engine.sendDraft(draft.id, delay: 10)
+
+        let provisional = LocalSend.messageID(localDraftID: draft.id)
+        let shown = try #require(try await cache.read { try $0.message(id: provisional, accountID: account) })
+        #expect(EmailAddress.parseList(shown.sender) == [EmailAddress(name: "Alias Sender", address: "Alias@Example.com")])
+        #expect(shown.rfcMessageID == draft.rfcMessageID)
+        let body = try #require(try await cache.read { try $0.body(messageID: provisional, accountID: account) })
+        try expectOrder(["Written body", "Quoted original"], in: try #require(body.plainText))
+        #expect(await gmail.uploads.isEmpty)
+
+        clock.advance(10)
+        await engine.sendDueDrafts()
+        #expect(await gmail.draftCalls == ["create", "send D1"])
+        let cached = try await cache.read { try $0.cachedMessageIDs(accountID: account) }
+        #expect(cached.count == 1 && !cached.contains(provisional))
+        let sent = try #require(try await cache.read { tx in try cached.first.flatMap { try tx.message(id: $0, accountID: account) } })
+        #expect(sent.rfcMessageID == draft.rfcMessageID)
+        #expect(try await cache.read { try $0.thread(id: provisional, accountID: account) } == nil)
+    }
+
     @Test(arguments: ["missing@example.com", "pending@example.com", "foreign@example.com"])
     func unavailableIdentitiesNeverUploadAsAnotherSender(address: String) async throws {
         let (engine, cache, gmail, _, accounts) = try await makeIntegrationEngine()
@@ -70,6 +94,8 @@ import Testing
         #expect(stored.fromAddress == address)
         #expect(stored.sendError == ComposeError.senderUnavailable.errorDescription)
         #expect(try await cache.read { try $0.composeRows(localDraftID: draft.id) }.isEmpty)
+        // A refused send shows only in the Outbox.
+        #expect(try await cache.read { try $0.message(id: LocalSend.messageID(localDraftID: draft.id), accountID: account) } == nil)
     }
 
     @Test func anInvalidReplyToFailsBeforeUploading() async throws {
@@ -161,8 +187,11 @@ import Testing
             await engine.sendDueDrafts()
         }
         try await engine.sendDraft(draft.id, delay: 10)
+        let provisional = LocalSend.messageID(localDraftID: draft.id)
+        #expect(try await cache.read { try $0.message(id: provisional, accountID: account) } != nil)
 
         #expect(try await engine.undoSend(draft.id))
+        #expect(try await cache.read { try $0.message(id: provisional, accountID: account) } == nil)
         #expect(try await cache.read { try $0.invitationReply(uid: "event", recurrenceKey: "", accountID: account) } == nil)
         await engine.sendDueDrafts()
         clock.advance(20)

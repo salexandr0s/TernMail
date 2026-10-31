@@ -4,7 +4,7 @@ import MailStore
 import MessageContent
 import UniformTypeIdentifiers
 
-/// Why a draft can't be uploaded at all. Shown to the user as is.
+/// Why a draft can't be started or uploaded at all. Shown to the user as is.
 public enum ComposeError: Error, Equatable, LocalizedError {
     case missingAttachment(String)
     case tooLarge
@@ -14,6 +14,7 @@ public enum ComposeError: Error, Equatable, LocalizedError {
     case senderUnavailable
     case invalidReplyTo
     case invalidCalendar
+    case stillSending
 
     public var errorDescription: String? {
         switch self {
@@ -33,6 +34,8 @@ public enum ComposeError: Error, Equatable, LocalizedError {
             "This sender's Reply-To address is invalid. Update it in Gmail and try again."
         case .invalidCalendar:
             "This calendar reply is invalid. Open the invitation and choose your answer again."
+        case .stillSending:
+            "This message is still sending. Try again once it's sent."
         }
     }
 }
@@ -67,12 +70,16 @@ extension SyncEngine {
     }
 
     /// Queues the send for after `delay`, the undo send delay, first storing
-    /// `content` when given. Returns false when the draft can't be sent.
+    /// `content` when given. The message shows in its conversation and in
+    /// Sent at once (`LocalSend`). Returns false when the draft can't be sent.
     @discardableResult
     public func sendDraft(_ localDraftID: String, content: DraftContent? = nil, delay: TimeInterval) async throws -> Bool {
         let now = now()
+        let rendering = await provisionalRendering(at: now)
         let row = try await write { tx in
-            try tx.enqueueSend(localDraftID: localDraftID, content: content, now: now, notBefore: now.addingTimeInterval(delay))
+            try tx.enqueueSend(
+                localDraftID: localDraftID, content: content, now: now, notBefore: now.addingTimeInterval(delay), rendering: rendering
+            )
         }
         scheduleSending()
         return row != nil
@@ -417,6 +424,23 @@ extension SyncEngine {
         return (EmailAddress(name: identity.displayName ?? sender.name, address: identity.address), replyTo)
     }
 
+    /// How a queued send shows until Gmail's copy replaces it: from the
+    /// address and name it goes out with, carrying the text it will carry,
+    /// as `outgoingIdentity` and `message(for:)` make them. An address the
+    /// send will refuse shows as it is, until the refusal removes it.
+    func provisionalRendering(at date: Date) async -> @Sendable (LocalDraft) -> LocalSend.Rendering {
+        let account = sender
+        let identities = (try? await accounts?.identities(accountID: accountID)) ?? []
+        return { draft in
+            let address = EmailAddress(address: draft.fromAddress ?? account.address)
+            let from = identities.first(where: { $0.lowercasedAddress == address.normalized })
+                .map { EmailAddress(name: $0.displayName ?? account.name, address: $0.address) }
+                ?? (address.normalized == account.normalized ? account : address)
+            let message = Self.message(for: draft, attachments: [], sender: from, date: date)
+            return LocalSend.Rendering(sender: from, html: message.html, plainText: message.plainText)
+        }
+    }
+
     private static func outgoingCalendar(for draft: LocalDraft) throws -> MIMEMessage.CalendarPart? {
         guard let text = draft.calendarPart else {
             if draft.kind == .invitationReply { throw ComposeError.invalidCalendar }
@@ -499,6 +523,8 @@ extension SyncEngine {
         nextLargeSave[localDraftID] = nil
         try? FileManager.default.removeItem(at: outgoingDirectory.appending(path: localDraftID, directoryHint: .isDirectory))
         if sent { scheduleSending() }
+        // Without Gmail's copy, the message reaches Sent with the next pass.
+        if sent, sentMessage == nil, sendsAutomatically { requestSync(reason: .afterAction) }
         if sent { continuation.yield(.draftSent(localDraftID: localDraftID)) }
     }
 

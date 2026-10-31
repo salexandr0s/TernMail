@@ -48,31 +48,34 @@ public struct GoogleSession: Sendable {
     }
 
     /// Refreshes once after a 401. Gmail reads also retry transient failures
-    /// within their account's shared quota and provider cooldown.
+    /// within their account's shared quota and the cooldown a failure sets:
+    /// a rate limit or Retry-After holds every lane, a server or network
+    /// failure only the lane that saw it.
     func send(
         _ request: URLRequest, forceRefresh initiallyForced: Bool = false,
         gmailQuotaUnits: Int? = nil, retryReadFailures: Bool = false,
-        gmailResponseCooldown: (@Sendable (Data, HTTPURLResponse) -> TimeInterval?)? = nil
+        gmailResponseCooldown: (@Sendable (Data, HTTPURLResponse) -> GmailRequestBudget.Cooldown?)? = nil
     ) async throws -> (data: Data, response: HTTPURLResponse) {
         var forceRefresh = initiallyForced
         var hasRefreshed = initiallyForced
         var retries = 0
+        let lane = GmailRequestBudget.priority
         while true {
             let refresh = forceRefresh
             forceRefresh = false
             let responseValue: (Data, HTTPURLResponse)
             do {
                 if let gmailQuotaUnits {
-                    let backoff = pow(2, Double(retries))
+                    let attempt = retries
                     responseValue = try await gmailRequestBudget.perform(units: gmailQuotaUnits) {
                         let result = try await authorized(request, forceRefresh: refresh)
                         let error = GmailError(status: result.1.statusCode, body: result.0)
-                        if error.isRetryable {
-                            let delay = GmailRequestBudget.retryAfter(result.1.value(forHTTPHeaderField: "Retry-After")) ?? backoff
-                            await gmailRequestBudget.postpone(for: max(1, delay))
+                        let header = result.1.value(forHTTPHeaderField: "Retry-After")
+                        if let cooldown = GmailRequestBudget.cooldown(for: error, retryAfter: header, attempt: attempt) {
+                            await gmailRequestBudget.postpone(cooldown, lane: lane)
                         }
-                        if let delay = gmailResponseCooldown?(result.0, result.1) {
-                            await gmailRequestBudget.postpone(for: delay)
+                        if let cooldown = gmailResponseCooldown?(result.0, result.1) {
+                            await gmailRequestBudget.postpone(cooldown, lane: lane)
                         }
                         return result
                     }
@@ -81,7 +84,9 @@ public struct GoogleSession: Sendable {
                 }
             } catch let error as GmailError {
                 if gmailQuotaUnits != nil, retryReadFailures, error.isRetryable, retries < 3 {
-                    await gmailRequestBudget.postpone(for: pow(2, Double(retries)))
+                    if let cooldown = GmailRequestBudget.cooldown(for: error, retryAfter: nil, attempt: retries) {
+                        await gmailRequestBudget.postpone(cooldown, lane: lane)
+                    }
                     retries += 1
                     continue
                 }

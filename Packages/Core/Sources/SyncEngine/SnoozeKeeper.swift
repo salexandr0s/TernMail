@@ -188,14 +188,15 @@ extension SyncEngine {
         guard !threadIDs.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.triage)
         let (rows, replaced, replacedMessages) = try await write { tx -> ([PendingAction], [String: Date], [MessageSnoozeRecord]) in
             let earlier = try tx.snoozeHolds(accountID: accountID).filter { threadIDs.contains($0.key) }
             let replacedMessages = try tx.messageSnoozeHolds(accountID: accountID).filter { threadIDs.contains($0.threadID) }
             for record in replacedMessages {
                 try tx.releaseMessageSnooze(messageID: record.messageID, wakingAt: record.wakeAt, revision: record.revision, accountID: accountID)
             }
-            let rows = try threadIDs.map { threadID in
+            // A conversation already out of the Inbox gets its hold and no row.
+            let rows = try threadIDs.compactMap { threadID -> PendingAction? in
                 let row = try tx.enqueue(
                     .modifyThreads, accountID: accountID, threadIDs: [threadID],
                     remove: [SystemLabel.inbox], now: now, notBefore: notBefore

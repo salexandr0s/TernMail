@@ -2,19 +2,64 @@ import Foundation
 
 /// One account's Gmail traffic shares this budget, including mail sync,
 /// attachments and settings. Calendar and People requests use their own APIs.
+///
+/// Requests run in three lanes. Each lane runs one request at a time and
+/// leaves part of the quota to the lanes above it, so the open conversation
+/// never queues behind a history page, and a history page never queues
+/// behind an attachment scan.
 public actor GmailRequestBudget {
     /// 4,000 units per minute plus a 500-unit burst leaves room below the
     /// 6,000-unit per-user quota used by new Google Cloud projects.
     public static let maximumRequestUnits = 500
-    /// A full thread read can start even while background work uses the budget.
-    static let interactiveReserve = 120
-    static var maximumBatchUnits: Int {
-        priority == .interactive ? maximumRequestUnits : maximumRequestUnits - interactiveReserve
+    /// The most one request may cost at the current priority.
+    static var maximumBatchUnits: Int { maximumRequestUnits - priority.reserve }
+    /// A server or network failure holds its lane back no longer than this.
+    /// Gmail's own rate limit, with or without a Retry-After, is not capped.
+    static let laneCooldownLimit: TimeInterval = 8
+
+    public enum Priority: Sendable, Hashable, CaseIterable {
+        /// Speculative and historical work: prefetch, attachment indexing,
+        /// anything that can wait for the mailbox to go quiet.
+        case background
+        /// History and metadata passes.
+        case sync
+        /// The open conversation, search, Load Older and the user's own changes.
+        case interactive
+
+        /// Units a request at this priority leaves for the lanes above it.
+        var reserve: Int {
+            switch self {
+            case .background: 250
+            case .sync: 120
+            case .interactive: 0
+            }
+        }
+
+        /// Dispatch order: the reader first, then sync, then everything else.
+        static let dispatchOrder: [Priority] = [.interactive, .sync, .background]
     }
 
-    public enum Priority: Sendable, Hashable { case background, interactive }
+    /// What a failed response asks the budget to wait for.
+    public enum Cooldown: Sendable, Equatable {
+        /// Gmail's rate limit, or any Retry-After: every lane of the account waits.
+        case shared(TimeInterval)
+        /// A server or network failure: only the lane that saw it waits.
+        case lane(TimeInterval)
+    }
+
+    /// The budget's state at one instant, for diagnostics.
+    public struct Snapshot: Sendable, Equatable {
+        public var availableUnits: Int
+        /// Seconds until the shared cooldown ends; zero when none is running.
+        public var sharedCooldown: TimeInterval
+        /// Seconds until each cooling lane may run again.
+        public var laneCooldowns: [Priority: TimeInterval]
+        public var executing: Set<Priority>
+        public var waiting: [Priority: Int]
+    }
+
     /// Inherited by requests made while opening a message. Unclassified work
-    /// stays in the background lane, including sync and speculative downloads.
+    /// stays in the background lane, including speculative downloads.
     @TaskLocal public static var priority: Priority = .background
     private let unitsPerSecond: Double
     private let now: @Sendable () -> TimeInterval
@@ -22,6 +67,7 @@ public actor GmailRequestBudget {
     private var availableUnits: Double = Double(maximumRequestUnits)
     private var updatedAt: TimeInterval
     private var blockedUntil: TimeInterval = 0
+    private var laneBlockedUntil: [Priority: TimeInterval] = [:]
     private var executing: Set<Priority> = []
     private var waiters: [Waiter] = []
     private var wake: Task<Void, Never>?
@@ -53,8 +99,7 @@ public actor GmailRequestBudget {
         units: Int, _ operation: @Sendable () async throws -> Value
     ) async throws -> Value {
         let priority = Self.priority
-        let limit = priority == .interactive ? Self.maximumRequestUnits : Self.maximumRequestUnits - Self.interactiveReserve
-        guard units > 0, units <= limit else {
+        guard units > 0, units <= Self.maximumRequestUnits - priority.reserve else {
             throw GmailError.invalidRequest("Gmail request exceeds its quota budget")
         }
         try await acquire(units: units, priority: priority)
@@ -68,9 +113,53 @@ public actor GmailRequestBudget {
 
     /// Retry-After applies to every Gmail caller sharing this account.
     func postpone(for seconds: TimeInterval) {
-        guard seconds.isFinite, seconds > 0 else { return }
-        blockedUntil = max(blockedUntil, now() + seconds)
+        postpone(.shared(seconds), lane: Self.priority)
+    }
+
+    /// Holds requests back after a failure: every lane for a shared cooldown,
+    /// only `lane` for a lane cooldown.
+    func postpone(_ cooldown: Cooldown, lane: Priority) {
+        switch cooldown {
+        case .shared(let seconds):
+            guard seconds.isFinite, seconds > 0 else { return }
+            blockedUntil = max(blockedUntil, now() + seconds)
+        case .lane(let seconds):
+            guard seconds.isFinite, seconds > 0 else { return }
+            let until = now() + min(seconds, Self.laneCooldownLimit)
+            laneBlockedUntil[lane] = max(laneBlockedUntil[lane] ?? 0, until)
+        }
         schedule()
+    }
+
+    /// The wait a failed Gmail response asks for, or nil when the request
+    /// should not be retried. `attempt` counts earlier tries of the same
+    /// request, so each retry waits twice as long as the one before.
+    static func cooldown(for error: GmailError, retryAfter header: String?, attempt: Int) -> Cooldown? {
+        guard error.isRetryable else { return nil }
+        if let seconds = retryAfter(header) { return .shared(max(1, seconds)) }
+        let backoff = max(1, pow(2, Double(attempt)))
+        switch error {
+        case .rateLimited: return .shared(backoff)
+        default: return .lane(min(backoff, laneCooldownLimit))
+        }
+    }
+
+    public func snapshot() -> Snapshot {
+        let instant = max(updatedAt, now())
+        let available = min(Double(Self.maximumRequestUnits), availableUnits + (instant - updatedAt) * unitsPerSecond)
+        var laneCooldowns: [Priority: TimeInterval] = [:]
+        for (lane, until) in laneBlockedUntil where until > instant {
+            laneCooldowns[lane] = until - instant
+        }
+        var waiting: [Priority: Int] = [:]
+        for waiter in waiters { waiting[waiter.priority, default: 0] += 1 }
+        return Snapshot(
+            availableUnits: Int(available.rounded(.down)),
+            sharedCooldown: max(0, blockedUntil - instant),
+            laneCooldowns: laneCooldowns,
+            executing: executing,
+            waiting: waiting
+        )
     }
 
     private func acquire(units: Int, priority: Priority) async throws {
@@ -92,33 +181,41 @@ public actor GmailRequestBudget {
         schedule()
     }
 
+    /// Dispatches what can run now and sets one timer for the earliest wait.
+    /// A lane in its own cooldown is skipped, so the lanes below it keep
+    /// running. A lane waiting for quota stops the lanes below it, since
+    /// they would take the units it is waiting for.
     private func schedule() {
         let instant = max(updatedAt, now())
         availableUnits = min(Double(Self.maximumRequestUnits), availableUnits + (instant - updatedAt) * unitsPerSecond)
         updatedAt = instant
-        while let index = nextWaiterIndex() {
-            let first = waiters[index]
-            let reserve = first.priority == .background ? Self.interactiveReserve : 0
-            let delay = max(blockedUntil - instant, (Double(first.units + reserve) - availableUnits) / unitsPerSecond)
-            if delay > 0 {
-                scheduleWake(at: instant + delay, delay: delay)
-                return
+        var nextWake: TimeInterval?
+        dispatch: while true {
+            for lane in Priority.dispatchOrder {
+                guard !executing.contains(lane), let index = waiters.firstIndex(where: { $0.priority == lane }) else { continue }
+                let laneDelay = (laneBlockedUntil[lane] ?? 0) - instant
+                if laneDelay > 0 {
+                    nextWake = min(nextWake ?? .infinity, laneDelay)
+                    continue
+                }
+                let waiter = waiters[index]
+                let delay = max(blockedUntil - instant, (Double(waiter.units + lane.reserve) - availableUnits) / unitsPerSecond)
+                if delay > 0 {
+                    nextWake = min(nextWake ?? .infinity, delay)
+                    break dispatch
+                }
+                availableUnits -= Double(waiter.units)
+                executing.insert(lane)
+                waiters.remove(at: index).continuation.resume()
+                continue dispatch
             }
-            cancelWake()
-            availableUnits -= Double(first.units)
-            executing.insert(first.priority)
-            waiters.remove(at: index).continuation.resume()
+            break
         }
-        cancelWake()
-    }
-
-    private func nextWaiterIndex() -> Int? {
-        // One request per lane prevents slow background HTTP from occupying
-        // the reader's slot. FIFO is preserved within each lane.
-        if !executing.contains(.interactive),
-           let index = waiters.firstIndex(where: { $0.priority == .interactive }) { return index }
-        guard !executing.contains(.background) else { return nil }
-        return waiters.firstIndex(where: { $0.priority == .background })
+        if let nextWake {
+            scheduleWake(at: instant + nextWake, delay: nextWake)
+        } else {
+            cancelWake()
+        }
     }
 
     private func cancelWake() {
@@ -130,8 +227,8 @@ public actor GmailRequestBudget {
     }
 
     private func scheduleWake(at deadline: TimeInterval, delay: TimeInterval) {
-        // An interactive arrival may need only 120 units while a background
-        // batch is waiting for 500. Replace that timer instead of inheriting it.
+        // An interactive arrival may need only 120 units while a sync batch
+        // is waiting for 500. Replace that timer instead of inheriting it.
         if let wakeDeadline, wakeDeadline <= deadline { return }
         cancelWake()
         wakeGeneration += 1

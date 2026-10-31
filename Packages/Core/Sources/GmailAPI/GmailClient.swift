@@ -120,29 +120,32 @@ public struct GmailClient: Sendable {
     // MARK: Changes
 
     /// Adds and removes labels on whole threads, including messages outside the
-    /// local cache. Returns the threads that failed.
+    /// local cache. Gmail answers each with the thread as it now stands.
     public func modifyThreads(
         ids: [String],
         addLabelIDs: [String],
         removeLabelIDs: [String]
-    ) async throws -> [String: GmailError] {
+    ) async throws -> LabelChangeResult {
         let body = try encode(LabelChangeRequest(addLabelIds: addLabelIDs, removeLabelIds: removeLabelIDs))
-        return try await batchFailures(ids) { .post("threads/\($0)/modify", body: body) }
+        return try await changeThreads(ids) { .post("threads/\($0)/modify", body: body) }
     }
 
-    public func trashThreads(ids: [String]) async throws -> [String: GmailError] {
-        try await batchFailures(ids) { .post("threads/\($0)/trash") }
+    public func trashThreads(ids: [String]) async throws -> LabelChangeResult {
+        try await changeThreads(ids) { .post("threads/\($0)/trash") }
     }
 
-    public func untrashThreads(ids: [String]) async throws -> [String: GmailError] {
-        try await batchFailures(ids) { .post("threads/\($0)/untrash") }
+    public func untrashThreads(ids: [String]) async throws -> LabelChangeResult {
+        try await changeThreads(ids) { .post("threads/\($0)/untrash") }
     }
 
+    /// `batchModify` answers with nothing, so one changed message is read back
+    /// in `minimal` format for the history ID the change left it at. A failed
+    /// read-back leaves the result unconfirmed; the change itself stands.
     public func batchModifyMessages(
         ids: [String],
         addLabelIDs: [String],
         removeLabelIDs: [String]
-    ) async throws {
+    ) async throws -> LabelChangeResult {
         for chunk in ids.chunked(into: Self.batchModifyLimit) {
             let body = try encode(BatchModifyRequest(
                 ids: Array(chunk),
@@ -151,6 +154,35 @@ public struct GmailClient: Sendable {
             ))
             _ = try await send(.post("messages/batchModify", body: body))
         }
+        guard let sample = ids.last else { return LabelChangeResult() }
+        let items = Self.formatQuery(.minimal, metadataHeaders: [])
+        do {
+            let answer = try await send(.get("messages/\(sample)", items))
+            let stamp: HistoryStamp? = try? decode(answer)
+            return LabelChangeResult(confirmedHistoryID: stamp?.historyID)
+        } catch {
+            return LabelChangeResult()
+        }
+    }
+
+    /// Sends one change per thread and reads the history ID each answer
+    /// carries. An answer that can't be read still counts as applied, since
+    /// Gmail returned success for it.
+    private func changeThreads(_ ids: [String], endpoint: (String) -> Endpoint) async throws -> LabelChangeResult {
+        let unique = ids.uniqued()
+        let results = try await batch(unique.map(endpoint))
+        var result = LabelChangeResult()
+        for (id, outcome) in zip(unique, results) {
+            switch outcome {
+            case .success(let data):
+                let stamp: HistoryStamp? = try? decode(data)
+                guard let historyID = stamp?.historyID else { continue }
+                result.confirmedHistoryID = max(result.confirmedHistoryID ?? 0, historyID)
+            case .failure(let error):
+                result.failures[id] = error
+            }
+        }
+        return result
     }
 
     // MARK: Transport
@@ -248,14 +280,23 @@ public struct GmailClient: Sendable {
     }
 
     /// Inspect parts while the account's request permit is still held, so a
-    /// competing direct request observes the same provider cooldown.
-    private static func batchCooldown(_ data: Data, _ response: HTTPURLResponse) -> TimeInterval? {
+    /// competing direct request observes the same provider cooldown. A
+    /// throttled part cools every lane; a failed part cools only this one.
+    private static func batchCooldown(_ data: Data, _ response: HTTPURLResponse) -> GmailRequestBudget.Cooldown? {
         guard let boundary = BatchCodec.boundary(contentType: response.value(forHTTPHeaderField: "Content-Type")),
               let parts = try? BatchCodec.decode(data, boundary: boundary) else { return nil }
-        return parts.compactMap { part -> TimeInterval? in
-            guard GmailError(status: part.status, body: part.body).isRetryable else { return nil }
-            return max(1, GmailRequestBudget.retryAfter(part.retryAfter) ?? 1)
-        }.max()
+        var shared: TimeInterval?
+        var lane: TimeInterval?
+        for part in parts {
+            let error = GmailError(status: part.status, body: part.body)
+            switch GmailRequestBudget.cooldown(for: error, retryAfter: part.retryAfter, attempt: 0) {
+            case .shared(let seconds)?: shared = max(shared ?? 0, seconds)
+            case .lane(let seconds)?: lane = max(lane ?? 0, seconds)
+            case nil: break
+            }
+        }
+        if let shared { return .shared(shared) }
+        return lane.map { .lane($0) }
     }
 
     func batchDecode<T: Decodable & Sendable>(
@@ -276,16 +317,6 @@ public struct GmailClient: Sendable {
         return decoded
     }
 
-    private func batchFailures(_ ids: [String], endpoint: (String) -> Endpoint) async throws -> [String: GmailError] {
-        let unique = ids.uniqued()
-        let results = try await batch(unique.map(endpoint))
-        var failures: [String: GmailError] = [:]
-        for (id, result) in zip(unique, results) {
-            if case .failure(let error) = result { failures[id] = error }
-        }
-        return failures
-    }
-
     func decode<T: Decodable>(_ data: Data) throws -> T {
         try session.decode(data)
     }
@@ -293,6 +324,26 @@ public struct GmailClient: Sendable {
     func encode(_ value: some Encodable) throws -> Data {
         try session.encode(value)
     }
+}
+
+/// What Gmail reported for a batch of label changes.
+public struct LabelChangeResult: Sendable, Equatable {
+    /// The threads or messages Gmail refused, by ID.
+    public var failures: [String: GmailError]
+    /// The history ID the changed mail stood at afterwards, the highest Gmail
+    /// reported. Nil when it reported none.
+    public var confirmedHistoryID: Int64?
+
+    public init(failures: [String: GmailError] = [:], confirmedHistoryID: Int64? = nil) {
+        self.failures = failures
+        self.confirmedHistoryID = confirmedHistoryID
+    }
+}
+
+/// The one field a change's answer is read for.
+private struct HistoryStamp: Decodable {
+    let historyId: String?
+    var historyID: Int64? { historyId.flatMap(Int64.init) }
 }
 
 private struct LabelChangeRequest: Encodable {
