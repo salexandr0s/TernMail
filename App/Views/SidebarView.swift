@@ -79,12 +79,6 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .sheet(isPresented: Binding(get: { mailbox.navigation.isCreatingSearch }, set: { mailbox.navigation.isCreatingSearch = $0 })) {
-            SavedSearchEditor(mailbox: mailbox, existing: nil)
-        }
-        .sheet(item: Binding(get: { mailbox.navigation.searchToEdit }, set: { mailbox.navigation.searchToEdit = $0 })) { search in
-            SavedSearchEditor(mailbox: mailbox, existing: search)
-        }
         .sheet(isPresented: Binding(get: { mailbox.navigation.isShowingSwitcher }, set: { mailbox.navigation.isShowingSwitcher = $0 })) {
             MailboxSwitcher(mailbox: mailbox)
         }
