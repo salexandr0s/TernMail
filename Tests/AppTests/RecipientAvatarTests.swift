@@ -131,12 +131,48 @@ import Testing
         editor.unmarkText()
     }
 
-    private func editingField(_ coordinator: RecipientField.Coordinator) throws -> (RecipientTokenField, NSTextView, NSWindow) {
+    @Test func tokenMenuEditsAndRemovesOnlyTheChosenAddress() throws {
+        let named = EmailAddress(name: "Doe, Jane", address: "jane@company.invalid")
+        let plain = EmailAddress(address: "sam@company.invalid")
+        let last = EmailAddress(address: "lee@company.invalid")
+        var addresses = [named, plain, last]
+        let recipient = RecipientField(label: "To", addresses: .init(get: { addresses }, set: { addresses = $0 }),
+                                       requestsFocus: .constant(false), isEditable: true) { _ in [] }
+        let coordinator = recipient.makeCoordinator()
+        let (field, editor, window) = try editingField(coordinator, showing: addresses)
+        defer { coordinator.cancelRequests(); window.close() }
+        func choose(_ title: String, for index: Int) throws {
+            let tokens = try #require(field.objectValue as? [Any])
+            let menu = try #require(coordinator.tokenField(field, menuForRepresentedObject: tokens[index]))
+            let item = try #require(menu.items.first { $0.title == title })
+            #expect(item.isEnabled)
+            menu.performActionForItem(at: menu.index(of: item))
+        }
+
+        try choose("Remove", for: 1)
+        #expect(addresses == [named, last])
+
+        try choose("Edit", for: 0)
+        let text = RecipientField.tokenText(named)
+        #expect((editor.string as NSString).substring(with: editor.selectedRange()) == text)
+        #expect(addresses == [named, last])
+        // Leaving the field turns the text back into the same address.
+        window.makeFirstResponder(nil)
+        #expect(addresses == [named, last])
+        let objects = try #require(field.objectValue as? [Any])
+        #expect(objects.compactMap { ($0 as? RecipientField.Token)?.address } == [named, last])
+    }
+
+    /// A field in a window with the cursor in it. `addresses` are its tokens
+    /// before editing starts, as when someone clicks into a filled field.
+    private func editingField(_ coordinator: RecipientField.Coordinator,
+                              showing addresses: [EmailAddress] = []) throws -> (RecipientTokenField, NSTextView, NSWindow) {
         let field = RecipientField.makeField()
         field.frame = NSRect(x: 0, y: 0, width: 500, height: 60)
         field.delegate = coordinator
         coordinator.field = field
         coordinator.configureAvatars()
+        if !addresses.isEmpty { coordinator.show(addresses) }
         let window = NSWindow(contentRect: field.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView?.addSubview(field)

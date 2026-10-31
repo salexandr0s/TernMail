@@ -119,6 +119,13 @@ struct RecipientField: NSViewRepresentable {
         return "\"\(escaped)\" <\(address.address)>"
     }
 
+    /// An address as text the field turns back into one token. The name
+    /// leaves out commas and semicolons, which would end the token.
+    static func tokenText(_ address: EmailAddress) -> String {
+        let name = address.name?.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: ";", with: "")
+        return name.map { "\($0) <\(address.address)>" } ?? address.address
+    }
+
     /// The address in one token. Tokens hold objects, not values.
     final class Token: NSObject {
         let address: EmailAddress
@@ -149,6 +156,8 @@ struct RecipientField: NSViewRepresentable {
         /// Completion strings and the addresses they stand for. A name's commas
         /// are left out of its completion string, since a comma ends a token.
         private var completions: [String: EmailAddress] = [:]
+        /// Text that Edit made from a token, and the address it stands for.
+        private var editedAddresses: [String: EmailAddress] = [:]
         private var loadTask: Task<Void, Never>?
         private var queryGeneration = 0
         /// Never on screen or edited, so SwiftUI can measure it at any time.
@@ -318,7 +327,7 @@ struct RecipientField: NSViewRepresentable {
             let text = editingString.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             if let group = groupCompletions[text] { return GroupToken(group) }
-            if let address = completions[text] { return Token(address) }
+            if let address = completions[text] ?? editedAddresses[text] { return Token(address) }
             return Token(EmailAddress.parseList(text).first ?? EmailAddress(address: text))
         }
 
@@ -407,6 +416,19 @@ struct RecipientField: NSViewRepresentable {
             objects.firstIndex { ($0 as? Token) === token } ?? objects.firstIndex { ($0 as? Token)?.address == token.address }
         }
 
+        /// The token's character in the field editor, which holds each token as one attachment.
+        private static func range(of token: Token, in editor: NSTextView) -> NSRange? {
+            guard let storage = editor.textStorage else { return nil }
+            var found: NSRange?
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+                guard let cell = (value as? NSTextAttachment)?.attachmentCell as? NSCell,
+                      (cell.representedObject as? Token) === token else { return }
+                found = range
+                stop.pointee = true
+            }
+            return found
+        }
+
         @objc private func copyAddress(_ item: NSMenuItem) {
             guard let token = item.representedObject as? Token else { return }
             NSPasteboard.general.clearContents()
@@ -414,24 +436,20 @@ struct RecipientField: NSViewRepresentable {
         }
 
         /// Turns the token back into selected text, so typing replaces it.
+        /// Until it changes, the text stands for the original address, whose
+        /// name may hold the commas the text leaves out.
         @objc private func editToken(_ item: NSMenuItem) {
-            guard let field, let token = item.representedObject as? Token,
-                  var objects = field.objectValue as? [Any], let index = index(of: token, in: objects) else { return }
-            let text = RecipientField.editingString(token.address)
-            objects[index] = text
-            field.objectValue = objects
-            field.window?.makeFirstResponder(field)
-            if let editor = field.currentEditor() as? NSTextView {
-                // In the field editor a token is one character; text keeps its length.
-                var start = 0
-                for object in objects[..<index] { start += (object as? String).map { ($0 as NSString).length } ?? 1 }
-                editor.setSelectedRange(NSRange(location: start, length: (text as NSString).length))
-            }
-            publish()
+            guard parent.isEditable, let field, let token = item.representedObject as? Token else { return }
+            if field.currentEditor() == nil { field.window?.makeFirstResponder(field) }
+            guard let editor = field.currentEditor() as? NSTextView, let range = Self.range(of: token, in: editor) else { return }
+            let text = RecipientField.tokenText(token.address)
+            editedAddresses[text] = token.address
+            editor.insertText(text, replacementRange: range)
+            editor.setSelectedRange(NSRange(location: range.location, length: (text as NSString).length))
         }
 
         @objc private func removeToken(_ item: NSMenuItem) {
-            guard let field, let token = item.representedObject as? Token,
+            guard parent.isEditable, let field, let token = item.representedObject as? Token,
                   var objects = field.objectValue as? [Any], let index = index(of: token, in: objects) else { return }
             objects.remove(at: index)
             field.objectValue = objects
@@ -469,8 +487,7 @@ struct RecipientField: NSViewRepresentable {
         }
 
         private func completionString(_ address: EmailAddress) -> String {
-            let name = address.name?.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: ";", with: "")
-            let string = name.map { "\($0) <\(address.address)>" } ?? address.address
+            let string = RecipientField.tokenText(address)
             completions[string] = address
             return string
         }
@@ -496,6 +513,7 @@ struct RecipientField: NSViewRepresentable {
                 guard let text = (object as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
                     return []
                 }
+                if let address = editedAddresses[text] { return [address] }
                 let parsed = EmailAddress.parseList(text)
                 return parsed.isEmpty ? [EmailAddress(address: text)] : parsed
             }
