@@ -77,7 +77,7 @@ struct ThreadSummaryView: View {
         }
         .onDisappear { model.clear(); loadedIdentity = nil }
         .sheet(isPresented: $showsSettings) {
-            AssistantSettingsView(model: assistant, showsIntroduction: false, isSheet: true, showsMailScope: true)
+            AssistantSettingsView(model: assistant, isSheet: true, showsMailScope: true)
         }
     }
 

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct AssistantSettingsView: View {
     @Bindable var model: AssistantModel
-    var showsIntroduction = true
     var isSheet = false
     var showsMailScope = false
     @Environment(\.dismiss) private var dismiss
@@ -55,7 +54,6 @@ struct AssistantSettingsView: View {
     }
 
     @ViewBuilder private var sections: some View {
-        if showsIntroduction { introduction }
         if showsMailScope {
             SettingsControlRow("Mail scope") {
                 Picker("Mail scope", selection: $model.selectedScope) {
@@ -68,18 +66,6 @@ struct AssistantSettingsView: View {
         accountsSection
         AssistantWritingStyleSettingsSection(model: model.writingStyle) { turningOffStyle = $0 }
         privacySection
-    }
-
-    private var introduction: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text("Assistant")
-                .font(.title2.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
-            Text("Ask about your mail, summarize threads, and prepare replies.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     /// Clearing the chat or changing access only needs a confirmation when there is something to lose.

@@ -158,7 +158,7 @@ struct SettingsView: View {
         case .blocked: IntegrationSettingsView(pane: .blocked)
         case .vacation: IntegrationSettingsView(pane: .vacation)
         case .calendar: CalendarManagementView(model: app.calendar)
-        case .assistant: AssistantSettingsView(model: app.assistant, showsIntroduction: false)
+        case .assistant: AssistantSettingsView(model: app.assistant)
         case .failedChanges: FailedChangesView()
         case .maintenance: MaintenanceSettingsView(app: app)
         }

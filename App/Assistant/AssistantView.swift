@@ -54,7 +54,7 @@ struct AssistantView: View {
         }
         .onChange(of: model.availableAccounts.map(\.id)) { model.refreshAccess() }
         .sheet(isPresented: $showsSettings) {
-            AssistantSettingsView(model: model, showsIntroduction: false, isSheet: true)
+            AssistantSettingsView(model: model, isSheet: true)
         }
         .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: modelName,
                                          onNewChat: startNewChat, onSettings: { showsSettings = true }))
