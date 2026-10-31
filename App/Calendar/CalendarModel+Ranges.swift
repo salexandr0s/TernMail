@@ -1,4 +1,5 @@
 import Dispatch
+import Diagnostics
 import Foundation
 import GmailAPI
 import MailStore
@@ -86,11 +87,15 @@ extension CalendarModel {
         let displayCalendar = calendar
         let interval = displayInterval
         let buildsTimeAxis = mode == .day || mode == .week
+        let preparationSpan = TernSignposts.begin(.calendarPreparation)
         let prepared = await Task.detached(priority: .userInitiated) {
             CalendarPresentationSnapshot(events: current, interval: interval, calendar: displayCalendar,
                 buildsTimeAxis: buildsTimeAxis)
         }.value
-        guard key == rangeIdentity, events == current, !Task.isCancelled else { return }
+        guard key == rangeIdentity, events == current, !Task.isCancelled else {
+            TernSignposts.cancel(preparationSpan); return
+        }
+        TernSignposts.end(preparationSpan)
         presentation = prepared
         presentationRevision += 1
     }
@@ -128,6 +133,7 @@ extension CalendarModel {
             let stale = loaded.contains { $0.result?.isStale != false || $0.result?.isComplete != true }
             if refreshIfIncomplete, loaded.contains(where: { $0.result?.isComplete != true }) { needsRefresh = true }
             let checkedAt = stale ? nil : loaded.compactMap { $0.result?.fetchedAt }.min() ?? Date.now
+            let preparationSpan = TernSignposts.begin(.calendarPreparation)
             let preparation = Task.detached(priority: .userInitiated) { () throws -> CalendarRangeSnapshot in
                 var found: [CalendarDisplayEvent] = []
                 for item in loaded {
@@ -155,8 +161,14 @@ extension CalendarModel {
                 try? await preparation.value
             } onCancel: { preparation.cancel() }
             guard let snapshot, revision == rangeRevision, lifecycle == lifecycleRevision,
-                  key == rangeIdentity, allCalendars == calendars, !Task.isCancelled else { return }
-            if pending != operations { await reloadOccurrences(refresh: false); return }
+                  key == rangeIdentity, allCalendars == calendars, !Task.isCancelled else {
+                TernSignposts.cancel(preparationSpan); return
+            }
+            if pending != operations {
+                TernSignposts.cancel(preparationSpan)
+                await reloadOccurrences(refresh: false); return
+            }
+            TernSignposts.end(preparationSpan)
             publish(snapshot)
             remember(snapshot, for: key)
         }
