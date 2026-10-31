@@ -16,6 +16,7 @@ struct AccountsSettings: View {
                             ConnectionsView(account: owner.account, app: app)
                         }
                     }
+                    PermanentDeletionSection(accounts: mailbox.accounts.map(\.account), app: app)
                     if let error = app.signInError {
                         Section {
                             Label(error, systemImage: "exclamationmark.triangle")

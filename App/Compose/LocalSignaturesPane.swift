@@ -19,7 +19,7 @@ struct LocalSignaturesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("Local signatures") {
+            Section {
                 HStack(spacing: Tokens.Space.s3) {
                     Text("Signature")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
@@ -38,6 +38,7 @@ struct LocalSignaturesPane: View {
                     Text("Name")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
                     TextField("Signature name", text: $name)
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                 }
                 .padding(.horizontal, Tokens.Space.s3)

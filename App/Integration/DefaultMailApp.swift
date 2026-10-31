@@ -21,7 +21,7 @@ final class DefaultMailApp {
         do {
             try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "mailto")
             refresh()
-        } catch { self.error = "macOS couldn't change the default mail app." }
+        } catch { self.error = "macOS couldn't change the default email app." }
     }
 }
 
@@ -31,13 +31,17 @@ struct DefaultMailAppView: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text("Default mail app")
+                Text("Default email app")
                 Text(model.error ?? (model.isDefault ? "Email links open in Tern." : "Choose Tern to open email links."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Button(model.isDefault ? "Default Mail App" : "Make Default") { Task { await model.makeDefault() } }
-                .disabled(model.isDefault || model.isChanging)
+            // Once Tern is the default, the line above says so; a disabled
+            // button would only repeat it.
+            if !model.isDefault {
+                Button("Make Default") { Task { await model.makeDefault() } }
+                    .disabled(model.isChanging)
+            }
         }
         .task { model.refresh() }
     }
