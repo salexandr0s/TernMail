@@ -3,7 +3,8 @@ import Foundation
 import MailStore
 import MessageContent
 
-/// Scripting reads immutable metadata snapshots; it never waits for SQLite or Google.
+/// Scripting reads immutable metadata snapshots; it never waits for SQLite or
+/// Google. Scripts may start new messages, which open as drafts and never send.
 @MainActor
 final class MailScriptingBridge {
     static let shared = MailScriptingBridge()
@@ -22,6 +23,9 @@ final class MailScriptingBridge {
     private var firstSnapshot: Task<Void, Never>?
     private var conversations: [MailScriptConversation] = []
     private var messages: [MailScriptMessage] = []
+    private weak var app: AppModel?
+    /// The latest messages scripts made, so `make` can return a reference to one.
+    private(set) var outgoingMessages: [MailScriptOutgoingMessage] = []
 
     init(mailboxProvider: @escaping @MainActor () -> MailboxModel? = { nil }) {
         self.mailboxProvider = mailboxProvider
@@ -30,6 +34,7 @@ final class MailScriptingBridge {
     deinit { refresh?.cancel(); firstSnapshot?.cancel() }
 
     func bind(_ app: AppModel) {
+        self.app = app
         mailboxProvider = { [weak app] in
             guard let app, case .signedIn = app.phase else { return nil }
             return app.mailbox
@@ -94,6 +99,23 @@ final class MailScriptingBridge {
     var selectedMessages: [MailScriptMessage] { hasCurrentSelection ? messages : [] }
 
     func waitForRefresh() async { await firstSnapshot?.value }
+
+    /// Opens a draft with the fields a script set, in its own window.
+    func start(_ message: MailScriptOutgoingMessage) {
+        guard let app, let mailbox = mailboxProvider() else {
+            NSScriptCommand.current()?.scriptErrorNumber = errAEEventFailed
+            NSScriptCommand.current()?.scriptErrorString = "Sign in to Tern first."
+            return
+        }
+        message.markStarted()
+        outgoingMessages = Array((outgoingMessages + [message]).suffix(20))
+        let request = message.request
+        app.showMainWindow()
+        Task {
+            guard let id = await mailbox.startMailto(request), app.mailbox === mailbox else { return }
+            app.mailURLs.composeDraftID = id
+        }
+    }
 
     fileprivate func isValid(generation: Int, accountID: String) -> Bool {
         generation == self.generation && hasCurrentSelection && sourceMailbox?.account(id: accountID) != nil
@@ -187,7 +209,62 @@ final class MailScriptMessage: MailScriptObject {
     nonisolated override var objectSpecifier: NSScriptObjectSpecifier? { specifier(collection: "ternMessages") }
 }
 
+/// A new message a script makes. Its properties apply once, when Tern opens the
+/// draft; after that the person edits it in its window.
+@MainActor @objc(TernScriptOutgoingMessage)
+final class MailScriptOutgoingMessage: NSObject {
+    struct Fields: Equatable {
+        var subject = "", content = "", to = "", cc = "", bcc = ""
+    }
+
+    nonisolated let uniqueID = UUID().uuidString
+    private var fields = Fields()
+    private var isStarted = false
+
+    override class var accessInstanceVariablesDirectly: Bool { false }
+    @objc dynamic var scriptID: String { uniqueID }
+    @objc dynamic var subject: String { get { fields.subject } set { edit { $0.subject = newValue } } }
+    @objc dynamic var content: String { get { fields.content } set { edit { $0.content = newValue } } }
+    @objc dynamic var toAddresses: String { get { fields.to } set { edit { $0.to = newValue } } }
+    @objc dynamic var ccAddresses: String { get { fields.cc } set { edit { $0.cc = newValue } } }
+    @objc dynamic var bccAddresses: String { get { fields.bcc } set { edit { $0.bcc = newValue } } }
+
+    var request: MailtoRequest { Self.request(for: fields) }
+    func markStarted() { isStarted = true }
+
+    /// Addresses may be separated by commas or new lines; invalid ones are dropped.
+    static func request(for fields: Fields) -> MailtoRequest {
+        func addresses(_ text: String) -> [EmailAddress] {
+            EmailAddress.parseList(text.replacingOccurrences(of: "\n", with: ",")).filter(\.isValid)
+        }
+        return MailtoRequest(to: addresses(fields.to), cc: addresses(fields.cc), bcc: addresses(fields.bcc),
+                             subject: fields.subject, body: fields.content)
+    }
+
+    private func edit(_ change: (inout Fields) -> Void) {
+        guard !isStarted else {
+            NSScriptCommand.current()?.scriptErrorNumber = errAEWriteDenied
+            NSScriptCommand.current()?.scriptErrorString = "Tern opened this message in a window. Edit it there."
+            return
+        }
+        change(&fields)
+    }
+
+    nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
+        guard let description = NSScriptClassDescription(for: NSApplication.self) else { return nil }
+        return NSUniqueIDSpecifier(containerClassDescription: description, containerSpecifier: nil,
+            key: "ternOutgoingMessages", uniqueID: uniqueID)
+    }
+}
+
 extension NSApplication {
+    @objc var ternOutgoingMessages: [MailScriptOutgoingMessage] { MailScriptingBridge.shared.outgoingMessages }
+    @objc(insertInTernOutgoingMessages:)
+    func insertInTernOutgoingMessages(_ message: MailScriptOutgoingMessage) { MailScriptingBridge.shared.start(message) }
+    @objc(insertObject:inTernOutgoingMessagesAtIndex:)
+    func insertTernOutgoingMessage(_ message: MailScriptOutgoingMessage, at index: Int) { MailScriptingBridge.shared.start(message) }
+    @objc(valueInTernOutgoingMessagesWithUniqueID:)
+    func ternOutgoingMessage(uniqueID: String) -> MailScriptOutgoingMessage? { ternOutgoingMessages.first { $0.uniqueID == uniqueID } }
     @objc var ternSelectedConversations: [MailScriptConversation] { MailScriptingBridge.shared.selectedConversations }
     @objc var ternSelectedMessages: [MailScriptMessage] { MailScriptingBridge.shared.selectedMessages }
     @objc var ternConversations: [MailScriptConversation] { ternSelectedConversations }

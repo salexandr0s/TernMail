@@ -101,16 +101,38 @@ import Testing
         #expect(fixture.bridge.selectedMessages.map(\.messageID) == ["m1"])
     }
 
-    @Test func packagedDictionaryDeclaresOnlyReadAccessAndUsesRegisteredRuntimeClasses() throws {
+    @Test func packagedDictionaryReadsMailAndOnlyStartsDraftsWithRegisteredRuntimeClasses() throws {
         let url = try #require(Bundle.main.url(forResource: "Tern", withExtension: "sdef"))
         let dictionary = try XMLDocument(contentsOf: url)
+        // Tern defines no commands, so nothing can send. The Standard Suite's make starts drafts.
         #expect(try dictionary.nodes(forXPath: "//command").isEmpty)
-        let access = try dictionary.nodes(forXPath: "//property/@access | //element/@access").map(\.stringValue)
-        #expect(!access.isEmpty && access.allSatisfy { $0 == "r" })
+        let mail = try dictionary.nodes(forXPath: "//property[not(ancestor::class[@name='outgoing message'])] | //element[@type!='outgoing message']")
+        #expect(!mail.isEmpty)
+        #expect(try mail.allSatisfy { try $0.nodes(forXPath: "@access").map(\.stringValue) == ["r"] })
         #expect(NSClassFromString("TernScriptConversation") != nil)
         #expect(NSClassFromString("TernScriptMessage") != nil)
+        #expect(NSClassFromString("TernScriptOutgoingMessage") != nil)
+        let registry = NSScriptSuiteRegistry.shared()
+        #expect(registry.suiteNames.contains("Standard Suite"))
+        let code = "Tomg".utf8.reduce(FourCharCode(0)) { $0 << 8 | FourCharCode($1) }
+        #expect(registry.classDescription(withAppleEventCode: code)?.className == "outgoing message")
+        #expect(NSScriptClassDescription(for: NSApplication.self)?.toManyRelationshipKeys.contains("ternOutgoingMessages") == true)
         #expect(Bundle.main.object(forInfoDictionaryKey: "NSAppleScriptEnabled") as? Bool == true)
         #expect(Bundle.main.object(forInfoDictionaryKey: "OSAScriptingDefinition") as? String == "Tern.sdef")
+    }
+
+    @Test func scriptedMessageFieldsBecomeADraftRequestAndFreezeOnceOpened() {
+        let request = MailScriptOutgoingMessage.request(for: .init(subject: "Plans", content: "See you",
+            to: "a@example.com, not an address\nb@example.com", cc: "", bcc: "c@example.com"))
+        #expect(request.to.map(\.address) == ["a@example.com", "b@example.com"])
+        #expect(request.cc.isEmpty)
+        #expect(request.bcc.map(\.address) == ["c@example.com"])
+        #expect(request.subject == "Plans" && request.body == "See you")
+        let message = MailScriptOutgoingMessage()
+        message.subject = "First"
+        message.markStarted()
+        message.subject = "Second"
+        #expect(message.subject == "First")
     }
 
     @MainActor private final class Context { var mailbox: MailboxModel? }

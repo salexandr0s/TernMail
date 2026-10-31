@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
-<dictionary title="Tern Mail">
-  <suite name="Tern Mail" code="TrnS" description="Read metadata for the currently selected mail. No mail changes are supported.">
-    <class name="application" code="capp" description="Tern's current mail selection.">
-      <cocoa class="NSApplication"/>
+<dictionary title="Tern Mail" xmlns:xi="http://www.w3.org/2003/XInclude">
+  <xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite)"/>
+  <suite name="Tern Mail" code="TrnS" description="Read the selected mail and start new messages. Scripts never send mail.">
+    <class-extension extends="application" description="Tern's mail selection and the messages scripts start.">
       <property name="selected conversations" code="TsCv" access="r" description="The selected conversations, limited to the selected messages in message mode.">
         <cocoa key="ternSelectedConversations"/>
         <type type="conversation" list="yes"/>
@@ -14,7 +14,8 @@
       </property>
       <element type="conversation" access="r"><cocoa key="ternConversations"/></element>
       <element type="message" access="r"><cocoa key="ternMessages"/></element>
-    </class>
+      <element type="outgoing message"><cocoa key="ternOutgoingMessages"/></element>
+    </class-extension>
     <class name="mail object" code="TmOb" hidden="yes" description="Read-only account-qualified mail metadata.">
       <cocoa class="TernScriptMailObject"/>
       <property name="id" code="ID  " type="text" access="r" description="The stable account-qualified scripting identifier."><cocoa key="scriptID"/></property>
@@ -33,6 +34,15 @@
     <class name="message" code="Tmsg" inherits="mail object" description="One currently selected message.">
       <cocoa class="TernScriptMessage"/>
       <property name="message id" code="TmID" type="text" access="r" description="Gmail's message identifier within this account."><cocoa key="messageID"/></property>
+    </class>
+    <class name="outgoing message" code="Tomg" description="A new message a script starts. Tern opens it in a window for you to finish and send. Set its properties when you make it.">
+      <cocoa class="TernScriptOutgoingMessage"/>
+      <property name="id" code="ID  " type="text" access="r" description="The message's identifier while Tern is open."><cocoa key="scriptID"/></property>
+      <property name="subject" code="Tsub" type="text" description="The subject line."/>
+      <property name="content" code="ctnt" type="text" description="The message text."/>
+      <property name="to addresses" code="Ttoa" type="text" description="Recipients, separated by commas."><cocoa key="toAddresses"/></property>
+      <property name="cc addresses" code="Tcca" type="text" description="Cc recipients, separated by commas."><cocoa key="ccAddresses"/></property>
+      <property name="bcc addresses" code="Tbca" type="text" description="Bcc recipients, separated by commas."><cocoa key="bccAddresses"/></property>
     </class>
   </suite>
 </dictionary>
