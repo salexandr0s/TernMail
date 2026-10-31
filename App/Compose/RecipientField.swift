@@ -19,6 +19,8 @@ struct RecipientField: NSViewRepresentable {
     var directorySuggestions: @MainActor (String) async -> [EmailAddress] = { _ in [] }
     var groupSuggestions: @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] }
     var expandGroup: @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil }
+    /// Keeps an address out of future suggestions; from a token's menu.
+    var blockSuggestion: @MainActor (EmailAddress) async -> Void = { _ in }
     let suggestions: @MainActor (String) async -> [EmailAddress]
 
     init(label: String, addresses: Binding<[EmailAddress]>, requestsFocus: Binding<Bool>, isEditable: Bool,
@@ -27,11 +29,13 @@ struct RecipientField: NSViewRepresentable {
          directorySuggestions: @escaping @MainActor (String) async -> [EmailAddress] = { _ in [] },
          groupSuggestions: @escaping @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] },
          expandGroup: @escaping @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil },
+         blockSuggestion: @escaping @MainActor (EmailAddress) async -> Void = { _ in },
          suggestions: @escaping @MainActor (String) async -> [EmailAddress]) {
         self.label = label; self._addresses = addresses; self._requestsFocus = requestsFocus; self.isEditable = isEditable
         self.accountID = accountID; self.avatarContext = avatarContext
         self.onFocusChange = onFocusChange; self.directorySuggestions = directorySuggestions
-        self.groupSuggestions = groupSuggestions; self.expandGroup = expandGroup; self.suggestions = suggestions
+        self.groupSuggestions = groupSuggestions; self.expandGroup = expandGroup
+        self.blockSuggestion = blockSuggestion; self.suggestions = suggestions
     }
 
     func makeCoordinator() -> Coordinator {
@@ -363,6 +367,81 @@ struct RecipientField: NSViewRepresentable {
                 .joined(separator: ", ")
             pasteboard.clearContents()
             return pasteboard.setString(text, forType: .string)
+        }
+
+        // MARK: Token menu
+
+        func tokenField(_ tokenField: NSTokenField, hasMenuForRepresentedObject object: Any) -> Bool {
+            object is Token
+        }
+
+        func tokenField(_ tokenField: NSTokenField, menuForRepresentedObject object: Any) -> NSMenu? {
+            guard let token = object as? Token else { return nil }
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            let items: [(title: String, action: Selector, isEnabled: Bool)] = [
+                ("Copy Address", #selector(copyAddress(_:)), true),
+                ("Edit", #selector(editToken(_:)), parent.isEditable),
+                ("Remove", #selector(removeToken(_:)), parent.isEditable),
+            ]
+            for entry in items {
+                menu.addItem(menuItem(entry.title, action: entry.action, token: token, isEnabled: entry.isEnabled))
+            }
+            menu.addItem(.separator())
+            menu.addItem(menuItem("Add to Blocklist", action: #selector(blockToken(_:)), token: token,
+                                  isEnabled: token.address.isValid))
+            return menu
+        }
+
+        private func menuItem(_ title: String, action: Selector, token: Token, isEnabled: Bool) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = token
+            item.isEnabled = isEnabled
+            return item
+        }
+
+        /// The token's position among the field's objects. The field hands the
+        /// menu the object it holds; the address is a fallback.
+        private func index(of token: Token, in objects: [Any]) -> Int? {
+            objects.firstIndex { ($0 as? Token) === token } ?? objects.firstIndex { ($0 as? Token)?.address == token.address }
+        }
+
+        @objc private func copyAddress(_ item: NSMenuItem) {
+            guard let token = item.representedObject as? Token else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(RecipientField.editingString(token.address), forType: .string)
+        }
+
+        /// Turns the token back into selected text, so typing replaces it.
+        @objc private func editToken(_ item: NSMenuItem) {
+            guard let field, let token = item.representedObject as? Token,
+                  var objects = field.objectValue as? [Any], let index = index(of: token, in: objects) else { return }
+            let text = RecipientField.editingString(token.address)
+            objects[index] = text
+            field.objectValue = objects
+            field.window?.makeFirstResponder(field)
+            if let editor = field.currentEditor() as? NSTextView {
+                // In the field editor a token is one character; text keeps its length.
+                var start = 0
+                for object in objects[..<index] { start += (object as? String).map { ($0 as NSString).length } ?? 1 }
+                editor.setSelectedRange(NSRange(location: start, length: (text as NSString).length))
+            }
+            publish()
+        }
+
+        @objc private func removeToken(_ item: NSMenuItem) {
+            guard let field, let token = item.representedObject as? Token,
+                  var objects = field.objectValue as? [Any], let index = index(of: token, in: objects) else { return }
+            objects.remove(at: index)
+            field.objectValue = objects
+            publish()
+        }
+
+        @objc private func blockToken(_ item: NSMenuItem) {
+            guard let token = item.representedObject as? Token else { return }
+            let block = parent.blockSuggestion
+            Task { await block(token.address) }
         }
 
         // MARK: Private

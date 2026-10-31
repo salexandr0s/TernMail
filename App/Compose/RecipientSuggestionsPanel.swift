@@ -120,6 +120,8 @@ final class RecipientSuggestionsPanel: NSObject, NSTableViewDataSource, NSTableV
         table.enumerateAvailableRowViews { row, index in
             for cell in row.subviews.compactMap({ $0 as? RecipientSuggestionCell }) { cell.selected = index == self.table.selectedRow }
         }
+        // The panel never takes focus, so VoiceOver hears about the highlighted row from here.
+        NSAccessibility.post(element: table, notification: .selectedRowsChanged)
     }
 
     @objc private func chooseClickedRow() {

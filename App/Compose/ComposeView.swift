@@ -15,11 +15,13 @@ struct ComposeWindow: View {
     @Binding var localDraftID: String?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
+    /// The draft differs from its last save, so the close button shows a dot.
+    @State private var isEdited = false
 
     var body: some View {
         Group {
             if let id = localDraftID, let mailbox = app.mailbox {
-                ComposeView(localDraftID: id, mailbox: mailbox) { localDraftID = $0 }
+                ComposeView(localDraftID: id, mailbox: mailbox, isEdited: $isEdited) { localDraftID = $0 }
                     // Each draft, and a new sign-in's mailbox, needs its own model.
                     .id(id)
                     .id(ObjectIdentifier(mailbox))
@@ -29,6 +31,7 @@ struct ComposeWindow: View {
             }
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
+        .background(WindowEditedMarker(isEdited: isEdited))
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
         }
@@ -57,11 +60,14 @@ struct ComposeView: View {
     @State private var focusedRecipient: Field?
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.dismiss) private var dismiss
+    /// Mirrors `model.isEdited` for the window's close button.
+    @Binding private var isEdited: Bool
     /// Shows the copy the window's message became in another account.
     private let onMove: (String) -> Void
 
-    init(localDraftID: String, mailbox: MailboxModel, onMove: @escaping (String) -> Void) {
+    init(localDraftID: String, mailbox: MailboxModel, isEdited: Binding<Bool>, onMove: @escaping (String) -> Void) {
         _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox))
+        _isEdited = isEdited
         self.onMove = onMove
     }
 
@@ -88,9 +94,12 @@ struct ComposeView: View {
         .navigationTitle(model.title)
         .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
-        .alert(model.alert ?? "", isPresented: isShowingAlert) {
+        .alert(model.alert?.title ?? "", isPresented: isShowingAlert) {
             Button("OK") {}
+        } message: {
+            Text(model.alert?.message ?? "")
         }
+        .onChange(of: model.isEdited, initial: true) { _, edited in isEdited = edited }
         .task { model.start() }
         .task(id: model.phase) {
             switch model.phase {
@@ -147,8 +156,19 @@ struct ComposeView: View {
             // Keep room to write when recipients, files and quoted text are visible.
             // The native window minimum grows with the other controls' intrinsic sizes.
             .frame(minHeight: Tokens.Layout.editorMinHeight)
+            // Cmd-K must also work while the formatting bar is hidden. The
+            // popover points at the selection, where the link goes.
+            .popover(isPresented: $model.isEditingLink, attachmentAnchor: linkAnchor, arrowEdge: .bottom) {
+                LinkEditor(existingURL: model.format.linkURL, width: Tokens.Layout.linkEditorWidth) { url in
+                    model.editor?.setLink(url)
+                }
+            }
             if model.attachments.contains(where: { $0.contentID == nil }) {
-                AttachmentStrip(attachments: model.attachments.filter { $0.contentID == nil }, isEditable: model.isEditable) {
+                AttachmentStrip(
+                    attachments: model.attachments.filter { $0.contentID == nil },
+                    isEditable: model.isEditable,
+                    fileURL: { [model] in await model.attachmentFileURL($0) }
+                ) {
                     model.removeAttachment($0)
                 }
             }
@@ -200,6 +220,7 @@ struct ComposeView: View {
                                 .contentShape(Rectangle())
                         }
                         .help("Add Cc recipients")
+                        .accessibilityLabel("Add Cc Recipients")
                     }
                     if !model.showsBcc {
                         Button { reveal(.bcc) } label: {
@@ -209,6 +230,7 @@ struct ComposeView: View {
                                 .contentShape(Rectangle())
                         }
                         .help("Add Bcc recipients")
+                        .accessibilityLabel("Add Bcc Recipients")
                     }
                 }
                 .buttonStyle(.borderless)
@@ -371,11 +393,17 @@ struct ComposeView: View {
             },
             directorySuggestions: { [model] text in await model.directorySuggestions(for: text) },
             groupSuggestions: { [model] text in await model.groupSuggestions(for: text) },
-            expandGroup: { [model] group in await model.expandGroup(group) }
+            expandGroup: { [model] group in await model.expandGroup(group) },
+            blockSuggestion: { [model] address in await model.blockSuggestion(address) }
         ) { [model] text in
             await model.suggestions(for: text)
         }
         .alignmentGuide(.firstTextBaseline) { _ in baseline }
+    }
+
+    /// Where the link popover points: the selected text, or the editor when it isn't ready.
+    private var linkAnchor: PopoverAttachmentAnchor {
+        model.editor?.selectionRect.map { .rect(.rect($0)) } ?? .rect(.bounds)
     }
 
     private func reveal(_ field: Field) {
@@ -436,6 +464,16 @@ struct ComposeView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // Discarding sits at the far end from Send, so a slip can't reach it.
+        ToolbarItem(placement: .navigation) {
+            Button {
+                Task { await model.discard() }
+            } label: {
+                Label("Discard Draft", systemImage: "trash")
+            }
+            .help("Discard Draft")
+            .disabled(!model.isEditable)
+        }
         ToolbarItem(placement: .primaryAction) {
             Toggle(isOn: $model.showsFormatting) {
                 Label("Formatting", systemImage: "textformat")
@@ -446,12 +484,6 @@ struct ComposeView: View {
             .accessibilityLabel("Formatting")
             .accessibilityValue(model.showsFormatting ? "Expanded" : "Collapsed")
             .disabled(!model.isEditable)
-            // Cmd-K must also work while the formatting bar is hidden.
-            .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
-                LinkEditor(existingURL: model.format.linkURL, width: Tokens.Layout.linkEditorWidth) { url in
-                    model.editor?.setLink(url)
-                }
-            }
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -474,22 +506,13 @@ struct ComposeView: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
-                Task { await model.discard() }
-            } label: {
-                Label("Discard Draft", systemImage: "trash")
-            }
-            .help("Discard Draft")
-            .disabled(!model.isEditable)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
                 Task { await model.send() }
             } label: {
                 Label("Send", systemImage: "paperplane.fill")
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .controlSize(.regular)
             .help("Send (⇧⌘D)")
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
@@ -528,6 +551,32 @@ struct ComposeView: View {
             focus = .subject
         } else {
             model.editor?.focus()
+        }
+    }
+}
+
+/// Sets the hosting window's edited state, which the close button shows as a dot.
+private struct WindowEditedMarker: NSViewRepresentable {
+    let isEdited: Bool
+
+    func makeNSView(context: Context) -> MarkerView {
+        let view = MarkerView()
+        view.isEdited = isEdited
+        return view
+    }
+
+    func updateNSView(_ view: MarkerView, context: Context) {
+        view.isEdited = isEdited
+    }
+
+    final class MarkerView: NSView {
+        var isEdited = false {
+            didSet { window?.isDocumentEdited = isEdited }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.isDocumentEdited = isEdited
         }
     }
 }

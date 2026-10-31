@@ -1,13 +1,18 @@
 import AppKit
 import MailStore
+import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The files attached to a draft, in a row under the message.
+/// The files attached to a draft, in a row under the message. Clicking one
+/// opens it in Quick Look; dragging one out copies the file.
 struct AttachmentStrip: View {
     let attachments: [OutgoingAttachment]
     let isEditable: Bool
+    /// A copy of the file under its own name, or nil when it can't be read.
+    let fileURL: @MainActor (OutgoingAttachment) async -> URL?
     let remove: (OutgoingAttachment) -> Void
+    @State private var previewURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -15,21 +20,7 @@ struct AttachmentStrip: View {
             ScrollView(.horizontal) {
                 HStack(spacing: Tokens.Space.s2) {
                     ForEach(attachments) { attachment in
-                        AttachmentChip(filename: attachment.filename, size: attachment.size) {
-                            if isEditable {
-                                Button {
-                                    remove(attachment)
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Remove \(attachment.filename)")
-                                .accessibilityLabel("Remove \(attachment.filename)")
-                            }
-                        }
+                        chip(attachment)
                     }
                 }
                 .padding(.horizontal, Tokens.Space.s4)
@@ -39,8 +30,59 @@ struct AttachmentStrip: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .background(Tokens.Surface.muted)
+        .quickLookPreview($previewURL)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")
+    }
+
+    private func chip(_ attachment: OutgoingAttachment) -> some View {
+        AttachmentChip(filename: attachment.filename, size: attachment.size, open: { preview(attachment) }) {
+            if isEditable {
+                Button {
+                    remove(attachment)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove \(attachment.filename)")
+                .accessibilityLabel("Remove \(attachment.filename)")
+            }
+        }
+        .draggable(OutgoingAttachmentTransfer { await fileURL(attachment) })
+        .contextMenu {
+            Button("Quick Look") { preview(attachment) }
+            Button("Show in Finder") { reveal(attachment) }
+            if isEditable {
+                Divider()
+                Button("Remove", role: .destructive) { remove(attachment) }
+            }
+        }
+    }
+
+    private func preview(_ attachment: OutgoingAttachment) {
+        Task { previewURL = await fileURL(attachment) }
+    }
+
+    private func reveal(_ attachment: OutgoingAttachment) {
+        Task {
+            guard let url = await fileURL(attachment) else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+}
+
+/// Drags an attachment out as a file, which is written once the drop lands.
+struct OutgoingAttachmentTransfer: Transferable {
+    let file: @MainActor () async -> URL?
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .data) { transfer in
+            guard let url = await transfer.file() else { throw CocoaError(.fileNoSuchFile) }
+            return SentTransferredFile(url)
+        }
     }
 }
 

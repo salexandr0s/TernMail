@@ -30,6 +30,9 @@ protocol RichTextEditing: AnyObject {
     func focus()
     func insertDocument(_ document: ComposeDocument)
     func insertImage(_ reference: InlineImageReference, data: Data)
+    /// The selection, in the editor view's coordinates, for a popover to point
+    /// at. Nil before the editor is in a window.
+    var selectionRect: CGRect? { get }
 }
 
 /// The message body editor: an `NSTextView`, since SwiftUI's rich text
@@ -62,6 +65,8 @@ struct RichTextEditor: NSViewRepresentable {
         textView.usesFontPanel = false
         textView.usesRuler = false
         textView.isAutomaticLinkDetectionEnabled = true
+        textView.isContinuousSpellCheckingEnabled = true
+        textView.isGrammarCheckingEnabled = true
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: Tokens.Space.s4, height: Tokens.Space.s3)
         textView.isVerticallyResizable = true
@@ -172,6 +177,20 @@ struct RichTextEditor: NSViewRepresentable {
             textView.window?.makeFirstResponder(textView)
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        }
+
+        var selectionRect: CGRect? {
+            guard let textView, let window = textView.window, let host = textView.enclosingScrollView else { return nil }
+            // The first line of the selection, or the caret, on screen.
+            let screen = textView.firstRect(forCharacterRange: textView.selectedRange(), actualRange: nil)
+            guard screen.height > 0 else { return nil }
+            let local = host.convert(window.convertFromScreen(screen), from: nil)
+            // SwiftUI measures from the top; the scroll view measures from the bottom.
+            let top = host.isFlipped ? local.minY : host.bounds.height - local.maxY
+            // A selection scrolled out of view still anchors inside the editor.
+            let bounds = host.bounds
+            return CGRect(x: min(max(local.minX, 0), bounds.width), y: min(max(top, 0), bounds.height),
+                          width: min(local.width, bounds.width), height: local.height)
         }
 
         func toggleBold() { toggle(.boldFontMask) }

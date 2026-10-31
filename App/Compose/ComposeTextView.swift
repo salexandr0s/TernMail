@@ -25,8 +25,9 @@ final class ComposeTextView: NSTextView {
         Task { @MainActor [weak self] in self?.onFocusChange?(isFocused) }
     }
 
+    /// Rich text from other apps and web pages keeps the formatting the message can hold.
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
-        [.rtf, .string, .URL]
+        [.rtf, .html, .string, .URL]
     }
 
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
@@ -36,6 +37,7 @@ final class ComposeTextView: NSTextView {
     override func paste(_ sender: Any?) {
         if let items = Self.attachables(on: .general) { onAttach?(items); return }
         if ComposePreferences.markdown, NSPasteboard.general.data(forType: .rtf) == nil,
+           NSPasteboard.general.data(forType: .html) == nil,
            let text = NSPasteboard.general.string(forType: .string) {
             onInsertDocument?(MarkdownConverter.document(from: text))
             return
