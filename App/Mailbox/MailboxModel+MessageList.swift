@@ -22,7 +22,7 @@ extension MailboxModel {
         if let rows = listProjection.cached(for: key) { return rows }
         // Direct preference edits and model-only callers stay synchronous.
         // Database snapshots are normally prepared off-main before publication.
-        let rows = MessageListProjection.prepare(listProjectionInput(threads: listedThreads, entries: listEntries))
+        let rows = MessageListProjection.prepare(listProjectionInput(threads: listedThreads, entries: listEntries, mailboxID: key.mailboxID))
         listProjection.store(rows, for: key)
         return rows
     }
@@ -33,7 +33,12 @@ extension MailboxModel {
               mailboxID: search.isActive ? nil : selectedLabelID)
     }
 
-    func listProjectionInput(threads: [ThreadRecord], entries: [MessageListEntry]) -> MessageListProjection.Input {
+    func listProjectionConfiguration(mailboxID: String?) -> MessageListProjection.Key {
+        .init(dataRevision: 0, contextRevision: listContextRevision,
+              conversations: listPreferences.conversations, filters: listPreferences.filters, mailboxID: mailboxID)
+    }
+
+    func listProjectionInput(threads: [ThreadRecord], entries: [MessageListEntry], mailboxID: String?) -> MessageListProjection.Input {
         let categories = accountPresentation.mapValues { preferences in
             Set(preferences.inboxCategories.map { "CATEGORY_" + $0.rawValue.uppercased() })
         }
@@ -41,7 +46,7 @@ extension MailboxModel {
         for account in accounts { addresses[account.account.id, default: []].insert(account.account.email.lowercased()) }
         return .init(threads: threads, entries: entries,
             conversations: listPreferences.conversations, filters: listPreferences.filters,
-            mailboxID: search.isActive ? nil : selectedLabelID, categories: categories, addresses: addresses,
+            mailboxID: mailboxID, categories: categories, addresses: addresses,
             availableLabels: Dictionary(accounts.map { ($0.account.id, $0.labels) }, uniquingKeysWith: { first, _ in first }))
     }
 

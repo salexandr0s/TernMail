@@ -39,17 +39,18 @@ struct ThreadListView: View {
             .onChange(of: mailbox.search.listFocusRequest) {
                 listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
             }
-            .task(id: observationID) {
-                await observeEntries(for: displayedThreads.map(\.key))
-            }
             .task(id: mailbox.accounts.map(\.account.id)) { await observeAddresses() }
             .onChange(of: mailbox.listPreferences.conversations) { _, _ in
                 mailbox.search.setMessageMode(!mailbox.listPreferences.conversations)
                 mailbox.selectedMessageRows = []
                 mailbox.selectedThreadIDs = []
             }
-            .onChange(of: mailbox.listItems.map(\.id)) { _, ids in
-                mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(ids))
+            .onChange(of: mailbox.listProjectionKey) { _, _ in
+                mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(mailbox.listItems.map(\.id)))
+                if mailbox.listItems.isEmpty {
+                    if mailbox.search.isActive { mailbox.search.loadMoreResults() }
+                    else { mailbox.loadMoreThreads() }
+                }
             }
     }
 
@@ -90,35 +91,6 @@ struct ThreadListView: View {
             mailbox.toggleListRead(selection)
         }
         return .handled
-    }
-
-    private var displayedThreads: [ThreadRecord] {
-        mailbox.search.isActive ? mailbox.search.results : mailbox.threads
-    }
-
-    private var observationID: MessageListObservationID {
-        .init(keys: displayedThreads.map(\.key), query: mailbox.search.queryText,
-              remoteRevision: mailbox.search.gmail?.revision ?? 0, conversations: mailbox.listPreferences.conversations)
-    }
-
-    private func observeEntries(for keys: [ThreadKey]) async {
-        guard !Task.isCancelled else { return }
-        let visible = Set(keys)
-        mailbox.listEntries = mailbox.listEntries.filter { visible.contains(ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID)) }
-        guard !keys.isEmpty else { mailbox.listEntries = []; return }
-        let threadsByAccount = Dictionary(grouping: keys, by: \.accountID).mapValues { $0.map(\.threadID) }
-        do {
-            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? mailbox.search.query : nil
-            for try await entries in mailbox.cache.messageListEntries(threadsByAccount: threadsByAccount, matching: query,
-                                                                      includingMessageIDs: mailbox.search.matchingMessageIDs, snoozedOnly: mailbox.showsSnoozed) {
-                guard !Task.isCancelled else { return }
-                mailbox.listEntries = entries
-                if mailbox.listItems.isEmpty { mailbox.loadMoreThreads() }
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            mailbox.listEntries = []
-        }
     }
 
     private func observeAddresses() async {
