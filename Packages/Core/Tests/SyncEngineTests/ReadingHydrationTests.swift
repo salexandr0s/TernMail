@@ -157,7 +157,8 @@ import Testing
             try tx.saveBodies([MessageBodyRecord(accountID: account, messageID: "m1", html: nil, plainText: "Cached", fetchedAt: baseDate)])
         }
         await gmail.setThread(try decode(GmailThread.self, #"""
-        {"id":"t1","messages":[{"id":"m1","threadId":"t1","payload":{"mimeType":"multipart/related","parts":[
+        {"id":"t1","messages":[{"id":"m1","threadId":"t1","historyId":"1","labelIds":["INBOX"],"internalDate":"1900000000000",
+          "payload":{"mimeType":"multipart/related","parts":[
           {"partId":"1","mimeType":"image/png","headers":[{"name":"Content-ID","value":"<logo>"}],"body":{"data":"AQID","size":3}}
         ]}}]}
         """#))
@@ -167,6 +168,75 @@ import Testing
         #expect(await gmail.attachmentRequests.isEmpty)
         try await engine.refreshCalendarInvitations(threadID: "t1")
         #expect(await gmail.fullThreadRequests == ["t1"])
+
+        // The mark outlives the engine, so the next launch asks for nothing.
+        let (relaunched, _, coldGmail, _) = try await makeEngine(cache: cache)
+        try await relaunched.refreshCalendarInvitations(threadID: "t1")
+        #expect(await coldGmail.fullThreadRequests.isEmpty)
+    }
+
+    @Test func aRelaunchOpensACachedConversationWithoutARequest() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        await gmail.setThread(try readableThread(image: true))
+        await gmail.setAttachment("picture", data: Data([1, 2, 3]))
+        try await engine.openThread("t1", markRead: false)
+        try await engine.refreshCalendarInvitations(threadID: "t1")
+        #expect(await gmail.fullThreadRequests == ["t1"])
+        #expect(try await cache.read { try $0.bodyEnrichedAt(messageID: "m1", accountID: account) } != nil)
+
+        let (relaunched, _, coldGmail, _) = try await makeEngine(cache: cache)
+        try await relaunched.openThread("t1", markRead: false)
+        try await relaunched.refreshCalendarInvitations(threadID: "t1")
+        #expect(await coldGmail.fullThreadRequests.isEmpty)
+        #expect(await coldGmail.attachmentRequests.isEmpty)
+        #expect(try await cache.read { try $0.body(messageID: "m1", accountID: account)?.plainText } == "Hello")
+        #expect(try await cache.mimeResources(messageID: "m1", accountID: account).map(\.contentID) == ["logo"])
+    }
+
+    @Test func aNewMessageInACachedConversationFetchesOnlyItsOwnParts() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        await gmail.setThread(try readableThread(image: true))
+        await gmail.setAttachment("picture", data: Data([1, 2, 3]))
+        try await engine.openThread("t1", markRead: false)
+        #expect(await gmail.attachmentRequests == ["picture"])
+
+        // A sync pass brings the reply's metadata; its body is still to fetch.
+        try await seed(cache, [("m2", "t1", [SystemLabel.inbox])])
+        await gmail.setThread(try decode(GmailThread.self, #"""
+        {"id":"t1","messages":[
+          {"id":"m1","threadId":"t1","historyId":"100","labelIds":["INBOX"],"internalDate":"1900000000000",
+           "payload":{"mimeType":"multipart/related","parts":[
+             {"partId":"0","mimeType":"text/plain","body":{"data":"SGVsbG8"}},
+             {"partId":"1","mimeType":"image/png","headers":[{"name":"Content-ID","value":"<logo>"}],"body":{"attachmentId":"picture","size":3}}]}},
+          {"id":"m2","threadId":"t1","historyId":"101","labelIds":["INBOX"],"internalDate":"1900000060000",
+           "payload":{"mimeType":"multipart/related","parts":[
+             {"partId":"0","mimeType":"text/plain","body":{"data":"UmVwbHk"}},
+             {"partId":"1","mimeType":"image/png","headers":[{"name":"Content-ID","value":"<reply>"}],"body":{"attachmentId":"picture2","size":3}}]}}]}
+        """#))
+        await gmail.setAttachment("picture2", data: Data([4, 5, 6]))
+        try await engine.openThread("t1", markRead: false)
+        try await engine.refreshCalendarInvitations(threadID: "t1")
+        #expect(await gmail.fullThreadRequests == ["t1", "t1"])
+        #expect(await gmail.attachmentRequests == ["picture", "picture2"])
+        #expect(try await cache.read { try $0.body(messageID: "m2", accountID: account)?.plainText } == "Reply")
+        #expect(try await cache.mimeResources(messageID: "m1", accountID: account).map(\.contentID) == ["logo"])
+        #expect(try await cache.mimeResources(messageID: "m2", accountID: account).map(\.contentID) == ["reply"])
+    }
+
+    @Test func aPictureGmailNoLongerHasDoesNotKeepTheConversationRefetching() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        // The picture's attachment is never registered, so Gmail answers not found.
+        await gmail.setThread(try readableThread(image: true))
+        try await engine.openThread("t1", markRead: false)
+        try await engine.refreshCalendarInvitations(threadID: "t1")
+        try await engine.refreshCalendarInvitations(threadID: "t1")
+        #expect(await gmail.fullThreadRequests == ["t1"])
+        #expect(await gmail.attachmentRequests == ["picture"])
+        #expect(try await cache.read { try $0.body(messageID: "m1", accountID: account)?.plainText } == "Hello")
+        #expect(try await cache.mimeResources(messageID: "m1", accountID: account).isEmpty)
     }
 
     private func readableThread(messageID: String = "m1", threadID: String = "t1", image: Bool = false) throws -> GmailThread {

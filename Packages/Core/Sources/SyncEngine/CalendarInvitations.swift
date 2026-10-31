@@ -44,45 +44,11 @@ extension SyncEngine {
         }
     }
 
-    /// Older cached bodies need one invitation and inline-image enrichment.
-    /// A completed current-version hydration is reused on later opens.
+    /// Reads the invitation and inline pictures of bodies cached before that
+    /// was done, from one full fetch of the conversation. Once every body is
+    /// marked enriched in the cache, this costs no request, across launches.
     public func refreshCalendarInvitations(threadID: String) async throws {
         try await loadReadingThread(threadID, enrichCached: true, foreground: true)
-    }
-
-    func refreshReadingEnrichment(threadID: String, versions: [String: Int64]) async throws {
-        let accountID = accountID
-        let remote = try await gmail.thread(id: threadID, format: .full)
-        guard remote.id == threadID, let messages = remote.messages else { throw GmailError.decoding("Calendar invitation thread") }
-        var found: [String: Invitation] = [:]
-        var checked = Set<String>()
-        for message in messages where versions[message.id] != nil {
-            try Task.checkCancellation()
-            guard message.threadId == threadID else { throw GmailError.decoding("Calendar invitation message") }
-            var parts: [String: Data] = [:]
-            var attempted = Set<String>()
-            while let id = CalendarParts.requiredAttachmentID(of: message, attachments: parts, attemptedAttachmentIDs: attempted) {
-                try Task.checkCancellation()
-                attempted.insert(id)
-                parts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
-            }
-            found[message.id] = CalendarParts.invitation(in: message, attachments: parts)
-            checked.insert(message.id)
-        }
-        let liveVersions = try await write { [found, checked] tx -> [String: Int64] in
-            var liveVersions: [String: Int64] = [:]
-            for id in checked {
-                guard let live = try tx.message(id: id, accountID: accountID), live.threadID == threadID,
-                      versions[id] == live.historyID else { continue }
-                if let invitation = found[id] {
-                    let record = MessageCalendarRecord(accountID: accountID, messageID: id, invitation: invitation)
-                    if try tx.messageCalendar(messageID: id, accountID: accountID) != record { try tx.saveMessageCalendar(record) }
-                } else { try tx.deleteMessageCalendar(messageID: id, accountID: accountID) }
-                liveVersions[id] = live.historyID
-            }
-            return liveVersions
-        }
-        try await hydrateReadingImages(messages, versions: liveVersions)
     }
 
     /// This is the fallback for an invitation absent from Google Calendar. The caller first

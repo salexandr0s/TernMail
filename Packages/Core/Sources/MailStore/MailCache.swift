@@ -215,6 +215,30 @@ public struct CacheTransaction {
             """, arguments: [accountID, threadID])
     }
 
+    /// Messages in a thread with a cached body whose inline pictures and
+    /// invitation have not yet been read from the full payload.
+    public func unenrichedBodyMessageIDs(threadID: String, accountID: String) throws -> [String] {
+        try String.fetchAll(db, sql: """
+            SELECT message.id
+            FROM message
+            JOIN messageBody ON messageBody.accountID = message.accountID AND messageBody.messageID = message.id
+            WHERE message.accountID = ? AND message.threadID = ? AND messageBody.enrichedAt IS NULL
+            """, arguments: [accountID, threadID])
+    }
+
+    /// Records when a body's inline pictures and invitation were read from the
+    /// full payload. The column is not part of `MessageBodyRecord`, so saving
+    /// the body again leaves it alone. Nil asks the next open to read them again.
+    public func setBodyEnrichedAt(_ date: Date?, messageID: String, accountID: String) throws {
+        try db.execute(sql: "UPDATE messageBody SET enrichedAt = ? WHERE accountID = ? AND messageID = ?",
+                       arguments: [date, accountID, messageID])
+    }
+
+    public func bodyEnrichedAt(messageID: String, accountID: String) throws -> Date? {
+        try Date.fetchOne(db, sql: "SELECT enrichedAt FROM messageBody WHERE accountID = ? AND messageID = ?",
+                          arguments: [accountID, messageID])
+    }
+
     public func thread(id: String, accountID: String) throws -> ThreadRecord? {
         try ThreadRecord.fetchOne(db, key: ["accountID": accountID, "id": id])
     }

@@ -397,6 +397,15 @@ enum Schema {
                 CREATE INDEX pendingAction_account ON pendingAction(accountID, state);
                 """)
         }
+        migrator.registerMigration("reading-enrichment-v1") { db in
+            // Whether a body's inline pictures and invitation have been read
+            // from the full payload used to live in memory, so every launch
+            // fetched each opened conversation once more. Null means not yet;
+            // bodies cached before this get one such read on their next open.
+            try db.alter(table: "messageBody") { t in
+                t.add(column: "enrichedAt", .datetime)
+            }
+        }
         return migrator
     }
 

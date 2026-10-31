@@ -1567,8 +1567,11 @@ struct TestClock: Sendable {
     }
 }
 
-func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHolds = UndoHolds(), sendsAutomatically: Bool = false) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
-    let cache = try MailCache.inMemory()
+/// Pass `cache` to build a second engine over an existing cache, standing in
+/// for the next launch.
+func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHolds = UndoHolds(), sendsAutomatically: Bool = false,
+                cache existing: MailCache? = nil) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
+    let cache = try existing ?? MailCache.inMemory()
     let gmail = FakeGmail()
     let clock = TestClock()
     let engine = SyncEngine(

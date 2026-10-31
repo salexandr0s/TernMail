@@ -121,8 +121,6 @@ public actor SyncEngine {
     var prefetchTask: Task<Void, Never>?
     var prefetchTargets: [String] = []
     var prefetchGeneration = UUID()
-    var completedReadingVersions: [String: Int64] = [:]
-    var completedReadingOrder: [String] = []
     private var hasStarted = false
     private var writesInFlight = 0
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []

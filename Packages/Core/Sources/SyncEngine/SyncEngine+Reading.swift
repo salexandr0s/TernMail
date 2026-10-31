@@ -88,16 +88,20 @@ extension SyncEngine {
         } else { readingLoads[threadID] = load }
     }
 
+    /// One full fetch serves every gap in a conversation: bodies the cache
+    /// lacks, and cached bodies whose inline pictures and invitation were never
+    /// read. A conversation with neither costs no request.
     private func hydrateReadingThread(_ threadID: String, enrichCached: Bool) async throws {
         let accountID = accountID
         let snapshot = try await cache.read { tx in
-            (missing: try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID),
+            (missing: Set(try tx.messageIDsWithoutBody(threadID: threadID, accountID: accountID)),
+             unenriched: Set(try tx.unenrichedBodyMessageIDs(threadID: threadID, accountID: accountID)),
              versions: Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) }))
         }
-        guard !snapshot.missing.isEmpty else {
-            if enrichCached { try await enrichReadingThreadIfNeeded(threadID) }
-            return
-        }
+        // A plain open fetches only for a missing body, and enriches the rest
+        // while it is at it. An enrichment call also fetches for those alone.
+        guard !snapshot.missing.isEmpty || (enrichCached && !snapshot.unenriched.isEmpty) else { return }
+        let wanted = snapshot.missing.union(snapshot.unenriched)
         try Task.checkCancellation()
         let deleted = deletedMessageIDs
         let thread: GmailThread
@@ -114,17 +118,22 @@ extension SyncEngine {
         guard thread.id == threadID, let messages = thread.messages else { throw GmailError.decoding("Thread messages") }
         let fetchedAt = now()
         var updates: [CacheTransaction.MessageUpdate] = []
-        var bodies: [MessageBodyRecord] = []
-        var calendars: [MessageCalendarRecord] = []
+        var bodies: [String: MessageBodyRecord] = [:]
+        var calendars: [String: MessageCalendarRecord] = [:]
         var attachments: [String: [AttachmentRecord]] = [:]
         for message in messages {
             try Task.checkCancellation()
             guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
             updates.append(try Mapping.message(message, accountID: accountID))
+            guard wanted.contains(message.id) else { continue }
+            // A cached body needs only the parts its invitation may live in.
+            let needsBody = snapshot.missing.contains(message.id)
             var parts: [String: Data] = [:]
-            for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
-                try Task.checkCancellation()
-                parts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+            if needsBody {
+                for id in MIMEParts.requiredAttachmentIDs(of: message).sorted() {
+                    try Task.checkCancellation()
+                    parts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
+                }
             }
             var attempted = Set<String>()
             while let id = CalendarParts.requiredAttachmentID(of: message, attachments: parts, attemptedAttachmentIDs: attempted) {
@@ -132,57 +141,59 @@ extension SyncEngine {
                 attempted.insert(id)
                 parts[id] = try await gmail.attachment(messageID: message.id, attachmentID: id)
             }
-            bodies.append(Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: parts))
-            if let invitation = CalendarParts.invitation(in: message, attachments: parts) {
-                calendars.append(MessageCalendarRecord(accountID: accountID, messageID: message.id, invitation: invitation))
+            if needsBody {
+                bodies[message.id] = Mapping.body(message, accountID: accountID, fetchedAt: fetchedAt, attachments: parts)
+                attachments[message.id] = Mapping.attachments(message, accountID: accountID)
             }
-            attachments[message.id] = Mapping.attachments(message, accountID: accountID)
+            if let invitation = CalendarParts.invitation(in: message, attachments: parts) {
+                calendars[message.id] = MessageCalendarRecord(accountID: accountID, messageID: message.id, invitation: invitation)
+            }
         }
         let versions = try await write { [updates, bodies, calendars, attachments] tx -> [String: Int64] in
             let gone = deleted.withLock { $0 }
             let live = try updates.filter { update in
                 guard !gone.contains(update.record.id) else { return false }
-                let current = try tx.message(id: update.record.id, accountID: accountID)
-                if snapshot.versions[update.record.id] != nil, current == nil { return false }
+                if snapshot.versions[update.record.id] != nil, try tx.message(id: update.record.id, accountID: accountID) == nil { return false }
                 return true
             }
-            // A label change can advance history while the immutable message
-            // body is in flight. Fill missing content without replacing newer
-            // metadata or an already-cached newer body.
-            let content = try live.filter { update in
-                guard let current = try tx.message(id: update.record.id, accountID: accountID),
-                      current.historyID > update.record.historyID else { return true }
-                return try tx.body(messageID: update.record.id, accountID: accountID) == nil
-            }
-            let liveIDs = Set(content.map(\.record.id))
             let threads = try tx.upsertMessages(live)
-            try tx.saveBodies(bodies.filter { liveIDs.contains($0.messageID) }, calendars: calendars)
             var versions: [String: Int64] = [:]
-            for update in content {
-                try tx.replaceMIMEResources([], messageID: update.record.id, accountID: accountID)
-                try tx.replaceAttachments(attachments[update.record.id] ?? [], messageID: update.record.id, accountID: accountID)
-                versions[update.record.id] = try tx.message(id: update.record.id, accountID: accountID)?.historyID
+            for update in live where wanted.contains(update.record.id) {
+                let id = update.record.id
+                guard let current = try tx.message(id: id, accountID: accountID) else { continue }
+                let stored = try tx.body(messageID: id, accountID: accountID)
+                if let body = bodies[id] {
+                    // A label change can advance history while the immutable
+                    // body is in flight. Fill the gap without replacing a body
+                    // another load stored since the snapshot.
+                    guard stored == nil || current.historyID <= update.record.historyID else { continue }
+                    try tx.saveBodies([body], calendars: calendars[id].map { [$0] } ?? [])
+                    try tx.replaceMIMEResources([], messageID: id, accountID: accountID)
+                    try tx.replaceAttachments(attachments[id] ?? [], messageID: id, accountID: accountID)
+                } else {
+                    // A body cached before its pictures and invitation were
+                    // read. The payload is immutable, so the invitation holds
+                    // whatever version the metadata has reached.
+                    guard stored != nil else { continue }
+                    if let calendar = calendars[id] {
+                        if try tx.messageCalendar(messageID: id, accountID: accountID) != calendar { try tx.saveMessageCalendar(calendar) }
+                    } else {
+                        try tx.deleteMessageCalendar(messageID: id, accountID: accountID)
+                    }
+                }
+                versions[id] = current.historyID
             }
             try tx.rebuildThreads(threads, accountID: accountID)
             return versions
         }
-        for id in versions.keys {
-            completedReadingVersions[id] = nil
-            completedReadingOrder.removeAll { $0 == id }
-        }
         // The cache observation can now display text while optional pictures load.
-        try await hydrateReadingImages(messages, versions: versions)
+        try await hydrateReadingImages(messages.filter { versions[$0.id] != nil }, versions: versions)
     }
 
-    func enrichReadingThreadIfNeeded(_ threadID: String) async throws {
-        let accountID = accountID
-        let versions = try await cache.read { tx in
-            Dictionary(uniqueKeysWithValues: try tx.messages(threadID: threadID, accountID: accountID).map { ($0.id, $0.historyID) })
-        }
-        guard !versions.isEmpty, !versions.allSatisfy({ completedReadingVersions[$0.key] == $0.value }) else { return }
-        try await refreshReadingEnrichment(threadID: threadID, versions: versions)
-    }
-
+    /// Stores a message's inline pictures and marks its body enriched in one
+    /// write, so later opens of the conversation need no request. A picture
+    /// Gmail no longer has is marked too, so it is not asked for on every open;
+    /// a transient failure leaves the mark off and the next open retries.
     func hydrateReadingImages(_ messages: [GmailMessage], versions: [String: Int64]) async throws {
         let accountID = accountID
         let deleted = deletedMessageIDs
@@ -190,27 +201,20 @@ extension SyncEngine {
             guard let version = versions[message.id] else { continue }
             try Task.checkCancellation()
             do {
-                let resources = try await inlineResources(in: message)
-                let stored = try await write { tx -> Bool in
+                let resources: [MIMEInlineResourceRecord]?
+                do { resources = try await inlineResources(in: message) }
+                catch GmailError.notFound, GmailError.decoding { resources = nil }
+                let enrichedAt = now()
+                try await write { tx in
                     guard !deleted.withLock({ $0.contains(message.id) }),
                           let live = try tx.message(id: message.id, accountID: accountID),
                           live.threadID == message.threadId, live.historyID == version,
-                          try tx.body(messageID: message.id, accountID: accountID) != nil else { return false }
-                    try tx.replaceMIMEResources(resources, messageID: message.id, accountID: accountID)
-                    return true
+                          try tx.body(messageID: message.id, accountID: accountID) != nil else { return }
+                    if let resources { try tx.replaceMIMEResources(resources, messageID: message.id, accountID: accountID) }
+                    try tx.setBodyEnrichedAt(enrichedAt, messageID: message.id, accountID: accountID)
                 }
-                if stored { rememberReadingCompletion(message.id, version: version) }
             } catch is CancellationError { throw CancellationError() }
-            catch { /* Optional pictures can retry on the next explicit open. */ }
-        }
-    }
-
-    private func rememberReadingCompletion(_ messageID: String, version: Int64) {
-        completedReadingVersions[messageID] = version
-        completedReadingOrder.removeAll { $0 == messageID }
-        completedReadingOrder.append(messageID)
-        while completedReadingOrder.count > 512 {
-            completedReadingVersions[completedReadingOrder.removeFirst()] = nil
+            catch { /* Left unmarked, so the next explicit open retries. */ }
         }
     }
 }
