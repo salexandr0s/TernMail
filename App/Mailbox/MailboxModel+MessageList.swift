@@ -23,9 +23,9 @@ extension MailboxModel {
         }
         var addresses = listOwnAddresses
         for account in accounts { addresses[account.account.id, default: []].insert(account.account.email.lowercased()) }
-        return MessageListItem.project(threads: listedThreads, entries: listEntries,
+        return listProjection.items(for: .init(threads: listedThreads, entries: listEntries,
             conversations: listPreferences.conversations, filters: listPreferences.filters,
-            mailboxID: search.isActive ? nil : selectedLabelID, categories: categories, addresses: addresses)
+            mailboxID: search.isActive ? nil : selectedLabelID, categories: categories, addresses: addresses))
     }
 
     var selectedListRowIDs: Set<MailListRowID> {

@@ -13,6 +13,32 @@ struct MailListRowID: Hashable, Sendable, Comparable {
     }
 }
 
+/// Reuses the displayed rows while selection, toolbar or sync status changes.
+/// Callers still read every observable input before consulting this cache.
+final class MessageListProjection {
+    struct Input: Equatable {
+        let threads: [ThreadRecord]
+        let entries: [MessageListEntry]
+        let conversations: Bool
+        let filters: Set<MailQuickFilter>
+        let mailboxID: String?
+        let categories: [String: Set<String>]
+        let addresses: [String: Set<String>]
+    }
+
+    private var previous: Input?
+    private var result: [MessageListItem] = []
+
+    func items(for input: Input) -> [MessageListItem] {
+        guard previous != input else { return result }
+        result = MessageListItem.project(threads: input.threads, entries: input.entries,
+            conversations: input.conversations, filters: input.filters, mailboxID: input.mailboxID,
+            categories: input.categories, addresses: input.addresses)
+        previous = input
+        return result
+    }
+}
+
 struct MessageListItem: Identifiable, Equatable {
     let id: MailListRowID
     let thread: ThreadRecord

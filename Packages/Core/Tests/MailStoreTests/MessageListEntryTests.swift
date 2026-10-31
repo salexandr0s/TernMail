@@ -4,6 +4,40 @@ import Testing
 @testable import MailStore
 
 @Suite struct MessageListEntryTests {
+    @Test func observationSkipsEqualSnapshotsAndRetainsInitialAndDeletedNil() async throws {
+        let cache = try MailCache.inMemory()
+        let fetches = AsyncStream<Void>.makeStream()
+        var fetched = fetches.stream.makeAsyncIterator()
+        var values = cache.observe { db -> String? in
+            let name = try CacheTransaction(db: db).labels(accountID: "a").first { $0.id == SystemLabel.inbox }?.name
+            fetches.continuation.yield()
+            return name
+        }.makeAsyncIterator()
+        defer { fetches.continuation.finish() }
+
+        let initial: String? = try #require(try await values.next())
+        #expect(initial == nil)
+        _ = await fetched.next()
+        let other = LabelRecord(accountID: "a", id: "other", name: "Other", isSystem: false)
+        try await cache.write { try $0.replaceLabels([other], accountID: "a") }
+        _ = await fetched.next()
+        let inbox = LabelRecord(accountID: "a", id: SystemLabel.inbox, name: "Inbox", isSystem: true)
+        try await cache.write { try $0.replaceLabels([inbox, other], accountID: "a") }
+        _ = await fetched.next()
+        #expect(try await values.next() == "Inbox")
+
+        try await cache.write { try $0.replaceLabels([inbox], accountID: "a") }
+        _ = await fetched.next()
+        let renamed = LabelRecord(accountID: "a", id: SystemLabel.inbox, name: "Renamed", isSystem: true)
+        try await cache.write { try $0.replaceLabels([renamed], accountID: "a") }
+        _ = await fetched.next()
+        #expect(try await values.next() == "Renamed")
+
+        try await cache.write { try $0.replaceLabels([], accountID: "a") }
+        let deleted: String? = try #require(try await values.next())
+        #expect(deleted == nil)
+    }
+
     @Test func messageModeSearchKeepsLocalPrefixesAndExactServerMatchesWithoutSiblings() async throws {
         let cache = try MailCache.inMemory()
         try await cache.write { tx in

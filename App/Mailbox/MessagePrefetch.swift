@@ -50,11 +50,16 @@ final class MessagePrefetchController {
 }
 
 struct MessagePrefetchModifier: ViewModifier {
+    @Environment(AppModel.self) private var app
     let mailbox: MailboxModel
     @State private var controller = MessagePrefetchController()
 
     private var plan: MessagePrefetchPlan {
-        MessagePrefetchPlan(
+        guard app.destination == .mail,
+              mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID else {
+            return MessagePrefetchPlan(keys: [], accounts: [])
+        }
+        return MessagePrefetchPlan(
             keys: MessagePrefetchPlan.candidates(rows: mailbox.listItems.map(\.id), selected: mailbox.selectedListRowIDs),
             accounts: mailbox.accounts.map(ObjectIdentifier.init)
         )
@@ -64,7 +69,7 @@ struct MessagePrefetchModifier: ViewModifier {
         content
             .onAppear { MessageWebViewWarmup.start() }
             .onChange(of: plan, initial: true) { _, plan in
-                controller.update(keys: plan.keys, accounts: mailbox.accounts)
+                controller.update(keys: plan.keys, accounts: plan.accounts.isEmpty ? [] : mailbox.accounts)
             }
             .onDisappear { controller.stop() }
     }

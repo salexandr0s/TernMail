@@ -91,6 +91,35 @@ import Testing
         #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m2"])
     }
 
+    @Test func projectedRowsRefreshMetadataAndSendingAliasesWithoutChangingMessageIDs() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = false
+        mailbox.listPreferences.filters = [.addressedToMe]
+        #expect(mailbox.listItems.count == 2)
+
+        let entry = try #require(mailbox.listEntries.first)
+        var message = entry.message
+        message.recipients = "alias@example.com"
+        message.subject = "Updated subject"
+        mailbox.listEntries = [.init(message: message, labels: entry.labels)]
+        #expect(mailbox.listItems.isEmpty)
+        mailbox.listOwnAddresses = ["a": ["alias@example.com"]]
+        #expect(mailbox.listItems.first?.thread.subject == "Updated subject")
+
+        let file = AttachmentRecord(accountID: "a", messageID: message.id, partID: "file", attachmentID: "remote",
+            filename: "notes.pdf", mimeType: "application/pdf", size: 20, isInline: false)
+        mailbox.listEntries = [.init(message: message, labels: [SystemLabel.inbox, SystemLabel.unread], attachments: [file])]
+        #expect(mailbox.listItems.first?.thread.isUnread == true)
+        #expect(mailbox.listItems.first?.thread.isStarred == false)
+        #expect(mailbox.listItems.first?.attachments == [file])
+
+        mailbox.listPreferences.filters = [.starred]
+        #expect(mailbox.listItems.isEmpty)
+        mailbox.listPreferences.filters = []
+        #expect(mailbox.listItems.count == 1)
+    }
+
     @Test(arguments: [true, false])
     func customMailboxShowsOnlyMessagesCarryingItsLabel(conversations: Bool) async throws {
         let (mailbox, cache) = try await fixture()

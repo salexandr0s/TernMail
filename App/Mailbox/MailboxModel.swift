@@ -91,6 +91,7 @@ final class MailboxModel {
     var selectedMessageRows: Set<MailListRowID> = []
     var conversationWindowRequest: MailLink?
     var listEntries: [MessageListEntry] = []
+    @ObservationIgnored let listProjection = MessageListProjection()
     var listOwnAddresses: [String: Set<String>] = [:]
     var accountPresentation: [String: AccountMailPreferences] = [:]
     var visibleAccountIDs: Set<String>?
