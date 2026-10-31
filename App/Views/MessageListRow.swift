@@ -23,6 +23,16 @@ struct MessageListRow: View {
     /// Text starts past the unread dot and the avatar; the separator starts with it.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s1_5 * 3 + Tokens.Space.s0_5 + avatarSize }
     private var showsStar: Bool { thread.isStarred || isHovered || isSelected }
+    /// Set in Snoozed, where the row shows when the conversation returns.
+    private var wakeTime: Date? {
+        guard mailbox.showsSnoozed else { return nil }
+        return item.messages.first?.snoozeWakeAt ?? mailbox.wakeTimes[thread.key]
+    }
+
+    /// Row text follows the reader's text size, so dates and counts keep pace with the subject.
+    private func scaledFont(_ style: NSFont.TextStyle, weight: Font.Weight = .regular) -> Font {
+        .system(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale, weight: weight)
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: Tokens.Space.s1_5) {
@@ -43,7 +53,9 @@ struct MessageListRow: View {
         .onHover { isHovered = $0 }
         .alignmentGuide(.listRowSeparatorLeading) { _ in textLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
-        .accessibilityElement(children: .contain)
+        // One element per row: VoiceOver reads the state, then who, what and when.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilitySummary)
     }
 
     @ViewBuilder private var avatar: some View {
@@ -57,19 +69,18 @@ struct MessageListRow: View {
 
     private var senderLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-            Text(senderText).font(.system(size: NSFont.preferredFont(forTextStyle: .body).pointSize * scale))
-                .fontWeight(thread.isUnread ? .semibold : .regular).lineLimit(1)
+            Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .regular)).lineLimit(1)
             if thread.messageCount > 1 {
-                Text("\(thread.messageCount)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+                Text("\(thread.messageCount)").font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
             }
             Spacer(minLength: Tokens.Space.s2)
             if mailbox.listPreferences.showsImportance, item.labels.contains(SystemLabel.important) {
-                Image(systemName: "exclamationmark").font(.caption.weight(.semibold))
+                Image(systemName: "exclamationmark").font(scaledFont(.caption1, weight: .semibold))
                     .foregroundStyle(Tokens.Status.important).accessibilityLabel("Important")
             }
             Button { mailbox.toggleListStar([item.id]) } label: {
                 Image(systemName: thread.isStarred ? "star.fill" : "star")
-                    .font(.caption)
+                    .font(scaledFont(.caption1))
                     .foregroundStyle(thread.isStarred ? Tokens.Status.star : Color.secondary)
             }
             .buttonStyle(.borderless)
@@ -77,9 +88,9 @@ struct MessageListRow: View {
             .opacity(showsStar ? 1 : 0)
             .help(thread.isStarred ? "Remove Star" : "Star")
             .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
-            Text(ThreadDate.short(thread.lastDate)).font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+            Text(ThreadDate.short(thread.lastDate)).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
             if mailbox.listPreferences.showsAccountBadges, mailbox.listMixesAccounts, let accountMark {
-                Text(accountMark).font(.caption2.weight(.medium)).padding(.horizontal, Tokens.Space.s1)
+                Text(accountMark).font(scaledFont(.caption2, weight: .medium)).padding(.horizontal, Tokens.Space.s1)
                     // Stays legible on the badge's own fill when the row's text turns white.
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .frame(minWidth: Tokens.Space.s5, minHeight: Tokens.Space.s4)
@@ -94,38 +105,36 @@ struct MessageListRow: View {
     private var subjectLine: some View {
         HStack(spacing: Tokens.Space.s1) {
             if item.labels.contains(SystemLabel.draft) {
-                Text("Draft").font(.caption.weight(.medium)).foregroundStyle(Tokens.Status.error)
+                Text("Draft").font(scaledFont(.caption1, weight: .medium)).foregroundStyle(Tokens.Status.error)
             }
             Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
-                .font(.system(size: NSFont.preferredFont(forTextStyle: .callout).pointSize * scale))
-                .fontWeight(thread.isUnread ? .medium : .regular)
+                .font(scaledFont(.callout, weight: thread.isUnread ? .medium : .regular))
                 .foregroundStyle(thread.subject.isEmpty ? Color.secondary : Color.primary)
                 .lineLimit(1)
         }
     }
 
     @ViewBuilder private var previewLine: some View {
-        if let wake = item.messages.first?.snoozeWakeAt ?? mailbox.wakeTimes[thread.key], mailbox.showsSnoozed {
-            Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+        if let wake = wakeTime {
+            Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock").font(scaledFont(.caption1)).foregroundStyle(.secondary)
         } else if !thread.snippet.isEmpty {
-            Text(thread.snippet).font(.system(size: NSFont.preferredFont(forTextStyle: .callout).pointSize * scale))
-                .foregroundStyle(.secondary).lineLimit(1)
+            Text(thread.snippet).font(scaledFont(.callout)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 
     private var detailLine: some View {
         HStack(spacing: Tokens.Space.s1) {
             ForEach(Array(displayedLabels.prefix(2)), id: \.id) { label in
-                Text(label.name).font(.caption2.weight(.medium)).lineLimit(1)
-                    .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
-                    .foregroundStyle(Color(gmailHex: label.textColor) ?? .secondary)
-                    .background(label.isSystem ? Color.clear : (Color(gmailHex: label.backgroundColor) ?? Tokens.Surface.muted), in: Capsule())
-                    .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+                let icon = LabelAppearance.shared.icon(for: label)
+                TernBadge(text: label.name, systemImage: icon == "tag" ? "tag.fill" : icon,
+                          tint: Color(gmailHex: label.backgroundColor) ?? .secondary)
             }
             if let attachment = item.attachments.first {
-                Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType)).font(.caption)
+                Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType)).font(scaledFont(.caption1))
                     .lineLimit(1).help(attachment.filename)
-                if item.attachments.count > 1 { Text("+\(item.attachments.count - 1)").font(.caption.monospacedDigit()).fixedSize() }
+                if item.attachments.count > 1 {
+                    Text("+\(item.attachments.count - 1)").font(scaledFont(.caption1).monospacedDigit()).fixedSize()
+                }
             }
         }
         .foregroundStyle(.secondary)
@@ -135,6 +144,21 @@ struct MessageListRow: View {
     private var senderText: String {
         if [SystemLabel.sent, SystemLabel.draft].contains(mailbox.selectedLabelID ?? ""), !item.recipients.isEmpty { return "To: " + item.recipients }
         return thread.participants.isEmpty ? "No Sender" : thread.participants
+    }
+
+    private var accessibilitySummary: String {
+        var parts: [String] = []
+        if thread.isUnread { parts.append("Unread") }
+        parts.append(senderText)
+        parts.append(thread.subject.isEmpty ? "No Subject" : thread.subject)
+        parts.append(ThreadDate.short(thread.lastDate))
+        if thread.messageCount > 1 { parts.append("\(thread.messageCount) messages") }
+        if thread.isStarred { parts.append("Starred") }
+        if let wake = wakeTime { parts.append("Returns \(ThreadDate.wake(wake))") }
+        if !item.attachments.isEmpty {
+            parts.append(item.attachments.count == 1 ? "1 attachment" : "\(item.attachments.count) attachments")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func attachmentSymbol(_ type: String) -> String {
@@ -153,8 +177,12 @@ struct MessageListMenu: View {
         Group {
             if mailbox.offersArchive { Button("Archive", systemImage: "archivebox") { mailbox.performListAction(.archive, rows: rows) } }
             if mailbox.offersTrash { Button("Move to Trash", systemImage: "trash") { mailbox.performListAction(.trash, rows: rows) } }
-            Button("Read / Unread", systemImage: "envelope.open") { mailbox.toggleListRead(rows) }
-            Button("Star / Unstar", systemImage: "star") { mailbox.toggleListStar(rows) }
+            let allRead = mailbox.allListRead(rows)
+            Button(allRead ? "Mark as Unread" : "Mark as Read", systemImage: allRead ? "envelope.badge" : "envelope.open") {
+                mailbox.toggleListRead(rows)
+            }
+            let allStarred = mailbox.allListStarred(rows)
+            Button(allStarred ? "Remove Star" : "Star", systemImage: allStarred ? "star.fill" : "star") { mailbox.toggleListStar(rows) }
             Divider()
             if rows.count == 1, let row = rows.first {
                 Button("Open in New Window", systemImage: "macwindow.badge.plus") { mailbox.requestConversationWindow(for: row) }

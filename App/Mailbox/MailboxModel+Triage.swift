@@ -140,21 +140,24 @@ final class MailTriageModel {
 }
 
 extension MailboxModel {
-    func performDeleteKeyAction() {
-        guard MailTriagePreferences.deleteBehavior == .archive else {
-            perform(.trash)
-            return
-        }
-        let labelID = selectedLabelID
+    /// The Delete key does what Settings says. Archiving inside a user label
+    /// takes the selection out of that label, so it leaves the list shown.
+    @discardableResult
+    func performDeleteKeyAction(_ behavior: DeleteKeyBehavior = MailTriagePreferences.deleteBehavior) -> Task<Void, Never>? {
+        guard behavior == .archive else { return canTrash ? perform(.trash) : nil }
+        guard canArchive else { return nil }
         let targets = selectedActionTargets
-        let removesLabel = targets.contains { accountID, _ in
+        guard !search.isActive, let labelID = selectedLabelID, targets.contains(where: { accountID, _ in
             account(id: accountID)?.labels.contains { $0.id == labelID && !$0.isSystem } == true
-        }
-        queueUndoable(removesLabel ? "Remove Label" : "Archive", for: selectedThreadIDs, sound: .archive) { owner, _ in
+        }) else { return perform(.archive) }
+        let keys = selectedThreadIDs
+        selectThread(after: keys)
+        return queueUndoable("Remove Label", for: keys, sound: .archive) { owner, _ in
             guard let target = targets.first(where: { $0.accountID == owner.account.id })?.target else { return nil }
-            let userLabel = owner.labels.first { $0.id == labelID && !$0.isSystem }
-            if let userLabel { return try await owner.engine.editLabels(target: target, add: [], remove: [userLabel.id]) }
-            return try await owner.engine.perform(.archive, target: target)
+            guard owner.labels.contains(where: { $0.id == labelID && !$0.isSystem }) else {
+                return try await owner.engine.perform(.archive, target: target)
+            }
+            return try await owner.engine.editLabels(target: target, add: [], remove: [labelID])
         }
     }
 }

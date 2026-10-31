@@ -40,6 +40,7 @@ struct FavoritesView: View {
             Label(title(favorite), systemImage: symbol(favorite)).lineLimit(1)
         }
         .badge(canExpand && isExpanded ? 0 : mailbox.sidebarBadgeCount(box))
+        .conversationDropTarget(box, mailbox: mailbox)
         .tag(box)
         .onTapGesture {
             mailbox.selectedMailbox = box
@@ -69,7 +70,9 @@ struct FavoritesView: View {
                     Image(systemName: symbol(favorite)).foregroundStyle(accountColor(owner.account.id))
                 }
                     .lineLimit(1).padding(.leading, Tokens.Space.s8)
-                    .badge(mailbox.sidebarBadgeCount(accountBox)).tag(accountBox)
+                    .badge(mailbox.sidebarBadgeCount(accountBox))
+                    .conversationDropTarget(accountBox, mailbox: mailbox)
+                    .tag(accountBox)
                     .accessibilityLabel("\(title(favorite)), \(shortName(owner.account))")
                 if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
             }

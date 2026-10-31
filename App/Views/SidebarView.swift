@@ -51,6 +51,7 @@ struct SidebarView: View {
                     ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
                         let boxID = MailboxID.account(owner.account.id, box.id)
                         MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarCount(boxID))
+                            .conversationDropTarget(boxID, mailbox: mailbox)
                             .tag(boxID)
                         if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                     }
@@ -279,6 +280,7 @@ private struct CombinedMailboxRows: View {
             box: box, title: box.title, color: box.color,
             count: isExpanded ? 0 : mailbox.sidebarCount(combinedID), isExpanded: isExpanded
         )
+        .conversationDropTarget(combinedID, mailbox: mailbox)
         .tag(combinedID)
         .onTapGesture(perform: selectAndToggle)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -299,6 +301,7 @@ private struct CombinedMailboxRows: View {
                     .padding(.leading, Tokens.Space.s8)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
+                    .conversationDropTarget(boxID, mailbox: mailbox)
                     .tag(boxID)
                     .contextMenu {
                         MailboxContextMenu(mailbox: mailbox, box: boxID,
@@ -410,6 +413,7 @@ private struct LabelRow: View {
         }
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
+        .conversationDropTarget(.account(label.accountID, label.id), mailbox: mailbox)
         .tag(MailboxID.account(label.accountID, label.id))
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .contextMenu {

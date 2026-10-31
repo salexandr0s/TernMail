@@ -183,6 +183,33 @@ import Testing
         #expect(mailbox.actionTargets(forRows: mixed).isEmpty)
     }
 
+    @Test func deleteKeyFollowsTheSettingsChoice() async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let key = ThreadKey(accountID: "a", threadID: "t")
+        mailbox.listPreferences.nextSelection = .none
+        mailbox.selectedThreadIDs = [key]
+        await mailbox.performDeleteKeyAction(.archive)?.value
+        var pending = try await cache.read { try $0.pendingActions(accountID: "a") }
+        #expect(pending.map(\.kind) == [.modifyThreads])
+        #expect(pending.first?.removeLabelIDs == [SystemLabel.inbox])
+        mailbox.selectedThreadIDs = [key]
+        await mailbox.performDeleteKeyAction(.trash)?.value
+        pending = try await cache.read { try $0.pendingActions(accountID: "a") }
+        #expect(pending.map(\.kind) == [.modifyThreads, .trashThreads])
+        // Nothing selected: the key does nothing rather than acting on stale targets.
+        mailbox.selectedThreadIDs = []
+        #expect(mailbox.performDeleteKeyAction(.trash) == nil)
+    }
+
+    @Test func rowSummaryLeadsWithUnreadAndEndsWithStarred() {
+        let summary = MessageListRow.accessibilitySummary(unread: true, sender: "Sender", subject: "Planning",
+                                                          date: "Oct 30", messageCount: 3, starred: true)
+        #expect(summary == "Unread, Sender, Planning, Oct 30, 3 messages, starred")
+        #expect(MessageListRow.accessibilitySummary(unread: false, sender: "Sender", subject: "", date: "Oct 30",
+                                                    messageCount: 1, starred: false) == "Sender, No Subject, Oct 30")
+    }
+
     @Test func profilePresentationFiltersOwnersAndFavoritesKeepExplicitScopes() async throws {
         let (mailbox, _) = try await fixture()
         let second = AccountRecord(id: "b", email: "second@example.com", displayName: nil, grantedScopes: [], addedAt: .now)

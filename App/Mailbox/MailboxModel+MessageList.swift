@@ -41,9 +41,13 @@ extension MailboxModel {
         selectedThreadIDs = Set(valid.map(\.threadKey))
     }
 
+    /// What a row stands for: its conversation, or its one message in message mode.
+    func conversationLink(for row: MailListRowID) -> MailLink {
+        MailLink(accountID: row.accountID, threadID: row.threadID, messageID: listPreferences.conversations ? nil : row.messageID)
+    }
+
     func requestConversationWindow(for row: MailListRowID) {
-        conversationWindowRequest = MailLink(accountID: row.accountID, threadID: row.threadID,
-            messageID: listPreferences.conversations ? nil : row.messageID)
+        conversationWindowRequest = conversationLink(for: row)
     }
 
     /// This snapshot is shared by triage, commands and the message list.
@@ -83,14 +87,22 @@ extension MailboxModel {
         }
     }
 
+    /// Menus title the toggle by these: one unread row offers Mark as Read.
+    func allListRead(_ rows: Set<MailListRowID>) -> Bool {
+        !listItems.contains { rows.contains($0.id) && $0.thread.isUnread }
+    }
+
+    func allListStarred(_ rows: Set<MailListRowID>) -> Bool {
+        let selected = listItems.filter { rows.contains($0.id) }
+        return !selected.isEmpty && selected.allSatisfy { $0.thread.isStarred }
+    }
+
     func toggleListRead(_ rows: Set<MailListRowID>) {
-        let unread = listItems.contains { rows.contains($0.id) && $0.thread.isUnread }
-        performListAction(unread ? .markRead : .markUnread, rows: rows)
+        performListAction(allListRead(rows) ? .markUnread : .markRead, rows: rows)
     }
 
     func toggleListStar(_ rows: Set<MailListRowID>) {
-        let selected = listItems.filter { rows.contains($0.id) }
-        performListAction(!selected.isEmpty && selected.allSatisfy { $0.thread.isStarred } ? .unstar : .star, rows: rows)
+        performListAction(allListStarred(rows) ? .unstar : .star, rows: rows)
     }
 
     func selectRow(after leaving: Set<MailListRowID>) {

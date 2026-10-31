@@ -1,11 +1,15 @@
 import MailStore
 import MessageContent
+import QuickLook
 import SwiftUI
 
 struct ThreadListView: View {
     @Bindable var mailbox: MailboxModel
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
+    @Environment(\.openWindow) private var openWindow
     @FocusState private var listFocused: Bool
+    @Namespace private var dragNamespace
+    @State private var previewURL: URL?
 
     var body: some View {
         list
@@ -47,20 +51,45 @@ struct ThreadListView: View {
             .onChange(of: mailbox.listItems.map(\.id)) { _, ids in
                 mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(ids))
             }
-            .sheet(isPresented: isChoosingSnoozeDate) {
-                if let ids = mailbox.snoozeDateTargets {
-                    SnoozeDateSheet(
-                        initial: SnoozeSchedule().wakeTime(for: .tomorrow, now: .now) ?? .now.addingTimeInterval(3600),
-                        now: .now,
-                        onSnooze: { mailbox.snooze(ids, until: $0) },
-                        onCancel: { mailbox.snoozeDateTargets = nil }
-                    )
-                }
-            }
     }
 
-    private var isChoosingSnoozeDate: Binding<Bool> {
-        Binding(get: { mailbox.snoozeDateTargets != nil }, set: { if !$0 { mailbox.snoozeDateTargets = nil } })
+    /// Choose Date & Time opens beside the first conversation it will snooze.
+    private func snoozeDateAnchor(in rows: [MessageListItem]) -> MailListRowID? {
+        guard let keys = mailbox.snoozeDateTargets else { return nil }
+        let targetRows = mailbox.snoozeRowTargets
+        return rows.first { targetRows?.contains($0.id) ?? keys.contains($0.id.threadKey) }?.id
+    }
+
+    @ViewBuilder private var snoozeDatePicker: some View {
+        if let ids = mailbox.snoozeDateTargets {
+            SnoozeDateSheet(
+                initial: SnoozeSchedule().wakeTime(for: .tomorrow, now: .now) ?? .now.addingTimeInterval(3600),
+                now: .now,
+                onSnooze: { mailbox.snooze(ids, until: $0) },
+                onCancel: { mailbox.snoozeDateTargets = nil }
+            )
+        }
+    }
+
+    /// Double-click and Return open each chosen conversation in its own window, in list order.
+    private func openConversations(_ ids: Set<MailListRowID>) {
+        for row in mailbox.listItems where ids.contains(row.id) {
+            openWindow(id: ConversationWindow.sceneID, value: mailbox.conversationLink(for: row.id))
+        }
+    }
+
+    /// Space previews the one selected conversation's first attachment, and
+    /// otherwise toggles the selection between read and unread.
+    private func previewOrToggleRead() -> KeyPress.Result {
+        let selection = mailbox.selectedListRowIDs
+        guard !selection.isEmpty else { return .ignored }
+        if selection.count == 1, let item = mailbox.listItems.first(where: { selection.contains($0.id) }),
+           let attachment = item.attachments.first {
+            Task { previewURL = await mailbox.download(attachment) }
+        } else {
+            mailbox.toggleListRead(selection)
+        }
+        return .handled
     }
 
     private var displayedThreads: [ThreadRecord] {
@@ -178,6 +207,7 @@ struct ThreadListView: View {
         let accountColors = AccountAppearance.colorIndexes(
             for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
         )
+        let snoozeAnchor = snoozeDateAnchor(in: rows)
         return List(selection: Binding(get: { mailbox.selectedListRowIDs }, set: { mailbox.selectListRows($0) })) {
             // Keyed by account too, since thread IDs repeat across accounts.
             ForEach(rows) { row in
@@ -187,7 +217,9 @@ struct ThreadListView: View {
                 )
                     .tag(row.id)
                     .listRowInsets(EdgeInsets())
-                    .onTapGesture(count: 2) { mailbox.requestConversationWindow(for: row.id) }
+                    .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
+                    .popover(isPresented: Binding(get: { snoozeAnchor == row.id }, set: { if !$0 { mailbox.snoozeDateTargets = nil } }),
+                             arrowEdge: .trailing) { snoozeDatePicker }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row.id)
                     }
@@ -220,9 +252,25 @@ struct ThreadListView: View {
         .listStyle(.inset)
         .contentMargins(.horizontal, 0, for: .scrollContent)
         .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
+        // Dragging a selected row carries the whole selection.
+        .dragContainer(for: ConversationDragItem.self, itemID: \.rowID, in: dragNamespace) { ids in
+            ids.map { ConversationDragItem(mailbox.conversationLink(for: $0)) }
+        }
+        .dragContainerSelection(Array(mailbox.selectedListRowIDs), containerNamespace: dragNamespace)
         .contextMenu(forSelectionType: MailListRowID.self) { ids in
             MessageListMenu(mailbox: mailbox, rows: ids)
+        } primaryAction: { ids in
+            openConversations(ids)
         }
+        .onDeleteCommand { mailbox.performDeleteKeyAction() }
+        .onKeyPress(.return) {
+            guard !mailbox.selectedListRowIDs.isEmpty else { return .ignored }
+            openConversations(mailbox.selectedListRowIDs)
+            return .handled
+        }
+        .onKeyPress(.space) { previewOrToggleRead() }
+        .quickLookPreview($previewURL)
+        .protectAttachmentPreview(previewURL)
         .focused($listFocused)
     }
 
