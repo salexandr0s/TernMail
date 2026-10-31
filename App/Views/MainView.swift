@@ -71,8 +71,10 @@ struct MainView: View {
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
                 preferredWidth: preferredAssistantWidth, isPresented: showsAssistant)
             HStack(spacing: 0) {
+                // A split wider than the mail area runs under the assistant and
+                // keeps its leading edge, the sidebar or the list, in view.
                 mailContent(topInset: contentTopInset)
-                    .frame(width: layout.mailWidth)
+                    .frame(width: layout.mailWidth, alignment: .leading)
                     .clipped()
                 if showsAssistant {
                     Rectangle()
