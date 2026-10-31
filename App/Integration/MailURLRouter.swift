@@ -1,4 +1,5 @@
 import AppKit
+import CoreSpotlight
 import MailStore
 import MessageContent
 import Observation
@@ -125,6 +126,12 @@ struct MailURLHandling: ViewModifier {
                 app.mailURLs.resume()
             }
             .onChange(of: app.phase) { _, _ in app.mailURLs.resume() }
+            // A Spotlight result names its conversation by the item's `tern://` link.
+            .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+                      let url = URL(string: identifier) else { return }
+                app.mailURLs.receive(url)
+            }
             .onChange(of: app.mailURLs.composeDraftID, initial: true) { _, id in
                 guard let id else { return }
                 openWindow(id: ComposeWindow.sceneID, value: id)

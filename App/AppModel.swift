@@ -35,6 +35,7 @@ final class AppModel {
     @ObservationIgnored private var maintenanceModel: CacheMaintenanceModel?
     @ObservationIgnored private var maintenanceTask: Task<Void, Never>?
     @ObservationIgnored private var mailURLRouter: MailURLRouter?
+    @ObservationIgnored private var spotlightIndexer: MailSpotlightIndexer?
     @ObservationIgnored private var mailBadges: MailBadgeController?
     @ObservationIgnored private var preferenceReconciliation: Task<Void, Never>?
     var destination: WorkspaceDestination = .mail
@@ -59,6 +60,13 @@ final class AppModel {
         let router = MailURLRouter(app: self)
         mailURLRouter = router
         return router
+    }
+
+    private var spotlight: MailSpotlightIndexer {
+        if let spotlightIndexer { return spotlightIndexer }
+        let indexer = MailSpotlightIndexer(app: self)
+        spotlightIndexer = indexer
+        return indexer
     }
 
     var maintenance: CacheMaintenanceModel {
@@ -111,6 +119,7 @@ final class AppModel {
             try await accounts.importAttachmentCategoryOverrides(categories)
             inboxUpdatesAreStopped = true
             await closeMailbox()
+            spotlight.removeAll()
             do {
                 try await cache.resetDisposableCache()
                 await DomainLogoImages.shared.removeAll()
@@ -158,7 +167,10 @@ final class AppModel {
     }
 
     private func configureMailRuntime(_ owner: AccountMailbox) {
-        owner.onMailSync = { [weak self] snapshot in await self?.mailNotifications?.process(snapshot) }
+        owner.onMailSync = { [weak self] snapshot in
+            self?.spotlight.mailSynced(accountID: snapshot.accountID)
+            await self?.mailNotifications?.process(snapshot)
+        }
         owner.onUnreadCountChange = { [weak self] in self?.refreshMailBadges() }
     }
 
@@ -394,6 +406,7 @@ final class AppModel {
                     await mailbox.addAccount(second, gmail: AuditGmail(.second), onCreate: configureMailRuntime)
                     mailbox.selectedMailbox = .combined(SystemLabel.inbox)
                     schedulePreferenceReconciliation()
+                    spotlight.start()
                     await mailbox.start()
                 }
                 return
@@ -723,6 +736,7 @@ final class AppModel {
         }
         AccountProfileImages.shared.removeAll()
         await closeMailbox()
+        spotlight.removeAll()
         let signedOut = sessions
         sessions = [:]
         accountsNeedingSignIn = []
@@ -946,6 +960,7 @@ final class AppModel {
         mailURLRouter?.resume()
         await refreshInboxUpdates()
         startCacheMaintenance()
+        spotlight.start()
         Task { await mailbox.start() }
     }
 
@@ -999,6 +1014,7 @@ final class AppModel {
     /// attached to their drafts, which only their local drafts lead to.
     private func removeCachedData(accountIDs: Set<String>) async throws {
         guard let cache else { return }
+        spotlight.remove(accountIDs: accountIDs)
         let draftIDs = try await cache.write { tx in
             var draftIDs: [String] = []
             for accountID in accountIDs {
