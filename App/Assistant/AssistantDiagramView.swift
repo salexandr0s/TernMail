@@ -20,8 +20,7 @@ struct AssistantDiagramView: View {
                 .labelStyle(.iconOnly).buttonStyle(.borderless)
                 .help(showsSource ? "Show diagram" : "Show source")
                 Button("Copy diagram source", systemImage: "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(source, forType: .string)
+                    NSPasteboard.general.replaceContents(with: source)
                 }
                 .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy diagram source")
             }

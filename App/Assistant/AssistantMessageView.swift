@@ -158,8 +158,7 @@ struct AssistantMessageView: View {
             if message.state == .failed { Label("Incomplete", systemImage: "exclamationmark.circle") }
             if !message.text.isEmpty {
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.text, forType: .string)
+                    NSPasteboard.general.replaceContents(with: message.text)
                     copied = true
                 } label: {
                     HStack(spacing: Tokens.Space.s1) {

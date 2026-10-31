@@ -389,8 +389,7 @@ struct MailCommands: Commands {
 
     private func copyLink() {
         guard let url = selectedLink?.ternURL else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        NSPasteboard.general.replaceContents(with: url.absoluteString)
     }
 
     private func openConversationWindow() {

@@ -56,8 +56,7 @@ struct AssistantMarkdownView: View {
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     Spacer()
                     Button("Copy code", systemImage: "doc.on.doc") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(String(block.text.characters), forType: .string)
+                        NSPasteboard.general.replaceContents(with: String(block.text.characters))
                     }
                     .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy code")
                 }
