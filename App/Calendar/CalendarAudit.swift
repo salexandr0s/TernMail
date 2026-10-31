@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
 import Foundation
 import GmailAPI
 import MailStore
@@ -91,6 +91,15 @@ actor CalendarAuditService: CalendarService {
         rows = ["personal": [breakfast.id: breakfast, trip.id: trip],
                 "work": [review.id: review, overlap.id: overlap, planning.id: planning],
                 "shared": [focus.id: focus]]
+        if ProcessInfo.processInfo.arguments.contains("--performance-audit") {
+            let argument = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-events=") }
+            let count = min(1_000, max(100, argument.flatMap { Int($0.split(separator: "=").last ?? "") } ?? 100))
+            for index in 0..<count {
+                let value = event("performance-\(index)", "Synthetic event \(index)", day: index % 7,
+                                  hour: 8 + (index / 7) % 10, minutes: 15 + (index % 4) * 15)
+                rows["work", default: [:]][value.id] = value
+            }
+        }
     }
 
     func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage {

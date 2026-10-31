@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
 import Foundation
 import GmailAPI
 import MailStore
@@ -57,6 +57,10 @@ actor AuditGmail: GmailService {
     }
 
     init(_ account: Account = .first) {
+        if ProcessInfo.processInfo.arguments.contains("--performance-audit") {
+            mail = Self.performanceMail()
+            return
+        }
         if account == .second {
             mail = Self.secondMail
             userLabels = [UserLabel(id: "Label_1", name: "Projects")]
@@ -101,6 +105,31 @@ actor AuditGmail: GmailService {
                     from: account == .first ? "UI Audit <audit@example.invalid>" : "Second Audit <second@example.invalid>")
             }
         }
+    }
+
+    private static func performanceMail() -> [Message] {
+        let argument = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-mails=") }
+        let count = min(60_000, max(200, argument.flatMap { Int($0.split(separator: "=").last ?? "") } ?? 1_000))
+        var result = (0..<count).map { index in
+            Message(id: "performance-\(index)", thread: "performance-thread-\(index)",
+                    subject: "Synthetic performance message \(index)",
+                    text: index.isMultiple(of: 2)
+                        ? String(repeating: "<p>Prepared content for measuring scrolling and navigation.</p>", count: 20)
+                        : String(repeating: "Synthetic plain text for measuring navigation.\n", count: 12),
+                    html: index.isMultiple(of: 2), labels: ["INBOX"],
+                    from: "Synthetic Sender \(index % 20) <sender\(index % 20)@example.invalid>",
+                    attachment: index.isMultiple(of: 4) ? "Synthetic-document-\(index).txt" : nil)
+        }
+        for size in [20, 100] {
+            let conversation = (0..<size).map { index in
+                Message(id: "performance-long-\(size)-\(index)", thread: "performance-long-\(size)",
+                        subject: "Synthetic \(size)-message conversation",
+                        text: String(repeating: "<p>Long conversation message \(index): synthetic text for layout and Find.</p>", count: 10),
+                        html: true, labels: ["INBOX", "UNREAD"])
+            }
+            result.insert(contentsOf: conversation, at: 10)
+        }
+        return result
     }
 
     private static let secondMail: [Message] = [
