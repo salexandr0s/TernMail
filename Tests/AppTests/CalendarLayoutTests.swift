@@ -28,6 +28,35 @@ import Testing
             accountID: "account", calendarID: "calendar")
     }
 
+    @MainActor @Test func timeGridOpensAtEightInTheMorning() async throws {
+        let calendar = try calendar()
+        let day = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 30)))
+        let grid = CalendarTimeGrid(date: day, isWeek: true, calendar: calendar, events: [], selectedID: .constant(nil),
+                                    create: { _ in }, edit: { _ in }, change: { _, _ in }, delete: { _ in },
+                                    duplicate: { _ in }, dropMail: { _, _ in })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: grid)
+        window.orderFront(nil)
+        defer { window.close() }
+        let expected = Tokens.Space.s2 + 8 * grid.hourHeight
+        var offset: CGFloat?
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        repeat {
+            try await Task.sleep(for: .milliseconds(100))
+            // The hours scroll inside the horizontal day scroller; only they are taller than a day.
+            offset = scrollViews(in: window.contentView).first { ($0.documentView?.frame.height ?? 0) > 24 * grid.hourHeight }?
+                .contentView.bounds.origin.y
+        } while offset.map({ abs($0 - expected) >= 1 }) ?? true && ContinuousClock.now < deadline
+        #expect(abs(try #require(offset) - expected) < 1)
+    }
+
+    @MainActor private func scrollViews(in view: NSView?) -> [NSScrollView] {
+        guard let view else { return [] }
+        return ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
+    }
+
     @Test func overlappingEventsReceiveIndependentLanesAndLaterEventsRecoverWidth() throws {
         let calendar = try calendar()
         let day = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 30)))
