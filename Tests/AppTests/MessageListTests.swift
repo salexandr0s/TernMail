@@ -246,6 +246,17 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func addingAnAccountPreservesTheSelectedExistingAccountRows() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let row = try #require(mailbox.listItems.first)
+        mailbox.selectListRows([row.id])
+        let second = AccountRecord(id: "b", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(), syncEnabled: false)
+        #expect(mailbox.selectedListRowIDs == [row.id])
+        #expect(mailbox.listItems.map(\.id) == [row.id])
+    }
+
     @Test func selectionReusesPreparedRowsWithoutComparingOrRebuildingThePage() async throws {
         let (mailbox, _) = try await fixture()
         defer { Task { await mailbox.stop() } }

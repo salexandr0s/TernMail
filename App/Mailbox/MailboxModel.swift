@@ -1107,13 +1107,22 @@ final class MailboxModel {
     private func accountsChanged() {
         listContextRevision &+= 1
         listPages.stop()
-        mailboxPage = .empty
+        let retainedAccounts = Set(selectedAccounts.map(\.account.id))
+        mailboxPage = MailListPage(
+            threads: mailboxPage.threads.filter { retainedAccounts.contains($0.accountID) },
+            entries: mailboxPage.entries.filter { retainedAccounts.contains($0.message.accountID) })
         mailboxPageReady = false
-        threads = []
-        listEntries = []
+        threads = mailboxPage.threads
+        if !search.isActive { listEntries = mailboxPage.entries }
+        let signedInAccounts = Set(accounts.map(\.account.id))
+        selectedThreadIDs = selectedThreadIDs.filter { signedInAccounts.contains($0.accountID) }
+        selectedMessageRows = selectedMessageRows.filter { signedInAccounts.contains($0.accountID) }
         isListPresentationReady = false
         updateSearchSources()
-        observeThreads()
+        // Account construction also runs before start(), including headless
+        // scripting/compose contexts. It must not launch a list subscription
+        // whose delayed first value can revoke an unrelated explicit selection.
+        if isStarted { observeThreads() }
     }
 
     /// Call before cache-changing reading/triage operations that bypass the
