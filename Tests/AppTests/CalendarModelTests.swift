@@ -6,6 +6,90 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func initialRangeLoadsFromNetworkOnlyWhenItsCacheIsIncomplete() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "first-open")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+
+            await fixture.model.reloadOccurrences(refresh: false, refreshIfIncomplete: true)
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 1)
+
+            fixture.model.events = []
+            await fixture.model.reloadOccurrences(refresh: false, refreshIfIncomplete: true)
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test func rangeReloadPublishesCachedEventsBeforeOneFreshRequest() async throws {
+        try await withFixture { fixture in
+            let cached = Self.event(id: "cached")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(cached.startDate)
+            try await fixture.cacheRange([cached])
+            var fresh = cached
+            fresh.summary = "Updated planning"
+            await fixture.service.put(fresh)
+            await fixture.service.suspendNextRange()
+
+            let reload = Task { await fixture.model.reloadOccurrences() }
+            #expect(await fixture.waitForSuspendedRange())
+            #expect(fixture.model.events.map(\.event) == [cached])
+            await fixture.service.resumeRange()
+            await reload.value
+
+            #expect(fixture.model.events.map(\.event) == [fresh])
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test func lateRangeResponseCannotReplaceTheNewlySelectedDate() async throws {
+        try await withFixture { fixture in
+            let first = Self.event(id: "first")
+            var second = Self.event(id: "second")
+            second.start = CalendarDateTime(dateTime: "2030-01-08T10:00:00+01:00", timeZone: "Europe/Vienna")
+            second.end = CalendarDateTime(dateTime: "2030-01-08T11:00:00+01:00", timeZone: "Europe/Vienna")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(first.startDate)
+            await fixture.service.put(first)
+            await fixture.service.put(second)
+            await fixture.service.suspendNextRange()
+
+            let oldReload = Task { await fixture.model.reloadOccurrences() }
+            #expect(await fixture.waitForSuspendedRange())
+            fixture.model.date = try #require(second.startDate)
+            await fixture.model.reloadOccurrences()
+            #expect(fixture.model.events.map(\.event.id) == [second.id])
+            await fixture.service.resumeRange()
+            await oldReload.value
+
+            #expect(fixture.model.events.map(\.event.id) == [second.id])
+            #expect(await fixture.service.rangeRequestCount == 2)
+        }
+    }
+
+    @Test func cachedRangeUsesCurrentCalendarVisibilityAndPresentationWithoutNetwork() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "cached")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            try await fixture.cacheRange([event])
+            fixture.model.calendars[0].entry.backgroundColor = "#123456"
+            fixture.model.calendars[0].entry.accessRole = "reader"
+            await fixture.model.reloadOccurrences(refresh: false)
+            #expect(fixture.model.events.first?.colorHex == "#123456")
+            #expect(fixture.model.events.first?.canEdit == false)
+
+            fixture.model.calendars[0].isVisible = false
+            await fixture.model.reloadOccurrences(refresh: false)
+            #expect(fixture.model.events.isEmpty)
+            #expect(await fixture.service.rangeRequestCount == 0)
+        }
+    }
+
     @Test func calendarErrorsSeparateConsentFromCloudSetupAndHideProviderDetails() {
         let disabled = CalendarConnectionIssue(error: GmailError.http(status: 403, reason: "SERVICE_DISABLED"))
         let permission = CalendarConnectionIssue(error: GmailError.http(status: 403, reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
@@ -296,7 +380,23 @@ import Testing
             CalendarDisplayEvent(event: event, accountID: accountID, calendarID: "work", fallbackTimeZoneID: "Europe/Vienna")
         }
 
+        func cacheRange(_ events: [GoogleCalendarEvent]) async throws {
+            let interval = model.displayInterval
+            let state = try await store.syncState(accountID: accountID, calendarID: "work")
+            try await store.saveOccurrences(events, accountID: accountID, calendarID: "work",
+                start: interval.start, end: interval.end, expected: state)
+        }
+
+        func waitForSuspendedRange() async -> Bool {
+            for _ in 0..<200 {
+                if await service.hasSuspendedRange { return true }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return false
+        }
+
         func close() async {
+            await service.resumeRange()
             await model.stop()
             defaults.removePersistentDomain(forName: defaultsName)
         }
@@ -306,11 +406,20 @@ import Testing
         static let entry = GoogleCalendarEntry(id: "work", summary: "Work", timeZone: "Europe/Vienna", accessRole: "owner")
         private var remote: [String: GoogleCalendarEvent] = [:]
         private var offline = false
+        private var shouldSuspendRange = false
+        private var rangeContinuation: CheckedContinuation<Void, Never>?
+        private(set) var rangeRequestCount = 0
         private(set) var insertCount = 0
         private(set) var patchETags: [String?] = []
 
         func setOffline(_ value: Bool) { offline = value }
         func put(_ event: GoogleCalendarEvent) { remote[event.id] = event }
+        var hasSuspendedRange: Bool { rangeContinuation != nil }
+        func suspendNextRange() { shouldSuspendRange = true }
+        func resumeRange() {
+            rangeContinuation?.resume()
+            rangeContinuation = nil
+        }
 
         func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage {
             if offline { throw GmailError.transport(.notConnectedToInternet) }
@@ -319,7 +428,17 @@ import Testing
 
         func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
             if offline { throw GmailError.transport(.notConnectedToInternet) }
-            return CalendarEventPage(items: Array(remote.values), nextSyncToken: "snapshot")
+            var events = Array(remote.values)
+            if query.singleEvents {
+                rangeRequestCount += 1
+                if let start = query.timeMin { events.removeAll { ($0.endDate ?? .distantPast) <= start } }
+                if let end = query.timeMax { events.removeAll { ($0.startDate ?? .distantFuture) >= end } }
+                if shouldSuspendRange {
+                    shouldSuspendRange = false
+                    await withCheckedContinuation { rangeContinuation = $0 }
+                }
+            }
+            return CalendarEventPage(items: events, nextSyncToken: "snapshot")
         }
 
         func event(calendarID: String, eventID: String) async throws -> GoogleCalendarEvent {

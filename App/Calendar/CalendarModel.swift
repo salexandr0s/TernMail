@@ -276,7 +276,8 @@ final class CalendarModel {
                 app.assistant.refreshAccess()
             }
             didLoadCalendars = true
-            await reloadOccurrences()
+            // Load a missing visible range before whole-calendar history.
+            await reloadOccurrences(refresh: false, refreshIfIncomplete: true)
             for owner in calendars where owner.entry.canReadDetails {
                 guard revision == lifecycleRevision else { return }
                 do { try await engines[owner.accountID]?.syncEvents(calendarID: owner.calendarID) }
@@ -287,45 +288,58 @@ final class CalendarModel {
                 do { try await engine.flush() } catch { issues.append("Pending changes are waiting for a connection.") }
             }
             guard revision == lifecycleRevision else { return }
-            await reloadOperations()
             await reloadOccurrences()
             if !issues.isEmpty { statusText = Set(issues).sorted().joined(separator: " ") }
             await refreshNotifications()
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func reloadOccurrences() async {
+    func reloadOccurrences(refresh: Bool = true, refreshIfIncomplete: Bool = false) async {
         rangeRevision += 1
         let revision = rangeRevision
         let lifecycle = lifecycleRevision
         let interval = displayInterval
-        var found: [CalendarDisplayEvent] = []
-        var stale = false
-        for owner in calendars where owner.isVisible {
-            guard let engine = engines[owner.accountID] else { stale = true; continue }
-            do {
-                let result = try await engine.occurrences(calendarID: owner.calendarID, start: interval.start, end: interval.end)
-                guard revision == rangeRevision else { return }
-                stale = stale || result.isStale || !result.isComplete
-                found += result.events.filter { !$0.isCancelled }.map {
-                    CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
-                        colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
-                        fallbackTimeZoneID: calendar.timeZone.identifier)
+        let displayCalendar = calendar
+        // Publish the saved range before waiting for Google, including when
+        // navigation changes the date while an earlier request is suspended.
+        var needsRefresh = refresh
+        for shouldRefresh in [false, true] {
+            if shouldRefresh && !needsRefresh { return }
+            var found: [CalendarDisplayEvent] = []
+            var stale = false
+            for owner in calendars where owner.isVisible {
+                guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
+                guard let engine = engines[owner.accountID] else { stale = true; continue }
+                do {
+                    let result = try await engine.occurrences(calendarID: owner.calendarID, start: interval.start,
+                                                              end: interval.end, refresh: shouldRefresh)
+                    guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
+                    stale = stale || result.isStale || !result.isComplete
+                    if !result.isComplete, refreshIfIncomplete { needsRefresh = true }
+                    found += result.events.filter { !$0.isCancelled }.map {
+                        CalendarDisplayEvent(event: $0, accountID: owner.accountID, calendarID: owner.calendarID,
+                            colorHex: owner.colorHex, canEdit: CalendarEventPermissions.canEdit($0, in: owner),
+                            fallbackTimeZoneID: displayCalendar.timeZone.identifier)
+                    }
+                } catch {
+                    stale = true
+                    if refreshIfIncomplete { needsRefresh = true }
                 }
-            } catch { stale = true }
+            }
+            guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
+            await reloadOperations()
+            guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
+            events = CalendarPendingEvents.project(found, operations: operations, calendars: calendars, interval: interval,
+                                                   calendar: displayCalendar)
+            statusText = calendars.isEmpty ? (connectionStates.values.contains(where: \.isEnabled)
+                ? "No calendars are available. Refresh or check the account connection."
+                : "Connect Google Calendar to see your events.")
+                : operations.contains(where: { $0.status == .failed || $0.status == .conflicted })
+                    ? "Some calendar changes need review in Calendar activity."
+                    : operations.contains(where: { $0.status == .queued || $0.status == .running })
+                    ? "Calendar changes are waiting to sync."
+                    : stale ? "Showing cached events. Some calendars could not be checked." : "Calendars are up to date."
         }
-        await reloadOperations()
-        guard revision == rangeRevision, lifecycle == lifecycleRevision else { return }
-        events = CalendarPendingEvents.project(found, operations: operations, calendars: calendars, interval: interval,
-                                               calendar: calendar)
-        statusText = calendars.isEmpty ? (connectionStates.values.contains(where: \.isEnabled)
-            ? "No calendars are available. Refresh or check the account connection."
-            : "Connect Google Calendar to see your events.")
-            : operations.contains(where: { $0.status == .failed || $0.status == .conflicted })
-                ? "Some calendar changes need review in Calendar activity."
-                : operations.contains(where: { $0.status == .queued || $0.status == .running })
-                ? "Calendar changes are waiting to sync."
-                : stale ? "Showing cached events. Some calendars could not be checked." : "Calendars are up to date."
     }
 
     var displayInterval: DateInterval {

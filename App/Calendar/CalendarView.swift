@@ -35,7 +35,7 @@ struct CalendarView: View {
         .background(Tokens.Surface.primary)
         .background { undoShortcutMonitor }
         .environment(\.timeZone, model.calendar.timeZone)
-        .task(id: "\(model.mode.rawValue)-\(model.date.timeIntervalSince1970)") { if isActive { await model.refresh() } }
+        .task(id: rangeRequest) { if isActive { await model.reloadOccurrences() } }
         .task(id: searchRequest) {
             guard isActive else { return }
             await model.searchEvents()
@@ -83,9 +83,6 @@ struct CalendarView: View {
             Button("Cancel", role: .cancel) { model.cancelUndo() }
         } message: { recipients in
             Text("Google Calendar will send an update to: " + recipients.joined(separator: ", ") + ".")
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            if isActive { Task { await model.refresh() } }
         }
         .onExitCommand { if isActive { model.selectedEventID = nil } }
     }
@@ -314,6 +311,11 @@ struct CalendarView: View {
         }
         .font(.caption).padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
         .background(Tokens.Surface.muted)
+    }
+
+    private var rangeRequest: [String] {
+        [String(isActive), model.mode.rawValue, String(model.date.timeIntervalSince1970),
+         model.calendar.timeZone.identifier, String(model.firstWeekday)]
     }
 
     private var searchRequest: [String] {
