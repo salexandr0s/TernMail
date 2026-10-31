@@ -17,7 +17,10 @@ struct MessageFileItem: Transferable {
     /// The message's subject when the caller has it. Otherwise it is read
     /// from the cache once the message is known.
     let subject: String?
-    let preview: SharePreview<Never, Never>
+    /// The title the share sheet shows. `SharePreview` isn't Sendable, so the
+    /// item keeps the text and builds the preview when asked.
+    let previewTitle: String
+    var preview: SharePreview<Never, Never> { SharePreview(previewTitle) }
 
     init(_ message: MessageDetail, mailbox: MailboxModel) {
         self.init(link: MailLink(accountID: message.record.accountID, threadID: message.record.threadID, messageID: message.id),
@@ -30,7 +33,7 @@ struct MessageFileItem: Transferable {
         self.link = link
         self.preferredMessageID = preferredMessageID
         self.subject = subject
-        preview = SharePreview(previewTitle.map { $0.isEmpty ? "No Subject" : $0 } ?? "Message")
+        self.previewTitle = previewTitle.map { $0.isEmpty ? "No Subject" : $0 } ?? "Message"
     }
 
     /// The .eml type, falling back to the generic message type.
