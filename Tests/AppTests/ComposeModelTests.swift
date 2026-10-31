@@ -147,13 +147,32 @@ import Testing
         try await waitUntil { model.phase == .open }
 
         model.content.subject = "Plan"
-        await mailbox.prepareToQuit()
+        #expect(await mailbox.prepareToQuit().isEmpty)
         #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while try await cache.read({ try $0.localDraft(id: id) })?.gmailDraftID == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await cache.read { try $0.localDraft(id: id) }?.gmailDraftID != nil)
+        await mailbox.stop()
+    }
+
+    @Test func quittingStopsWhileADraftCanNotBeStored() async throws {
+        let file = CacheFile()
+        let (mailbox, cache) = try await makeMailbox(in: file)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+
+        try file.refuse("UPDATE", on: "localDraft")
+        model.content.subject = "Plan"
+        #expect(await mailbox.prepareToQuit() == ["Plan"])
+        #expect(model.phase == .open && model.isEditable && model.content.subject == "Plan")
+
+        try file.allow("UPDATE", on: "localDraft")
+        #expect(await mailbox.prepareToQuit().isEmpty)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.subject == "Plan")
         await mailbox.stop()
     }
 

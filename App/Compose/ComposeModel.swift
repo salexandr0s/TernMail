@@ -549,15 +549,16 @@ final class ComposeModel {
 
     /// Before quitting: stores the draft as closing the window would, and
     /// waits for that. A kept draft goes to Gmail, so it shows in Drafts even
-    /// when its window isn't restored.
-    func prepareToQuit() async {
+    /// when its window isn't restored. False when it couldn't be stored; the
+    /// window then stays as it was, showing why.
+    func prepareToQuit() async -> Bool {
         guard takesEdits, let draft else {
             await lastWrite?.value
-            return
+            return true
         }
         cancelTimers()
         let action = closingAction(for: draft)
-        _ = await serially { [self] in await storeForClosing(action) }.value
+        return await serially { [self] in await storeForClosing(action) }.value == nil
     }
 
     /// Stores the draft as `action` leaves it, after the edits and files
