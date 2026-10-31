@@ -16,10 +16,7 @@ struct ComposeFeatureCommands: Commands {
             .disabled(model == nil)
         }
         CommandGroup(after: .toolbar) {
-            Toggle("Show Formatting", isOn: Binding(
-                get: { model?.showsFormatting ?? false },
-                set: { model?.showsFormatting = $0 }
-            ))
+            Toggle("Show Formatting", isOn: model.map { Bindable($0).showsFormatting } ?? .constant(false))
             .disabled(model == nil)
         }
     }

@@ -5,6 +5,13 @@ import SwiftUI
 /// a binding from the model instead.
 @MainActor
 extension Binding {
+    /// Shows `value` and hands each change to `action` without storing it, for
+    /// controls whose owner decides what a change does: a guarded navigation,
+    /// an editor command or a parent's callback.
+    init(_ value: Value, set action: @escaping (Value) -> Void) {
+        self.init(get: { value }, set: { action($0) })
+    }
+
     /// `true` while the optional holds a value. Setting `false` clears it, which
     /// is how alerts, dialogs and popovers report a dismissal.
     func isPresent<Wrapped>() -> Binding<Bool> where Value == Wrapped? {
@@ -45,5 +52,14 @@ extension Binding {
     /// Reads `fallback` while the optional is empty. Writes store the new value.
     func or<Wrapped>(_ fallback: Wrapped) -> Binding<Wrapped> where Value == Wrapped? {
         Binding<Wrapped>(get: { wrappedValue ?? fallback }, set: { wrappedValue = $0 })
+    }
+}
+
+@MainActor
+extension Binding where Value == Bool {
+    /// The opposite flag, for a control worded the other way round from the
+    /// stored setting.
+    func negated() -> Binding<Bool> {
+        Binding(get: { !wrappedValue }, set: { wrappedValue = !$0 })
     }
 }

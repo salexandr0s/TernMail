@@ -9,7 +9,7 @@ struct WorkspaceSectionToolbar: CustomizableToolbarContent {
 
     var body: some CustomizableToolbarContent {
         ToolbarItem(id: "workspace.destination", placement: .navigation) {
-            Picker("Section", selection: Binding(get: { section }, set: { onSelect($0) })) {
+            Picker("Section", selection: Binding(section, set: onSelect)) {
                 ForEach(WorkspaceSection.allCases) { section in
                     Label(section.title, systemImage: section.systemImage).tag(section)
                 }
