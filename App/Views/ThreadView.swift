@@ -255,6 +255,12 @@ struct ThreadView: View {
         .background(Tokens.Surface.canvas)
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
+        .userActivity(MailUserActivity.conversationType, isActive: isReaderActive && readingDetail != nil) { activity in
+            MailUserActivity.describeConversation(
+                activity, link: MailLink(accountID: key.accountID, threadID: key.threadID),
+                subject: readingDetail?.thread.subject ?? "", email: mailbox.account(id: key.accountID)?.account.email
+            )
+        }
         .onChange(of: key) { _, _ in
             selectedMailQuote = nil
             finder.hide()

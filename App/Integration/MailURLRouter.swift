@@ -132,6 +132,15 @@ struct MailURLHandling: ViewModifier {
                       let url = URL(string: identifier) else { return }
                 app.mailURLs.receive(url)
             }
+            .onContinueUserActivity(MailUserActivity.conversationType) { activity in
+                guard let url = MailUserActivity.conversationLink(in: activity) else { return }
+                app.mailURLs.receive(url)
+            }
+            .onContinueUserActivity(MailUserActivity.calendarDayType) { activity in
+                guard let day = MailUserActivity.calendarDay(in: activity, calendar: app.calendar.calendar) else { return }
+                app.showCalendar()
+                app.calendar.date = day
+            }
             .onChange(of: app.mailURLs.composeDraftID, initial: true) { _, id in
                 guard let id else { return }
                 openWindow(id: ComposeWindow.sceneID, value: id)

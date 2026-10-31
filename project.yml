@@ -71,6 +71,9 @@ targets:
             CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - $(GOOGLE_REDIRECT_SCHEME)
+        NSUserActivityTypes:
+          - dev.tern.mail.conversation
+          - dev.tern.calendar.day
     entitlements:
       path: App/Tern.entitlements
       properties:

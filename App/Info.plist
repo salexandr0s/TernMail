@@ -89,6 +89,11 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>dev.tern.mail.conversation</string>
+		<string>dev.tern.calendar.day</string>
+	</array>
 	<key>OSAScriptingDefinition</key>
 	<string>Tern.sdef</string>
 	<key>TernGoogleClientID</key>

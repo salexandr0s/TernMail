@@ -37,6 +37,12 @@ struct CalendarView: View {
         }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
+        .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
+            MailUserActivity.describeCalendarDay(
+                activity, date: model.date, calendar: model.calendar,
+                title: CalendarLayout.format(model.date, style: .dateTime.year().month(.wide).day(), calendar: model.calendar)
+            )
+        }
         .onAppear { model.mode = storedMode }
         .onChange(of: model.mode) { _, mode in storedMode = mode }
         .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
