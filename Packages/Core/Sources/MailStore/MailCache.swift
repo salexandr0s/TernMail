@@ -493,6 +493,29 @@ public struct CacheTransaction {
         try PendingAction.filter(Column("accountID") == accountID).order(Column("id")).fetchAll(db)
     }
 
+    public func pendingChangeSummary(accountID: String) throws -> PendingChangeSummary {
+        var counts: [String: Int] = [:]
+        let rows = try Row.fetchAll(
+            db, sql: "SELECT state, COUNT(*) AS count FROM pendingAction WHERE accountID = ? GROUP BY state",
+            arguments: [accountID]
+        )
+        for row in rows {
+            let state: String = row["state"]
+            counts[state] = row["count"] as Int
+        }
+        let oldestError = try String.fetchOne(db, sql: """
+            SELECT lastError FROM pendingAction
+            WHERE accountID = ? AND state IN (?, ?) AND lastError IS NOT NULL
+            ORDER BY id LIMIT 1
+            """, arguments: [accountID, PendingAction.State.queued.rawValue, PendingAction.State.sending.rawValue])
+        return PendingChangeSummary(
+            queued: counts[PendingAction.State.queued.rawValue] ?? 0,
+            sending: counts[PendingAction.State.sending.rawValue] ?? 0,
+            failed: counts[PendingAction.State.failed.rawValue] ?? 0,
+            oldestError: oldestError
+        )
+    }
+
     public func action(id: Int64) throws -> PendingAction? {
         try PendingAction.fetchOne(db, key: id)
     }
@@ -568,6 +591,38 @@ public struct CacheTransaction {
             arguments: [PendingAction.State.queued.rawValue, accountID, PendingAction.State.sending.rawValue]
         )
         try forgetStaleUnreadDeltas(accountID: accountID)
+    }
+
+    /// Puts back the rows of `lane` whose send ended without recording an
+    /// outcome, as when the write recording it failed. A `sending` row goes
+    /// out again at `retryAt`, so a send whose outcome keeps failing to land
+    /// isn't repeated at once, and an `undone` row is dropped, since its
+    /// inverse is already queued.
+    public func requeueLostSends(accountID: String, lane: PendingAction.Lane, retryAt: (PendingAction) -> Date) throws {
+        let lost = try PendingAction
+            .filter(Column("accountID") == accountID)
+            .filter([PendingAction.State.sending.rawValue, PendingAction.State.undone.rawValue].contains(Column("state")))
+            .order(Column("id"))
+            .fetchAll(db)
+        for var action in lost where action.kind.lane == lane {
+            guard let id = action.id else { continue }
+            if action.state == .undone {
+                try deleteAction(id: id)
+            } else {
+                action.state = .queued
+                action.notBefore = retryAt(action)
+                try updateAction(action)
+            }
+        }
+    }
+
+    /// Ends the backoff of every queued row that has failed a try, so it goes
+    /// at once. A row still in its undo hold has had no try and keeps the hold.
+    public func makeRetriesDue(accountID: String, now: Date) throws {
+        try db.execute(
+            sql: "UPDATE pendingAction SET notBefore = ? WHERE accountID = ? AND state = ? AND attempts > 0 AND notBefore > ?",
+            arguments: [now, accountID, PendingAction.State.queued.rawValue, now]
+        )
     }
 
     /// Saves a change to a row. When the change alters what the row does to
@@ -801,6 +856,34 @@ public struct CacheTransaction {
             .filter(Column("accountID") == accountID && messageIDs.contains(Column("id")))
             .fetchAll(db)
             .map(\.threadID))
+    }
+}
+
+/// What one account's queue holds, for a status line: changes still to go
+/// out, changes going out now, and changes Gmail refused.
+public struct PendingChangeSummary: Sendable, Equatable {
+    /// Changes waiting for their hold, a backoff or sign-in to end.
+    public var queued: Int
+    public var sending: Int
+    /// Changes kept for Retry or Discard.
+    public var failed: Int
+    /// What the oldest change still to go out ran into on its last try, as
+    /// its row records it: a description of the error, never message content
+    /// or addresses. Nil when no such change has failed a try.
+    public var oldestError: String?
+
+    public init(queued: Int = 0, sending: Int = 0, failed: Int = 0, oldestError: String? = nil) {
+        self.queued = queued
+        self.sending = sending
+        self.failed = failed
+        self.oldestError = oldestError
+    }
+}
+
+extension MailCache {
+    /// The account's queue summary, again whenever it changes.
+    public func pendingChangeSummary(accountID: String) -> AsyncThrowingStream<PendingChangeSummary, any Error> {
+        observe { db in try CacheTransaction(db: db).pendingChangeSummary(accountID: accountID) }
     }
 }
 

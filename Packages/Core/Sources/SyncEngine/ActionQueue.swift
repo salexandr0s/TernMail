@@ -239,6 +239,19 @@ extension SyncEngine {
 
     // MARK: Sending
 
+    /// Sends what waited for the account to sign in again at once, along with
+    /// every change waiting out a backoff after a failed try. The app calls
+    /// this after sign-in; a pass that reaches Gmail calls it too while the
+    /// queue waits.
+    public func resumeAfterSignIn() async {
+        guard !isStopped else { return }
+        waitsForSignIn = false
+        let accountID = accountID
+        let now = now()
+        _ = try? await write { tx in try tx.makeRetriesDue(accountID: accountID, now: now) }
+        scheduleSending()
+    }
+
     /// Starts a send loop for each lane that isn't running, and wakes the
     /// ones asleep, so a new row or an undo is looked at now.
     func scheduleSending() {
@@ -258,16 +271,41 @@ extension SyncEngine {
 
     /// Sends a lane's due rows until it is empty. Between rows it sleeps until
     /// the next hold or backoff ends, or until `scheduleSending()` wakes it.
+    /// While the account waits for sign-in it sends nothing until woken, and
+    /// a read that fails is tried again after a pause.
     private func drainQueue(_ lane: PendingAction.Lane) async {
         let accountID = accountID
+        var failedReads = 0
         while !Task.isCancelled, !(lane == .compose && isStoppingDrafts) {
             wakeRequests.remove(lane)
-            let dueTimes = try? await cache.read { tx in
-                try tx.pendingActions(accountID: accountID)
-                    .filter { $0.state == .queued && $0.kind.lane == lane }
-                    .map(\.notBefore)
+            if waitsForSignIn {
+                await sleepUntilWoken(lane, limit: nil)
+                continue
             }
-            guard let dueTimes, let next = dueTimes.min() else {
+            // With no label send under way, a label row still marked as going
+            // out lost its outcome. It counts as due, and `sendDueActions()`
+            // puts it back in the queue behind a backoff.
+            let recovers = lane == .labels && labelSendsInFlight == 0
+            let dueTimes: [Date]
+            do {
+                dueTimes = try await cache.read { tx in
+                    try tx.pendingActions(accountID: accountID).filter { $0.kind.lane == lane }.compactMap { row -> Date? in
+                        switch row.state {
+                        case .queued: row.notBefore
+                        case .sending, .undone: recovers ? .distantPast : nil
+                        case .sent, .failed: nil
+                        }
+                    }
+                }
+                failedReads = 0
+            } catch {
+                // The rows are still there. Ending the loop would leave them
+                // until the next change wakes the lane.
+                failedReads += 1
+                await sleepUntilWoken(lane, limit: min(pow(2, Double(failedReads)), 60))
+                continue
+            }
+            guard let next = dueTimes.min() else {
                 // A row queued while the read was in flight sets the flag again.
                 if wakeRequests.contains(lane) { continue }
                 break
@@ -285,22 +323,26 @@ extension SyncEngine {
         drainTasks[lane] = nil
     }
 
-    /// Sleeps until `wake(_:)` is called for `lane` or `limit` seconds pass.
-    /// Returns at once when a wake request is already pending.
-    private func sleepUntilWoken(_ lane: PendingAction.Lane, limit: TimeInterval) async {
-        guard limit > 0, !isStopped, !Task.isCancelled, !wakeRequests.contains(lane) else { return }
+    /// Sleeps until `wake(_:)` is called for `lane` or `limit` seconds pass;
+    /// with no limit, until woken. Returns at once when a wake request is
+    /// already pending.
+    private func sleepUntilWoken(_ lane: PendingAction.Lane, limit: TimeInterval?) async {
+        guard limit.map({ $0 > 0 }) ?? true, !isStopped, !Task.isCancelled, !wakeRequests.contains(lane) else { return }
         laneWaiterGeneration += 1
         let generation = laneWaiterGeneration
-        let timer = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(limit)) } catch { return }
-            await self?.wake(lane, generation: generation)
+        var timer: Task<Void, Never>?
+        if let limit {
+            timer = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(limit)) } catch { return }
+                await self?.wake(lane, generation: generation)
+            }
         }
         // Registering and `stop()` both run on the actor without suspending,
         // so a waiter is either resumed by `stop()` or never registered after it.
         await withCheckedContinuation { continuation in
             laneWaiters[lane] = LaneWaiter(generation: generation, continuation: continuation)
         }
-        timer.cancel()
+        timer?.cancel()
     }
 
     /// Resumes the drain task asleep on `lane`. With a generation, only the
@@ -321,12 +363,22 @@ extension SyncEngine {
 
     /// Sends every queued row whose hold or backoff has passed and returns how
     /// many it claimed. Label rows go out one at a time; changes to
-    /// conversations that match are combined into one request.
+    /// conversations that match are combined into one request. With no other
+    /// call under way, a row an earlier call left marked as going out lost
+    /// its outcome, as when the write recording it failed. It goes back in
+    /// the queue to be sent again after a backoff; until then, later changes
+    /// to its conversations keep waiting behind it.
     @discardableResult
     public func sendDueActions() async -> Int {
         let accountID = accountID
         let now = now()
+        labelSendsInFlight += 1
+        defer { labelSendsInFlight -= 1 }
+        let recovers = labelSendsInFlight == 1
         guard let (claimed, due) = try? await write({ tx -> (Int, [PendingAction]) in
+            if recovers {
+                try tx.requeueLostSends(accountID: accountID, lane: .labels) { now.addingTimeInterval(Self.backoff(after: $0.attempts)) }
+            }
             let claimed = try tx.claimDueActions(accountID: accountID, now: now, lane: .labels)
             return (claimed.count, try claimed.compactMap { try Self.resolvingTemporaryLabels($0, accountID: accountID, in: tx) })
         }) else {
@@ -356,7 +408,8 @@ extension SyncEngine {
 
     enum Outcome {
         case sent
-        case retry(String)
+        /// Gmail may still accept the change. `finish` queues it again.
+        case retry(any Error)
         case failed(String)
     }
 
@@ -411,7 +464,7 @@ extension SyncEngine {
                 undoReceipts[id]?.value?.update(prepared)
                 ready.append(prepared)
             } catch {
-                await finish(current, outcome: Self.outcome(for: error))
+                await finish(current, outcome: Self.outcome(for: error, of: current))
             }
         }
         guard var combined = ready.first, !isStopped, !Task.isCancelled else { return }
@@ -422,22 +475,61 @@ extension SyncEngine {
             for action in ready {
                 let ids = Set(action.threadIDs + action.messageIDs)
                 let errors = result.failures.filter { ids.contains($0.key) }.map(\.value).filter { $0 != .notFound }
-                let outcome: Outcome
-                if errors.isEmpty { outcome = .sent }
-                else if errors.allSatisfy(Self.shouldRetry) { outcome = .retry(String(describing: errors[0])) }
-                else { outcome = .failed(String(describing: errors[0])) }
-                await finish(action, outcome: outcome, confirmedHistoryID: result.confirmedHistoryID)
+                await finish(action, outcome: Self.outcome(delivering: action, errors: errors), confirmedHistoryID: result.confirmedHistoryID)
             }
         } catch {
-            for action in ready { await finish(action, outcome: Self.outcome(for: error)) }
+            for action in ready {
+                let outcome = if let error = error as? GmailError {
+                    Self.outcome(delivering: action, errors: [error])
+                } else {
+                    Self.outcome(for: error, of: action)
+                }
+                await finish(action, outcome: outcome)
+            }
         }
     }
 
-    static func outcome(for error: any Error) -> Outcome {
-        if let error = error as? GmailError {
-            return shouldRetry(error) ? .retry(String(describing: error)) : .failed(String(describing: error))
+    /// How many tries a change gets against an error that may pass, other
+    /// than a network failure or a rejected sign-in, before it counts as
+    /// refused.
+    static let retryLimit = 8
+
+    /// How many unreadable answers to a delivered change make it count as
+    /// sent. Gmail most likely made the change, and the next pass brings
+    /// what it did.
+    static let unreadableAnswerLimit = 3
+
+    /// How long a change waits for its next try after `attempts` tries.
+    static func backoff(after attempts: Int) -> TimeInterval {
+        min(pow(2, Double(attempts)), 300)
+    }
+
+    /// What becomes of `row` after `error`. A change that can't reach Gmail
+    /// keeps trying, as does one that failed outside Gmail, such as on a
+    /// token that couldn't be refreshed, and a rejected sign-in waits for the
+    /// account to sign in again (`finish`). Any other error that may pass
+    /// gets `retryLimit` tries.
+    static func outcome(for error: any Error, of row: PendingAction) -> Outcome {
+        guard let error = error as? GmailError else { return .retry(error) }
+        guard shouldRetry(error) else { return .failed(String(describing: error)) }
+        switch error {
+        case .transport, .unauthorized: return .retry(error)
+        default: return row.attempts < retryLimit ? .retry(error) : .failed(String(describing: error))
         }
-        return .retry(String(describing: type(of: error)))
+    }
+
+    /// What becomes of `action` after Gmail answered its delivery with
+    /// `errors` for its conversations or messages. A refusal among them
+    /// decides, then a rejected sign-in.
+    static func outcome(delivering action: PendingAction, errors: [GmailError]) -> Outcome {
+        guard let first = errors.first else { return .sent }
+        if action.attempts >= unreadableAnswerLimit, errors.allSatisfy(isUnreadableAnswer) { return .sent }
+        let deciding = errors.first(where: { !shouldRetry($0) }) ?? errors.first(where: { $0 == .unauthorized }) ?? first
+        return outcome(for: deciding, of: action)
+    }
+
+    private static func isUnreadableAnswer(_ error: GmailError) -> Bool {
+        if case .decoding = error { true } else { false }
     }
 
     static func shouldRetry(_ error: GmailError) -> Bool {
@@ -450,7 +542,9 @@ extension SyncEngine {
     }
 
     /// `confirmedHistoryID` is where Gmail said its history stood after a sent
-    /// change; the pass that reaches it drops the row.
+    /// change; the pass that reaches it drops the row. A retry waits out a
+    /// backoff, except after a rejected sign-in: then the send loops wait for
+    /// `resumeAfterSignIn()`, and the row goes as soon as they resume.
     func finish(_ current: PendingAction, outcome: Outcome, confirmedHistoryID: Int64? = nil) async {
         guard let id = current.id else { return }
         var row = current
@@ -461,10 +555,16 @@ extension SyncEngine {
             row.sentAt = now
             row.lastError = nil
             row.confirmedHistoryID = confirmedHistoryID
-        case .retry(let reason):
+        case .retry(let error):
             row.state = .queued
-            row.lastError = reason
-            row.notBefore = now.addingTimeInterval(min(pow(2, Double(row.attempts)), 300))
+            // Error descriptions carry no message content or addresses.
+            row.lastError = error is GmailError ? String(describing: error) : String(describing: type(of: error))
+            if (error as? GmailError) == .unauthorized {
+                row.notBefore = now
+                waitsForSignIn = true
+            } else {
+                row.notBefore = now.addingTimeInterval(Self.backoff(after: row.attempts))
+            }
         case .failed(let message):
             row.state = .failed
             row.lastError = message
@@ -472,7 +572,7 @@ extension SyncEngine {
         let failed = if case .failed = outcome { true } else { false }
         // Undone during the request: its inverse is queued behind it, so the row
         // just goes, whatever Gmail answered.
-        let reported = try? await write { [row] tx -> Bool in
+        let reported = await recordOutcome { [row] tx -> Bool in
             if try tx.deleteActionIfUndone(id: id) { return false }
             if failed {
                 try tx.retainFailedAction(row, message: row.lastError ?? "Gmail refused this change.")
@@ -493,6 +593,24 @@ extension SyncEngine {
             if current.kind.changesLabel { labelsRefreshedAt = nil }
             if sendsAutomatically, current.kind.lane != .compose { requestSync(reason: .afterAction) }
         }
+    }
+
+    /// Tries a failed write twice more after a short pause. A row whose
+    /// outcome isn't written stays marked as going out, holding back later
+    /// changes to its conversations, until the next `sendDueActions()` puts
+    /// a label row back in the queue, or the next launch any row. Nil when
+    /// no try landed.
+    func recordOutcome<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async -> T? {
+        for attempt in 1...3 {
+            do {
+                return try await write(updates)
+            } catch is CancellationError {
+                return nil
+            } catch {
+                if attempt < 3 { try? await sleep(.milliseconds(100 * attempt)) }
+            }
+        }
+        return nil
     }
 
     private func deliver(_ action: PendingAction) async throws -> LabelChangeResult {

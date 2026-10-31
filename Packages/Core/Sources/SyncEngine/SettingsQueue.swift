@@ -187,8 +187,8 @@ extension SyncEngine {
             }
             await finish(row, outcome: .sent)
         } catch {
-            if case .retry(let reason) = Self.outcome(for: error) {
-                await finish(row, outcome: .retry(reason))
+            if case .retry = Self.outcome(for: error, of: row) {
+                await finish(row, outcome: .retry(error))
             } else {
                 await refuseSettingsChange(row, error: error)
             }

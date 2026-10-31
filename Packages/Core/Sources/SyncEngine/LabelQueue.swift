@@ -340,16 +340,22 @@ extension SyncEngine {
                 do {
                     existing = try await existingLabelID(named: name)
                 } catch {
-                    return await finish(row, outcome: .retry(String(describing: error)))
+                    return await retryOrRefuseLabelChange(row, after: error)
                 }
                 if let existing { return await recordCreated(row, realID: existing, adopted: true) }
                 return await refuseLabelChange(row)
             }
-            if case .retry(let reason) = Self.outcome(for: error) {
-                await finish(row, outcome: .retry(reason))
-            } else {
-                await refuseLabelChange(row)
-            }
+            await retryOrRefuseLabelChange(row, after: error)
+        }
+    }
+
+    /// Queues `row` again while Gmail may still accept it, and refuses it once
+    /// Gmail won't or it has had its tries (`outcome(for:of:)`).
+    private func retryOrRefuseLabelChange(_ row: PendingAction, after error: any Error) async {
+        if case .retry = Self.outcome(for: error, of: row) {
+            await finish(row, outcome: .retry(error))
+        } else {
+            await refuseLabelChange(row)
         }
     }
 

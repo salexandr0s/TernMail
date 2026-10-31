@@ -153,6 +153,14 @@ public actor SyncEngine {
     /// `sendWaitingDraftsNow()` can each be running one.
     var sendsInFlight = 0
     var sendWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Calls of `sendDueActions()` under way. Only a call with none beside it
+    /// may take a label row still marked as going out for one that lost its
+    /// outcome.
+    var labelSendsInFlight = 0
+    /// Set when Gmail rejected the account's sign-in during a send. The send
+    /// loops wait until `resumeAfterSignIn()`; a direct `sendDueActions()`
+    /// still tries.
+    var waitsForSignIn = false
     /// Set by `stop()`: the compose lane starts no further rows.
     var isStoppingDrafts = false
     /// Earliest next save per local draft. Large messages save at most every
@@ -411,7 +419,10 @@ public actor SyncEngine {
                 // Polling counts from here.
                 wake(.poll)
             }
-            return try await GmailRequestBudget.$priority.withValue(.sync) { try await runPass() }
+            let changed = try await GmailRequestBudget.$priority.withValue(.sync) { try await runPass() }
+            // The pass reached Gmail, so the account's sign-in works again.
+            if waitsForSignIn { await resumeAfterSignIn() }
+            return changed
         }
         pass = task
         return try await task.value
