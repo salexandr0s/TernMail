@@ -65,6 +65,8 @@ struct AccountsSettings: View {
                     Text("Signing in…")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    Button("Cancel Sign-In") { app.auth.cancelSignIn() }
+                        .buttonStyle(.bordered)
                 } else if !app.auth.isConfigured {
                     Text("Google sign-in is unavailable in this version.")
                         .font(.caption)

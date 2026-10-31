@@ -70,6 +70,7 @@
 		38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */; };
 		39BF9F4B4287AA236BA17F43 /* MailScriptingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0914AFBD1CEFCAF0585191C /* MailScriptingTests.swift */; };
 		3B05A8D8B362F28845300B3B /* NotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA99ABC2C2D0B4B9748D3663 /* NotificationPolicy.swift */; };
+		3B8A43F28339B326F390A6DD /* GoogleAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90C734946DAE4AEC12890E99 /* GoogleAuthTests.swift */; };
 		3C4C4E7AE93BF4735A855D07 /* SingleKeyShortcutsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */; };
 		3F1EA6952687324D1314CDEF /* SingleKeyShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 815A2929B02FA5953330D6B7 /* SingleKeyShortcuts.swift */; };
 		3F23C3555CE584681643645C /* EmailCalendarPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9168AB9D186528609BC387 /* EmailCalendarPresentation.swift */; };
@@ -417,6 +418,7 @@
 		8E5BF0E287E3B95D9B8E0833 /* SingleKeyShortcutsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleKeyShortcutsTests.swift; sourceTree = "<group>"; };
 		8EADB9C49965A9646FDC8331 /* AccountMailbox+Compose.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AccountMailbox+Compose.swift"; sourceTree = "<group>"; };
 		8F5652A353C2254FCFC5021C /* LabelEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelEditorSheet.swift; sourceTree = "<group>"; };
+		90C734946DAE4AEC12890E99 /* GoogleAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthTests.swift; sourceTree = "<group>"; };
 		91AE86CEAF17C226E2E350ED /* ComposeTemplatesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeTemplatesPane.swift; sourceTree = "<group>"; };
 		92A893BD94B24ACC112006B6 /* MailboxModel+ComposeFeatures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+ComposeFeatures.swift"; sourceTree = "<group>"; };
 		94555E55243A61189CBBD92E /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
@@ -757,6 +759,7 @@
 				C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */,
 				8A570AAE2ACA004420A60965 /* ContactPhotoImagesTests.swift */,
 				3B1C246205C901405B0F5BFC /* EmailCalendarTests.swift */,
+				90C734946DAE4AEC12890E99 /* GoogleAuthTests.swift */,
 				C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */,
 				5864A21670390DACDCCD90AA /* InvitationBannerTests.swift */,
 				504DF8DA5F20BC02B117F0BD /* KeychainIOTests.swift */,
@@ -1126,6 +1129,7 @@
 				38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */,
 				9AFDA5119D8FD03D5454DC05 /* ContactPhotoImagesTests.swift in Sources */,
 				764CF8F05D3F2EE8619C9AEA /* EmailCalendarTests.swift in Sources */,
+				3B8A43F28339B326F390A6DD /* GoogleAuthTests.swift in Sources */,
 				29CA8194A885564D66501125 /* InboxWatcherTests.swift in Sources */,
 				0E2637F672272FCBF7E17B6A /* InvitationBannerTests.swift in Sources */,
 				42302766EB81A855E3886352 /* KeychainIOTests.swift in Sources */,

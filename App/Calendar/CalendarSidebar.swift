@@ -129,15 +129,19 @@ struct CalendarConnectionControl: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if state.needsAuthorization {
+            if app.isSigningIn {
+                Button("Cancel Sign-In") { app.auth.cancelSignIn() }
+                    .buttonStyle(.bordered)
+            } else if state.needsAuthorization {
                 Button(state.issue == nil ? "Connect Google Calendar" : "Reconnect Google Calendar") { connect(account.id) }
                     .buttonStyle(.bordered)
+                    .disabled(model.isLoading)
             } else {
                 Button("Retry", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .buttonStyle(.bordered)
+                    .disabled(model.isLoading)
             }
         }
         .font(.callout)
-        .disabled(model.isLoading || app.isSigningIn)
     }
 }

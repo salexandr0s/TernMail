@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls { model.mailURLs.receive(url) }
+        for url in urls where !model.auth.handleRedirect(url) { model.mailURLs.receive(url) }
     }
 
     #if DEBUG

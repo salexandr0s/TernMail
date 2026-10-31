@@ -50,6 +50,11 @@ struct SignInView: View {
                 .disabled(model.isSigningIn)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel(model.isSigningIn ? "Signing in with Google" : "Sign In with Google")
+                if model.isSigningIn {
+                    Button("Cancel Sign-In") { model.auth.cancelSignIn() }
+                        .buttonStyle(.link)
+                        .keyboardShortcut(.cancelAction)
+                }
             } else {
                 TernBadge(text: "Sign-in unavailable", systemImage: "exclamationmark.circle")
             }
@@ -93,7 +98,7 @@ struct SignInView: View {
             return "Google sign-in isn't available in this version of Tern."
         }
         if case .signInRequired(let account) = model.phase {
-            return "Google ended the session for \(account.email). Your downloaded mail is still here."
+            return "Sign in to reconnect \(account.email). Your downloaded mail is still here."
         }
         return "Sign in to read and organize your Gmail."
     }
