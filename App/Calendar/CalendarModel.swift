@@ -301,6 +301,7 @@ final class CalendarModel {
             didLoadCalendars = true
             // Load a missing visible range before whole-calendar history.
             await reloadOccurrences(refresh: false, refreshIfIncomplete: true)
+            invalidateRangeSnapshots()
             for owner in calendars where owner.entry.canReadDetails {
                 guard revision == lifecycleRevision else { return }
                 do { try await engines[owner.accountID]?.syncEvents(calendarID: owner.calendarID) }
@@ -341,7 +342,7 @@ final class CalendarModel {
     func setVisible(id: String, visible: Bool) {
         updatePreference(id) { $0.visible = visible }
         if let index = calendars.firstIndex(where: { $0.id == id }) { calendars[index].isVisible = visible }
-        Task { await reloadOccurrences() }
+        Task { await activateRange() }
     }
     func setAssistantAccess(id: String, access: CalendarAIAccess) {
         updatePreference(id) { $0.assistantAccess = CalendarAssistantAccess(rawValue: access.rawValue) ?? .off }

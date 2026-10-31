@@ -1,7 +1,7 @@
 import MessageContent
 import SwiftUI
 
-struct CalendarGridIdentity: Equatable {
+struct CalendarGridIdentity: Equatable, Sendable {
     let mode: String
     let date: Date
     let calendar: Calendar
@@ -25,7 +25,7 @@ struct CalendarGridViews: View, Equatable {
     /// A conversation dropped on the grid, with the slot it landed on.
     let dropMail: (MailLink, CalendarEventRange) -> Void
 
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.presentationID == rhs.presentationID }
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.presentationID == rhs.presentationID }
 
     var body: some View {
         switch mode {

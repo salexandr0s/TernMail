@@ -12,7 +12,7 @@ struct CalendarRangeIdentity: Hashable, Sendable {
     let owners: [String]
 }
 
-struct CalendarRangeSnapshot {
+struct CalendarRangeSnapshot: Sendable {
     let presentation: CalendarPresentationSnapshot
     let checkedAt: Date?
     let stale: Bool
@@ -167,6 +167,7 @@ extension CalendarModel {
     }
 
     private func publish(_ snapshot: CalendarRangeSnapshot) {
+        guard presentation?.id != snapshot.presentation.id else { return }
         let changed = presentation?.interval != snapshot.presentation.interval
             || presentation?.calendar != snapshot.presentation.calendar || events != snapshot.presentation.events
         if changed {

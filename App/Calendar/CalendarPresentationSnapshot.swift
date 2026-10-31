@@ -4,6 +4,7 @@ import SwiftUI
 /// Immutable layout inputs, prepared once per range/data revision rather than
 /// during selection, hover, scrolling or a switch back to Calendar.
 struct CalendarPresentationSnapshot: Sendable {
+    let id = UUID()
     struct Day: Sendable {
         let events: [CalendarDisplayEvent]
         let allDay: [CalendarDisplayEvent]

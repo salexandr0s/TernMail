@@ -38,8 +38,9 @@ struct CalendarTimeGrid: View {
         self.isWeek = isWeek
         self.calendar = calendar
         self.events = events
-        prepared = presentation?.matches(calendar) == true ? presentation : nil
         days = Self.days(showing: date, isWeek: isWeek, calendar: calendar)
+        prepared = presentation?.matches(calendar) == true && presentation?.days == days && presentation?.timeAxis != nil
+            ? presentation : nil
         _selectedID = selectedID
         self.create = create
         self.edit = edit
@@ -47,8 +48,7 @@ struct CalendarTimeGrid: View {
         self.delete = delete
         self.duplicate = duplicate
         self.dropMail = dropMail
-        let axis = prepared?.days == days ? prepared?.timeAxis ?? CalendarTimeAxis(days: days, calendar: calendar)
-            : CalendarTimeAxis(days: days, calendar: calendar)
+        let axis = prepared?.timeAxis ?? CalendarTimeAxis(days: days, calendar: calendar)
         timeAxis = axis
         _hourScroll = State(initialValue: ScrollPosition(y: Tokens.Space.s2 + CGFloat(axis.row(ofHour: 8)) * Tokens.Space.s16))
     }
@@ -226,7 +226,7 @@ struct CalendarTimeGrid: View {
     }
 
     private func dayColumn(_ day: Date, width: CGFloat, axis: CalendarTimeAxis) -> some View {
-        let placements = prepared?.day(day)?.placements ?? CalendarTimelinePlacement.layout(
+        let placements = prepared.map { $0.day(day)?.placements ?? [] } ?? CalendarTimelinePlacement.layout(
             CalendarLayout.events(events, on: day, calendar: calendar).filter { !$0.isAllDay }, day: day, axis: axis)
         return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
