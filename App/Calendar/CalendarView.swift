@@ -39,6 +39,7 @@ struct CalendarView: View {
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: { isCompact = $0 }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
+        .environment(\.calendarPresentation, model.presentation)
         .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
             MailUserActivity.describeCalendarDay(
                 activity, date: model.date, calendar: model.calendar,
@@ -48,7 +49,7 @@ struct CalendarView: View {
         .onAppear { model.mode = storedMode }
         .onChange(of: model.mode) { _, mode in storedMode = mode }
         .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
-        .task(id: rangeRequest) { if isActive { await model.reloadOccurrences() } }
+        .task(id: rangeRequest) { if isActive { await model.activateRange() } }
         .task(id: searchRequest) {
             guard isActive else { return }
             await model.searchEvents()
@@ -208,9 +209,12 @@ struct CalendarView: View {
                                       edit: model.edit, delete: requestDelete, duplicate: model.duplicate)
             }
         } else {
-            CalendarGridViews(mode: $model.mode, date: $model.date, calendar: model.calendar, events: model.events,
+            CalendarGridViews(presentationID: .init(mode: model.mode.rawValue, date: model.date, calendar: model.calendar,
+                                  selectedID: model.selectedEventID, revision: model.presentationRevision),
+                              mode: $model.mode, date: $model.date, calendar: model.calendar, events: model.events,
                               selectedID: $model.selectedEventID, create: model.beginNew(in:), edit: model.edit,
                               change: prepareChange, delete: requestDelete, duplicate: model.duplicate, dropMail: dropMail)
+                .equatable()
                 .focusable().focused($hasKeyboardFocus)
                 .onDeleteCommand { if isActive, let selected, selected.canEdit { requestDelete(selected) } }
                 .onCopyCommand { copyProviders() }

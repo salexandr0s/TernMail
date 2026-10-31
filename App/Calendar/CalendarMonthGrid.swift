@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Month gestures use the whole six-week canvas, so a drag can cross row boundaries.
 struct CalendarMonthGrid: View {
+    @Environment(\.calendarPresentation) private var presentation
     @Binding var date: Date
     let calendar: Calendar
     let events: [CalendarDisplayEvent]
@@ -74,7 +75,8 @@ struct CalendarMonthGrid: View {
     }
 
     private func cell(_ day: Date, height: CGFloat) -> some View {
-        let dayEvents = CalendarLayout.events(events, on: day, calendar: calendar)
+        let dayEvents = presentation?.matches(calendar) == true
+            ? presentation?.day(day)?.events ?? [] : CalendarLayout.events(events, on: day, calendar: calendar)
         let capacity = max(1, Int((height - Tokens.Space.s10) / (Tokens.Space.s6 + Tokens.Space.s0_5)))
         let limit = dayEvents.count > capacity ? max(1, capacity - 1) : capacity
         let currentMonth = calendar.isDate(day, equalTo: date, toGranularity: .month)

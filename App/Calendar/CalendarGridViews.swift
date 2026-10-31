@@ -1,7 +1,17 @@
 import MessageContent
 import SwiftUI
 
-struct CalendarGridViews: View {
+struct CalendarGridIdentity: Equatable {
+    let mode: String
+    let date: Date
+    let calendar: Calendar
+    let selectedID: String?
+    let revision: Int
+}
+
+struct CalendarGridViews: View, Equatable {
+    @Environment(\.calendarPresentation) private var presentation
+    let presentationID: CalendarGridIdentity
     @Binding var mode: CalendarDisplayMode
     @Binding var date: Date
     let calendar: Calendar
@@ -15,10 +25,12 @@ struct CalendarGridViews: View {
     /// A conversation dropped on the grid, with the slot it landed on.
     let dropMail: (MailLink, CalendarEventRange) -> Void
 
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.presentationID == rhs.presentationID }
+
     var body: some View {
         switch mode {
         case .day, .week:
-            CalendarTimeGrid(date: date, isWeek: mode == .week, calendar: calendar, events: events,
+            CalendarTimeGrid(date: date, isWeek: mode == .week, calendar: calendar, events: events, presentation: presentation,
                              selectedID: $selectedID, create: create, edit: edit, change: change,
                              delete: delete, duplicate: duplicate, dropMail: dropMail)
         case .month:

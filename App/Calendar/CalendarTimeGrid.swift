@@ -6,6 +6,9 @@ struct CalendarTimeGrid: View {
     let isWeek: Bool
     let calendar: Calendar
     let events: [CalendarDisplayEvent]
+    let prepared: CalendarPresentationSnapshot?
+    let days: [Date]
+    let timeAxis: CalendarTimeAxis
     @Binding var selectedID: String?
     let create: (CalendarEventRange) -> Void
     let edit: (CalendarDisplayEvent) -> Void
@@ -26,7 +29,8 @@ struct CalendarTimeGrid: View {
     /// scroll replaces the point, so the grid is never pulled back to it.
     @State private var hourScroll: ScrollPosition
 
-    init(date: Date, isWeek: Bool, calendar: Calendar, events: [CalendarDisplayEvent], selectedID: Binding<String?>,
+    init(date: Date, isWeek: Bool, calendar: Calendar, events: [CalendarDisplayEvent],
+         presentation: CalendarPresentationSnapshot? = nil, selectedID: Binding<String?>,
          create: @escaping (CalendarEventRange) -> Void, edit: @escaping (CalendarDisplayEvent) -> Void,
          change: @escaping (CalendarDisplayEvent, CalendarEventRange) -> Void, delete: @escaping (CalendarDisplayEvent) -> Void,
          duplicate: @escaping (CalendarDisplayEvent) -> Void, dropMail: @escaping (MailLink, CalendarEventRange) -> Void) {
@@ -34,6 +38,8 @@ struct CalendarTimeGrid: View {
         self.isWeek = isWeek
         self.calendar = calendar
         self.events = events
+        prepared = presentation?.matches(calendar) == true ? presentation : nil
+        days = Self.days(showing: date, isWeek: isWeek, calendar: calendar)
         _selectedID = selectedID
         self.create = create
         self.edit = edit
@@ -41,13 +47,11 @@ struct CalendarTimeGrid: View {
         self.delete = delete
         self.duplicate = duplicate
         self.dropMail = dropMail
-        let axis = CalendarTimeAxis(days: Self.days(showing: date, isWeek: isWeek, calendar: calendar), calendar: calendar)
+        let axis = prepared?.days == days ? prepared?.timeAxis ?? CalendarTimeAxis(days: days, calendar: calendar)
+            : CalendarTimeAxis(days: days, calendar: calendar)
+        timeAxis = axis
         _hourScroll = State(initialValue: ScrollPosition(y: Tokens.Space.s2 + CGFloat(axis.row(ofHour: 8)) * Tokens.Space.s16))
     }
-
-    var days: [Date] { Self.days(showing: date, isWeek: isWeek, calendar: calendar) }
-    /// The hour rows of `days`. The drag gesture maps points through it too.
-    var timeAxis: CalendarTimeAxis { CalendarTimeAxis(days: days, calendar: calendar) }
 
     private static func days(showing date: Date, isWeek: Bool, calendar: Calendar) -> [Date] {
         guard let interval = calendar.dateInterval(of: isWeek ? .weekOfYear : .day, for: date) else { return [] }
@@ -152,7 +156,7 @@ struct CalendarTimeGrid: View {
     }
 
     private func allDayLane(columnWidth: CGFloat) -> some View {
-        let rowCount = days.map { CalendarLayout.events(events, on: $0, calendar: calendar).filter(\.isAllDay).count }.max() ?? 0
+        let rowCount = days.map { allDayEvents(on: $0).count }.max() ?? 0
         let rowHeight = Tokens.Space.s6 + Tokens.Space.s0_5
         let contentHeight = max(Tokens.Space.s8, CGFloat(rowCount + 1) * rowHeight + Tokens.Space.s2)
         return ScrollView(.vertical) {
@@ -168,7 +172,7 @@ struct CalendarTimeGrid: View {
                             }))
                             .help("Click or drag to create an all-day event")
                         VStack(spacing: Tokens.Space.s0_5) {
-                            ForEach(CalendarLayout.events(events, on: day, calendar: calendar).filter(\.isAllDay)) { event in
+                            ForEach(allDayEvents(on: day)) { event in
                                 allDayChip(event, day: day)
                             }
                             if let preview = previewEvent, preview.isAllDay,
@@ -222,8 +226,8 @@ struct CalendarTimeGrid: View {
     }
 
     private func dayColumn(_ day: Date, width: CGFloat, axis: CalendarTimeAxis) -> some View {
-        let timed = CalendarLayout.events(events, on: day, calendar: calendar).filter { !$0.isAllDay }
-        let placements = CalendarTimelinePlacement.layout(timed, day: day, axis: axis)
+        let placements = prepared?.day(day)?.placements ?? CalendarTimelinePlacement.layout(
+            CalendarLayout.events(events, on: day, calendar: calendar).filter { !$0.isAllDay }, day: day, axis: axis)
         return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
                 ForEach(0..<axis.rows.count, id: \.self) { row in
@@ -310,5 +314,10 @@ struct CalendarTimeGrid: View {
 
     private func eventMenu(_ event: CalendarDisplayEvent) -> some View {
         CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete)
+    }
+
+    private func allDayEvents(on day: Date) -> [CalendarDisplayEvent] {
+        if let prepared { return prepared.day(day)?.allDay ?? [] }
+        return CalendarLayout.events(events, on: day, calendar: calendar).filter(\.isAllDay)
     }
 }
