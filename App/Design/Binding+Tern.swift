@@ -11,6 +11,19 @@ extension Binding {
         Binding<Bool>(get: { wrappedValue != nil }, set: { if !$0 { wrappedValue = nil } })
     }
 
+    /// `true` while the optional holds `value`. Setting `true` stores `value`.
+    /// Setting `false` clears the optional only while it still holds `value`, so
+    /// one row's popover closing leaves another row's request alone.
+    func equals<Wrapped: Equatable>(_ value: Wrapped) -> Binding<Bool> where Value == Wrapped? {
+        Binding<Bool>(get: { wrappedValue == value }, set: { isOn in
+            if isOn {
+                wrappedValue = value
+            } else if wrappedValue == value {
+                wrappedValue = nil
+            }
+        })
+    }
+
     /// `true` while the set holds `element`. Setting it inserts or removes the element.
     func contains<Element: Hashable>(_ element: Element) -> Binding<Bool> where Value == Set<Element> {
         Binding<Bool>(get: { wrappedValue.contains(element) }, set: { isOn in

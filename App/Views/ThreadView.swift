@@ -334,8 +334,7 @@ struct ThreadView: View {
             }
             await app.calendar.interpretEmailSuggestions(calendarSuggestions, key: key, service: service)
         }
-        .confirmationDialog("Send invitation response?", isPresented: Binding(
-            get: { responseReview != nil }, set: { if !$0 { responseReview = nil } }), presenting: responseReview) { review in
+        .confirmationDialog("Send invitation response?", isPresented: $responseReview.isPresent(), presenting: responseReview) { review in
             Button("Send Response") {
                 calendarReplyBusy = true
                 Task {
@@ -349,8 +348,7 @@ struct ThreadView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { review in Text(review.explanation) }
-        .alert("Remove cancelled event?", isPresented: Binding(
-            get: { cancellationReview != nil }, set: { if !$0 { cancellationReview = nil } }), presenting: cancellationReview) { item in
+        .alert("Remove cancelled event?", isPresented: $cancellationReview.isPresent(), presenting: cancellationReview) { item in
             Button("Remove Event", role: .destructive) {
                 calendarReplyBusy = true
                 Task {

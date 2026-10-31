@@ -26,7 +26,7 @@ struct AttachmentLibraryDestination: View {
             if let key = model.sourceThreadKey, !ids.contains(key.accountID) { model.sourceThreadKey = nil }
             model.previewURL = nil
         }
-        .sheet(isPresented: Binding(get: { model.sourceThreadKey != nil }, set: { if !$0 { model.sourceThreadKey = nil } })) {
+        .sheet(isPresented: $model.sourceThreadKey.isPresent()) {
             if let key = model.sourceThreadKey {
                 VStack(spacing: 0) {
                     HStack {
