@@ -159,6 +159,12 @@ import Testing
         #expect(CalendarLayout.events([event], on: last, calendar: calendar).count == 1)
         #expect(CalendarLayout.events([event], on: after, calendar: calendar).isEmpty)
         #expect(after.timeIntervalSince(first) == 49 * 3600)
+        let snapshot = CalendarPresentationSnapshot(events: [event],
+            interval: DateInterval(start: first, end: after.addingTimeInterval(86_400)), calendar: calendar, buildsTimeAxis: true)
+        #expect(snapshot.day(first)?.allDay.map(\.id) == [event.id])
+        #expect(snapshot.day(last)?.allDay.map(\.id) == [event.id])
+        #expect(snapshot.day(after) == nil)
+        #expect(snapshot.timeAxis?.rows.count == 25)
     }
 
     @Test func monthGridUsesConfiguredWeekStartAcrossYearBoundary() throws {

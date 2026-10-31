@@ -6,6 +6,67 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func oneHundredWarmActivationsReusePreparedRangeWithoutRequestsOrPublication() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "warm")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.model.activateRange()
+            let prepared = try #require(fixture.model.presentation)
+            let revision = fixture.model.presentationRevision
+
+            for _ in 0..<100 { await fixture.model.activateRange() }
+
+            #expect(fixture.model.presentation?.id == prepared.id)
+            #expect(fixture.model.presentationRevision == revision)
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 1)
+            #expect(fixture.model.rangeSnapshots.count == 1)
+        }
+    }
+
+    @Test func concurrentActivationSharesItsNetworkRequest() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "shared")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let first = Task { await fixture.model.activateRange() }
+            #expect(await fixture.waitForSuspendedRange())
+            let second = Task { await fixture.model.activateRange() }
+            await Task.yield()
+            await fixture.service.resumeRange()
+            await first.value
+            await second.value
+
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test func rangeRetentionIsBoundedAndRevocationDropsPreparedContent() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "bounded")
+            let firstDay = try #require(event.startDate)
+            fixture.model.mode = .day
+            await fixture.service.put(event)
+            for offset in 0..<5 {
+                fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: offset, to: firstDay))
+                await fixture.model.activateRange()
+            }
+            #expect(fixture.model.rangeSnapshots.count == 3)
+            #expect(fixture.model.rangeSnapshotOrder.count == 3)
+            #expect(fixture.model.rangeSnapshots.values.reduce(0) { $0 + $1.byteCost } <= 12 * 1_024 * 1_024)
+
+            fixture.model.accessExpired(fixture.accountID)
+            #expect(fixture.model.rangeSnapshots.isEmpty)
+            #expect(fixture.model.presentation == nil || fixture.model.presentation?.events.isEmpty == true)
+            #expect(fixture.model.events.isEmpty)
+        }
+    }
+
     @Test func initialRangeLoadsFromNetworkOnlyWhenItsCacheIsIncomplete() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "first-open")
