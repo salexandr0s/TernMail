@@ -89,6 +89,8 @@ struct TernApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    /// The quit under way, so choosing Quit again meanwhile starts nothing new.
+    private let quitRequests = QuitRequests()
 
     override init() {
         super.init()
@@ -177,29 +179,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        Task {
-            await model.prepareToQuit()
-            let waiting = await model.sendingDraftIDs()
-            var sent = true
-            if !waiting.isEmpty { sent = await model.sendWaitingMessages() }
-            guard !sent else {
-                sender.reply(toApplicationShouldTerminate: true)
-                return
-            }
-            let unsent = await model.sendingDraftIDs().count
-            if unsent > 0 {
-                let shouldQuit = Self.confirmQuit(unsent: unsent)
-                if !shouldQuit { await model.cancelQuit() }
-                sender.reply(toApplicationShouldTerminate: shouldQuit)
-                return
-            }
-            // Nothing waits any more, so Gmail refused what didn't go out.
-            let refused = await model.refusedDraftCount(among: waiting)
-            let shouldQuit = refused == 0 || Self.confirmQuit(refused: refused)
-            if !shouldQuit { await model.cancelQuit() }
+        let started = quitRequests.begin { [self] in
+            await reviewQuit()
+        } reply: { shouldQuit in
             sender.reply(toApplicationShouldTerminate: shouldQuit)
         }
-        return .terminateLater
+        // A quit already under way gives the answer.
+        return started ? .terminateLater : .terminateCancel
+    }
+
+    /// Stores open drafts, then sends what waits in the Outbox. A draft that
+    /// can't be stored, or an Outbox that can't be read, stops the quit and
+    /// asks whether to try again, stay open or quit anyway.
+    private func reviewQuit() async -> Bool {
+        // Before anything stops, so staying open leaves Tern as it was.
+        if case .stayOpen = await attempt({ try await self.model.storeOpenDrafts() }) { return false }
+        await model.prepareToQuit()
+        let shouldQuit = await reviewOutbox()
+        if !shouldQuit { await model.cancelQuit() }
+        return shouldQuit
+    }
+
+    /// Sends the messages waiting in the Outbox, and asks before quitting
+    /// with one that didn't go.
+    private func reviewOutbox() async -> Bool {
+        let waiting: Set<String>
+        switch await attempt({ try await self.model.sendingDraftIDs() }) {
+        case .done(let ids): waiting = ids
+        case .quitAnyway: return true
+        case .stayOpen: return false
+        }
+        guard !waiting.isEmpty else { return true }
+        if await model.sendWaitingMessages() { return true }
+        switch await attempt({ try await self.model.sendingDraftIDs().count }) {
+        case .done(let unsent) where unsent > 0: return Self.confirmQuit(unsent: unsent)
+        case .done: break
+        case .quitAnyway: return true
+        case .stayOpen: return false
+        }
+        // Nothing waits any more, so Gmail refused what didn't go out.
+        switch await attempt({ try await self.model.refusedDraftCount(among: waiting) }) {
+        case .done(let refused): return refused == 0 || Self.confirmQuit(refused: refused)
+        case .quitAnyway: return true
+        case .stayOpen: return false
+        }
+    }
+
+    private enum QuitStep<Value> {
+        case done(Value)
+        case quitAnyway
+        case stayOpen
+    }
+
+    /// Runs `step` until it works or the person stops trying.
+    private func attempt<Value>(_ step: () async throws -> Value) async -> QuitStep<Value> {
+        while true {
+            do {
+                return .done(try await step())
+            } catch {
+                switch Self.ask(after: error) {
+                case .alertFirstButtonReturn: continue
+                case .alertThirdButtonReturn: return .quitAnyway
+                default: return .stayOpen
+                }
+            }
+        }
+    }
+
+    /// Says why quitting stopped, and returns the button chosen: Try Again,
+    /// Stay Open or Quit Anyway.
+    private static func ask(after error: any Error) -> NSApplication.ModalResponse {
+        let alert = NSAlert()
+        if case .unsavedDrafts(let titles)? = error as? AppModel.QuitProblem {
+            alert.messageText = titles.count == 1 ? "Couldn't Save Your Draft" : "Couldn't Save \(titles.count) Drafts"
+            let names = ListFormatter.localizedString(byJoining: titles.map { "“\($0)”" })
+            alert.informativeText = "Tern couldn't save everything in \(names). The message window shows what went wrong. "
+                + "If you quit now, the unsaved changes are lost."
+        } else {
+            alert.messageText = "Couldn't Check the Outbox"
+            alert.informativeText = "Tern couldn't read the messages waiting to send. "
+                + "If you quit now, any still waiting go out the next time you open Tern."
+        }
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "Stay Open").keyEquivalent = "\u{1b}"
+        alert.addButton(withTitle: "Quit Anyway").hasDestructiveAction = true
+        return alert.runModal()
     }
 
     /// Asks before quitting with a refused message, which is open again and says why.
@@ -223,6 +287,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Stay Open").keyEquivalent = "\u{1b}"
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn
+    }
+}
+
+/// One quit at a time. macOS asks again when Quit is chosen while an earlier
+/// quit still stores drafts or sends, and that request must not start another.
+@MainActor
+final class QuitRequests {
+    private(set) var isQuitting = false
+
+    /// Runs `review` and gives its answer to `reply`. Returns false, starting
+    /// nothing, while an earlier quit is still under way.
+    func begin(_ review: @escaping @MainActor () async -> Bool, reply: @escaping @MainActor (Bool) -> Void) -> Bool {
+        guard !isQuitting else { return false }
+        isQuitting = true
+        Task { [self] in
+            let shouldQuit = await review()
+            isQuitting = false
+            reply(shouldQuit)
+        }
+        return true
     }
 }
 

@@ -98,6 +98,75 @@ import Testing
         #expect(restored.workingHours == model.workingHours)
         #expect(restored.workingWeekdays == [2, 4])
     }
+
+    @Test(arguments: [false, true])
+    func lateSharingReadForAFormerSelectionIsDropped(fails: Bool) async throws {
+        let first = Self.ownedCalendar("first"), second = Self.ownedCalendar("second")
+        let gate = SharingReadGate()
+        let list = CalendarShareList()
+        list.select(first.id)
+        let late = Task {
+            try await list.reload(Self.ownedCalendar("first")) { _ in
+                await gate.hold()
+                if fails { throw CalendarModelError.unavailable }
+                return [Self.share("first")]
+            }
+        }
+        await gate.waitUntilHeld()
+        list.select(second.id)
+        #expect(list.shares(for: second).isEmpty)
+        try await list.reload(second) { _ in [Self.share("second")] }
+        await gate.release()
+        // Neither the late people nor the late error reach the list now on screen.
+        try await late.value
+        #expect(list.shares(for: second) == [Self.share("second")])
+        #expect(list.shares(for: first).isEmpty)
+    }
+
+    @Test func refreshAfterAnEditReadsOnlyTheCalendarStillShown() async throws {
+        let first = Self.ownedCalendar("first"), second = Self.ownedCalendar("second")
+        let list = CalendarShareList()
+        list.select(second.id)
+        try await list.reload(second) { _ in [Self.share("second")] }
+        var reads = 0
+        try await list.reload(first) { _ in reads += 1; return [Self.share("first")] }
+        #expect(reads == 0)
+        #expect(list.shares(for: second) == [Self.share("second")])
+        #expect(list.shares(for: first).isEmpty)
+    }
+
+    private static func ownedCalendar(_ id: String) -> CalendarDisplayCalendar {
+        CalendarDisplayCalendar(entry: GoogleCalendarEntry(id: id, summary: id, timeZone: "Europe/Vienna", accessRole: "owner"),
+                                accountID: "account", accountName: "Account", canShare: true)
+    }
+
+    private static func share(_ id: String) -> CalendarShare {
+        CalendarShare(id: "user:" + id, email: id + "@example.invalid", role: "reader")
+    }
+}
+
+/// Holds a sharing read open until the test lets it finish.
+private actor SharingReadGate {
+    private var isHeld = false
+    private var held: CheckedContinuation<Void, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func hold() async {
+        isHeld = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
+        await withCheckedContinuation { held = $0 }
+    }
+
+    func waitUntilHeld() async {
+        guard !isHeld else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        held?.resume()
+        held = nil
+    }
 }
 
 private actor ManagementCalendarService: CalendarService {

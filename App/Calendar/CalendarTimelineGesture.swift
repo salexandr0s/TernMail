@@ -118,12 +118,7 @@ extension CalendarTimeGrid {
                 let start = calendar.date(byAdding: .day, value: -dayOffset, to: allDay) ?? allDay
                 session.range = CalendarInteraction.moving(event, to: start, allDay: true, calendar: calendar)
             } else if let target = timedDate(at: point, snapped: false) {
-                let candidate = event.isAllDay ? target : event.start.addingTimeInterval(target.timeIntervalSince(session.anchor))
-                let parts = calendar.dateComponents([.hour, .minute], from: candidate)
-                let minute = Int((Double((parts.hour ?? 0) * 60 + (parts.minute ?? 0)) / 15).rounded()) * 15
-                let start = candidate == event.start && !event.isAllDay ? event.start
-                    : CalendarInteraction.date(at: minute, on: candidate, calendar: calendar)
-                session.range = CalendarInteraction.moving(event, to: start, allDay: false, calendar: calendar)
+                session.range = CalendarInteraction.dragging(event, from: session.anchor, to: target, calendar: calendar)
             } else { session.range = nil }
         case .resizeStart(let event), .resizeEnd(let event):
             let target = event.isAllDay ? allDay : timed
@@ -145,10 +140,8 @@ extension CalendarTimeGrid {
               viewport.contains(point), frames[.canvas]?.contains(point) == true,
               point.y >= content.minY, point.y <= content.maxY,
               let day = day(at: point.x, in: content) else { return nil }
-        let y = point.y - content.minY
-        let minute = snapped ? CalendarInteraction.snappedMinute(at: y, hourHeight: hourHeight, allowEndOfDay: allowEndOfDay)
-            : min(allowEndOfDay ? 1440 : 1439, max(0, Int((y / hourHeight * 60).rounded())))
-        return CalendarInteraction.date(at: minute, on: day, calendar: calendar)
+        let minute = Double((point.y - content.minY) / hourHeight * 60)
+        return timeAxis.date(atMinute: minute, on: day, snapped: snapped, allowEndOfDay: allowEndOfDay)
     }
 
     private func day(at x: CGFloat, in frame: CGRect) -> Date? {
