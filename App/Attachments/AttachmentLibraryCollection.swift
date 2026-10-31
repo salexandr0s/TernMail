@@ -1,4 +1,3 @@
-import AppKit
 import MailStore
 import SwiftUI
 
@@ -11,6 +10,9 @@ struct AttachmentLibraryCollection: View {
     let onOpenSource: () -> Void
     @State private var anchorID: String?
     @State private var currentID: String?
+    /// Shift and Command as last pressed, for clicks. Keyboard and VoiceOver
+    /// selection pass their own modifiers, so a stale event can't widen it.
+    @State private var heldModifiers: EventModifiers = []
     @FocusState private var gridFocused: Bool
     @FocusState private var listFocused: Bool
 
@@ -99,9 +101,11 @@ struct AttachmentLibraryCollection: View {
             cardGrid
                 .focusable().focused($gridFocused)
                 .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow], phases: [.down, .repeat]) { press in
-                    move(press.key, reader: reader)
+                    // Shift-arrow extends the range; Command-arrow doesn't toggle cards.
+                    move(press.key, modifiers: press.modifiers.intersection(.shift), reader: reader)
                     return .handled
                 }
+                .onModifierKeysChanged(mask: [.shift, .command]) { _, new in heldModifiers = new }
                 .accessibilityLabel("Attachment cards")
                 .accessibilityHint("Use arrow keys to select, Space to preview, Return to open. Command-click or Shift-click selects several files.")
         }
@@ -112,7 +116,8 @@ struct AttachmentLibraryCollection: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s4)],
                       spacing: Tokens.Space.s4) {
                 ForEach(model.items) { item in
-                    AttachmentCardCell(item: item, model: model, onSelect: { select(item) }, onOpenSource: onOpenSource)
+                    AttachmentCardCell(item: item, model: model, onClick: { select(item, modifiers: heldModifiers) },
+                                       onActivate: { select(item, modifiers: []) }, onOpenSource: onOpenSource)
                         .id(item.id)
                 }
             }
@@ -121,7 +126,7 @@ struct AttachmentLibraryCollection: View {
         }
     }
 
-    private func move(_ key: KeyEquivalent, reader: ScrollViewProxy) {
+    private func move(_ key: KeyEquivalent, modifiers: EventModifiers, reader: ScrollViewProxy) {
         let delta: Int
         switch key {
         case .leftArrow: delta = -1
@@ -130,13 +135,12 @@ struct AttachmentLibraryCollection: View {
         case .downArrow: delta = columns
         default: return
         }
-        moveSelection(by: delta)
+        moveSelection(by: delta, modifiers: modifiers)
         if let currentID { reader.scrollTo(currentID) }
     }
 
-    private func select(_ item: AttachmentLibraryItem) {
+    private func select(_ item: AttachmentLibraryItem, modifiers: EventModifiers) {
         gridFocused = true
-        let modifiers = NSApp.currentEvent?.modifierFlags ?? []
         if modifiers.contains(.shift), let anchorID,
            let start = model.items.firstIndex(where: { $0.id == anchorID }),
            let end = model.items.firstIndex(where: { $0.id == item.id }) {
@@ -152,12 +156,12 @@ struct AttachmentLibraryCollection: View {
         currentID = item.id
     }
 
-    private func moveSelection(by delta: Int) {
+    private func moveSelection(by delta: Int, modifiers: EventModifiers) {
         guard !model.items.isEmpty else { return }
         let old = model.items.firstIndex { $0.id == currentID }
             ?? model.items.firstIndex { model.selection.contains($0.id) }
         let index = old.map { min(model.items.count - 1, max(0, $0 + delta)) } ?? 0
-        select(model.items[index])
+        select(model.items[index], modifiers: modifiers)
     }
 
     private func openSource(_ item: AttachmentLibraryItem) {
@@ -168,17 +172,19 @@ struct AttachmentLibraryCollection: View {
 private struct AttachmentCardCell: View {
     let item: AttachmentLibraryItem
     let model: AttachmentLibraryModel
-    let onSelect: () -> Void
+    let onClick: () -> Void
+    /// The accessibility default action, which never extends a selection.
+    let onActivate: () -> Void
     let onOpenSource: () -> Void
 
     var body: some View {
         AttachmentLibraryCard(item: item, accountName: model.accountName(item),
             accounts: model.availableAccounts, selected: model.selection.contains(item.id))
             .onTapGesture(count: 2) { Task { await model.preview(item) } }
-            .onTapGesture(perform: onSelect)
+            .onTapGesture(perform: onClick)
             .contextMenu { AttachmentItemMenu(item: item, model: model, onOpenSource: onOpenSource) }
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction { onSelect() }
+            .accessibilityAction { onActivate() }
             .accessibilityAction(named: "Preview") { Task { await model.preview(item) } }
             .accessibilityAction(named: "Save") { Task { await model.save(item) } }
             .accessibilityAction(named: "Show Email") {
