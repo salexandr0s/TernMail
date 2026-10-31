@@ -44,7 +44,7 @@ Deviations, with reasons:
 - `SplitDividerHandle` kept (it already sets the resize cursor); `isCompact` toolbar switching kept; the `.inspector` spike skipped (the panel stays, the calendar copy is resizable).
 - `DisclosureGroup`/`OutlineGroup` not adopted in the sidebar because a disclosure row cannot be selected on macOS.
 - `SidebarLayoutTests` waits for the first layout (rows and toolbar inset) instead of a fixed 200 ms; under load the first layout takes 200–500 ms.
-- Toolbar spaces ignore `hidden(_:)`, so a space stays when the items beside it hide. The mail items come before the calendar and library items (`14625f7`), which puts the three mail spaces ahead of those sections' controls, in the open part of the toolbar where they don't show. Archive and Trash still share the triage capsule, because one more space pushes search into the overflow menu at 960 points.
+- Toolbar spaces ignore `hidden(_:)`, so a space stays when the items beside it hide. The mail items come before the calendar and library items (`14625f7`), which puts the two mail spaces ahead of those sections' controls, in the open part of the toolbar where they don't show. More ends the triage group again, as it did in `dc69a8a` (`4dd0059`). Narrow windows fold that group into one menu, and while More had a group of its own, its space stayed there and made the gap before Search twice as wide as the others.
 
 ### Phase 4: message list and reader (`b71eb0e`, `079a259`, `1bee764`, `2cdb19b`)
 
@@ -220,7 +220,7 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 - Confirm Spotlight indexing with a signed build before relying on it. The setting stays off by default.
 - Moving a conversation out of Trash through `LabelQueue.move` removes INBOX rather than TRASH. Drop-to-Inbox works around it with `editLabels`.
 - Debug runs log "Application performed a reentrant operation in its NSTableView delegate". The source is not traced.
-- Two toolbar spaces still show after the items beside them hide. In narrow Mail windows the space before More stays when More folds into the compact menu, so the gap before Search is twice as wide as the others. In Attachments, which has no assistant button, the assistant's space stays after Search.
+- In Attachments, which has no assistant button, the assistant's toolbar space still shows after Search.
 - Undo Send has no key equivalent.
 - The Keyboard Shortcuts window prints the catalog's keys, while the menu bar shows the keys macOS remaps for the active layout. With Swiss German, ⌘/ shows as ⌘'.
 
