@@ -59,23 +59,22 @@ extension CalendarModel {
                               invitationState: CalendarInvitationState? = nil) async {
         let revision = lifecycleRevision
         guard let owner = app?.mailbox?.account(id: key.accountID), let cache = app?.cache else { return }
+        let preparation = model.beginPreparation()
+        let timeZone = calendar.timeZone
         do {
             let state: CalendarInvitationState
             if let invitationState { state = invitationState }
             else { state = try await cache.read { try $0.calendarInvitationState(accountID: key.accountID) } }
-            let records = state.invitations
             let addresses = try await owner.engine.calendarReplyAddresses()
             let saved = try await store?.suggestions(accountID: key.accountID, threadID: key.threadID) ?? []
             try validateEmailLifetime(revision, accountID: key.accountID)
-            let messages = detail.messages.map { message in
-                EmailCalendarMessage(id: message.id, subject: message.record.subject, date: message.record.date,
-                    text: CalendarDetection.readableText(html: message.body?.html, plainText: message.body?.plainText),
-                    invitations: records.filter { $0.messageID == message.id }.map(\.invitation), sender: message.record.sender,
-                    allowsDateDetection: message.labels.isDisjoint(with: ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"]),
-                    dateHeaderOffset: message.record.dateHeaderOffset)
-            }
+            let prepared = try await EmailCalendarPreparation.shared.prepare(detail: detail, invitations: state.invitations, accountID: key.accountID,
+                lifetime: String(describing: ObjectIdentifier(owner)) + ":\(revision)", timeZone: timeZone)
+            try validateEmailLifetime(revision, accountID: key.accountID)
+            guard model.acceptsPreparation(preparation), calendar.timeZone == timeZone,
+                  app?.mailbox?.account(id: key.accountID) === owner else { return }
             let prefix = key.accountID + ":"
-            model.update(messages: messages, addresses: addresses, timeZone: calendar.timeZone,
+            model.update(prepared: prepared, addresses: addresses, timeZone: timeZone,
                 dismissedIDs: Set(saved.filter(\.isDismissed).map { String($0.id.dropFirst(prefix.count)) }), invitationState: state)
             for record in saved where record.isUserEdited {
                 model.restoreCorrection(itemID: String(record.id.dropFirst(prefix.count)), event: record.event)
@@ -88,18 +87,21 @@ extension CalendarModel {
 
     func persistEmailSuggestions(_ model: EmailCalendarModel, key: ThreadKey) async throws {
         let revision = lifecycleRevision
+        let sourceRevision = model.revision
         guard let store else { return }
         for item in model.items {
-            if let saved = try await store.suggestion(id: key.accountID + ":" + item.id), saved.isUserEdited {
-                try validateEmailLifetime(revision, accountID: key.accountID)
+            let saved = try await store.suggestion(id: key.accountID + ":" + item.id)
+            try validateEmailLifetime(revision, accountID: key.accountID)
+            guard model.revision == sourceRevision else { throw CancellationError() }
+            if let saved, saved.isUserEdited {
                 model.restoreCorrection(itemID: item.id, event: saved.event)
                 continue
             }
-            try validateEmailLifetime(revision, accountID: key.accountID)
             let event = item.event ?? GoogleCalendarEvent(summary: item.title)
+            if let saved, saved.sourceRevision == sourceRevision, saved.event == event, saved.sourceText == item.evidence { continue }
             try await store.saveSuggestion(CalendarSuggestionRecord(id: key.accountID + ":" + item.id,
                 accountID: key.accountID, threadID: key.threadID, messageID: item.messageID,
-                sourceRevision: model.revision, event: event, sourceText: item.evidence))
+                sourceRevision: sourceRevision, event: event, sourceText: item.evidence))
         }
     }
 
