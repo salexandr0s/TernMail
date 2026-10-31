@@ -12,6 +12,9 @@ struct EmailCalendarMessage: Sendable, Equatable {
     let text: String
     var invitations: [Invitation] = []
     var sender = ""
+    /// Gmail's Promotions and Social mail is full of sale periods, opening hours
+    /// and notification times, so its dates are not read as events locally.
+    var allowsDateDetection = true
 }
 
 struct EmailCalendarItem: Identifiable, Sendable, Equatable, Codable {
@@ -50,6 +53,7 @@ final class EmailCalendarModel {
     private var generation = 0
     private var interpretedItems: [EmailCalendarItem]?
     private var invitationState = CalendarInvitationState()
+    private var referenceDate = Date.now
 
     var cachedInterpretation: [EmailCalendarItem]? { interpretedRevision == revision ? interpretedItems : nil }
 
@@ -57,7 +61,7 @@ final class EmailCalendarModel {
 
     func update(messages: [EmailCalendarMessage], addresses: [String],
                 timeZone: TimeZone = .autoupdatingCurrent, dismissedIDs: Set<String> = [],
-                invitationState: CalendarInvitationState = .init()) {
+                invitationState: CalendarInvitationState = .init(), now: Date = .now) {
         let addressesChanged = self.addresses != addresses
         self.addresses = addresses
         self.invitationState = invitationState
@@ -70,6 +74,7 @@ final class EmailCalendarModel {
         generation += 1
         self.messages = messages
         self.timeZone = timeZone
+        referenceDate = now
         revision = fingerprint
         interpretationError = nil
         isInterpreting = false
@@ -106,7 +111,7 @@ final class EmailCalendarModel {
             }
             // Structured data supplies the precise event; text detection must not
             // create another candidate for the invitation's readable alternative.
-            guard invitations.isEmpty else { continue }
+            guard invitations.isEmpty, message.allowsDateDetection else { continue }
             for suggestion in CalendarDetection.suggestions(in: message.text, messageDate: message.date, timeZone: timeZone) {
                 var event = GoogleCalendarEvent(summary: message.subject)
                 event.start = CalendarDateTime(date: suggestion.start, timeZone: timeZone, allDay: suggestion.isAllDay)
@@ -129,8 +134,20 @@ final class EmailCalendarModel {
                 ))
             }
         }
-        items = next
+        items = next.filter(isCurrent)
         refreshInvitationState()
+    }
+
+    /// A suggestion without a date, or one that has already ended, leaves nothing
+    /// to add to a calendar. Invitations, updates and cancellations still show.
+    private func isCurrent(_ item: EmailCalendarItem) -> Bool {
+        guard item.kind == .detected || item.kind == .proposed else { return true }
+        guard let event = item.event, let start = event.start?.resolvedDate(fallbackTimeZone: timeZone) else { return false }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let end = event.end?.resolvedDate(fallbackTimeZone: timeZone)
+            ?? (event.isAllDay ? calendar.date(byAdding: .day, value: 1, to: start) : start)
+        return (end ?? start) > referenceDate
     }
 
     private func refreshInvitationState() {
@@ -183,9 +200,10 @@ final class EmailCalendarModel {
                   item.relatedMessageIDs.allSatisfy { id in messages.contains { $0.id == id } }
               }) else { return false }
         let structuredMessageIDs = Set(items.filter { $0.invitation != nil }.map(\.messageID))
-        let useful = interpreted.filter { !structuredMessageIDs.contains($0.messageID) }
-        let interpretedMessageIDs = Set(useful.flatMap { [$0.messageID] + $0.relatedMessageIDs })
-        items.removeAll { $0.invitation == nil && interpretedMessageIDs.contains($0.messageID) }
+        let useful = interpreted.filter { !structuredMessageIDs.contains($0.messageID) && isCurrent($0) }
+        // The interpretation reads the whole conversation, so it replaces every
+        // text detection, including the dates it found not to be events.
+        items.removeAll { $0.invitation == nil }
         items.append(contentsOf: useful)
         interpretedRevision = sourceRevision
         interpretedItems = interpreted
@@ -238,6 +256,9 @@ final class EmailCalendarModel {
                 hash.update(data: Data(part.utf8))
             }
             if let data = try? encoder.encode(message.invitations) { hash.update(data: data) }
+            // Only a change from the default alters the revision, so readings
+            // cached for ordinary mail stay valid.
+            if !message.allowsDateDetection { hash.update(data: Data("without-date-detection".utf8)) }
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }

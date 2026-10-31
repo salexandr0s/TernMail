@@ -61,6 +61,30 @@ import TernAI
         #expect(!reopened.restoreInterpretation(cached, for: first.revision))
     }
 
+    @Test func interpretationReplacesLocalDetectionAndDropsUndatedProposals() async throws {
+        for text in [#"{"events": []}"#, try response(start: nil)] {
+            let model = EmailCalendarModel()
+            model.update(messages: [message()], addresses: [])
+            #expect(model.items.first?.kind == .detected)
+            await model.interpret(using: EmailCalendarExtractionService(provider: EmailCalendarProvider(text: text), model: "fixture", isScopeValid: { true }))
+            #expect(model.cachedInterpretation != nil)
+            #expect(model.items.isEmpty)
+        }
+    }
+
+    @Test func localDetectionSkipsPromotionsAndEndedEvents() {
+        var promotion = message()
+        promotion.allowsDateDetection = false
+        let model = EmailCalendarModel()
+        model.update(messages: [message()], addresses: [])
+        #expect(model.items.count == 1)
+        model.update(messages: [promotion], addresses: [])
+        #expect(model.items.isEmpty)
+        let later = EmailCalendarModel()
+        later.update(messages: [message()], addresses: [], now: Date(timeIntervalSince1970: 2_000_000_000))
+        #expect(later.items.isEmpty)
+    }
+
     @Test func cachedCancellationReplacesEarlierSuggestionAndRejectsInventedRelatedSource() throws {
         let model = EmailCalendarModel()
         let cancellation = EmailCalendarMessage(id: "later", subject: "Cancelled", date: message().date.addingTimeInterval(60), text: "The planning meeting is cancelled.")
@@ -180,11 +204,12 @@ import TernAI
         #expect(EmailCalendarPresentation(item: item, calendar: .current).badge.symbol == "xmark")
     }
 
-    private func response(source: String = "message", quote: String = "Meet July 15, 2031 at 14:00.") throws -> String {
+    private func response(source: String = "message", quote: String = "Meet July 15, 2031 at 14:00.",
+                          start: String? = "2031-07-15T14:00:00Z") throws -> String {
         try AIJSON.object(["events": .array([.object([
             "title": .string("Planning"), "source_message_id": .string(source), "supporting_text": .string(quote),
             "superseded_message_ids": .array([]), "status": .string("proposed"),
-            "start": .string("2031-07-15T14:00:00Z"), "end": .null, "all_day": .bool(false),
+            "start": start.map(AIJSON.string) ?? .null, "end": .null, "all_day": .bool(false),
             "time_zone": .string("Etc/UTC"), "uncertainties": .array([.string("Choose a duration.")]),
         ])])]).jsonString()
     }

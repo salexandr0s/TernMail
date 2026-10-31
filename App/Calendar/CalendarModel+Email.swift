@@ -70,7 +70,8 @@ extension CalendarModel {
             let messages = detail.messages.map { message in
                 EmailCalendarMessage(id: message.id, subject: message.record.subject, date: message.record.date,
                     text: CalendarDetection.readableText(html: message.body?.html, plainText: message.body?.plainText),
-                    invitations: records.filter { $0.messageID == message.id }.map(\.invitation), sender: message.record.sender)
+                    invitations: records.filter { $0.messageID == message.id }.map(\.invitation), sender: message.record.sender,
+                    allowsDateDetection: message.labels.isDisjoint(with: ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"]))
             }
             let prefix = key.accountID + ":"
             model.update(messages: messages, addresses: addresses, timeZone: calendar.timeZone,
