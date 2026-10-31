@@ -29,6 +29,8 @@ struct TernApp: App {
                 .task { await model.start() }
         }
         .defaultSize(width: Tokens.Layout.windowWidth, height: Tokens.Layout.windowHeight)
+        // The catalog's shortcut goes on the scene's own Window ▸ Tern item.
+        .keyboardShortcut(ShortcutCatalog.mainWindow.shortcut)
         .commands { MailCommands(app: model) }
 
         WindowGroup("Conversation", id: ConversationWindow.sceneID, for: MailLink.self) { $link in
@@ -70,6 +72,8 @@ struct TernApp: App {
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .windowResizability(.contentMinSize)
+        // The catalog's shortcut goes on the scene's own Window ▸ Assistant item.
+        .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
 
         Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
             KeyboardShortcutsView()

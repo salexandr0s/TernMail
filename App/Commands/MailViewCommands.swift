@@ -7,12 +7,10 @@ extension FocusedValues {
     @Entry var conversationLink: MailLink?
 }
 
-/// The View menu and the app's Window menu additions.
+/// The View menu.
 struct MailViewCommands: Commands {
-    @FocusedValue(\.mailboxModel) private var mailbox
     @FocusedValue(\.readerActions) private var reader
     @FocusedValue(\.sidebarToggle) private var sidebar
-    @Environment(\.openWindow) private var openWindow
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @AppStorage("showMessageSize") private var showsMessageSize = false
 
@@ -37,14 +35,6 @@ struct MailViewCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.collapseAll.shortcut)
                 .disabled(!(reader?.canCollapse ?? false))
-        }
-        CommandGroup(after: .windowArrangement) {
-            Button("Tern", systemImage: "envelope") { openWindow(id: RootView.sceneID) }
-                .labelStyle(.titleAndIcon)
-                .keyboardShortcut(ShortcutCatalog.mainWindow.shortcut)
-            Button("Assistant", systemImage: "sparkles") { AssistantWindow.open(using: openWindow, fullScreen: false) }
-                .labelStyle(.titleAndIcon)
-                .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
         }
     }
 }
