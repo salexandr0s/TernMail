@@ -80,9 +80,12 @@ struct SidebarView: View {
             MailboxSwitcher(mailbox: mailbox)
         }
         .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
-        .safeAreaInset(edge: .bottom) {
+        // Rows scroll under the status line; the bar's hard edge effect keeps
+        // the status readable over them.
+        .safeAreaBar(edge: .bottom) {
             SyncStatusView(mailbox: mailbox)
         }
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
         .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
             expandOrCollapse(press.key)
         }
