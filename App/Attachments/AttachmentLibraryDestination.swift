@@ -21,6 +21,7 @@ struct AttachmentLibraryDestination: View {
                 focusSearch: { toolbar.searchFocusRequest += 1 })
         }
         .toolbar(removing: .sidebarToggle)
+        .modifier(MailNoticeOverlay(mailbox: mailbox))
         .onDisappear { model.dismissPresentation() }
         .onChange(of: toolbar.searchText) { _, text in if model.search != text { model.search = text } }
         .onChange(of: model.search, initial: true) { _, text in if toolbar.searchText != text { toolbar.searchText = text } }

@@ -226,31 +226,7 @@ struct MainView: View {
             : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
         .navigationSubtitle(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
             ? mailbox.selectedMailboxSubtitle : "")
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
-                if let notice = mailbox.sendNotice {
-                    NoticeView(notice: notice) {
-                        if let undo = notice.undo { self.undo(undo) }
-                    } onDismiss: {
-                        if mailbox.sendNotice?.id == notice.id { mailbox.sendNotice = nil }
-                    }
-                    .transition(.opacity)
-                    .id(notice.id)
-                }
-                if let notice = mailbox.notice {
-                    NoticeView(notice: notice) {
-                        if let undo = notice.undo { self.undo(undo) }
-                    } onDismiss: {
-                        if mailbox.notice?.id == notice.id { mailbox.notice = nil }
-                    }
-                    .transition(.opacity)
-                    .id(notice.id)
-                }
-            }
-            .padding(Tokens.Space.s4)
-            .ternAnimation(value: mailbox.notice)
-            .ternAnimation(value: mailbox.sendNotice)
-        }
+        .modifier(MailNoticeOverlay(mailbox: mailbox))
     }
 
     private func toggleAssistant() {
@@ -363,16 +339,6 @@ struct MainView: View {
     }
 
     /// Undoing a send or a discard reopens the message's window.
-    private func undo(_ undo: MailboxModel.Notice.Undo) {
-        switch undo {
-        case .action(let row):
-            mailbox.undo(row)
-        case .send(let id):
-            Task { if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
-        case .discard(let id):
-            Task { if await mailbox.undoDiscard(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
-        }
-    }
 }
 
 /// Keeps the assistant's account access current as the mailbox changes.
