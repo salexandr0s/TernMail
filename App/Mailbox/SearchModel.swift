@@ -23,6 +23,11 @@ final class SearchModel {
     static let pageSize = 200
 
     private(set) var text = ""
+    /// An operator such as `in:inbox` that every result must also match, from
+    /// the scope bar. Nil searches all mail.
+    private(set) var restriction: String?
+    /// The one account the scope bar picked, or nil for every account searched.
+    private(set) var accountID: String?
     /// Local matches plus Gmail's conversations, newest first.
     private(set) var results: [ThreadRecord] = []
     /// Gmail's side of the current query. Nil while the field is empty.
@@ -37,7 +42,20 @@ final class SearchModel {
 
     var matchingMessageIDs: [String: Set<String>] {
         _ = gmail?.revision
-        return Dictionary(sources.map { ($0.accountID, gmail?.messageIDs(in: $0.accountID) ?? []) }, uniquingKeysWith: { first, _ in first })
+        return Dictionary(activeSources.map { ($0.accountID, gmail?.messageIDs(in: $0.accountID) ?? []) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The query the cache and Gmail answer: the field's text, narrowed by
+    /// the scope bar's restriction.
+    var queryText: String {
+        guard let restriction else { return text }
+        return "\(restriction) \(text)"
+    }
+
+    /// Whether more results wait past the listed ones: another local page,
+    /// or another page from Gmail.
+    var hasMoreResults: Bool {
+        results.count >= limit || gmail?.state == .more
     }
 
     func setMessageMode(_ enabled: Bool) {
@@ -69,6 +87,7 @@ final class SearchModel {
     /// Searches these accounts from now on, running the current query again.
     func setSources(_ sources: [Source]) {
         self.sources = sources
+        if let accountID, !sources.contains(where: { $0.accountID == accountID }) { self.accountID = nil }
         restart()
     }
 
@@ -76,6 +95,26 @@ final class SearchModel {
     func update(_ newText: String) {
         guard newText != text else { return }
         text = newText
+        // The next search starts from all mail in every account again.
+        if !isActive {
+            restriction = nil
+            accountID = nil
+        }
+        restart()
+    }
+
+    /// Limits results to mail that also matches `restriction`, or searches
+    /// all mail again for nil.
+    func restrict(to restriction: String?) {
+        guard restriction != self.restriction else { return }
+        self.restriction = restriction
+        restart()
+    }
+
+    /// Searches one of the sources, or all of them again for nil.
+    func restrict(toAccount accountID: String?) {
+        guard accountID != self.accountID else { return }
+        self.accountID = accountID
         restart()
     }
 
@@ -123,8 +162,14 @@ final class SearchModel {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The sources the scope bar leaves in.
+    private var activeSources: [Source] {
+        guard let accountID else { return sources }
+        return sources.filter { $0.accountID == accountID }
+    }
+
     private func restart() {
-        query = SearchQuery(text)
+        query = SearchQuery(queryText)
         limit = Self.pageSize
         delayTask?.cancel()
         gmail?.cancel()
@@ -143,7 +188,7 @@ final class SearchModel {
         }
         let query = query
         let messageMode = usesMessageMode
-        gmail = GmailPager(sources: Dictionary(uniqueKeysWithValues: sources.map { source in
+        gmail = GmailPager(sources: Dictionary(uniqueKeysWithValues: activeSources.map { source in
             let engine = source.engine
             return (source.accountID, { token in
                 if messageMode { return try await engine.searchGmailMessages(query, timeZone: .current, pageToken: token) }
@@ -165,7 +210,7 @@ final class SearchModel {
     private func observeResults() {
         resultsTasks.forEach { $0.cancel() }
         let query = query
-        resultsTasks = sources.map { source in
+        resultsTasks = activeSources.map { source in
             let accountID = source.accountID
             let stream = cache.searchResults(
                 query, including: gmail?.threadIDs(in: accountID) ?? [], accountID: accountID,
@@ -193,7 +238,7 @@ final class SearchModel {
     /// once every account has answered the query, so the list never shows
     /// one account's matches alone while another's are on the way.
     private func publish() {
-        guard sources.allSatisfy({ found[$0.accountID] != nil || failedAccountIDs.contains($0.accountID) }) else {
+        guard activeSources.allSatisfy({ found[$0.accountID] != nil || failedAccountIDs.contains($0.accountID) }) else {
             return
         }
         let merged = found.values.joined().sorted { lhs, rhs in

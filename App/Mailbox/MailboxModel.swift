@@ -411,15 +411,15 @@ final class MailboxModel {
     var hasSeveralAccounts: Bool { !otherAccounts.isEmpty }
 
     /// Whether the list can show conversations from more than one account,
-    /// so each row names its account.
+    /// so each row names its account. Not while search covers one account.
     var listMixesAccounts: Bool {
-        searchedAccounts.count > 1
+        searchedAccounts.count > 1 && search.accountID == nil
     }
 
     /// The accounts search covers: the one in view, or every account in a
     /// combined mailbox or while no mailbox is selected. The list shows the
     /// same accounts when a mailbox is selected.
-    private var searchedAccounts: [AccountMailbox] {
+    var searchedAccounts: [AccountMailbox] {
         let sources = selectedMailbox.map(owners(of:)) ?? presentedAccounts
         if let saved = selectedSavedSearch {
             switch saved.scope {
@@ -466,7 +466,12 @@ final class MailboxModel {
 
     var selectedLabelTitle: String {
         if let saved = selectedSavedSearch { return saved.name }
-        if search.isActive { return "Search Results" }
+        if search.isActive { return searchResultsTitle }
+        return selectedMailboxTitle
+    }
+
+    /// The selected mailbox's name, also while a search covers it.
+    var selectedMailboxTitle: String {
         guard let id = selectedLabelID else { return "Tern" }
         if id == Self.outboxID { return "Outbox" }
         return SystemMailbox.all.first { $0.id == id }?.title ?? label(id: id)?.name ?? "Tern"
