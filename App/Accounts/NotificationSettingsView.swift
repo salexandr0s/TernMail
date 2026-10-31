@@ -33,7 +33,7 @@ struct NotificationSettingsView: View {
                     }
                     if !selectedAccount.isEmpty {
                         SettingsControlRow("Notify me about") {
-                            Picker("Notify me about", selection: Binding(get: { preferences.preferences(for: selectedAccount).notificationRule }, set: { rule in
+                            Picker("Notify me about", selection: Binding(preferences.preferences(for: selectedAccount).notificationRule, set: { rule in
                                 let id = selectedAccount
                                 Task { await preferences.update(id) { $0.notificationRule = rule } }
                             })) {

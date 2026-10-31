@@ -98,9 +98,21 @@ final class AccountPreferencesModel {
         onChange?()
     }
 
+    /// Applies the change at once so controls follow it, then saves it. A failed
+    /// save reloads the stored preferences.
     func update(_ id: String, _ change: @escaping @Sendable (inout AccountMailPreferences) -> Void) async {
-        do { _ = try await store.updateMailPreferences(accountID: id, change); await refresh() }
-        catch { self.error = "Couldn't save the account preference." }
+        var local = preferences(for: id)
+        change(&local)
+        preferencesByID[id] = local
+        // A refresh already under way read the old value; drop its result.
+        refreshGeneration = UUID()
+        do {
+            _ = try await store.updateMailPreferences(accountID: id, change)
+            await refresh()
+        } catch {
+            await refresh()
+            self.error = "Couldn't save the account preference."
+        }
     }
 
     /// Reorders accounts the way a list's `onMove` reports it and stores the result.

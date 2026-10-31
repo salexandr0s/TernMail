@@ -118,15 +118,16 @@ private struct AccountPreferenceEditor: View {
         }
 
         Section("Mail and profiles") {
-            SettingsToggleRow("Sync Mail", detail: "Keeps cached mail and drafts. New mail, sending and snoozes wait while paused.", isOn: Binding(get: { preferences.syncEnabled }, set: { enabled in
-                Task { await model.update(account.id) { $0.syncEnabled = enabled } }
-            }))
+            SettingsAsyncToggleRow("Sync Mail", detail: "Keeps cached mail and drafts. New mail, sending and snoozes wait while paused.",
+                                   isOn: preferences.syncEnabled) { enabled in
+                await model.update(account.id) { $0.syncEnabled = enabled }
+            }
             SettingsControlRow("Profile", detail: "This account also stays in All accounts.") {
-                Picker("Profile", selection: Binding(get: { preferences.profileID ?? "" }, set: { id in
-                    Task { await model.update(account.id) { $0.profileID = id.isEmpty ? nil : id } }
+                Picker("Profile", selection: Binding(preferences.profileID, set: { id in
+                    Task { await model.update(account.id) { $0.profileID = id } }
                 })) {
-                    Text("All accounts only").tag("")
-                    ForEach(model.profiles) { profile in Text(profile.name).tag(profile.id) }
+                    Text("All accounts only").tag(String?.none)
+                    ForEach(model.profiles) { profile in Text(profile.name).tag(Optional(profile.id)) }
                 }
                 .fixedSize()
             }
