@@ -261,7 +261,9 @@ struct MailCommands: Commands {
                     Label("Share", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon)
                 }
             } else {
-                Menu {} label: { Label("Share", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon) }
+                // A menu bar submenu stays enabled even when disabled, so the placeholder is a button.
+                Button("Share", systemImage: "square.and.arrow.up") {}
+                    .labelStyle(.titleAndIcon)
                     .disabled(true)
             }
         }
