@@ -243,11 +243,14 @@ struct ComposeView: View {
                     model.editor?.setLink(url)
                 }
             }
-            if model.attachments.contains(where: { $0.contentID == nil }) {
+            if model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty {
                 AttachmentStrip(
                     attachments: model.attachments.filter { $0.contentID == nil },
+                    failed: model.failedAttachments,
                     isEditable: model.isEditable,
-                    fileURL: { [model] in await model.attachmentFileURL($0) }
+                    fileURL: { [model] in await model.attachmentFileURL($0) },
+                    retry: { model.retry($0) },
+                    dismissFailure: { model.dismissFailure($0) }
                 ) {
                     model.removeAttachment($0)
                 }
