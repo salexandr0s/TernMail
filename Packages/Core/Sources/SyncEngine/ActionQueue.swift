@@ -45,12 +45,19 @@ final class WeakActionReceipt {
     init(_ value: ActionReceipt) { self.value = value }
 }
 
+/// A drain task asleep on its lane. The generation tells a timer that ran
+/// out from a later sleep on the same lane.
+struct LaneWaiter {
+    let generation: UInt64
+    let continuation: CheckedContinuation<Void, Never>
+}
+
 extension SyncEngine {
-    /// Applies `action` to the cache at once and queues it for Gmail after the
-    /// undo hold. Keep the returned receipt to undo it.
+    /// Applies `action` to the cache at once and queues it for Gmail. Keep the
+    /// returned receipt to undo it. Nil when nothing would change.
     @discardableResult
     public func perform(_ action: MailAction, threadIDs: [String]) async throws -> ActionReceipt? {
-        try await enqueue(action, threadIDs: threadIDs, hold: undoHold)
+        try await enqueue(action, threadIDs: threadIDs, hold: undoHolds.triage)
     }
 
     /// Reverts an action. A row Gmail has never seen is deleted. One that may
@@ -117,9 +124,9 @@ extension SyncEngine {
         let now = now()
         let notBefore = now.addingTimeInterval(hold)
         let rows = try await write { tx -> [PendingAction] in
-            try threadIDs.removingDuplicates().sorted().map { threadID in
+            try threadIDs.removingDuplicates().sorted().compactMap { threadID -> PendingAction? in
                 let threadIDs = [threadID]
-                func modify(add: [String] = [], remove: [String] = []) throws -> PendingAction {
+                func modify(add: [String] = [], remove: [String] = []) throws -> PendingAction? {
                     try tx.enqueue(
                         .modifyThreads, accountID: accountID, threadIDs: threadIDs,
                         add: add, remove: remove, now: now, notBefore: notBefore
@@ -149,6 +156,7 @@ extension SyncEngine {
                 }
             }
         }
+        guard !rows.isEmpty else { return nil }
         scheduleSending()
         return register(rows)
     }
@@ -178,30 +186,30 @@ extension SyncEngine {
                 _ = try tx.enqueue(restoringTrash ? .trashMessages : .untrashMessages,
                     accountID: accountID, messageIDs: ids,
                     add: restoringTrash ? [SystemLabel.trash] : [], remove: restoringTrash ? [] : [SystemLabel.trash],
-                    now: now, notBefore: now)
+                    now: now, notBefore: now, compensating: true)
             }
             if !restoringTrash {
                 let inbox = action.messageIDs.filter { action.diff[$0]?.removed.contains(SystemLabel.inbox) == true }
                 if !inbox.isEmpty {
                     _ = try tx.enqueue(.modifyMessages, accountID: accountID, messageIDs: inbox,
-                        add: [SystemLabel.inbox], now: now, notBefore: now)
+                        add: [SystemLabel.inbox], now: now, notBefore: now, compensating: true)
                 }
             }
         case .trashThreads:
             _ = try tx.enqueue(
                 .untrashThreads, accountID: accountID, threadIDs: action.threadIDs,
-                remove: [SystemLabel.trash], now: now, notBefore: now
+                remove: [SystemLabel.trash], now: now, notBefore: now, compensating: true
             )
             if !action.messageIDs.isEmpty {
                 _ = try tx.enqueue(
                     .modifyMessages, accountID: accountID, messageIDs: action.messageIDs,
-                    add: [SystemLabel.trash], now: now, notBefore: now
+                    add: [SystemLabel.trash], now: now, notBefore: now, compensating: true
                 )
             }
         case .untrashThreads:
             _ = try tx.enqueue(
                 .trashThreads, accountID: accountID, threadIDs: action.threadIDs,
-                add: [SystemLabel.trash], now: now, notBefore: now
+                add: [SystemLabel.trash], now: now, notBefore: now, compensating: true
             )
         case .saveDraft, .sendDraft, .discardDraft:
             // Draft rows have no inverse. Undo send cancels the row instead.
@@ -223,7 +231,7 @@ extension SyncEngine {
             for group in groups where !group.diff.added.isEmpty || !group.diff.removed.isEmpty {
                 _ = try tx.enqueue(
                     .modifyMessages, accountID: accountID, threadIDs: action.threadIDs, messageIDs: group.messageIDs,
-                    add: try resolve(group.diff.removed), remove: try resolve(group.diff.added), now: now, notBefore: now
+                    add: try resolve(group.diff.removed), remove: try resolve(group.diff.added), now: now, notBefore: now, compensating: true
                 )
             }
         }
@@ -231,43 +239,73 @@ extension SyncEngine {
 
     // MARK: Sending
 
-    /// Starts a send loop for each lane that isn't running.
+    /// Starts a send loop for each lane that isn't running, and wakes the
+    /// ones asleep, so a new row or an undo is looked at now.
     func scheduleSending() {
         guard sendsAutomatically, !isStopped else { return }
         let lanes: [PendingAction.Lane] = settings == nil ? [.labels, .compose] : [.labels, .compose, .settings]
         for lane in lanes {
             wakeRequests.insert(lane)
+            wake(lane)
             if drainTasks[lane] == nil {
                 drainTasks[lane] = Task { await drainQueue(lane) }
             }
         }
     }
 
-    /// Sends a lane's due rows until it is empty, checking each second for
-    /// new rows, undos and the end of a backoff.
+    /// Sends a lane's due rows until it is empty. Between rows it sleeps until
+    /// the next hold or backoff ends, or until `scheduleSending()` wakes it.
     private func drainQueue(_ lane: PendingAction.Lane) async {
         let accountID = accountID
         while !Task.isCancelled, !(lane == .compose && isStoppingDrafts) {
             wakeRequests.remove(lane)
-            let next = try? await cache.read { tx in
+            let dueTimes = try? await cache.read { tx in
                 try tx.pendingActions(accountID: accountID)
                     .filter { $0.state == .queued && $0.kind.lane == lane }
-                    .map(\.notBefore).min()
+                    .map(\.notBefore)
             }
-            guard let next = next ?? nil else {
+            guard let dueTimes, let next = dueTimes.min() else {
                 // A row queued while the read was in flight sets the flag again.
                 if wakeRequests.contains(lane) { continue }
                 break
             }
-            let wait = next.timeIntervalSince(now())
-            if wait > 0 {
-                try? await Task.sleep(for: .seconds(min(wait, 1)))
+            let now = now()
+            if next > now {
+                await sleepUntilWoken(lane, limit: next.timeIntervalSince(now))
             } else if await sendDue(lane) == 0 {
-                // Every due row waits behind an older change to its thread or draft.
-                try? await Task.sleep(for: .seconds(1))
+                // Every due row waits behind an older change to its thread or
+                // draft. The next backoff to end may release one.
+                let release = dueTimes.filter { $0 > now }.min()
+                await sleepUntilWoken(lane, limit: release?.timeIntervalSince(now) ?? 1)
             }
         }
         drainTasks[lane] = nil
+    }
+
+    /// Sleeps until `wake(_:)` is called for `lane` or `limit` seconds pass.
+    /// Returns at once when a wake request is already pending.
+    private func sleepUntilWoken(_ lane: PendingAction.Lane, limit: TimeInterval) async {
+        guard limit > 0, !isStopped, !Task.isCancelled, !wakeRequests.contains(lane) else { return }
+        laneWaiterGeneration += 1
+        let generation = laneWaiterGeneration
+        let timer = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(limit)) } catch { return }
+            await self?.wake(lane, generation: generation)
+        }
+        // Registering and `stop()` both run on the actor without suspending,
+        // so a waiter is either resumed by `stop()` or never registered after it.
+        await withCheckedContinuation { continuation in
+            laneWaiters[lane] = LaneWaiter(generation: generation, continuation: continuation)
+        }
+        timer.cancel()
+    }
+
+    /// Resumes the drain task asleep on `lane`. With a generation, only the
+    /// sleep it was set for.
+    func wake(_ lane: PendingAction.Lane, generation: UInt64? = nil) {
+        guard let waiter = laneWaiters[lane], generation == nil || waiter.generation == generation else { return }
+        laneWaiters[lane] = nil
+        waiter.continuation.resume()
     }
 
     private func sendDue(_ lane: PendingAction.Lane) async -> Int {
@@ -319,32 +357,25 @@ extension SyncEngine {
         case failed(String)
     }
 
-    /// Complete the original label snapshot before any whole-thread mutation.
-    /// Existing diffs survive retries; only newly discovered messages are added.
+    /// A change goes out as recorded: its diff names the messages the user
+    /// saw, and undo restores exactly those. Only a message-scoped trash or
+    /// untrash of messages the cache has never held fetches their labels
+    /// first, so undo can restore them too. Existing diffs survive retries.
     private func prepare(_ action: PendingAction) async throws -> PendingAction? {
-        guard ![.modifyMessages, .deleteMessages].contains(action.kind), let id = action.id else { return action }
+        guard action.kind == .trashMessages || action.kind == .untrashMessages, let id = action.id else { return action }
+        let unknown = action.messageIDs.filter { action.diff[$0] == nil }
+        guard !unknown.isEmpty else { return action }
         var snapshots: [GmailMessage] = []
-        if action.kind == .trashMessages || action.kind == .untrashMessages {
-            let found = try await gmail.messages(ids: action.messageIDs, format: .minimal, metadataHeaders: [])
-            for messageID in action.messageIDs {
-                guard let result = found[messageID] else { throw GmailError.missingBatchPart }
-                switch result {
-                case .success(let message):
-                    guard message.id == messageID else { throw GmailError.decoding("Message snapshot") }
-                    snapshots.append(message)
-                case .failure(.notFound): continue
-                case .failure(let error): throw error
-                }
+        let found = try await gmail.messages(ids: unknown, format: .minimal, metadataHeaders: [])
+        for messageID in unknown {
+            guard let result = found[messageID] else { throw GmailError.missingBatchPart }
+            switch result {
+            case .success(let message):
+                guard message.id == messageID else { throw GmailError.decoding("Message snapshot") }
+                snapshots.append(message)
+            case .failure(.notFound): continue
+            case .failure(let error): throw error
             }
-        }
-        for threadID in action.threadIDs {
-            let thread: GmailThread
-            do {
-                thread = try await gmail.thread(id: threadID, format: .metadata)
-            } catch GmailError.notFound { continue }
-            guard thread.id == threadID, let messages = thread.messages,
-                  messages.allSatisfy({ $0.threadId == threadID }) else { throw GmailError.decoding("Thread snapshot") }
-            snapshots += messages
         }
         return try await write { [snapshots] tx in
             guard var row = try tx.action(id: id), row.state == .sending else { return nil }
@@ -354,9 +385,7 @@ extension SyncEngine {
                     added: row.addLabelIDs.filter { !labels.contains($0) }.sorted(),
                     removed: row.removeLabelIDs.filter(labels.contains).sorted()
                 )
-                if row.kind == .trashThreads, labels.contains(SystemLabel.trash) { row.messageIDs.append(message.id) }
             }
-            row.messageIDs = row.messageIDs.removingDuplicates().sorted()
             try tx.updateAction(row)
             return row
         }
@@ -449,6 +478,11 @@ extension SyncEngine {
         if reported == true {
             unavailableUndoIDs.insert(id)
             continuation.yield(.actionFailed("Gmail didn't accept this change. The conversation was restored."))
+        }
+        // Gmail's own record of the change, and whatever it did alongside
+        // (a filter, a merged conversation), comes in with the next pass.
+        if case .sent = outcome, sendsAutomatically, current.kind.lane == .labels {
+            requestSync()
         }
     }
 

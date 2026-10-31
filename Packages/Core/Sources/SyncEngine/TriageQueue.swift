@@ -90,15 +90,16 @@ extension SyncEngine {
         guard !ids.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.triage)
         let rows = try await write { tx in
             let add = try add.map { try tx.resolvedLabelID($0, accountID: accountID) }
             let remove = try remove.map { try tx.resolvedLabelID($0, accountID: accountID) }.filter { !add.contains($0) }
-            return try stride(from: 0, to: ids.count, by: 1000).map { start in
+            return try stride(from: 0, to: ids.count, by: 1000).compactMap { start in
                 try tx.enqueue(kind, accountID: accountID, messageIDs: Array(ids[start..<min(start + 1000, ids.count)]),
                     add: add, remove: remove, now: now, notBefore: notBefore)
             }
         }
+        guard !rows.isEmpty else { return nil }
         scheduleSending()
         return register(rows)
     }
@@ -107,7 +108,7 @@ extension SyncEngine {
         guard triage != nil else { throw TriageError.unavailable }
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let row = try await write { tx -> PendingAction? in
             guard let label = try tx.displayedLabels(accountID: accountID).first(where: { $0.id == labelID }), !label.isSystem else {
                 throw LabelChangeError.notAUserLabel
@@ -131,17 +132,18 @@ extension SyncEngine {
         guard !ids.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.triage)
         let rows = try await write { tx in
-            try stride(from: 0, to: ids.count, by: 1000).map { start in
+            try stride(from: 0, to: ids.count, by: 1000).compactMap { start -> PendingAction? in
                 let chunk = Array(ids[start..<min(start + 1000, ids.count)])
-                var row = try tx.enqueue(.modifyMessages, accountID: accountID, messageIDs: chunk,
-                    remove: [SystemLabel.unread], now: now, notBefore: notBefore)
+                guard var row = try tx.enqueue(.modifyMessages, accountID: accountID, messageIDs: chunk,
+                    remove: [SystemLabel.unread], now: now, notBefore: notBefore) else { return nil }
                 row.diff = Dictionary(uniqueKeysWithValues: chunk.map { ($0, .init(added: [], removed: [SystemLabel.unread])) })
                 try tx.updateAction(row)
                 return row
             }
         }
+        guard !rows.isEmpty else { return nil }
         scheduleSending()
         return register(rows)
     }
@@ -178,9 +180,9 @@ extension SyncEngine {
         let now = now()
         let ids = approved.messageIDs
         _ = try await write { tx in
-            try stride(from: 0, to: ids.count, by: 1000).map { start in
-                var row = try tx.enqueue(.deleteMessages, accountID: accountID,
-                    messageIDs: Array(ids[start..<min(start + 1000, ids.count)]), now: now, notBefore: now)
+            try stride(from: 0, to: ids.count, by: 1000).compactMap { start -> PendingAction? in
+                guard var row = try tx.enqueue(.deleteMessages, accountID: accountID,
+                    messageIDs: Array(ids[start..<min(start + 1000, ids.count)]), now: now, notBefore: now) else { return nil }
                 row.labelID = approved.labelID
                 try tx.updateAction(row)
                 return row

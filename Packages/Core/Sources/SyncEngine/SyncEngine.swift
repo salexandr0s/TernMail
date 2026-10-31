@@ -32,6 +32,31 @@ enum SyncError: Error, Equatable {
 /// Passes run one at a time. The first download publishes complete chunks so
 /// mail is available while it continues. History and reset passes commit
 /// atomically; no pass advances its cursor until all requests succeed.
+/// How long each kind of change waits in the queue before it goes to Gmail.
+/// A change still waiting is undone by deleting its row; one that has gone
+/// out is undone with the inverse change, which costs one more request. The
+/// defaults send everything at once, so a change shows in Gmail as soon as
+/// it shows in Tern. Sending a draft has its own delay in `ComposeQueue`.
+public struct UndoHolds: Sendable, Equatable {
+    /// Archive, trash, read, star, snooze and label edits on conversations and messages.
+    public var triage: TimeInterval
+    /// Creating, renaming, recoloring and hiding labels.
+    public var labels: TimeInterval
+    /// Filters, the vacation responder and signatures.
+    public var settings: TimeInterval
+
+    public init(triage: TimeInterval = 0, labels: TimeInterval = 0, settings: TimeInterval = 0) {
+        self.triage = triage
+        self.labels = labels
+        self.settings = settings
+    }
+
+    /// Every kind waits `seconds`, for tests of the hold itself.
+    public static func uniform(_ seconds: TimeInterval) -> UndoHolds {
+        UndoHolds(triage: seconds, labels: seconds, settings: seconds)
+    }
+}
+
 public actor SyncEngine {
     /// The threading headers let a reply answer a message without fetching it.
     static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"]
@@ -70,7 +95,7 @@ public actor SyncEngine {
     let cache: MailCache
     let now: @Sendable () -> Date
     let sleep: @Sendable (Duration) async throws -> Void
-    let undoHold: TimeInterval
+    let undoHolds: UndoHolds
     let sendsAutomatically: Bool
     let indexesAttachmentsAutomatically: Bool
 
@@ -103,6 +128,10 @@ public actor SyncEngine {
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     var drainTasks: [PendingAction.Lane: Task<Void, Never>] = [:]
     var wakeRequests = Set<PendingAction.Lane>()
+    /// A drain task asleep until its lane's next row is due, or until a new
+    /// row or an undo wakes it. See `sleepUntilWoken(_:limit:)`.
+    var laneWaiters: [PendingAction.Lane: LaneWaiter] = [:]
+    var laneWaiterGeneration: UInt64 = 0
     /// Sends under way, so `stop()` can let them finish. The drain task and
     /// `sendWaitingDraftsNow()` can each be running one.
     var sendsInFlight = 0
@@ -131,8 +160,9 @@ public actor SyncEngine {
     /// - Parameters:
     ///   - settings: Defaults to `gmail` when it makes the settings calls.
     ///   - identities: Defaults to `gmail` when it lists send-as addresses.
-    ///   - undoHold: Seconds a new action waits before it is sent, so undo can cancel it.
-    ///   - sendsAutomatically: Tests turn this off and call `sendDueActions()` themselves.
+    ///   - undoHolds: How long each kind of change waits before it is sent, so undo can cancel it.
+    ///   - sendsAutomatically: Whether the engine sends queued rows itself and syncs after
+    ///     each sent change. Tests turn this off and call `sendDueActions()` and `sync()`.
     ///   - sleep: Waits between retries. Tests replace it to skip the wait.
     public init(
         accountID: String,
@@ -145,7 +175,7 @@ public actor SyncEngine {
         people: (any PeopleService)? = nil,
         accounts: AccountStore? = nil,
         cache: MailCache,
-        undoHold: TimeInterval = 2,
+        undoHolds: UndoHolds = UndoHolds(),
         sendsAutomatically: Bool = true,
         indexesAttachmentsAutomatically: Bool = false,
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
@@ -161,7 +191,7 @@ public actor SyncEngine {
         self.people = people
         self.accounts = accounts
         self.cache = cache
-        self.undoHold = undoHold
+        self.undoHolds = undoHolds
         self.sendsAutomatically = sendsAutomatically
         self.indexesAttachmentsAutomatically = indexesAttachmentsAutomatically
         self.sleep = sleep
@@ -243,6 +273,10 @@ public actor SyncEngine {
         let drains = Array(drainTasks.values)
         drainTasks = [:]
         drains.forEach { $0.cancel() }
+        // A cancelled drain asleep on its lane must wake to see the cancellation.
+        let waiters = Array(laneWaiters.values)
+        laneWaiters = [:]
+        waiters.forEach { $0.continuation.resume() }
         let running = pass
         running?.cancel()
         for drain in drains { await drain.value }
@@ -499,7 +533,13 @@ public actor SyncEngine {
             threads.formUnion(try tx.upsertMessages(live))
             // Store the cursor even when nothing changed, so the next pass starts later.
             try tx.saveCursor(historyID: latest, accountID: accountID)
-            try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+            // A sent change leaves the overlay once Gmail's history has moved
+            // past the cursor, which is when its own record of the change can
+            // be in the cache. `history.list` can lag the write's response by
+            // a moment; a pass that saw nothing new keeps the change in view.
+            if latest > cursor {
+                try tx.dropSentActions(sentBefore: passStart, accountID: accountID)
+            }
             try tx.rebuildThreads(threads, accountID: accountID)
         }
         await publishMailNotification(from: cursor, to: latest, added: MailSyncNotification.addedMessageHistory(records))

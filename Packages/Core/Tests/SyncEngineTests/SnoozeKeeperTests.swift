@@ -110,14 +110,14 @@ private let hour: TimeInterval = 60 * 60
         #expect(try await holds(cache).isEmpty)
         #expect(try await accounts.snoozes(accountID: account).isEmpty)
 
-        // A crash before the record was deleted wakes it again, which changes nothing.
+        // A crash before the record was deleted wakes it again. The conversation
+        // is already on its way back, so nothing more is sent.
         try await accounts.saveSnooze(SnoozeRecord(accountID: account, threadID: "t1", wakeAt: baseDate + hour, createdAt: baseDate))
         await gmail.setThread(try thread("t1", [("m1", [])]))
         await keeper.check()
         while await engine.sendDueActions() > 0 {}
         #expect(await gmail.changes == [
             Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox]),
-            Change("batchModify", ["m1"], add: [SystemLabel.inbox]),
             Change("batchModify", ["m1"], add: [SystemLabel.inbox]),
         ])
         #expect(try await holds(cache).isEmpty)

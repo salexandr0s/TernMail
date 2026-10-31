@@ -25,7 +25,7 @@ extension SyncEngine {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let row = try await write { tx in
             if let problem = LabelRules.problem(with: name, among: try tx.displayedLabels(accountID: accountID)) {
                 throw LabelChangeError.name(problem)
@@ -46,7 +46,7 @@ extension SyncEngine {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let rows = try await write { tx -> [PendingAction] in
             let labels = try tx.displayedLabels(accountID: accountID)
             let label = try Self.userLabel(labelID, among: labels, accountID: accountID, in: tx)
@@ -88,7 +88,7 @@ extension SyncEngine {
     public func setLabelColor(_ labelID: String, to color: LabelColor?) async throws -> ActionReceipt? {
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.labels)
         let row = try await write { tx -> PendingAction? in
             let label = try Self.userLabel(labelID, among: try tx.displayedLabels(accountID: accountID), accountID: accountID, in: tx)
             let old = Self.color(of: label)
@@ -146,7 +146,7 @@ extension SyncEngine {
         guard !threadIDs.isEmpty else { return nil }
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.triage)
         let rows = try await write { tx -> [PendingAction] in
             let resolve = { (ids: [String]) throws -> [String] in
                 try ids.map { try tx.resolvedLabelID($0, accountID: accountID) }.removingDuplicates()
@@ -160,7 +160,7 @@ extension SyncEngine {
             }
             remove = remove.filter { !add.contains($0) }.removingDuplicates()
             guard !add.isEmpty || !remove.isEmpty else { return [] }
-            return try threadIDs.map { threadID in
+            return try threadIDs.compactMap { threadID in
                 try tx.enqueue(
                     .modifyThreads, accountID: accountID, threadIDs: [threadID],
                     add: add, remove: remove, now: now, notBefore: notBefore

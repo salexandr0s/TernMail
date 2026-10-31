@@ -62,7 +62,7 @@ extension SyncEngine {
     private func queueSettingsChange(_ change: PendingAction.SettingsChange) async throws -> ActionReceipt {
         let accountID = accountID
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.settings)
         let row = try await write { tx in
             try tx.enqueueSettingsChange(change, accountID: accountID, now: now, notBefore: notBefore)
         }

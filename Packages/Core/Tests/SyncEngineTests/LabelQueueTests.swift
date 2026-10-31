@@ -185,7 +185,7 @@ import Testing
     }
 
     @Test func aDeleteWaitsForOlderUsesThenTakesTheLabelOutOfTheCache() async throws {
-        let (engine, cache, gmail, clock) = try await makeEngine()
+        let (engine, cache, gmail, clock) = try await makeEngine(undoHolds: .uniform(2))
         try await setLabels([("Label_1", "Trips")], cache, gmail)
         try await seed(cache, [
             ("m1", "t1", [SystemLabel.inbox, "Label_1"]), ("m2", "t2", [SystemLabel.inbox]),

@@ -57,22 +57,74 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await pendingActions(cache).map(\.state) == [.sent, .sent])
     }
 
-    @Test func undoAfterConfirmationRestoresUncachedMessagesFromTheSendSnapshot() async throws {
+    @Test func archiveGoesOutInOneRequestAndUndoRestoresTheMessagesTheUserSaw() async throws {
         let (engine, cache, gmail, clock) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
         await gmail.setThread(try decode(GmailThread.self, """
-            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1")),\(try encodedMessage("m2", thread: "t1")),\(try encodedMessage("m3", thread: "t1", labels: [SystemLabel.sent]))]}
+            {"id":"t1","messages":[\(try encodedMessage("m1", thread: "t1")),\(try encodedMessage("m2", thread: "t1"))]}
             """))
         let receipt = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
-        clock.advance(3)
         await engine.sendDueActions()
+        #expect(await gmail.fullThreadRequests.isEmpty)
+        #expect(await gmail.metadataRequests.isEmpty)
+        #expect(await gmail.changes == [Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox])])
         clock.advance(1)
         await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"250"}"#))
         try await engine.sync()
         #expect(try await pendingActions(cache).isEmpty)
         try await engine.undo(receipt)
         await engine.sendDueActions()
-        #expect(await gmail.changes.last == Change("batchModify", ["m1", "m2"], add: [SystemLabel.inbox]))
+        #expect(await gmail.changes.last == Change("batchModify", ["m1"], add: [SystemLabel.inbox]))
+    }
+
+    @Test func aSentChangeStaysInViewUntilGmailsHistoryMovesPastTheCursor() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        await engine.sendDueActions()
+        clock.advance(1)
+        // history.list has not caught up with the write yet.
+        try await engine.sync()
+        #expect(try await pendingActions(cache).map(\.state) == [.sent])
+        #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
+        await gmail.queueHistory(try decode(HistoryPage.self, #"{"historyId":"250"}"#))
+        try await engine.sync()
+        #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test func aChangeThatAltersNothingQueuesNoRow() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        #expect(try await engine.perform(.markRead, threadIDs: ["t1"]) == nil)
+        #expect(try await engine.perform(.markRead, target: .messages(["m1"])) == nil)
+        #expect(try await pendingActions(cache).isEmpty)
+        // Gmail may know the message even though the cache does not.
+        #expect(try await engine.perform(.markRead, target: .messages(["m9"])) != nil)
+    }
+
+    @Test func aQueueChangeWakesTheSenderBeforeItsTimerEnds() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine(undoHolds: .uniform(30), sendsAutomatically: true)
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
+        try await engine.perform(.archive, threadIDs: ["t1"])
+        let second = try #require(try await engine.perform(.archive, threadIDs: ["t2"]))
+        // The sender sleeps until the hold ends, on a timer of 30 real seconds.
+        // The test clock moves past the hold; only a wake lets the sender see it.
+        clock.advance(31)
+        try await engine.undo(second)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await gmail.changes.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gmail.changes == [Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox])])
+        // A sent change asks for a pass, so Gmail's own record of it comes in.
+        let syncStarted = Task { () -> Bool in
+            for await event in engine.events where event == .syncStarted { return true }
+            return false
+        }
+        let timeout = Task { try? await Task.sleep(for: .seconds(2)); syncStarted.cancel() }
+        #expect(await syncStarted.value)
+        timeout.cancel()
+        await engine.stop()
     }
 
     @Test func undoTrashKeepsMessagesThatWereAlreadyInTrash() async throws {
@@ -139,7 +191,7 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
     }
 
     @Test func undoDuringTheHoldSendsNothing() async throws {
-        let (engine, cache, gmail, clock) = try await makeEngine()
+        let (engine, cache, gmail, clock) = try await makeEngine(undoHolds: .uniform(2))
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
 
         let action = try #require(try await engine.perform(.archive, threadIDs: ["t1"]))
@@ -1515,7 +1567,7 @@ struct TestClock: Sendable {
     }
 }
 
-func makeEngine(indexesAttachmentsAutomatically: Bool = false) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
+func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHolds = UndoHolds(), sendsAutomatically: Bool = false) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
     let cache = try MailCache.inMemory()
     let gmail = FakeGmail()
     let clock = TestClock()
@@ -1525,7 +1577,8 @@ func makeEngine(indexesAttachmentsAutomatically: Bool = false) async throws -> (
         outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: "TernTests-\(UUID().uuidString)", directoryHint: .isDirectory),
         gmail: gmail,
         cache: cache,
-        sendsAutomatically: false,
+        undoHolds: undoHolds,
+        sendsAutomatically: sendsAutomatically,
         indexesAttachmentsAutomatically: indexesAttachmentsAutomatically,
         now: clock.now
     )

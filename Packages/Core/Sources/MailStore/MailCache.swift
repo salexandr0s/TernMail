@@ -267,6 +267,11 @@ public struct CacheTransaction {
 
     /// Records a local label change and rebuilds the affected threads so the UI
     /// shows it at once. The diff is taken against what the user currently sees.
+    /// Nil when the change would alter no label the cache knows: nothing to
+    /// show, send or undo. A deletion, or a message the cache has not seen,
+    /// is never a no-op. Nor is a `compensating` change: it makes Gmail match
+    /// the cache after a change Gmail may have applied, such as the inverse
+    /// of an undone row, so it is queued whatever the cache shows.
     public func enqueue(
         _ kind: PendingAction.Kind,
         accountID: String,
@@ -275,19 +280,20 @@ public struct CacheTransaction {
         add: [String] = [],
         remove: [String] = [],
         now: Date,
-        notBefore: Date
-    ) throws -> PendingAction {
+        notBefore: Date,
+        compensating: Bool = false
+    ) throws -> PendingAction? {
         let existing = try pendingActions(accountID: accountID)
         var affectedThreads = Set(threadIDs)
         if !messageIDs.isEmpty {
             affectedThreads.formUnion(try threadIDsOf(messageIDs: messageIDs, accountID: accountID))
         }
+        let messageScoped = [.modifyMessages, .trashMessages, .untrashMessages, .deleteMessages].contains(kind)
 
         var diff: [String: PendingAction.LabelDiff] = [:]
         var alreadyTrashed: [String] = []
         for threadID in affectedThreads {
             let labels = try effectiveLabels(threadID: threadID, accountID: accountID, actions: existing)
-            let messageScoped = [.modifyMessages, .trashMessages, .untrashMessages, .deleteMessages].contains(kind)
             let targets = messageScoped ? messageIDs.filter { labels[$0] != nil } : Array(labels.keys)
             for messageID in targets {
                 let current = labels[messageID] ?? []
@@ -297,9 +303,14 @@ public struct CacheTransaction {
                     removed: remove.filter { current.contains($0) }.sorted()
                 )
                 // Empty diffs still record which messages were known when the
-                // command was made, so a later send snapshot won't rewrite them.
+                // command was made; a sent change is overlaid on those alone.
                 diff[messageID] = change
             }
+        }
+        let unknown = messageScoped ? messageIDs.filter { diff[$0] == nil } : []
+        if !compensating, kind != .deleteMessages, !diff.isEmpty, unknown.isEmpty,
+           diff.values.allSatisfy({ $0.added.isEmpty && $0.removed.isEmpty }) {
+            return nil
         }
 
         var action = PendingAction(
@@ -536,7 +547,17 @@ enum ThreadRules {
             let targets: [String]
             switch action.kind {
             case .modifyThreads, .trashThreads, .untrashThreads:
-                targets = action.threadIDs.contains(threadID) ? Array(labels.keys) : []
+                // Gmail applied a sent change to the messages the thread had
+                // then, which the diff names; a message that arrived since
+                // keeps its own labels. A change still to go out covers
+                // whatever the thread holds when it does.
+                if !action.threadIDs.contains(threadID) {
+                    targets = []
+                } else if action.state == .sent {
+                    targets = action.diff.keys.filter { labels[$0] != nil }
+                } else {
+                    targets = Array(labels.keys)
+                }
             case .modifyMessages, .trashMessages, .untrashMessages:
                 targets = action.messageIDs.filter { labels[$0] != nil }
             case .deleteMessages:

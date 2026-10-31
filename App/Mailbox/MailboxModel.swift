@@ -120,7 +120,6 @@ final class MailboxModel {
     @ObservationIgnored private var threadLimit = pageSize
     @ObservationIgnored private var undoEntries: [UUID: UndoEntry] = [:]
     @ObservationIgnored private var undoOrder: [UUID] = []
-    @ObservationIgnored private var actionTask: Task<Void, Never>?
     @ObservationIgnored private var undoSendTimer: Task<Void, Never>?
 
     /// The retained targets are bounded along with UndoManager's history.
@@ -346,7 +345,6 @@ final class MailboxModel {
         navigationTask?.cancel()
         search.stop()
         older?.cancel()
-        actionTask?.cancel()
         undoSendTimer?.cancel()
         for entry in undoEntries.values {
             undoManager?.removeAllActions(withTarget: entry)
@@ -753,7 +751,9 @@ final class MailboxModel {
         return queueUndoable(name, confirmation: confirmation, steps: [step], revert: revert, sound: sound)
     }
 
-    /// Queues the steps with Undo, in order after earlier commands. The undo
+    /// Runs the steps with Undo. Commands don't wait for earlier ones to
+    /// finish, so an archive never queues behind a snooze that is still
+    /// fetching; the engines keep the order of the rows they write. The undo
     /// entry is registered inside the initiating event, so it can remember
     /// an undo requested before the engines return the durable queue rows.
     /// `confirmation` shows in a notice with Undo.
@@ -761,10 +761,8 @@ final class MailboxModel {
         guard !isStopped, !steps.isEmpty else { return nil }
         let entry = UndoEntry(name: name, revert: revert)
         registerUndo(entry)
-        let previous = actionTask
         let task = Task {
             defer { entry.isQueued = false }
-            await previous?.value
             guard !isStopped, !Task.isCancelled else { return }
             var failure: (any Error)?
             // An account signed out meanwhile is skipped, and so is its change.
@@ -797,7 +795,6 @@ final class MailboxModel {
                 notice = Notice(message: confirmation, undo: .action(handle))
             }
         }
-        actionTask = task
         return task
     }
 

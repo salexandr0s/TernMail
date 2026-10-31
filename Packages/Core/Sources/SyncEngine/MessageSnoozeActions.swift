@@ -27,7 +27,7 @@ extension SyncEngine {
         let fetched = try await fetchThreadMetadata(Array(legacyThreads))
         guard fetched.missing.isEmpty else { throw TriageError.incompleteResponse }
         let now = now()
-        let notBefore = now.addingTimeInterval(undoHold)
+        let notBefore = now.addingTimeInterval(undoHolds.triage)
         let deleted = deletedMessageIDs
         let result = try await write { tx -> ([PendingAction], MessageSnoozeChange) in
             let live = deleted.withLock { tombstones in fetched.updates.filter { !tombstones.contains($0.record.id) } }
@@ -52,7 +52,8 @@ extension SyncEngine {
             }
             let previous = Dictionary(uniqueKeysWithValues: try tx.messageSnoozeHolds(accountID: accountID)
                 .filter { ids.contains($0.messageID) }.map { ($0.messageID, $0) })
-            let rows = try messages.map { message in
+            // A message already out of the Inbox gets its hold and no row.
+            let rows = try messages.compactMap { message -> PendingAction? in
                 let row = try tx.enqueue(.modifyMessages, accountID: accountID, messageIDs: [message.id],
                     remove: [SystemLabel.inbox], now: now, notBefore: notBefore)
                 try tx.holdMessageSnooze(.init(accountID: accountID, messageID: message.id, threadID: message.threadID,

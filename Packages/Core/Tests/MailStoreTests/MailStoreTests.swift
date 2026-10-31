@@ -18,9 +18,9 @@ private let account = "acct"
         }
         #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
 
-        let action = try await cache.write { tx in
+        let action = try #require(try await cache.write { tx in
             try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now)
-        }
+        })
         #expect(action.diff == ["m1": .init(added: [], removed: [SystemLabel.inbox]), "m2": .init(added: [], removed: [])])
         #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
         #expect(try await threadIDs(cache, SystemLabel.allMail) == ["t1"])
@@ -29,6 +29,66 @@ private let account = "acct"
         let id = try #require(action.id)
         try await cache.write { tx in try tx.deleteAction(id: id) }
         #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+    }
+
+    @Test func aSentThreadChangeLeavesMessagesThatArrivedLaterAlone() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([update("m1", thread: "t1", labels: [SystemLabel.inbox])])
+            try tx.rebuildThreads(["t1"], accountID: account)
+        }
+        var action = try #require(try await cache.write { tx in
+            try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now)
+        })
+        // While the change waits, a reply that arrives is archived with the rest.
+        try await cache.write { tx in
+            try tx.upsertMessages([update("m2", thread: "t1", labels: [SystemLabel.inbox], minutes: 5)])
+            try tx.rebuildThreads(["t1"], accountID: account)
+        }
+        #expect(try await threadIDs(cache, SystemLabel.inbox).isEmpty)
+
+        // Once Gmail has applied it, only the messages it knew about are archived.
+        action.state = .sent
+        action.sentAt = .now
+        try await cache.write { [action] tx in
+            try tx.updateAction(action)
+            try tx.rebuildThreads(["t1"], accountID: account)
+        }
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+        let labels = try await cache.read { tx in
+            try tx.effectiveLabels(threadID: "t1", accountID: account, actions: try tx.pendingActions(accountID: account))
+        }
+        #expect(labels["m1"] == [])
+        #expect(labels["m2"] == [SystemLabel.inbox])
+    }
+
+    @Test func aChangeThatAltersNoKnownLabelIsNotQueued() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m1", thread: "t1", labels: [SystemLabel.sent]),
+                update("m2", thread: "t2", labels: [SystemLabel.trash]),
+            ])
+            try tx.rebuildThreads(["t1", "t2"], accountID: account)
+        }
+        let rows = try await cache.write { tx in
+            [
+                try tx.enqueue(.modifyThreads, accountID: account, threadIDs: ["t1"], remove: [SystemLabel.inbox], now: .now, notBefore: .now),
+                try tx.enqueue(.modifyMessages, accountID: account, messageIDs: ["m1"], remove: [SystemLabel.unread], now: .now, notBefore: .now),
+                try tx.enqueue(.trashThreads, accountID: account, threadIDs: ["t2"], add: [SystemLabel.trash], now: .now, notBefore: .now),
+            ]
+        }
+        #expect(rows.allSatisfy { $0 == nil })
+        #expect(try await pendingKinds(cache).isEmpty)
+
+        // A deletion has no label diff, and the cache may not know every message.
+        let kept = try await cache.write { tx in
+            [
+                try tx.enqueue(.deleteMessages, accountID: account, messageIDs: ["m2"], now: .now, notBefore: .now),
+                try tx.enqueue(.modifyMessages, accountID: account, messageIDs: ["m1", "m9"], remove: [SystemLabel.unread], now: .now, notBefore: .now),
+            ]
+        }
+        #expect(kept.allSatisfy { $0 != nil })
     }
 
     @Test func aCombinedListKeepsTheSameThreadIDFromTwoAccountsApart() async throws {

@@ -71,7 +71,7 @@ import Testing
             let change = try tx.enqueueSettingsChange(signature("me@example.com"), accountID: acct, now: now, notBefore: now)
 
             #expect(try tx.claimDueActions(accountID: acct, now: now, lane: .settings).map(\.id) == [change.id])
-            #expect(try tx.claimDueActions(accountID: acct, now: now + 60, lane: .labels).map(\.id) == [archive.id])
+            #expect(try tx.claimDueActions(accountID: acct, now: now + 60, lane: .labels).map(\.id) == [archive?.id])
             #expect(try tx.claimDueActions(accountID: acct, now: now + 60, lane: .compose).isEmpty)
         }
     }
