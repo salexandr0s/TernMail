@@ -126,7 +126,7 @@ struct ReceivedAttachmentsView: View {
 
 /// An attachment as a file for dragging and sharing. The download happens
 /// when the receiver asks for the file, so an untouched chip costs nothing.
-private struct AttachmentFileItem: Transferable {
+struct AttachmentFileItem: Transferable {
     let attachment: AttachmentRecord
     let mailbox: MailboxModel
 

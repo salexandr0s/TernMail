@@ -20,9 +20,12 @@ enum AttachmentActions {
         return try await AttachmentFileExport.copyWithoutReplacing(source, to: folder)
     }
 
-    static func open(_ source: URL) async throws {
+    /// Returns the file that opened: the source, or its copy in Downloads.
+    @discardableResult
+    static func open(_ source: URL) async throws -> URL {
         let file = try await openingURL(source)
         guard NSWorkspace.shared.open(file) else { throw CocoaError(.fileReadUnknown) }
+        return file
     }
 
     static func openWith(_ source: URL) async throws {
