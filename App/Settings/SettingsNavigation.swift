@@ -18,6 +18,21 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         SettingsDestination(rawValue: rawValue) ?? .general
     }
 
+    /// Moves a pane saved before the two signature panes merged.
+    /// "localSignatures" opens Signatures on this Mac, and "signatures", which
+    /// then meant Gmail Signatures, opens Signatures in Gmail. The move saves a
+    /// signature source, and a saved source skips it, so it runs once and a
+    /// later "signatures" keeps the source the user chose.
+    static func migrateSavedPane(in defaults: UserDefaults = .standard) {
+        guard defaults.object(forKey: SignatureSource.storageKey) == nil else { return }
+        let saved = defaults.string(forKey: storageKey)
+        if saved == "localSignatures" {
+            defaults.set(SettingsDestination.signatures.rawValue, forKey: storageKey)
+        }
+        let source: SignatureSource = saved == SettingsDestination.signatures.rawValue ? .gmail : .local
+        defaults.set(source.rawValue, forKey: SignatureSource.storageKey)
+    }
+
     var title: String {
         switch self {
         case .general: "General"

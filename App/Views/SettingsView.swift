@@ -10,6 +10,11 @@ struct SettingsView: View {
     @State private var unsaved = SettingsUnsavedChanges()
     @State private var pendingLeave: PendingLeave?
 
+    init() {
+        // Before the window first reads the stored pane.
+        SettingsDestination.migrateSavedPane()
+    }
+
     private var destination: SettingsDestination { SettingsDestination.stored(storedDestination) }
 
     /// The sidebar follows the stored pane, so another window can land Settings
