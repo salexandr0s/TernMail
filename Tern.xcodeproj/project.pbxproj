@@ -134,6 +134,7 @@
 		541C00E543BC6D6FDF5C55B7 /* Color+GmailHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6566F513957295F17D09EB /* Color+GmailHex.swift */; };
 		54F0643F608EA827E7161AD0 /* ComposeFeatureCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45879A9FDF1B517254E856E6 /* ComposeFeatureCommands.swift */; };
 		552B607ACD1A82363714F84E /* MailSpotlightIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08CE59A85E646ED16D777A85 /* MailSpotlightIndexer.swift */; };
+		55BFAADF6014E62DC78DB258 /* WindowCloseGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0907279D904C94E5B6AE6F5 /* WindowCloseGuard.swift */; };
 		55F26EF2BB97BA6D64C33485 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CA71DE49E2223C4232B67FAF /* Assets.xcassets */; };
 		567A89431FDA30790914DADD /* AssistantWritingStyleBindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 976DF53D6263E0F92E922EB2 /* AssistantWritingStyleBindings.swift */; };
 		582792874D6E818C39497EB4 /* Tern.sdef in Resources */ = {isa = PBXBuildFile; fileRef = 3160DB72492003E42099D739 /* Tern.sdef */; };
@@ -670,6 +671,7 @@
 		DDED45524A7D8FB43C18C976 /* ReadingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingPolicyTests.swift; sourceTree = "<group>"; };
 		DFDC6FD9EFE137E8077B57C8 /* MailboxModel+Restoration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Restoration.swift"; sourceTree = "<group>"; };
 		E084EBEC496D72C477C9D2FB /* AttachmentLibraryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibraryModel.swift; sourceTree = "<group>"; };
+		E0907279D904C94E5B6AE6F5 /* WindowCloseGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCloseGuard.swift; sourceTree = "<group>"; };
 		E0CFFA697854C472363308A8 /* AssistantMarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownTests.swift; sourceTree = "<group>"; };
 		E19D65AB42A124A25D59129D /* AssistantMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdown.swift; sourceTree = "<group>"; };
 		E29A0B0B690F25D229A8C9B8 /* CalendarManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarManagementView.swift; sourceTree = "<group>"; };
@@ -869,6 +871,7 @@
 				313612542F6E2902BDDD3B95 /* ThreadListView.swift */,
 				24BB9B46E342248DBF893DA9 /* ThreadView.swift */,
 				4CBCB320012A0F94BB95991B /* TriageControls.swift */,
+				E0907279D904C94E5B6AE6F5 /* WindowCloseGuard.swift */,
 				4495C7655653F21ED937ED6B /* WorkspaceAssistantToolbar.swift */,
 				CB31A42ACD68CED567F7AE15 /* WorkspaceSearch.swift */,
 				3C7975ECDE6AFD6C2ED24C3F /* WorkspaceSection.swift */,
@@ -1684,6 +1687,7 @@
 				6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */,
 				1D9533B01C204A2EBC8AF535 /* TriageControls.swift in Sources */,
 				FD6DE2872464C2EE7C1666B2 /* VacationPane.swift in Sources */,
+				55BFAADF6014E62DC78DB258 /* WindowCloseGuard.swift in Sources */,
 				300C77DFE21D00EBB6E807C8 /* WorkspaceAssistantToolbar.swift in Sources */,
 				1DA0EA3A9CB0810E593D6325 /* WorkspaceSearch.swift in Sources */,
 				B8F6B920CC38C6C07CF75363 /* WorkspaceSection.swift in Sources */,

@@ -40,7 +40,7 @@ struct ComposeWindow: View {
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
         .background(WindowEditedMarker(isEdited: isEdited))
-        .background(ComposeWindowCloseGuard { [closer] in closer.shouldClose() })
+        .background(WindowCloseGuard { [closer] _ in closer.shouldClose() })
         .background(ComposeWindowCascade())
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
@@ -749,45 +749,6 @@ final class ComposeWindowCloser {
         guard let model, !model.closesAtOnce else { return true }
         Task { await model.requestClose() }
         return false
-    }
-}
-
-/// Asks `shouldClose` before the close button or File > Close closes the
-/// window. Every other delegate call still reaches the delegate SwiftUI installed.
-private struct ComposeWindowCloseGuard: NSViewRepresentable {
-    let shouldClose: @MainActor () -> Bool
-
-    func makeNSView(context: Context) -> GuardView { GuardView() }
-
-    func updateNSView(_ nsView: GuardView, context: Context) {
-        nsView.delegate.shouldClose = shouldClose
-    }
-
-    final class GuardView: NSView {
-        let delegate = ForwardingDelegate()
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let window, window.delegate !== delegate else { return }
-            delegate.next = window.delegate
-            window.delegate = delegate
-        }
-    }
-
-    final class ForwardingDelegate: NSObject, NSWindowDelegate {
-        weak var next: NSWindowDelegate?
-        var shouldClose: @MainActor () -> Bool = { true }
-
-        func windowShouldClose(_ sender: NSWindow) -> Bool {
-            guard shouldClose() else { return false }
-            return next?.windowShouldClose?(sender) ?? true
-        }
-
-        override func responds(to aSelector: Selector!) -> Bool {
-            super.responds(to: aSelector) || next?.responds(to: aSelector) == true
-        }
-
-        override func forwardingTarget(for aSelector: Selector!) -> Any? { next }
     }
 }
 
