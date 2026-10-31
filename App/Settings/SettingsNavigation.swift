@@ -118,7 +118,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .connections: "google login sign in sync accounts permissions calendar contacts deletion"
         case .accountPreferences: "nickname color order profile sync pause"
         case .profiles: "work personal groups focus notification schedule hours"
-        case .reading: "remote images privacy tracking company business bank logos sender photos website icons dark mode conversation order mark read delay text size"
+        case .reading: "remote images privacy tracking company business bank logos sender photos website icons dark mode conversation order mark read delay text size spotlight search index"
         case .messageList: "density compact comfortable preview swipe sidebar mailbox count badges importance"
         case .attachments: "download files preview cache"
         case .writing: "font reply format markdown quote recipients send from default account"
