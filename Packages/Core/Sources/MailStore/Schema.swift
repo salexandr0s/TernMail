@@ -433,6 +433,22 @@ enum Schema {
                 SELECT accountID, messageID, labelID FROM messageLabel
                 """)
         }
+        migrator.registerMigration("list-flags-v1") { db in
+            // Whether a message's To or Cc names one of the account's own
+            // addresses, for the list's Addressed to Me filter, and the
+            // addresses that decides it by. The engine stores those from the
+            // sign-in address and the send-as identities (`setOwnAddresses`),
+            // which marks the messages cached before then. Until it does, no
+            // message is marked.
+            try db.alter(table: "message") { t in
+                t.add(column: "addressedToMe", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "ownAddress") { t in
+                t.column("accountID", .text).notNull()
+                t.column("address", .text).notNull()
+                t.primaryKey(["accountID", "address"])
+            }
+        }
         return migrator
     }
 

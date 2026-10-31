@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import MessageContent
 
 /// The message cache (`cache.sqlite`). A full sync can restore the mail in it,
 /// but not local drafts or pending actions: resyncs keep those, and deleting
@@ -55,7 +56,7 @@ public struct CacheTransaction {
         "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "effectiveLabel",
         "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
-        "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold",
+        "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold", "ownAddress",
         "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
     ]
 
@@ -124,11 +125,17 @@ public struct CacheTransaction {
     /// threads that changed. An update older than the stored copy (lower
     /// history ID) is ignored, and one identical to it writes nothing, so a
     /// pass or a thread fetch that brings no news leaves every observer quiet.
+    /// Each message is marked `addressedToMe` by the account's own addresses
+    /// (`setOwnAddresses`).
     @discardableResult
     public func upsertMessages(_ updates: [MessageUpdate]) throws -> Set<String> {
         var threads = Set<String>()
+        var ownAddressesByAccount: [String: Set<String>] = [:]
         for update in updates {
-            let record = update.record
+            var record = update.record
+            let own = try ownAddressesByAccount[record.accountID] ?? ownAddresses(accountID: record.accountID)
+            ownAddressesByAccount[record.accountID] = own
+            record.addressedToMe = Self.names(own, recipients: record.recipients, cc: record.cc)
             let labelIDs = Set(update.labelIDs)
             var storedLabels = Set<String>()
             if let stored = try MessageRecord.fetchOne(db, key: ["accountID": record.accountID, "id": record.id]) {
@@ -160,6 +167,56 @@ public struct CacheTransaction {
         try String.fetchSet(
             db, sql: "SELECT labelID FROM messageLabel WHERE accountID = ? AND messageID = ?", arguments: [accountID, messageID]
         )
+    }
+
+    /// Stores the account's own addresses, which decide `addressedToMe`, and
+    /// marks its cached messages again when they changed. Case doesn't
+    /// matter.
+    public func setOwnAddresses(_ addresses: Set<String>, accountID: String) throws {
+        let wanted = Set(addresses.map { $0.lowercased() })
+        let stored = try ownAddresses(accountID: accountID)
+        guard wanted != stored else { return }
+        for address in stored.subtracting(wanted) {
+            try db.execute(sql: "DELETE FROM ownAddress WHERE accountID = ? AND address = ?", arguments: [accountID, address])
+        }
+        for address in wanted.subtracting(stored) {
+            try db.execute(sql: "INSERT INTO ownAddress (accountID, address) VALUES (?, ?)", arguments: [accountID, address])
+        }
+        try recomputeAddressedToMe(accountID: accountID)
+    }
+
+    /// The account's own addresses in lowercase, as `setOwnAddresses` stored them.
+    func ownAddresses(accountID: String) throws -> Set<String> {
+        try String.fetchSet(db, sql: "SELECT address FROM ownAddress WHERE accountID = ?", arguments: [accountID])
+    }
+
+    /// Marks each of the account's cached messages by the stored own
+    /// addresses, writing only the rows whose mark changes.
+    func recomputeAddressedToMe(accountID: String) throws {
+        let own = try ownAddresses(accountID: accountID)
+        var changed: [(id: String, addressedToMe: Bool)] = []
+        let rows = try Row.fetchCursor(
+            db, sql: "SELECT id, recipients, cc, addressedToMe FROM message WHERE accountID = ?", arguments: [accountID]
+        )
+        while let row = try rows.next() {
+            let marked: Bool = row["addressedToMe"]
+            let addressed = Self.names(own, recipients: row["recipients"], cc: row["cc"])
+            if addressed != marked { changed.append((row["id"], addressed)) }
+        }
+        // Written after the read: a cursor mustn't see its own table change.
+        for change in changed {
+            try db.execute(
+                sql: "UPDATE message SET addressedToMe = ? WHERE accountID = ? AND id = ?",
+                arguments: [change.addressedToMe, accountID, change.id]
+            )
+        }
+    }
+
+    /// Whether a To header (`recipients`) or a Cc header names one of
+    /// `addresses`, which are lowercase.
+    static func names(_ addresses: Set<String>, recipients: String, cc: String?) -> Bool {
+        guard !addresses.isEmpty else { return false }
+        return (EmailAddress.parseList(recipients) + EmailAddress.parseList(cc ?? "")).contains { addresses.contains($0.normalized) }
     }
 
     /// Applies a history label change to a cached message and raises its stored

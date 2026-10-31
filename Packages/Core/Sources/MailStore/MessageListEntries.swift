@@ -3,7 +3,7 @@ import GRDB
 import MessageContent
 
 /// Body-free list data with each message's effective labels and file metadata.
-public struct MessageListEntry: Sendable, Equatable {
+public struct MessageListEntry: Sendable, Hashable {
     public let message: MessageRecord
     public let labels: Set<String>
     public let attachments: [AttachmentRecord]

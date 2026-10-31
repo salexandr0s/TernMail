@@ -237,7 +237,7 @@ public struct DraftRecord: Codable, Sendable, Equatable, FetchableRecord, Persis
 }
 
 /// An attachment on a received message, listed when its body is stored.
-public struct AttachmentRecord: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
+public struct AttachmentRecord: Codable, Sendable, Hashable, Identifiable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "attachment"
 
     public var accountID: String

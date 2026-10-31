@@ -77,6 +77,18 @@ extension MailCache {
         return observe { db in try ThreadRecord.fetchAll(db, sql: sql, arguments: arguments) }
     }
 
+    /// A mailbox's newest `limit` conversations under `labelID` across the
+    /// accounts and the messages they show, read together as one page.
+    public func listPage(accountIDs: [String], labelID: String, limit: Int) -> AsyncThrowingStream<MailListPage, any Error> {
+        listPage(.mailbox(accountIDs: accountIDs, labelID: labelID, limit: limit))
+    }
+
+    /// The page `builder` describes, read again after each write that
+    /// changes it. A write that leaves the page as it was sends nothing.
+    public func listPage(_ builder: MailListPageBuilder) -> AsyncThrowingStream<MailListPage, any Error> {
+        observe { db in try builder.page(in: CacheTransaction(db: db)) }
+    }
+
     /// A conversation as the reader shows it. Its labels are the stored
     /// effective labels, so a queue row that changes state without changing
     /// a label wakes no reader.
