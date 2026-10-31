@@ -18,7 +18,7 @@ The fourteen `NSViewRepresentable` wrappers, the `Task.detached` render path in 
 
 ## Status at `58101df`
 
-Phase 0 (`035b43c` to `a7801f2`) and Phase 1 (`2b6fbab` to `88def6b`) finished after this review; their entries under Work phases list the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
+Phase 0 (`035b43c` to `a7801f2`), Phase 1 (`2b6fbab` to `88def6b`) and Phase 2 (`23bd6f3` to `16d0572`) finished after this review; their entries under Work phases list the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
 
 - `ThreadRow` and `ThreadMenuItems` were deleted (`c1b7537`).
 - `MessageListRow` reads `ReadingPreferences.textScaleKey` (`2012eb2`) and exposes one accessibility element with a composed summary (`b71eb0e`).
@@ -346,14 +346,30 @@ Done in 24 commits, `2b6fbab` to `88def6b`. `c02569c` in that range is the separ
 
 ### Phase 2: correctness
 
-- `MessageListRow.swift` L54 stops reading main-actor state from the `alignmentGuide` closure, so the app target builds without warnings.
-- Stable row identity in the event editor's guest and alert lists.
-- `CalendarView` stops recreating the grid across the compact width, and the 8 AM scroll moves to a model-held `ScrollPosition`.
-- `AttachmentLibraryCollection.select` takes modifiers explicitly.
-- `ReceivedAttachmentsView` opens the clicked file first, shares in-flight downloads, and Save All reports partial results.
-- `ThreadView` keeps one `.id`.
-- `AssistantMailPaneSizing`: run the macOS 26 test in the Assistant section with `setPosition` disabled. Remove the width probe if it passes, otherwise keep only a restore helper. Split out the safe-area inset and check whether macOS 26 still needs it. `AssistantSidebarLayoutTests` stays as the regression test.
-- Done: the Signatures pane no longer writes on open, and a lower cache budget asks before trimming (`c5ebd40`).
+Done in nine commits, `23bd6f3` to `16d0572`.
+
+- `MessageListRow` copies `textLeading` into a local before the `alignmentGuide` closure, which is `Sendable` (`23bd6f3`). The app target now builds without warnings.
+- The event editor keys guests by address and alerts by an `EditableReminder` row with its own `UUID`, so removing a middle row keeps the other rows' toggles and pickers (`5d7bfb4`). The index-based `.id` is gone, and `id: \.offset` sites fell from 8 to 6.
+- `CalendarView` keeps one `HSplitView` and leaves the sidebar out of it below the compact width, which `onGeometryChange` reports, so the grid keeps its state and scroll offset (`090ca10`). Its `GeometryReader` is gone, which leaves 12 in the app.
+  - Deviation: the 8 AM start is a point-based `ScrollPosition` that `CalendarTimeGrid` holds, not the model. In a test harness on macOS 26, `ScrollPosition(id:)` never applied its first position, and after a user scroll the binding reported `isPositionedByUser` with no point, so a model-held position could not bring back the user's offset after a rebuild. Keeping the split is what keeps the offset. `CalendarLayoutTests.timeGridOpensAtEightInTheMorning` checks the start.
+  - `CalendarView.swift` is over 300 lines. Rule 9's cleanup found no dead code or unused imports, so no separate commit came first.
+- `AttachmentLibraryCollection.select` and `moveSelection` take modifiers as parameters (`4dc05d1`). A click passes the Shift and Command keys held at that moment, which `onModifierKeysChanged` tracks. Arrow keys pass Shift only, and the accessibility default action passes none. Nothing reads `NSEvent.modifierFlags` any more.
+- `ReceivedAttachmentsView` (`eeed593`):
+  - Quick Look opens the clicked file as soon as it downloads, then adds the others in message order while the panel stays open.
+  - `InFlightTasks` shares a running download between the preview, Save All and the chips. `InFlightTasksTests` checks that a second request waits for the first, which covers Phase 6's shared-download test.
+  - Save All skips failed downloads and says "Saved all N attachments.", "Saved X of N attachments." or "Couldn't save the attachments. Try another folder."
+- `ThreadView` gives each message the one `.id(message.id)` that its `scrollTo` calls use (`54d42f2`). The account-qualified inner id did nothing: `MainView` already rebuilds `ThreadView` per thread key, and the key carries the account.
+- `AssistantMailPaneSizing` (`59679bc`, `e384712`, `16d0572`):
+  - The test: a harness that mirrors `MainView`'s columns ran on macOS 26 with `setPosition` disabled, at 960 and 1280 points, after dragging both columns. The column widths alone narrowed both panes to their minimums, and at 960 navigation collapsed without resizing the window. Closing restored the dragged widths at 1280, but at 960 the list fell back to its minimum.
+  - So the helper now only restores. It saves the divider positions on open and sets them again after close. An attempt that runs before the split widens waits for the next layout pass instead of clamping the list and spending its retries, and `restoreWaitsForTheSplitToWiden` fails without that wait. In the harness, 12 of 12 closes restored the dragged widths.
+  - On macOS 26 the list column's frame starts at x 0, under the sidebar, so the helper saves each pane's `maxX`, which is the divider position, in place of its width.
+  - The inset is still needed. `MainView` clips the mail columns so a split wider than its frame never draws over the assistant, and any clip or mask drops the split's toolbar safe area. Unclipped, the split had 52 points of top safe area; clipped, it had none and the first rows sat under the toolbar. `ClippedSplitToolbarInset` now owns the measurement, and `SidebarLayoutTests` checks that the rows clear the toolbar.
+  - `EnclosingSplitDivider` finds the divider for the probe and for `DividerGrabView`. The probe is `MailColumnProbe`, in its own file.
+  - Found, not fixed: with the assistant open below about 950 points, the list, reader and divider need 629 points, more than the mail area has. The split then overflows that area centered, and in the harness at 720 points the leading 115 points of the list sat past the window's left edge. `frame(width:alignment: .leading)` kept the leading edge in view in the harness, but it needs a check in the running app first.
+  - Also open: saved positions that stay out of reach, for example after the window shrinks while the assistant is open, stay pending and apply on a later widening.
+- Done earlier: the Signatures pane no longer writes on open, and a lower cache budget asks before trimming (`c5ebd40`).
+- Not checked: the Accessibility Inspector audit and VoiceOver pass that Verification lists for this phase, and the changes in the running app.
+- At `16d0572`, TernTests pass (334 tests in 55 suites) and a clean Debug build reports no warnings in `App/`. Its three warnings are in `Packages/Core` (`PrintDocument.swift` L23 and L25, `DraftImport.swift` L85), outside this plan.
 
 ### Phase 3: performance
 
