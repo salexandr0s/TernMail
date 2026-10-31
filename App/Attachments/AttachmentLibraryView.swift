@@ -14,6 +14,11 @@ struct AttachmentLibraryView: View {
 
     private var filterCount: Int { AttachmentFilterChip.values(for: model).filter { $0.id != "search" }.count }
     private var hasFilters: Bool { !AttachmentFilterChip.values(for: model).isEmpty }
+    /// An empty library shows the first pass's progress in place of the list,
+    /// and the status bar leaves out its count until results arrive.
+    private var showsIndexProgress: Bool {
+        model.items.isEmpty && !model.isLoading && !hasFilters && model.isBuildingIndex
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -109,9 +114,9 @@ struct AttachmentLibraryView: View {
                     .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if model.isBuildingIndex {
+        } else if showsIndexProgress {
             ProgressView {
-                Text("Finding attachments in your mail…")
+                Text(model.coverageSummary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -152,7 +157,7 @@ struct AttachmentLibraryView: View {
     private var pageControls: some View {
         HStack(spacing: Tokens.Space.s2) {
             if model.isWorking { ProgressView().controlSize(.mini); Text("Preparing files…") }
-            else { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
+            else if !showsIndexProgress { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
             if model.hasPreviousPage || model.hasMore {
                 Button { model.previousPage() } label: { Image(systemName: "chevron.left") }
                     .disabled(!model.hasPreviousPage || model.isLoading)

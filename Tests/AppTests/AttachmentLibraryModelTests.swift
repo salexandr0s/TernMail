@@ -156,7 +156,7 @@ import Testing
         await mailbox.stop()
     }
 
-    @Test func indexProgressEndsWhenIndexingCompletesFailsOrNeedsSignIn() async throws {
+    @Test func indexProgressEndsWhenIndexingCompletesFailsOrCannotRun() async throws {
         let mailbox = try mailbox()
         let model = AttachmentLibraryModel(mailbox: mailbox)
         #expect(model.isBuildingIndex)
@@ -177,6 +177,10 @@ import Testing
         state.isComplete = true
         try await mailbox.cache.write { [state] tx in try tx.saveAttachmentIndexState(state) }
         try await waitUntil { model.indexStates.first?.isComplete == true }
+        #expect(!model.isBuildingIndex)
+        // With Sync Mail off an account never starts its first pass.
+        await mailbox.addAccount(AccountRecord(id: "second", email: "second@example.invalid", displayName: nil,
+            grantedScopes: [], addedAt: .now), gmail: AuditGmail(.second), syncEnabled: false)
         #expect(!model.isBuildingIndex)
         await mailbox.stop()
     }

@@ -226,6 +226,8 @@ struct CalendarView: View {
 
     private var emptyCalendars: some View {
         let hasConnection = model.accounts.contains { model.connectionState(for: $0.id).isEnabled }
+        // A reload can help only accounts that are already connected.
+        let canRetry = model.accounts.contains { !model.connectionState(for: $0.id).needsAuthorization }
         return ScrollView {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: hasConnection ? "No calendars to show" : "Your calendars in Tern",
@@ -242,8 +244,17 @@ struct CalendarView: View {
                 }
                 .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 .ternOutline(radius: Tokens.Radius.md)
-                if hasConnection {
-                    Button("Manage Calendars…", action: manageCalendars).buttonStyle(.bordered)
+                if app.isSigningIn || canRetry || hasConnection {
+                    HStack(spacing: Tokens.Space.s3) {
+                        if app.isSigningIn {
+                            Button("Cancel Sign-In") { app.auth.cancelSignIn() }
+                        } else if canRetry {
+                            Button("Retry", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                                .disabled(model.isLoading)
+                        }
+                        if hasConnection { Button("Manage Calendars…", action: manageCalendars) }
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
             .padding(Tokens.Space.s4)
