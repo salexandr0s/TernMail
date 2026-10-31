@@ -11,14 +11,14 @@ public struct DetectedCalendarSuggestion: Codable, Sendable, Equatable, Identifi
     public var sourceText: String
     public var sourceLocation: Int
     public var sourceLength: Int
-    public var start: Date?
+    public var start: Date
     public var end: Date?
     public var isAllDay: Bool
     public var timeZoneID: String
     public var uncertainties: [Uncertainty]
 
     public init(id: String, sourceText: String, sourceLocation: Int, sourceLength: Int,
-                start: Date?, end: Date?, isAllDay: Bool, timeZoneID: String,
+                start: Date, end: Date?, isAllDay: Bool, timeZoneID: String,
                 uncertainties: [Uncertainty]) {
         self.id = id; self.sourceText = sourceText
         self.sourceLocation = sourceLocation; self.sourceLength = sourceLength
@@ -50,73 +50,42 @@ public enum CalendarDetection {
     }
 
     /// Ranges refer to the supplied text in UTF-16 units, as NSTextCheckingResult does.
-    /// Relative dates never use the day on which the message happens to be opened.
+    /// Every date resolves against the message date, never the day on which the
+    /// message happens to be opened. A mention becomes a suggestion only when it
+    /// names an upcoming day: times, durations, opening hours, deadlines and past
+    /// days are left out, so every suggestion has a date.
     public static func suggestions(in text: String, messageDate: Date,
                                    timeZone: TimeZone = .autoupdatingCurrent,
                                    locale: Locale = .autoupdatingCurrent) -> [DetectedCalendarSuggestion] {
         guard text.utf16.count <= maximumTextLength,
               let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else { return [] }
-        let visible = unquotedText(text)
-        let matches = detector.matches(in: visible, range: NSRange(visible.startIndex..., in: visible))
+        let visible = unquotedText(text) as NSString
+        var mentions: [DateMention] = []
+        for match in detector.matches(in: visible as String, range: NSRange(location: 0, length: visible.length)) {
+            guard let mention = DateMention(match, in: visible, locale: locale) else { continue }
+            if mention.day != nil {
+                mentions.append(mention)
+            } else if let last = mentions.indices.last, mentions[last].canTakeTime(from: mention, in: visible) {
+                mentions[last].join(mention)
+            }
+        }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         calendar.locale = locale
-
-        return matches.prefix(maximumSuggestions).compactMap { match in
-            guard let range = Range(match.range, in: text), let detected = match.date else { return nil }
-            let source = String(text[range])
-            let lower = source.lowercased(with: locale)
-            let hasTime = matchesPattern(#"\d{1,2}:\d{2}|\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.|uhr)\b|\b(?:noon|midnight|mittag|mitternacht)\b"#, lower)
-            let hasYear = matchesPattern(#"\b(?:19|20|21)\d{2}\b"#, lower)
-            let relativeOffset = relativeDayOffset(in: lower)
-            let hasRelative = relativeOffset != nil || matchesPattern(#"\b(?:next|last|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|nächste|kommende)\b"#, lower)
-            var uncertainty: [DetectedCalendarSuggestion.Uncertainty] = []
-            let effectiveZone = match.timeZone ?? timeZone
-            var detectorCalendar = calendar
-            detectorCalendar.timeZone = match.timeZone ?? .autoupdatingCurrent
-            var targetCalendar = calendar
-            targetCalendar.timeZone = effectiveZone
-            // The detector interprets unqualified clock times in the Mac's zone.
-            // Rebuild their wall-clock components in the user's chosen zone.
-            var result: Date? = match.timeZone == nil
-                ? targetCalendar.date(from: detectorCalendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: detected))
-                : detected
-            if let offset = relativeOffset {
-                var referenceCalendar = calendar
-                referenceCalendar.timeZone = effectiveZone
-                if let day = referenceCalendar.date(byAdding: .day, value: offset, to: referenceCalendar.startOfDay(for: messageDate)) {
-                    let time = detectorCalendar.dateComponents([.hour, .minute, .second], from: detected)
-                    result = hasTime
-                        ? referenceCalendar.date(bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0, of: day)
-                        : day
-                } else { result = nil }
-            } else if !hasYear || hasRelative {
-                // NSDataDetector does not expose its reference date. An incomplete
-                // date from old mail therefore needs review rather than a guessed year.
-                result = nil
-                uncertainty.append(.dateNeedsReview)
-            }
-            if !hasTime, matchesPattern(#"\b(?:at|um)\s+\d{1,2}\b"#, lower) {
-                uncertainty.append(.timeNeedsReview)
-            }
-            let isAllDay = !hasTime && !uncertainty.contains(.timeNeedsReview)
-            if hasTime, match.timeZone == nil { uncertainty.append(.timeZoneMissing) }
-            let end: Date?
-            if match.duration > 0, let result {
-                end = result.addingTimeInterval(match.duration)
-            } else if isAllDay, let result {
-                end = calendar.date(byAdding: .day, value: 1, to: result)
-            } else {
-                end = nil
-                uncertainty.append(.durationMissing)
-            }
-            return DetectedCalendarSuggestion(
-                id: "\(match.range.location):\(match.range.length):\(source)", sourceText: source,
-                sourceLocation: match.range.location, sourceLength: match.range.length,
-                start: result, end: end, isAllDay: isAllDay,
-                timeZoneID: effectiveZone.identifier, uncertainties: uncertainty
-            )
+        var results: [DetectedCalendarSuggestion] = []
+        for mention in mentions {
+            guard let range = Range(mention.range, in: text),
+                  let suggestion = mention.suggestion(source: String(text[range]), messageDate: messageDate, calendar: calendar),
+                  !results.contains(where: { $0.start == suggestion.start && $0.end == suggestion.end }) else { continue }
+            results.append(suggestion)
         }
+        // A bare date adds nothing when a timed mention names the same day.
+        let timedStarts = results.filter { !$0.isAllDay }.map(\.start)
+        results.removeAll { candidate in
+            candidate.isAllDay && candidate.end.map { calendar.dateComponents([.day], from: candidate.start, to: $0).day == 1 } != false
+                && timedStarts.contains { calendar.isDate($0, inSameDayAs: candidate.start) }
+        }
+        return Array(results.prefix(maximumSuggestions))
     }
 
     /// Masking keeps source offsets stable while excluding common quotation and
@@ -143,19 +112,5 @@ public enum CalendarDetection {
             offset = NSMaxRange(lineRange)
         }
         return output as String
-    }
-
-    private static func matchesPattern(_ pattern: String, _ text: String) -> Bool {
-        text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    private static func relativeDayOffset(in text: String) -> Int? {
-        for (pattern, offset) in [
-            (#"\b(?:day after tomorrow|übermorgen)\b"#, 2),
-            (#"\b(?:tomorrow|morgen)\b"#, 1),
-            (#"\b(?:today|heute)\b"#, 0),
-            (#"\b(?:yesterday|gestern)\b"#, -1),
-        ] where matchesPattern(pattern, text) { return offset }
-        return nil
     }
 }

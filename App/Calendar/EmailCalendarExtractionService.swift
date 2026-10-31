@@ -54,7 +54,9 @@ struct EmailCalendarExtractionService {
             Include an exact supporting_text excerpt from that source message's text and its message_id.
             Use superseded_message_ids only for earlier messages whose meeting proposal this update or cancellation replaces.
             A date mentioned in passing, an email signature, a deadline with no meeting, or quoted content is not a confirmed meeting.
-            Use status proposed, updated, or cancelled. Put null for dates or time zones the evidence does not establish.
+            Opening hours, sales and offers, delivery estimates, billing dates, and durations such as a two-night stay are not events either.
+            Propose an event only once the messages establish its date. Only an update or cancellation of an earlier proposal may leave start null.
+            Use status proposed, updated, or cancelled. Put null for an end or time zone the evidence does not establish.
             Timed dates must be RFC3339 with offsets; all-day dates must be YYYY-MM-DD with an exclusive end date.
             Do not invent durations, invitees, or facts. List missing or uncertain details in uncertainties.
             All results are editable proposals. Do not claim any event has been saved or any invitation sent.
