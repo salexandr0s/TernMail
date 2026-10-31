@@ -101,7 +101,7 @@ final class NavigationPerformance {
     /// Captures timing only; neither keys, characters, locations nor targets are read.
     func installInputMonitoring() {
         guard inputMonitor == nil, !ProcessInfo.processInfo.arguments.contains("--performance-audit") else { return }
-        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .keyDown]) { [weak self] event in
             // AppKit calls local event monitors on its main event-dispatch thread.
             MainActor.assumeIsolated { self?.captureInput(timestamp: event.timestamp) }
             return event
