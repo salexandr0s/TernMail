@@ -194,7 +194,12 @@ import Testing
         try await waitUntil { mailbox.threads.map(\.id) == ["t2"] && mailbox.snoozed.map(\.id) == ["t1"] }
         #expect(try await accounts.snoozes(accountID: account.id).map(\.threadID) == ["t1"])
         mailbox.selectedMailbox = .account("audit", MailboxModel.snoozedID)
+        // A first visit publishes the threads and their message rows from one
+        // cache transaction, rather than showing summaries before their rows.
+        try await waitUntil { mailbox.isListPresentationReady }
         #expect(mailbox.threads.map(\.id) == ["t1"])
+        #expect(mailbox.listEntries.map(\.message.id) == ["m1"])
+        #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m1"])
         #expect(mailbox.wakeTimes[key("t1")] != nil)
 
         // Undo from the notice takes back the archive, the hold and the record.
@@ -204,6 +209,7 @@ import Testing
         }
         mailbox.undo(receipt)
         try await waitUntil { mailbox.snoozed.isEmpty && mailbox.threads.isEmpty }
+        #expect(mailbox.listEntries.isEmpty)
         #expect(try await accounts.snoozes(accountID: account.id).isEmpty)
         mailbox.selectedMailbox = .account("audit", SystemLabel.inbox)
         try await waitUntil { mailbox.threads.map(\.id).sorted() == ["t1", "t2"] }
