@@ -23,7 +23,7 @@ struct CalendarEventEditor: View {
     @State private var attendees: [CalendarAttendee]
     @State private var newAttendee = ""
     @State private var useDefaultAlerts: Bool
-    @State private var reminders: [CalendarReminder]
+    @State private var reminders: [EditableReminder]
     @State private var isSaving = false
     @State private var error: String?
     @State private var confirmedNotifications = false
@@ -48,7 +48,7 @@ struct CalendarEventEditor: View {
         _recurrence = State(initialValue: event.recurrence ?? [])
         _attendees = State(initialValue: event.attendees ?? [])
         _useDefaultAlerts = State(initialValue: event.reminders?.useDefault ?? true)
-        _reminders = State(initialValue: event.reminders?.overrides ?? [])
+        _reminders = State(initialValue: (event.reminders?.overrides ?? []).map { EditableReminder(reminder: $0) })
     }
 
     private var editable: Bool { draft.source?.canEdit ?? true }
@@ -128,7 +128,7 @@ struct CalendarEventEditor: View {
                         Label("No guests added", systemImage: "person.2")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(Array(attendees.enumerated()), id: \.offset) { index, attendee in
+                    ForEach($attendees, id: \.email) { $attendee in
                         HStack {
                             AddressAvatar(accountID: selectedCalendar?.accountID ?? draft.source?.accountID,
                                           address: attendee.email, name: attendee.displayName ?? "",
@@ -139,8 +139,8 @@ struct CalendarEventEditor: View {
                                 Text(Self.responseTitle(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: Tokens.Space.s2)
-                            Toggle("Optional", isOn: $attendees[index].optional.or(false)).toggleStyle(.checkbox).disabled(draft.isDeletion)
-                            Button { attendees.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove guest").accessibilityLabel("Remove \(attendee.displayName ?? attendee.email)").disabled(draft.isDeletion)
+                            Toggle("Optional", isOn: $attendee.optional.or(false)).toggleStyle(.checkbox).disabled(draft.isDeletion)
+                            Button { attendees.removeAll { $0.email == attendee.email } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove guest").accessibilityLabel("Remove \(attendee.displayName ?? attendee.email)").disabled(draft.isDeletion)
                         }
                     }
                     HStack {
@@ -168,18 +168,18 @@ struct CalendarEventEditor: View {
                 Section("Alerts") {
                     Toggle("Use Calendar Defaults", isOn: $useDefaultAlerts)
                     if !useDefaultAlerts {
-                        ForEach(Array(reminders.enumerated()), id: \.offset) { index, reminder in
+                        ForEach($reminders) { $row in
                             HStack {
-                                Picker("Method", selection: $reminders[index].method) {
+                                Picker("Method", selection: $row.reminder.method) {
                                     Text("Notification").tag("popup"); Text("Email").tag("email")
                                 }
-                                TextField("Minutes before", value: $reminders[index].minutes, format: .number).frame(width: Tokens.Space.s16)
+                                TextField("Minutes before", value: $row.reminder.minutes, format: .number).frame(width: Tokens.Space.s16)
                                 Text("minutes before").font(.caption).foregroundStyle(.secondary).fixedSize()
-                                Button { reminders.remove(at: index) } label: { Image(systemName: "minus.circle") }
+                                Button { reminders.removeAll { $0.id == row.id } } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
-                            }.id("\(index)-\(reminder.method)")
+                            }
                         }
-                        Button("Add Alert") { reminders.append(CalendarReminder(minutes: 10)) }.disabled(reminders.count >= 5)
+                        Button("Add Alert") { reminders.append(EditableReminder(reminder: CalendarReminder(minutes: 10))) }.disabled(reminders.count >= 5)
                     }
                 }.disabled(draft.isDeletion)
                 Section {
@@ -251,7 +251,7 @@ struct CalendarEventEditor: View {
         if draft.isDeletion { submit(draft); return }
         guard let zone = TimeZone(identifier: zoneID) else { error = "Choose a valid time zone."; return }
         guard allDay ? end >= start : end > start else { error = "The end must be after the start."; return }
-        guard reminders.allSatisfy({ (0...40320).contains($0.minutes) }) else { error = "Alerts must be between 0 and 40,320 minutes before the event."; return }
+        guard reminders.allSatisfy({ (0...40320).contains($0.reminder.minutes) }) else { error = "Alerts must be between 0 and 40,320 minutes before the event."; return }
         if !eventURL.isEmpty {
             guard let url = URL(string: eventURL), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { error = "Enter a complete http or https URL."; return }
         }
@@ -260,7 +260,7 @@ struct CalendarEventEditor: View {
         values.title = title; values.location = location; values.notes = notes; values.url = eventURL
         values.start = start; values.end = end; values.allDay = allDay; values.timeZoneID = zoneID
         values.recurrence = recurrence; values.attendees = attendees
-        values.usesDefaultAlerts = useDefaultAlerts; values.reminders = reminders
+        values.usesDefaultAlerts = useDefaultAlerts; values.reminders = reminders.map(\.reminder)
         output.event = values.applying(to: draft.event, calendar: calendar, timeZone: zone)
         submit(output)
     }

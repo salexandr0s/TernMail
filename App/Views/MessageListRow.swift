@@ -36,6 +36,8 @@ struct MessageListRow: View {
     }
 
     var body: some View {
+        // alignmentGuide closures are Sendable, so they take a copy rather than reading the view.
+        let separatorLeading = textLeading
         HStack(alignment: .center, spacing: Tokens.Space.s1_5) {
             Circle().fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
@@ -52,7 +54,7 @@ struct MessageListRow: View {
         .padding(.horizontal, Tokens.Space.s1)
         .padding(.vertical, Tokens.Space.s1)
         .onHover { isHovered = $0 }
-        .alignmentGuide(.listRowSeparatorLeading) { _ in textLeading }
+        .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
         .accessibilityElement(children: .combine)

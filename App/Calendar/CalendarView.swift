@@ -20,23 +20,23 @@ struct CalendarView: View {
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(CalendarDisplayMode.storageKey, store: CalendarDefaults.store) private var storedMode = CalendarDisplayMode.week
     @State private var showCalendarList = false
+    @State private var isCompact = false
     @FocusState private var hasKeyboardFocus: Bool
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                if geometry.size.width < Tokens.Calendar.compactWidth {
-                    calendarPane(compact: true)
-                } else {
-                    HSplitView {
-                        sidebar.frame(minWidth: Tokens.Layout.sidebarWidth,
-                                      idealWidth: Tokens.Calendar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
-                        calendarPane(compact: false).frame(minWidth: Tokens.Calendar.contentMinWidth)
-                    }
+        VStack(spacing: 0) {
+            // One split view at every width: crossing the compact width only adds or
+            // removes the sidebar, so the grid keeps its scroll position and drag state.
+            HSplitView {
+                if !isCompact {
+                    sidebar.frame(minWidth: Tokens.Layout.sidebarWidth,
+                                  idealWidth: Tokens.Calendar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
                 }
-                footer
+                calendarPane(compact: isCompact).frame(minWidth: isCompact ? nil : Tokens.Calendar.contentMinWidth)
             }
+            footer
         }
+        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: { isCompact = $0 }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
         .onAppear { model.mode = storedMode }

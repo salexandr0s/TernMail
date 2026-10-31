@@ -31,11 +31,11 @@ final class DividerGrabView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let (splitView, index) = divider else { return }
-        draggedSplitView = splitView
-        dividerIndex = index
-        initialMouseX = splitView.convert(event.locationInWindow, from: nil).x
-        initialPosition = splitView.arrangedSubviews[index].frame.maxX
+        guard let divider else { return }
+        draggedSplitView = divider.split
+        dividerIndex = divider.index
+        initialMouseX = divider.split.convert(event.locationInWindow, from: nil).x
+        initialPosition = divider.pane.frame.maxX
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -59,18 +59,6 @@ final class DividerGrabView: NSView {
         window?.invalidateCursorRects(for: self)
     }
 
-    /// SwiftUI may nest split views. Find the divider after this pane using
-    /// public view ancestry, leaving its controller and delegate in charge.
-    private var divider: (NSSplitView, Int)? {
-        var child: NSView = self
-        while let parent = child.superview {
-            if let splitView = parent as? NSSplitView, splitView.isVertical,
-               let index = splitView.arrangedSubviews.firstIndex(where: { $0 === child }),
-               index < splitView.arrangedSubviews.count - 1 {
-                return (splitView, index)
-            }
-            child = parent
-        }
-        return nil
-    }
+    /// The split's controller and delegate stay in charge of the divider.
+    private var divider: EnclosingSplitDivider? { EnclosingSplitDivider(of: self) }
 }

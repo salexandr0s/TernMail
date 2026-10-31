@@ -18,7 +18,7 @@ The fourteen `NSViewRepresentable` wrappers, the `Task.detached` render path in 
 
 ## Status at `58101df`
 
-Phase 0 finished after this review, in `035b43c` to `a7801f2`; its entry under Work phases lists the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
+Phase 0 (`035b43c` to `a7801f2`), Phase 1 (`2b6fbab` to `88def6b`) and Phase 2 (`23bd6f3` to `16d0572`) finished after this review; their entries under Work phases list the commits. The findings below still cite line numbers at `58101df`. At that revision no phase had started as planned work. Feature commits since `75374d4` finished these items along the way, and the sections below no longer list them:
 
 - `ThreadRow` and `ThreadMenuItems` were deleted (`c1b7537`).
 - `MessageListRow` reads `ReadingPreferences.textScaleKey` (`2012eb2`) and exposes one accessibility element with a composed summary (`b71eb0e`).
@@ -253,7 +253,7 @@ Both columns use the same patterns, listed below the table, so the next revision
 | Pattern | `75374d4` | `58101df` | Replacement |
 | --- | --- | --- | --- |
 | `Binding(get:set:)` | 60 | 64 | three helpers plus model-provided bindings |
-| `.weight(.medium)`, `.weight(.semibold)` or `fontWeight` | 128 | 110 | `.bold()` or weight tokens |
+| `.weight(.medium)`, `.weight(.semibold)` or `fontWeight` | 128 | 110 | stay; only regular, medium and semibold (Phase 1) |
 | `.caption2` | 35 | 29 | `.caption` on anything read or tapped |
 | icon-only `Button` or `Menu` labels | 42 | 37 | `Button(title, systemImage:)` and `.labelStyle(.iconOnly)` |
 | `onTapGesture` | 14 | 13 | `Button`, or `.accessibilityAddTraits(.isButton)` where the gesture must stay |
@@ -316,21 +316,60 @@ Done in seventeen commits, `035b43c` to `a7801f2`.
 
 ### Phase 1: shared helpers
 
-- `App/Design/Binding+Tern.swift`: `isPresent()` on `Binding<T?>`, `contains(_:)` on `Binding<Set<T>>`, and `or(_:)` for optional-with-default. Then replace the 64 sites in commits of five files, favoring `@Bindable` on nested observables, `ternConfirm(item:)` for dialogs and model-provided bindings over the helpers wherever the state is already stored.
-- `ternOutline(radius:)` modifier with an optional focus color, and a `radius:` parameter on `TernSurface` that retires `SettingsSurface`; a `copyToPasteboard(_:)` helper; `SettingsErrorLabel` with one icon; `SwatchPicker` with `AccountAppearance.names`; one initials function; a `SettingsToggleRow` variant that takes an async `onToggle`.
-- A `GmailQuery.quoted(_:)` helper for the three quote-escaping copies, and a `sceneID` constant for the main window in place of the five `openWindow(id: "main")` strings.
-- Decide on weight tokens versus `.bold()`, and on `TernEmptyState` versus `ContentUnavailableView`, before Phase 5 applies either.
+Done in 24 commits, `2b6fbab` to `88def6b`. `c02569c` in that range is the separate UI design review.
+
+- Bindings (`2b6fbab` to `1f1e304`):
+  - `App/Design/Binding+Tern.swift` has the planned `isPresent()`, `contains(_:)` and `or(_:)`, plus `isPresent(default:)`, `equals(_:)` for one value of an optional, `selecting(_:)` for radio-style toggles, `negated()`, and `init(_:set:)` for a value with its own write.
+  - `Binding(get:` now appears only in that file and in `App/Calendar/CalendarModel+Bindings.swift`, which meets the acceptance check.
+  - State that a model stores gets its binding from the model: `SidebarExpansion` (the expanded set in `@AppStorage`), `CalendarModel+Bindings.swift`, `RecurrenceSelection`, `AttachmentLibraryModel+Filters.swift`, `ProfileNotificationSchedule+Editing.swift`, and a setter on `selectedListRowIDs` in `MailboxModel+MessageList.swift`.
+  - The calendar delete confirmation is two optionals, one per kind, each shown with `ternConfirm(item:)`.
+  - The recurrence control parses the rule once when it opens, so opening it no longer rewrites a rule the provider wrote.
+  - `SettingsAsyncToggleRow` shows the new value while `onToggle` runs and drops it when the call returns.
+  - Account preference changes show at once and revert if the save fails (`f2a80a3`). No test covers the revert yet.
+  - Pickers with an empty choice tag it `String?.none` in place of `""`.
+  - Picking a profile schedule's current mode again keeps its custom hours.
+  - The filter editor edits plain values in `FilterEditorDraft` (`ab7f2c7`). The size stays a `String`: on macOS, `TextField(value:format:)` commits only on Return or focus loss, so a click on Save could miss a typed size.
+  - `ProfileScheduleView` still converts times on each read, so a time zone change shows correctly.
+  - `3cf0c4b` renamed `SidebarView.expandedKey` and broke the TernTests build; `ef1897e` fixed the test. Every build since uses `build-for-testing`.
+- `ternOutline(radius:style:focus:)` and `ternSurface(radius:style:)` in `Components.swift`, and `SettingsSurface` is gone (`dde15b8`, `6b0b19a`, `6e10ecd`). These outlines stay hand-drawn because they depend on other state: the user bubble in `AssistantMessageView`, `AssistantEmailCard` (contrast before hover and focus), the button style in `AssistantView`, the header borders in `ThreadSummaryView` and `EmailCalendarSuggestionsView`, selection in `AttachmentLibraryFilters` and `AttachmentLibraryRows`, the circle in `SenderAccountLabel`, and the avatar ring in `Components.swift`.
+- `NSPasteboard.replaceContents(with:)` in `App/Integration/NSPasteboard+Text.swift` replaces the nine plain-text copies (`b11bd4f`, `adf1d78`). `AttachmentActions` copies a file URL and `OriginalMessageView` copies a message source, so both keep their own code.
+- `SettingsErrorLabel` in `SettingsComponents.swift` shows errors in seven panes, all with the circle icon (`cd83a6d`, `a55ea14`). The writing style section keeps its caption-sized message inside its surface.
+- `SwatchPicker` serves both color rows (`55b8ade`). `AccountAppearance.palette` holds `Swatch` values with a name and a color, so no separate names list exists to drift.
+- `AvatarInitials.from(name:address:)` serves `TernAvatar` and `ContactAvatar`, and `AvatarInitialsTests` covers the input forms both pass (`4d55064`).
+- `SearchQuery.quoted(_:)` sits in `MessageContent` beside the parser that reads it back, in place of the planned `GmailQuery`, and a Core test checks the round trip (`40d6cf9`). `RecipientField.editingString` quotes a display name for an address header, not a search operand, so it keeps its own code.
+  - Open issue: the parser does not read backslash escapes, so a label name containing `"` does not survive the round trip. Gmail's own handling of escapes is unverified. Addresses can't contain quotes.
+- `RootView.sceneID` names the mailbox window's scene (`88def6b`).
+- Decisions for Phase 5:
+  - Weights: no weight tokens and no `.bold()`. `design_tokens.json` defines regular (400), medium (500) and semibold (600), and those are `Font.Weight.regular`, `.medium` and `.semibold`, so the sites already name the token values. `.bold()` would draw at 700. Phase 5 checks that text uses only those three weights and moves the two `fontWeight(_:)` sites into `.font(_:)`. Bold stays on the small glyphs drawn on a fill (`SwatchPicker`, `LabelAppearancePicker`, the `EmailCalendarSuggestionsView` badge), and the empty-state symbol keeps `.light`.
+  - Empty states: `TernEmptyState` keeps its API and is rebuilt on `ContentUnavailableView`, so the 24 call sites stay as they are and look like the seven that already use the system view. `fillsSpace: false` and the width cap need checking on the rebuilt view. The no-results case in `SettingsView` becomes `ContentUnavailableView.search(text:)`.
+- At `88def6b`, TernTests pass (331 tests in 54 suites), Core tests pass (516 tests in 87 suites), and a clean Debug build reports one app-target warning, `MessageListRow.swift` L54. The first full TernTests run failed `mailboxExpansionKeepsSidebarViewportAndInboxInPlace`: from the fourth mailbox on, the sidebar viewport was 59 points shorter. The test alone, its suite and a second full run all passed, so it is recorded as a timing flake.
 
 ### Phase 2: correctness
 
-- `MessageListRow.swift` L54 stops reading main-actor state from the `alignmentGuide` closure, so the app target builds without warnings.
-- Stable row identity in the event editor's guest and alert lists.
-- `CalendarView` stops recreating the grid across the compact width, and the 8 AM scroll moves to a model-held `ScrollPosition`.
-- `AttachmentLibraryCollection.select` takes modifiers explicitly.
-- `ReceivedAttachmentsView` opens the clicked file first, shares in-flight downloads, and Save All reports partial results.
-- `ThreadView` keeps one `.id`.
-- `AssistantMailPaneSizing`: run the macOS 26 test in the Assistant section with `setPosition` disabled. Remove the width probe if it passes, otherwise keep only a restore helper. Split out the safe-area inset and check whether macOS 26 still needs it. `AssistantSidebarLayoutTests` stays as the regression test.
-- Done: the Signatures pane no longer writes on open, and a lower cache budget asks before trimming (`c5ebd40`).
+Done in nine commits, `23bd6f3` to `16d0572`.
+
+- `MessageListRow` copies `textLeading` into a local before the `alignmentGuide` closure, which is `Sendable` (`23bd6f3`). The app target now builds without warnings.
+- The event editor keys guests by address and alerts by an `EditableReminder` row with its own `UUID`, so removing a middle row keeps the other rows' toggles and pickers (`5d7bfb4`). The index-based `.id` is gone, and `id: \.offset` sites fell from 8 to 6.
+- `CalendarView` keeps one `HSplitView` and leaves the sidebar out of it below the compact width, which `onGeometryChange` reports, so the grid keeps its state and scroll offset (`090ca10`). Its `GeometryReader` is gone, which leaves 12 in the app.
+  - Deviation: the 8 AM start is a point-based `ScrollPosition` that `CalendarTimeGrid` holds, not the model. In a test harness on macOS 26, `ScrollPosition(id:)` never applied its first position, and after a user scroll the binding reported `isPositionedByUser` with no point, so a model-held position could not bring back the user's offset after a rebuild. Keeping the split is what keeps the offset. `CalendarLayoutTests.timeGridOpensAtEightInTheMorning` checks the start.
+  - `CalendarView.swift` is over 300 lines. Rule 9's cleanup found no dead code or unused imports, so no separate commit came first.
+- `AttachmentLibraryCollection.select` and `moveSelection` take modifiers as parameters (`4dc05d1`). A click passes the Shift and Command keys held at that moment, which `onModifierKeysChanged` tracks. Arrow keys pass Shift only, and the accessibility default action passes none. Nothing reads `NSEvent.modifierFlags` any more.
+- `ReceivedAttachmentsView` (`eeed593`):
+  - Quick Look opens the clicked file as soon as it downloads, then adds the others in message order while the panel stays open.
+  - `InFlightTasks` shares a running download between the preview, Save All and the chips. `InFlightTasksTests` checks that a second request waits for the first, which covers Phase 6's shared-download test.
+  - Save All skips failed downloads and says "Saved all N attachments.", "Saved X of N attachments." or "Couldn't save the attachments. Try another folder."
+- `ThreadView` gives each message the one `.id(message.id)` that its `scrollTo` calls use (`54d42f2`). The account-qualified inner id did nothing: `MainView` already rebuilds `ThreadView` per thread key, and the key carries the account.
+- `AssistantMailPaneSizing` (`59679bc`, `e384712`, `16d0572`):
+  - The test: a harness that mirrors `MainView`'s columns ran on macOS 26 with `setPosition` disabled, at 960 and 1280 points, after dragging both columns. The column widths alone narrowed both panes to their minimums, and at 960 navigation collapsed without resizing the window. Closing restored the dragged widths at 1280, but at 960 the list fell back to its minimum.
+  - So the helper now only restores. It saves the divider positions on open and sets them again after close. An attempt that runs before the split widens waits for the next layout pass instead of clamping the list and spending its retries, and `restoreWaitsForTheSplitToWiden` fails without that wait. In the harness, 12 of 12 closes restored the dragged widths.
+  - On macOS 26 the list column's frame starts at x 0, under the sidebar, so the helper saves each pane's `maxX`, which is the divider position, in place of its width.
+  - The inset is still needed. `MainView` clips the mail columns so a split wider than its frame never draws over the assistant, and any clip or mask drops the split's toolbar safe area. Unclipped, the split had 52 points of top safe area; clipped, it had none and the first rows sat under the toolbar. `ClippedSplitToolbarInset` now owns the measurement, and `SidebarLayoutTests` checks that the rows clear the toolbar.
+  - `EnclosingSplitDivider` finds the divider for the probe and for `DividerGrabView`. The probe is `MailColumnProbe`, in its own file.
+  - Found, not fixed: with the assistant open below about 950 points, the list, reader and divider need 629 points, more than the mail area has. The split then overflows that area centered, and in the harness at 720 points the leading 115 points of the list sat past the window's left edge. `frame(width:alignment: .leading)` kept the leading edge in view in the harness, but it needs a check in the running app first.
+  - Also open: saved positions that stay out of reach, for example after the window shrinks while the assistant is open, stay pending and apply on a later widening.
+- Done earlier: the Signatures pane no longer writes on open, and a lower cache budget asks before trimming (`c5ebd40`).
+- Not checked: the Accessibility Inspector audit and VoiceOver pass that Verification lists for this phase, and the changes in the running app.
+- At `16d0572`, TernTests pass (334 tests in 55 suites) and a clean Debug build reports no warnings in `App/`. Its three warnings are in `Packages/Core` (`PrintDocument.swift` L23 and L25, `DraftImport.swift` L85), outside this plan.
 
 ### Phase 3: performance
 

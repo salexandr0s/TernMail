@@ -225,7 +225,7 @@ struct AssistantView: View {
 
     private func openSource(_ source: AssistantSource) {
         onOpenSource(source)
-        openWindow(id: "main")
+        openWindow(id: RootView.sceneID)
     }
 
     private func iconButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
