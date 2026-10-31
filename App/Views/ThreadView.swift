@@ -665,22 +665,26 @@ private struct MessageView: View {
         }
     }
 
-    /// A collapsed header opens on a click anywhere; its controls keep their own clicks.
+    /// Collapsed, one line: the sender, the start of the body and the time.
+    /// Open, the time and actions share the name line and the recipients
+    /// follow. A collapsed header opens on a click anywhere; its controls keep
+    /// their own clicks.
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                senderHeader
-                    .frame(minWidth: Tokens.Layout.senderMinWidth)
-                messageMetadata
+        HStack(alignment: isExpanded ? .top : .center, spacing: Tokens.Space.s2) {
+            Button(action: onToggle) {
+                ContactAvatar(accountID: message.record.accountID, address: senderAddress, name: senderName,
+                    cache: mailbox.cache, accounts: mailbox.accountStore)
             }
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                senderHeader
-                HStack {
-                    Spacer(minLength: 0)
-                    messageMetadata
-                }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
+            .help(message.record.sender)
+            ViewThatFits(in: .horizontal) {
+                headerLines(isNarrow: false)
+                headerLines(isNarrow: true)
             }
         }
+        // The chevron is the only disclosure mark; names open their menus without one.
+        .menuIndicator(.hidden)
         .contentShape(Rectangle())
         .onTapGesture { if !isExpanded { onToggle() } }
         .contextMenu {
@@ -689,45 +693,76 @@ private struct MessageView: View {
         }
     }
 
-    private var senderHeader: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+    /// Without room for `senderMinWidth` of name beside the time and actions,
+    /// those move to the second line, so the header keeps the same height.
+    private func headerLines(isNarrow: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+            if isNarrow {
+                nameAndChevron
+                HStack(spacing: Tokens.Space.s2) {
+                    Group {
+                        if isExpanded { recipients("To:", message.record.recipients) } else { snippet }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    messageMetadata
+                }
+                if isExpanded, let cc = message.record.cc, !cc.isEmpty {
+                    recipients("Cc:", cc)
+                }
+            } else {
+                HStack(spacing: Tokens.Space.s2) {
+                    HStack(spacing: Tokens.Space.s2) {
+                        nameAndChevron.layoutPriority(1)
+                        if !isExpanded { snippet }
+                    }
+                    .frame(minWidth: Tokens.Layout.senderMinWidth, idealWidth: Tokens.Layout.senderMinWidth,
+                           maxWidth: .infinity, alignment: .leading)
+                    messageMetadata
+                }
+                if isExpanded {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                        recipients("To:", message.record.recipients)
+                        if let cc = message.record.cc, !cc.isEmpty {
+                            recipients("Cc:", cc)
+                        }
+                    }
+                    // Only the name line decides whether this layout fits.
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    /// The name opens the sender's address menu; the chevron opens or
+    /// collapses the message.
+    private var nameAndChevron: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            MessageAddressMenu(address: .init(name: senderName, address: senderAddress), accountID: message.record.accountID, mailbox: mailbox)
+                .font(.body.weight(.semibold))
             Button(action: onToggle) {
-                ContactAvatar(accountID: message.record.accountID, address: senderAddress, name: senderName,
-                    cache: mailbox.cache, accounts: mailbox.accountStore)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
-            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                HStack(spacing: Tokens.Space.s1) {
-                    MessageAddressMenu(address: .init(name: senderName, address: senderAddress), accountID: message.record.accountID, mailbox: mailbox)
-                        .font(.body.weight(.semibold))
-                    Button(action: onToggle) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
-                }
-                if isExpanded {
-                    recipients("To:", message.record.recipients)
-                    if let cc = message.record.cc, !cc.isEmpty {
-                        recipients("Cc:", cc)
-                    }
-                } else {
-                    Text(message.record.snippet)
-                        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                }
-            }
-            Spacer(minLength: Tokens.Space.s2)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         }
-        .help(message.record.sender)
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 
+    private var snippet: some View {
+        Text(message.record.snippet)
+            .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+    }
+
+    /// The time, then the actions while open or the star while collapsed.
     private var messageMetadata: some View {
-        VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
+        HStack(spacing: Tokens.Space.s2) {
+            if isExpanded, showsSize {
+                Text(ByteCountFormatter.string(fromByteCount: Int64(message.record.sizeEstimate), countStyle: .file))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             Text(ThreadDate.short(message.record.date))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -735,10 +770,6 @@ private struct MessageView: View {
                 .help(Self.dateFormatter.string(from: message.record.date))
             if isExpanded {
                 MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose)
-                if showsSize {
-                    Text(ByteCountFormatter.string(fromByteCount: Int64(message.record.sizeEstimate), countStyle: .file))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
             } else if message.isStarred {
                 Image(systemName: "star.fill")
                     .imageScale(.small)
