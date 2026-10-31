@@ -466,7 +466,9 @@ struct ComposeView: View {
                     Button(template.name) { model.insertTemplate(template) }
                 }
             } label: { Label("Insert Template", systemImage: "doc.text") }
-            .help("Insert Template")
+            .help(model.templates.isEmpty ? "No templates yet. Add them in Settings > Templates." : "Insert Template")
+            // Without it, VoiceOver reads the menu's arrow image name.
+            .accessibilityLabel("Insert Template")
             .disabled(!model.isEditable || model.templates.isEmpty)
         }
         ToolbarItem(placement: .primaryAction) {
