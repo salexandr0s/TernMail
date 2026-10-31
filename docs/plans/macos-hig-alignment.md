@@ -218,7 +218,6 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 - Double-clicking or pasting "Doe, Jane" into a recipient field splits it at the comma. `9d671a2` fixed the token Edit path, not the field's own parsing.
 - `HTMLImporter` in Core collapses the whitespace inside `pre` elements, so a styled code block pasted as HTML loses its indentation.
 - Confirm Spotlight indexing with a signed build before relying on it. The setting stays off by default.
-- Moving a conversation out of Trash through `LabelQueue.move` removes INBOX rather than TRASH. Drop-to-Inbox works around it with `editLabels`.
 - Debug runs log "Application performed a reentrant operation in its NSTableView delegate". The source is not traced.
 - `ToolbarSpacer` ignores `hidden(_:)`, so the mail toolbar's three fixed spaces stay in the toolbar in Calendar and Attachments and take about 24 points there.
 - Undo Send has no key equivalent.
