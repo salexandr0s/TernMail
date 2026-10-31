@@ -154,7 +154,9 @@ final class ComposeModel {
     var isEditable: Bool { phase == .open && draft?.state == .editing }
 
     var canFormat: Bool { isEditable && isEditingMessage }
-    var canSendAndArchive: Bool { draft?.threadID != nil && isEditable }
+    /// A new message gets a thread ID once Gmail saves it, but there is no
+    /// earlier conversation to archive, and Send shouldn't change mid-draft.
+    var canSendAndArchive: Bool { draft?.kind != .new && draft?.threadID != nil && isEditable }
 
     var progressText: String? {
         if expandingGroups > 0 { return "Loading contact group…" }

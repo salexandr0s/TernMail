@@ -442,6 +442,16 @@ struct ComposeView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // On the leading side, far from Send.
+        ToolbarItem(placement: .navigation) {
+            Button {
+                Task { await model.discard() }
+            } label: {
+                Label("Discard Draft", systemImage: "trash")
+            }
+            .help("Discard Draft")
+            .disabled(!model.isEditable)
+        }
         ToolbarItem(placement: .primaryAction) {
             Toggle(isOn: $model.showsFormatting) {
                 Label("Formatting", systemImage: "textformat")
@@ -482,15 +492,6 @@ struct ComposeView: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
-                Task { await model.discard() }
-            } label: {
-                Label("Discard Draft", systemImage: "trash")
-            }
-            .help("Discard Draft")
-            .disabled(!model.isEditable)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
                 Task { await model.send() }
             } label: {
                 Label("Send", systemImage: "paperplane.fill")
@@ -502,12 +503,20 @@ struct ComposeView: View {
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
         }
+        // The arrow half of Send. A toolbar Menu with a primary action can't
+        // take the prominent style, so Send stays a Button.
         if model.canSendAndArchive {
             ToolbarItem(placement: .primaryAction) {
-                Button { Task { await model.send(archive: true) } } label: {
-                    Label("Send and Archive", systemImage: "archivebox")
+                Menu {
+                    Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
+                } label: {
+                    Label("More Send Options", systemImage: "chevron.down")
                 }
+                .labelStyle(.iconOnly)
+                .menuIndicator(.hidden)
                 .help("Send and Archive")
+                .accessibilityLabel("More Send Options")
+                .disabled(!model.isEditable)
             }
         }
     }
