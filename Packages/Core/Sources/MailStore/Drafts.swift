@@ -102,6 +102,10 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     /// Set just before Tern first asks Gmail to send the draft. `drafts.send`
     /// consumes its draft, so a draft gone after that was sent.
     public var sendRequested: Bool
+    /// Set while a reply or forward waits for what it takes from its
+    /// original, the quote and files (`completeImport`). It can't be sent
+    /// until they arrive.
+    public var importPending: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -111,7 +115,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         case subject, body, fromAddress, signatureHTML, calendarPart, quotedHTML, quotedPlainText, rfcMessageID, inReplyTo
         case composeFont, signatureAboveQuote, signatureSeparator, archiveAfterSend
         case references = "referencesHeader"
-        case revision, savedRevision, state, sendError, hasUnrecordedUpload, sendRequested, createdAt, updatedAt
+        case revision, savedRevision, state, sendError, hasUnrecordedUpload, sendRequested, importPending, createdAt, updatedAt
     }
 
     public init(
@@ -161,6 +165,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         sendError = nil
         hasUnrecordedUpload = false
         sendRequested = false
+        importPending = false
         createdAt = now
         updatedAt = now
     }
@@ -300,6 +305,29 @@ extension CacheTransaction {
         return draft
     }
 
+    /// Adds what a reply or forward takes from its original to a draft
+    /// waiting for it (`importPending`): the quote, and attachments whose
+    /// files are already in place. Edits made meanwhile stay. Returns the
+    /// draft, or nil when it is gone, has nothing pending or no longer takes
+    /// edits, and the caller removes the files.
+    @discardableResult
+    public func completeImport(
+        localDraftID: String, quotedHTML: String?, quotedPlainText: String?,
+        attachments: [OutgoingAttachment], now: Date
+    ) throws -> LocalDraft? {
+        guard var draft = try localDraft(id: localDraftID), draft.importPending, draft.state == .editing else { return nil }
+        // A draft still as it started has no copy in Gmail. Otherwise Gmail
+        // may hold or be getting one without the quote, so it counts as an edit.
+        let untouched = try draft.revision == 0 && draft.gmailDraftID == nil && !draft.hasUnrecordedUpload
+            && composeRows(localDraftID: localDraftID).isEmpty
+        draft.quotedHTML = quotedHTML
+        draft.quotedPlainText = quotedPlainText
+        draft.importPending = false
+        if untouched { try draft.update(db) } else { try raiseRevision(of: &draft, now: now) }
+        for attachment in attachments { _ = try addOutgoingAttachment(attachment, now: now) }
+        return try localDraft(id: localDraftID)
+    }
+
     /// Deletes a local draft and its attachment rows. Returns the attachments,
     /// whose files the caller removes.
     @discardableResult
@@ -433,6 +461,8 @@ extension CacheTransaction {
     /// saves go since the send uploads the newest revision, and the draft's
     /// message leaves its thread. A provisional message from `rendering`
     /// takes its place there and in Sent until Gmail's copy arrives (`LocalSend`).
+    /// Returns nil when the draft no longer takes edits or still waits for
+    /// its original (`importPending`).
     public func enqueueSend(
         localDraftID: String, content: DraftContent? = nil, now: Date, notBefore: Date,
         rendering: (LocalDraft) -> LocalSend.Rendering
@@ -455,7 +485,10 @@ extension CacheTransaction {
         standIn: (LocalDraft) throws -> String? = { _ in nil }
     ) throws -> PendingAction? {
         if let content { try updateLocalDraft(id: localDraftID, content: content, now: now) }
-        guard var draft = try localDraft(id: localDraftID), draft.state == .editing else { return nil }
+        // A reply or forward can't be sent before its quote and files arrive.
+        guard var draft = try localDraft(id: localDraftID), draft.state == .editing,
+              kind != .sendDraft || !draft.importPending
+        else { return nil }
         try PendingAction
             .filter(Column("localDraftID") == localDraftID && Column("kind") == PendingAction.Kind.saveDraft.rawValue)
             .filter(Column("state") == PendingAction.State.queued.rawValue)

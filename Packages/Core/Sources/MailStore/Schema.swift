@@ -466,6 +466,14 @@ enum Schema {
                 t.primaryKey(["accountID", "actionID", "labelID"])
             }
         }
+        migrator.registerMigration("reply-import-v1") { db in
+            // Set while a reply or forward waits for its original's quote and
+            // files, so its window can open first. Drafts started before this
+            // were imported whole.
+            try db.alter(table: "localDraft") { t in
+                t.add(column: "importPending", .boolean).notNull().defaults(to: false)
+            }
+        }
         return migrator
     }
 

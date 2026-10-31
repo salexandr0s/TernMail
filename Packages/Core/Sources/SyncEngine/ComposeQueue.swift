@@ -4,7 +4,7 @@ import MailStore
 import MessageContent
 import UniformTypeIdentifiers
 
-/// Why a draft can't be uploaded at all. Shown to the user as is.
+/// Why a draft can't be started or uploaded at all. Shown to the user as is.
 public enum ComposeError: Error, Equatable, LocalizedError {
     case missingAttachment(String)
     case tooLarge
@@ -14,6 +14,7 @@ public enum ComposeError: Error, Equatable, LocalizedError {
     case senderUnavailable
     case invalidReplyTo
     case invalidCalendar
+    case stillSending
 
     public var errorDescription: String? {
         switch self {
@@ -33,6 +34,8 @@ public enum ComposeError: Error, Equatable, LocalizedError {
             "This sender's Reply-To address is invalid. Update it in Gmail and try again."
         case .invalidCalendar:
             "This calendar reply is invalid. Open the invitation and choose your answer again."
+        case .stillSending:
+            "This message is still sending. Try again once it's sent."
         }
     }
 }

@@ -1156,6 +1156,76 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try Data(contentsOf: folder.appending(path: try #require(files.first).path)) == Data("items".utf8))
     }
 
+    @Test func aForwardOpensFromCachedHeadersAndSendsOnceItsFilesArrive() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let record = MessageRecord(
+            accountID: account, id: "m1", threadID: "t1", historyID: 1, date: baseDate, snippet: "",
+            sender: "Ana <ana@example.com>", recipients: "Me <me@example.com>", cc: nil, subject: "Agenda",
+            sizeEstimate: 0, rfcMessageID: "<agenda@example.com>"
+        )
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: record, labelIDs: [SystemLabel.inbox])]), accountID: account)
+        }
+        await gmail.add(try decode(GmailMessage.self, #"""
+            {"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
+            "payload":{"mimeType":"multipart/mixed","headers":[
+              {"name":"From","value":"Ana <ana@example.com>"},{"name":"Subject","value":"Agenda"},
+              {"name":"Message-ID","value":"<agenda@example.com>"}],
+            "parts":[
+              {"partId":"0","mimeType":"text/plain","body":{"data":"U2VlIGF0dGFjaGVk"}},
+              {"partId":"1","mimeType":"text/plain","filename":"agenda.txt","body":{"attachmentId":"a1","size":5}}
+            ]}}
+            """#))
+        await gmail.setAttachment("a1", data: Data("items".utf8))
+
+        // The forward opens from the cache alone and can't go out yet.
+        let shell = try await engine.insertReplyShell(.forward, to: "m1")
+        #expect(await gmail.metadataRequests.isEmpty)
+        #expect(shell.importPending && shell.subject == "Fwd: Agenda" && shell.threadID == "t1")
+        #expect(shell.quotedPlainText == nil)
+        #expect(try await engine.sendDraft(shell.id, delay: 10) == false)
+
+        // Text typed meanwhile stays when the quote and files arrive.
+        var content = shell.content
+        content.body = ComposeDocument(plainText: "For Friday")
+        _ = try await engine.updateDraft(shell.id, content: content)
+        let draft = try await engine.completeReplyImport(localDraftID: shell.id)
+        #expect(!draft.importPending && draft.body.plainText() == "For Friday")
+        #expect(draft.quotedPlainText?.contains("See attached") == true)
+        #expect(try await cache.read { try $0.outgoingAttachments(localDraftID: draft.id) }.map(\.filename) == ["agenda.txt"])
+        #expect(try await engine.sendDraft(draft.id, delay: 10))
+    }
+
+    @Test func aReplyWhoseOriginalWontLoadStaysPendingUntilItGoesWithout() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        // The headers are cached without the body, and Gmail no longer has the message.
+        let record = MessageRecord(
+            accountID: account, id: "gone", threadID: "t1", historyID: 1, date: baseDate, snippet: "",
+            sender: "Ana <ana@example.com>", recipients: "Me <me@example.com>", cc: nil, subject: "Lunch",
+            sizeEstimate: 0, rfcMessageID: "<lunch@example.com>"
+        )
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: record, labelIDs: [SystemLabel.inbox])]), accountID: account)
+        }
+
+        // Started in one step, nothing is kept.
+        await #expect(throws: GmailError.notFound) { try await engine.startReply(.reply, to: "gone") }
+        #expect(try await cache.read { try $0.localDrafts(accountID: account) }.isEmpty)
+
+        let shell = try await engine.insertReplyShell(.reply, to: "gone")
+        #expect(shell.importPending && shell.inReplyTo == "<lunch@example.com>")
+        await #expect(throws: GmailError.notFound) { try await engine.completeReplyImport(localDraftID: shell.id) }
+        #expect(try await cache.read { try $0.localDraft(id: shell.id)?.importPending } == true)
+        let skipped = try await engine.skipReplyImport(localDraftID: shell.id)
+        #expect(!skipped.importPending && skipped.quotedHTML == nil)
+        #expect(try await engine.sendDraft(shell.id, delay: 10))
+
+        // A message still sending has no copy in Gmail to answer.
+        await #expect(throws: ComposeError.stillSending) {
+            try await engine.insertReplyShell(.forward, to: LocalSend.messageID(localDraftID: shell.id))
+        }
+    }
+
     @Test func receivedAttachmentsDownloadOnceThroughTheirPartID() async throws {
         let (engine, _, gmail, _) = try await makeEngine()
         await gmail.add(try decode(GmailMessage.self, #"""
