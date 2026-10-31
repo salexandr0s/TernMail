@@ -30,12 +30,14 @@ struct SettingsView: View {
             .background(SettingsSidebarMaterial())
             Divider()
             VStack(alignment: .leading, spacing: 0) {
-                Text(destination.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, Tokens.Space.s4)
-                    .padding(.top, Tokens.Space.s3)
+                if let subtitle = destination.subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, Tokens.Space.s4)
+                        .padding(.top, Tokens.Space.s3)
+                }
                 detail
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .scrollContentBackground(.hidden)
@@ -88,26 +90,15 @@ struct SettingsView: View {
             ForEach(SettingsNavigationSection.sections) { section in
                 let destinations = section.destinations.filter { $0.matches(search) }
                 if !destinations.isEmpty {
-                    Section {
-                        ForEach(destinations) { item in
-                            Label {
-                                Text(item.title)
-                                    .font(.body)
-                                    .lineLimit(1)
-                            } icon: {
-                                Image(systemName: item.symbol)
-                                    .font(.callout.weight(.medium))
-                                    .foregroundStyle(.white)
-                                    .frame(width: Tokens.Settings.navigationIcon, height: Tokens.Settings.navigationIcon)
-                                    .background(item.tint.gradient, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                                    .accessibilityHidden(true)
-                            }
-                            .tag(item)
-                            .padding(.vertical, Tokens.Space.s0_5)
+                    if section.title.isEmpty {
+                        Section { rows(destinations) }
+                    } else {
+                        Section {
+                            rows(destinations)
+                        } header: {
+                            Text(section.title)
+                                .font(.caption.weight(.semibold))
                         }
-                    } header: {
-                        Text(section.title)
-                            .font(.caption.weight(.semibold))
                     }
                 }
             }
@@ -124,6 +115,25 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, Tokens.Settings.rowHeight)
         .accessibilityLabel("Settings categories")
+    }
+
+    private func rows(_ destinations: [SettingsDestination]) -> some View {
+        ForEach(destinations) { item in
+            Label {
+                Text(item.title)
+                    .font(.body)
+                    .lineLimit(1)
+            } icon: {
+                Image(systemName: item.symbol)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.white)
+                    .frame(width: Tokens.Settings.navigationIcon, height: Tokens.Settings.navigationIcon)
+                    .background(item.tint.gradient, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .accessibilityHidden(true)
+            }
+            .tag(item)
+            .padding(.vertical, Tokens.Space.s0_5)
+        }
     }
 
     private func selectSearchResult() {

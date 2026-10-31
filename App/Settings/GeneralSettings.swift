@@ -7,7 +7,7 @@ struct GeneralSettings: View {
 
     var body: some View {
         SettingsPage {
-            Section("Default email app") {
+            Section {
                 DefaultMailAppView()
             }
             Section("Sending") {

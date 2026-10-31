@@ -70,29 +70,17 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var subtitle: String {
+    /// A line above the pane for what its headers don't say. `nil` where it
+    /// would only list the pane's own sections.
+    var subtitle: String? {
         switch self {
-        case .general: "Default email app, sending and keyboard shortcuts."
-        case .mailActions: "Choose what the Delete key does and when Tern plays sounds."
-        case .notifications: "Choose which mail gets your attention."
         case .connections: "Add Google accounts and choose what each one shares with Tern."
-        case .accountPreferences: "Name, color, profile, sync and sidebar order for each account."
         case .profiles: "Group your accounts and set notification hours."
-        case .reading: "Adjust message appearance and reading behavior."
-        case .messageList: "Choose how your inbox looks and responds."
-        case .attachments: "Choose how Tern downloads and opens attachments."
-        case .writing: "Set the default sender, font and reply behavior."
         case .templates: "Save reusable messages to insert while writing."
         case .localSignatures: "Signatures stored on this Mac and where Tern adds them."
-        case .suggestions: "Hide addresses from recipient suggestions."
         case .signatures: "Manage the signatures saved to your Gmail accounts."
-        case .filters: "Organize incoming mail with Gmail rules."
-        case .blocked: "Manage the senders you've blocked in Gmail."
-        case .vacation: "Let people know when you're away."
-        case .calendar: "Choose the calendars Tern shows and how it schedules events."
         case .assistant: "Ask about your mail, summarize threads, and prepare replies."
-        case .failedChanges: "Review mail changes that couldn't be completed."
-        case .maintenance: "Manage the mail and attachments stored on this Mac."
+        default: nil
         }
     }
 
@@ -112,32 +100,32 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
 
     private var searchTerms: String {
         switch self {
-        case .general: "default mail app email links undo send keyboard shortcuts"
+        case .general: "default mail app email links undo send sending keyboard shortcuts"
         case .mailActions: "archive trash delete key snooze triage sounds"
-        case .notifications: "alerts sound badge dock menu bar permission"
+        case .notifications: "alerts notify new mail sound badge dock menu bar permission"
         case .connections: "google login sign in sync accounts permissions calendar contacts deletion"
-        case .accountPreferences: "nickname color order profile sync pause"
+        case .accountPreferences: "preferences name nickname color sidebar order profile sync pause"
         case .profiles: "work personal groups focus notification schedule hours"
-        case .reading: "remote images privacy tracking company business bank logos sender photos website icons dark mode conversation order mark read delay text size"
-        case .messageList: "density compact comfortable preview swipe sidebar mailbox count badges importance"
-        case .attachments: "download files preview cache"
-        case .writing: "font reply format markdown quote recipients send from default account"
+        case .reading: "appearance remote images privacy tracking company business bank logos sender photos website icons dark mode conversation order mark read delay text size"
+        case .messageList: "inbox appearance density compact comfortable preview swipe sidebar mailbox count badges importance"
+        case .attachments: "download open files preview cache"
+        case .writing: "font reply format markdown quote recipients sender send from default account"
         case .templates: "reusable replies canned responses"
         case .localSignatures: "local signatures new messages replies separator"
-        case .suggestions: "recipients autocomplete hidden addresses"
+        case .suggestions: "recipients autocomplete hide hidden addresses"
         case .signatures: "gmail send as identity footer"
-        case .filters: "rules forwarding labels delete archive"
-        case .blocked: "spam block email address"
-        case .vacation: "automatic reply out of office autoresponder dates"
-        case .calendar: "calendars subscriptions sharing scheduling availability"
+        case .filters: "gmail rules incoming forwarding labels delete archive"
+        case .blocked: "gmail spam block email address"
+        case .vacation: "automatic reply away out of office autoresponder dates"
+        case .calendar: "calendars events subscriptions sharing scheduling availability"
         case .assistant: "chatgpt openai ai model writing style summaries privacy access"
         case .failedChanges: "retry errors pending queue discard"
-        case .maintenance: "disk space storage cache budget reset trim database"
+        case .maintenance: "disk space storage cache attachments budget reset trim database"
         }
     }
 
     func matches(_ query: String) -> Bool {
-        let searchable = "\(title) \(subtitle) \(searchTerms)"
+        let searchable = "\(title) \(subtitle ?? "") \(searchTerms)"
         return query.split(whereSeparator: \.isWhitespace).allSatisfy {
             searchable.localizedStandardContains(String($0))
         }
@@ -145,11 +133,13 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
 }
 
 struct SettingsNavigationSection: Identifiable, Sendable {
+    /// Empty for the first group, which shows no header, as in System Settings,
+    /// so General isn't named twice.
     let title: String
     let destinations: [SettingsDestination]
     var id: String { title }
     static let sections = [
-        SettingsNavigationSection(title: "General", destinations: [.general, .mailActions, .notifications]),
+        SettingsNavigationSection(title: "", destinations: [.general, .mailActions, .notifications]),
         SettingsNavigationSection(title: "Accounts", destinations: [.connections, .accountPreferences, .profiles]),
         SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .attachments]),
         SettingsNavigationSection(title: "Composing", destinations: [.writing, .templates, .localSignatures, .suggestions]),
