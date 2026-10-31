@@ -1,6 +1,6 @@
 # Company logos
 
-Tern uses a sender's website icon when no contact photo is available. The fallback appears in the message list, conversation headers and assistant email cards. Existing photos take precedence. If no usable icon is found, the avatar keeps its initials.
+Tern uses a sender's website icon when no photo is available. The fallback appears in the message list, conversation headers, assistant email cards and attachment senders in list and grid views. Existing photos take precedence. If no usable icon is found, the avatar keeps its initials.
 
 **Settings → Reading → Privacy → Show company logos** controls these lookups and is enabled by default. Turning it off hides website icons and cancels requests once their last visible avatar stops using them. This setting is separate from images inside email bodies; those keep their existing privacy controls.
 

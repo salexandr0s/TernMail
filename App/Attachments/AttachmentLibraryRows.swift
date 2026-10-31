@@ -194,7 +194,9 @@ private struct AttachmentSenderAvatar: View {
                 .frame(width: size, height: size)
                 .clipShape(Circle()).accessibilityHidden(true)
         } else {
-            TernAvatar(name: sender, size: size)
+            DomainLogoAvatar(address: EmailAddress.parseList(sender).first?.address ?? "", size: size) {
+                TernAvatar(name: sender, size: size)
+            }
         }
     }
 
