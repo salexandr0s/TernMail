@@ -10,7 +10,6 @@ struct MainView: View {
     @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
-    @State private var isCompactWindow = false
     @State private var mailWidth: CGFloat = 0
     /// The sidebar hid because the window got narrower than the three
     /// columns' minimum widths, and comes back once the window is wide again.
@@ -35,6 +34,21 @@ struct MainView: View {
     }
 
     private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
+
+    /// Room for the toolbar's actions, search and assistant. Items start after
+    /// the sidebar column, or after the window controls while the sidebar is
+    /// hidden.
+    private var toolbarWidth: CGFloat {
+        mailWidth - (showsSidebar ? sidebarColumnWidth : Tokens.Layout.windowControlsWidth)
+            - (showsProfilePicker ? Tokens.Layout.toolbarMenuWidth : 0)
+    }
+
+    /// The section switcher shows its segments, and the profile picker its name.
+    private var isWideToolbar: Bool {
+        toolbarWidth - (showsProfilePicker ? Tokens.Layout.profileNameWidth : 0) >= Tokens.Layout.wideToolbarWidth
+    }
+
+    private var isCompactWindow: Bool { toolbarWidth < Tokens.Layout.compactToolbarWidth }
 
     // With no profiles the picker would offer All Accounts alone.
     private var showsProfilePicker: Bool {
@@ -132,7 +146,6 @@ struct MainView: View {
                 updateNavigationVisibility(isNarrow: narrow && !hidesReader)
             }
             .onChange(of: layout.mailWidth, initial: true) { _, width in
-                isCompactWindow = width < Tokens.Layout.compactToolbarWidth
                 mailWidth = width
                 fitColumns(to: width)
                 paneSizing.requestApply()
@@ -229,10 +242,8 @@ struct MainView: View {
             }
             .customizationBehavior(.disabled)
             .mailToolbarVisible(sidebarToggle != nil)
-            // Mail and Attachments switch sections from the sidebar's Library rows;
-            // Calendar has no mail sidebar, so its toolbar offers the way back.
-            WorkspaceSectionToolbar(section: section, onSelect: show)
-                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
+            WorkspaceSectionToolbar(section: section, isCompact: !isWideToolbar, onSelect: show)
+                .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
             CalendarToolbar(model: app.calendar)
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
@@ -241,13 +252,14 @@ struct MainView: View {
             }
             .mailToolbarVisible(isActive)
             ToolbarItem(id: "mail.profile", placement: .navigation) {
-                if let preferences = app.accountPreferences { ProfilePicker(model: preferences) }
+                if let preferences = app.accountPreferences { ProfilePicker(model: preferences, isCompact: !isWideToolbar) }
             }
             .mailToolbarVisible(showsProfilePicker)
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
-                section: section, isCompact: isCompactWindow
+                section: section, isCompact: isCompactWindow,
+                isFolded: toolbarWidth < Tokens.Layout.searchFoldWidth
             )
             WorkspaceAssistantToolbar(
                 isAssistantPresented: isActive ? showsAssistant : isCalendarAssistantPresented,
