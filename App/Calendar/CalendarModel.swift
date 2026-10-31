@@ -21,7 +21,7 @@ final class CalendarModel {
     var accounts: [CalendarAccountOption] = []
     var connectionStates: [String: CalendarConnectionState] = [:]
     var isLoading = false
-    var statusText = "Connect Google Calendar to see your events."
+    var statusText = ""
     var errorMessage: String?
     var editor: CalendarEditorDraft?
     var selectedEventID: String?
@@ -201,7 +201,7 @@ final class CalendarModel {
                 refreshAgain = true; return
             }
             accounts = records.map {
-                CalendarAccountOption(id: $0.id, title: $0.displayName ?? $0.email,
+                CalendarAccountOption(id: $0.id, title: $0.displayName ?? $0.email, email: $0.email,
                     canManage: $0.enabledFeatures.contains(AccountFeature.calendarManagement.rawValue),
                     canShare: $0.enabledFeatures.contains(AccountFeature.calendarSharing.rawValue))
             }
@@ -335,7 +335,7 @@ final class CalendarModel {
                                                    calendar: displayCalendar)
             statusText = calendars.isEmpty ? (connectionStates.values.contains(where: \.isEnabled)
                 ? "No calendars are available. Refresh or check the account connection."
-                : "Connect Google Calendar to see your events.")
+                : "Google Calendar isn't connected.")
                 : operations.contains(where: { $0.status == .failed || $0.status == .conflicted })
                     ? "Some calendar changes need review in Calendar activity."
                     : operations.contains(where: { $0.status == .queued || $0.status == .running })

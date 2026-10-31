@@ -40,6 +40,7 @@ enum CalendarAIAccess: String, CaseIterable, Identifiable {
 struct CalendarAccountOption: Identifiable, Hashable {
     var id: String
     var title: String
+    var email = ""
     var canManage = false
     var canShare = false
 }

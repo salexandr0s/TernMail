@@ -232,15 +232,16 @@ struct CalendarView: View {
                                systemImage: "calendar",
                                message: hasConnection ? "Check the account status below to load your calendars."
                                 : "Connect Google Calendar to see your schedule and add events.", fillsSpace: false)
-                ForEach(model.accounts) { account in
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        Text(account.title).font(.headline)
-                        CalendarConnectionControl(model: model, account: account, connect: connect)
+                // The only place that asks to connect: the sidebar shows just the month until a calendar loads.
+                VStack(spacing: 0) {
+                    ForEach(model.accounts) { account in
+                        if account.id != model.accounts.first?.id { Divider().padding(.horizontal, Tokens.Space.s3) }
+                        CalendarConnectionControl(model: model, account: account, connect: connect, showsAccount: true)
+                            .padding(Tokens.Space.s3)
                     }
-                    .padding(Tokens.Space.s4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 }
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .ternOutline(radius: Tokens.Radius.md)
                 if hasConnection {
                     Button("Manage Calendars…", action: manageCalendars).buttonStyle(.bordered)
                 }
