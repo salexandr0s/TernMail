@@ -17,9 +17,13 @@ struct MainView: View {
     /// The sidebar column's last width while visible, gutter included.
     @State private var sidebarColumnWidth = Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter
     @State private var showsAssistant = false
-    @State private var preferredAssistantWidth = Tokens.Assistant.sidebarWidth
+    /// `Double`, because `@AppStorage` cannot store `CGFloat`.
+    @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @AppStorage("mailColumnVisibility") private var storedColumnVisibility = ""
+    /// Kept with the window, so it follows the system setting for reopening
+    /// windows after a quit.
+    @SceneStorage("selectedMailbox") private var storedMailbox = ""
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
     @State private var paneSizing = AssistantMailPaneSizing()
     @State private var toolbarInset = ClippedSplitToolbarInset()
@@ -116,7 +120,7 @@ struct MainView: View {
         let contentTopInset = toolbarInset.top
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
-                preferredWidth: preferredAssistantWidth, isPresented: showsAssistant)
+                preferredWidth: CGFloat(preferredAssistantWidth), isPresented: showsAssistant)
             HStack(spacing: 0) {
                 // A split wider than the mail area runs under the assistant and
                 // keeps its leading edge, the sidebar or the list, in view.
@@ -166,9 +170,15 @@ struct MainView: View {
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
         .onAppear {
             mailbox.undoManager = undoManager
-            if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) { columnVisibility = stored }
+            if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) {
+                sidebarHiddenForWidth = false
+                columnVisibility = stored
+            }
+            // The first layout may have run before the stored choice came back.
             fitColumns(to: mailWidth)
+            if let stored = MailboxID(restorationValue: storedMailbox) { mailbox.restoreMailbox(stored) }
         }
+        .onChange(of: mailbox.selectedMailbox) { _, box in storedMailbox = box?.restorationValue ?? "" }
         .onChange(of: columnVisibility) { _, visibility in
             // The assistant and a narrow window hide columns for a while; keep the user's own choice.
             if !showsAssistant && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
@@ -259,6 +269,9 @@ struct MainView: View {
             }
             .mailToolbarVisible(showsProfilePicker)
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
+            // After the mail items: toolbar spaces ignore hidden(_:), and this
+            // keeps the mail spaces out of the library's group.
+            AttachmentLibraryToolbar(state: libraryToolbar, isCompact: isCompactWindow, isVisible: isActive && showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
                 section: section, isCompact: isCompactWindow,
@@ -277,31 +290,7 @@ struct MainView: View {
             : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
         .navigationSubtitle(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
             ? mailbox.selectedMailboxSubtitle : "")
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: Tokens.Space.s2) {
-                if let notice = mailbox.sendNotice {
-                    NoticeView(notice: notice) {
-                        if let undo = notice.undo { self.undo(undo) }
-                    } onDismiss: {
-                        if mailbox.sendNotice?.id == notice.id { mailbox.sendNotice = nil }
-                    }
-                    .transition(.opacity)
-                    .id(notice.id)
-                }
-                if let notice = mailbox.notice {
-                    NoticeView(notice: notice) {
-                        if let undo = notice.undo { self.undo(undo) }
-                    } onDismiss: {
-                        if mailbox.notice?.id == notice.id { mailbox.notice = nil }
-                    }
-                    .transition(.opacity)
-                    .id(notice.id)
-                }
-            }
-            .padding(Tokens.Space.s4)
-            .ternAnimation(value: mailbox.notice)
-            .ternAnimation(value: mailbox.sendNotice)
-        }
+        .modifier(MailNoticeOverlay(mailbox: mailbox))
     }
 
     private func toggleAssistant() {
@@ -326,7 +315,7 @@ struct MainView: View {
     }
 
     private func resizeAssistant(_ width: CGFloat) {
-        preferredAssistantWidth = min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth)
+        preferredAssistantWidth = Double(min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth))
     }
 
     private func openAssistantWindow(fullScreen: Bool) {
@@ -413,16 +402,6 @@ struct MainView: View {
     }
 
     /// Undoing a send or a discard reopens the message's window.
-    private func undo(_ undo: MailboxModel.Notice.Undo) {
-        switch undo {
-        case .action(let row):
-            mailbox.undo(row)
-        case .send(let id):
-            Task { if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
-        case .discard(let id):
-            Task { if await mailbox.undoDiscard(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
-        }
-    }
 }
 
 /// Keeps the assistant's account access current as the mailbox changes.
@@ -476,12 +455,12 @@ private struct DetailView: View {
         let ids = mailbox.selectedThreadIDs
         if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
             TernEmptyState(
-                title: "Outgoing messages",
+                title: "Outgoing Messages",
                 systemImage: "tray.and.arrow.up",
                 message: "Messages wait here until Gmail receives them. Double-click to open."
             )
         } else if !mailbox.listPreferences.conversations, mailbox.selectedMessageRows.count > 1 {
-            TernEmptyState(title: "\(mailbox.selectedMessageRows.count) messages selected", systemImage: "square.stack",
+            TernEmptyState(title: "\(mailbox.selectedMessageRows.count) Messages Selected", systemImage: "square.stack",
                 message: "Use the toolbar to organize your selection.")
         } else if ids.count == 1, let key = ids.first {
             let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
@@ -489,13 +468,13 @@ private struct DetailView: View {
                 .id(ReaderIdentity(key: key, messageID: messageID))
         } else if ids.count > 1 {
             TernEmptyState(
-                title: "\(ids.count) conversations selected",
+                title: "\(ids.count) Conversations Selected",
                 systemImage: "square.stack",
                 message: "Use the toolbar to organize your selection."
             )
         } else {
             TernEmptyState(
-                title: mailbox.listPreferences.conversations ? "No conversation selected" : "No message selected",
+                title: mailbox.listPreferences.conversations ? "No Conversation Selected" : "No Message Selected",
                 systemImage: "envelope.open"
             )
         }

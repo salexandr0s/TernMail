@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import MessageContent
 import Observation
 import Testing
 @testable import Tern
@@ -145,15 +146,25 @@ import Testing
         let item = AttachmentLibraryItem(attachment: attachment, threadID: "t3", sender: "Mira", subject: "Old invoice", date: .distantPast)
         mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
         #expect(await model.openSource(item))
-        #expect(model.sourceThreadKey == ThreadKey(accountID: "audit", threadID: "t3"))
+        #expect(model.sourceLink == MailLink(accountID: "audit", threadID: "t3", messageID: "m4"))
         #expect(mailbox.selectedMailbox == .combined(AttachmentLibraryModel.mailboxID))
         #expect(try await mailbox.cache.read { try $0.thread(id: "t3", accountID: "audit") } != nil)
         model.unavailableAccountIDs = ["audit"]
-        #expect(model.sourceThreadKey == nil)
+        #expect(model.sourceLink == nil)
         await model.preview(item)
         #expect(model.previewURL == nil)
         #expect(model.errorMessage?.contains("Sign in") == true)
         await mailbox.stop()
+    }
+
+    @Test func dragIdentityMatchesTheLibraryItem() {
+        // Drag containers name each file by `libraryID`, so it has to match the
+        // library's own ID, including IDs that contain the separator.
+        let attachment = AttachmentRecord(accountID: "a:1", messageID: "m4", partID: "0.1", attachmentID: nil,
+            filename: "plan.pdf", mimeType: "application/pdf", size: 20, isInline: false)
+        let item = AttachmentLibraryItem(attachment: attachment, threadID: "t3", sender: "Mira", subject: "Plan", date: .distantPast)
+        #expect(attachment.libraryID == item.id)
+        #expect(item.attachment.libraryID == item.id)
     }
 
     @Test func indexProgressEndsWhenIndexingCompletesFailsOrCannotRun() async throws {

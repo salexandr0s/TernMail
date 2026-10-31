@@ -21,7 +21,7 @@ struct CalendarScheduleView: View {
     var body: some View {
         if days.isEmpty {
             VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "No events this month", systemImage: "calendar",
+                TernEmptyState(title: "No Events This Month", systemImage: "calendar",
                                message: "Add an event or choose another month.", fillsSpace: false)
                 Button("New Event") {
                     let start = CalendarLayout.date(at: 9 * 60, on: date, calendar: calendar)
@@ -82,11 +82,7 @@ struct CalendarScheduleView: View {
         .ternHover()
         .draggable(CalendarEventTransfer(event))
         .onTapGesture(count: 2) { edit(event) }
-        .contextMenu {
-            Button("Open Event") { edit(event) }
-            Button("Duplicate") { duplicate(event) }
-            Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
-        }
+        .contextMenu { CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { edit(event) }

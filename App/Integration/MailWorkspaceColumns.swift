@@ -1,4 +1,5 @@
 import AppKit
+import MailStore
 import Observation
 import SwiftUI
 
@@ -17,6 +18,11 @@ final class AttachmentLibraryToolbarState {
     var searchFocusRequest = 0
     /// The window's search field while the library shows; the library mirrors it.
     var searchText = ""
+    /// The toolbar's sort menu; the library mirrors it like the search text.
+    var sort = AttachmentLibrarySort.newest
+    var viewMode = AttachmentLibraryViewMode.saved {
+        didSet { AttachmentLibraryViewMode.saved = viewMode }
+    }
     var showsSidebar: Bool { columnVisibility == .all }
 
     func toggleSidebar() { columnVisibility = showsSidebar ? .detailOnly : .all }

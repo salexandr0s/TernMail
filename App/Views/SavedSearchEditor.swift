@@ -18,20 +18,24 @@ struct SavedSearchEditor: View {
             PopupHeader(
                 title: existing == nil ? "New Saved Search" : "Edit Saved Search",
                 systemImage: "magnifyingglass",
-                subtitle: "Search history stays off. Only this named query is saved."
+                subtitle: "Search history stays off. Tern saves only this search."
             )
             Form {
                 TextField("Name", text: $name)
                     .focused($isNameFocused)
-                TextField("Gmail Query", text: $query)
+                TextField("Search terms", text: $query)
                     .help("Use Gmail search operators such as from:, label: and has:attachment.")
+                if let operators = URL(string: "https://support.google.com/mail/answer/7190") {
+                    Link("Gmail Search Operators", destination: operators)
+                        .font(.callout)
+                }
                 Picker("Accounts", selection: $selectedAccount) {
                     Text("All Accounts").tag("")
                     if case .accounts(let ids)? = existing?.scope, ids.count > 1 { Text("Selected Accounts").tag("__subset") }
                     ForEach(mailbox.presentedAccounts, id: \.account.id) { Text(mailbox.accountTitle($0.account)).tag($0.account.id) }
                 }
                 if let error = mailbox.navigation.error {
-                    Text(error)
+                    Label(error, systemImage: "exclamationmark.triangle")
                         .font(.callout)
                         .foregroundStyle(Tokens.Status.error)
                         .fixedSize(horizontal: false, vertical: true)

@@ -76,7 +76,7 @@ struct SuggestionBlocklistPane: View {
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

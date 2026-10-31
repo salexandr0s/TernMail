@@ -45,18 +45,22 @@ import Testing
             try await settleMail(in: controller.view, window: window)
             try await expectMailVisible(in: controller.view, window: window, searchFolds: searchFolds)
         }
-        // Narrower than the three column minimums, or than the list and reader
-        // beside the assistant, the split runs past its frame. It may run under
-        // the assistant or off the trailing edge, never off the leading edge.
-        window.setContentSize(NSSize(width: 720, height: 760))
-        try await settleMail(in: controller.view, window: window)
-        try expectLeadingEdgeVisible(in: controller.view, label: "720 points")
+        // Below the three column minimums the sidebar steps aside, and it comes back with the room.
+        window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
+        try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: true)
+        try expectLeadingEdgeVisible(in: controller.view, label: "\(Int(Tokens.Layout.windowMinWidth)) points")
         window.setContentSize(NSSize(width: 1_280, height: 760))
+        try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: false)
         try await settleMail(in: controller.view, window: window)
+        try await expectMailVisible(in: controller.view, window: window, searchFolds: false)
+        // Beside the assistant the list and reader can need more than the mail area.
+        // The split then runs under the assistant or off the trailing edge, never off
+        // the leading edge. Narrower windows can move the assistant button into the
+        // toolbar overflow, so it is clicked at 1,280 points.
         try await toggleAssistant(in: window)
         try await settle()
         #expect(try mailSplit(in: controller.view).frame.width <= 1_280 - Tokens.Assistant.sidebarMinWidth)
-        for width in [CGFloat(960), 720] {
+        for width in [CGFloat(960), Tokens.Layout.windowMinWidth] {
             window.setContentSize(NSSize(width: width, height: 760))
             try await settle()
             try await settle()
@@ -117,6 +121,35 @@ import Testing
             #expect(bounds.width >= Tokens.Layout.searchMinWidth - 1)
             #expect(bounds.minX >= 0 && bounds.maxX <= window.frame.width + 1)
             #expect(bounds.minY >= window.contentLayoutRect.maxY - 1)
+        }
+    }
+
+    /// Waits for the sidebar column to reach the expected state, then checks
+    /// that every visible column lies inside the window.
+    private func expectColumnsFit(in rootView: NSView, window: NSWindow, sidebarCollapsed: Bool) async throws {
+        let width = window.frame.width
+        let probe = try #require(descendants(in: rootView)
+            .compactMap { $0 as? MailColumnProbe.ProbeView }
+            .first { $0.pane == .navigation })
+        var sidebar: NSView = probe
+        var split: NSSplitView?
+        while let parent = sidebar.superview {
+            if let parent = parent as? NSSplitView, parent.isVertical {
+                split = parent
+                break
+            }
+            sidebar = parent
+        }
+        let columns = try #require(split)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while columns.isSubviewCollapsed(sidebar) != sidebarCollapsed, ContinuousClock.now < deadline {
+            try await settle()
+        }
+        #expect(columns.isSubviewCollapsed(sidebar) == sidebarCollapsed, "Sidebar collapsed state at width \(width)")
+        try await settle()
+        for column in columns.arrangedSubviews where !columns.isSubviewCollapsed(column) {
+            let frame = column.convert(column.bounds, to: nil)
+            #expect(frame.minX >= -1 && frame.maxX <= width + 1, "A column runs past the window at width \(width)")
         }
     }
 
@@ -342,6 +375,57 @@ import Testing
         bounds.origin.y = (scroll.documentView?.frame.minY ?? 0) - scroll.contentInsets.top
         clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
         scroll.reflectScrolledClipView(clip)
+    }
+
+    /// The library's layout and sort controls once pushed Search into the
+    /// overflow menu at the minimum window width.
+    @Test func attachmentLibraryKeepsSearchInNarrowToolbars() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+        let suite = "SidebarLayoutTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set("", forKey: SidebarExpansion.storageKey)
+        defer { settings.removePersistentDomain(forName: suite) }
+
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.toolbar = workspaceToolbar()
+        window.toolbarStyle = .unified
+        window.contentViewController = controller
+        window.orderFront(nil)
+        defer { window.close() }
+        app.destination = .mail
+        mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+
+        // Narrow toolbars fold both controls into one menu, as the mail actions fold.
+        // SwiftUI hides and shows the items over several passes, so this waits
+        // for the toolbar to settle.
+        for (width, folds) in [(CGFloat(1_280), false), (Tokens.Layout.windowMinWidth, true)] {
+            window.setContentSize(NSSize(width: width, height: 760))
+            let shown: Set<String> = folds
+                ? ["library.compactOptions", "workspace.search"]
+                : ["library.viewMode", "library.sort", "workspace.search"]
+            let hidden: Set<String> = folds ? ["library.viewMode", "library.sort"] : ["library.compactOptions"]
+            let layoutDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+            var visible: Set<String> = []
+            repeat {
+                try await settle()
+                visible = Set(window.toolbar?.visibleItems?.map(\.itemIdentifier.rawValue) ?? [])
+            } while !(shown.isSubset(of: visible) && hidden.isDisjoint(with: visible)) && ContinuousClock.now < layoutDeadline
+            #expect(shown.isSubset(of: visible), "Visible toolbar items at width \(Int(width)): \(visible.sorted())")
+            #expect(hidden.isDisjoint(with: visible), "Visible toolbar items at width \(Int(width)): \(visible.sorted())")
+        }
+        await app.signOut()
     }
 
     private func settle() async throws {

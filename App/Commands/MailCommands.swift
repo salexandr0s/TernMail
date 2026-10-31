@@ -232,16 +232,23 @@ struct MailCommands: Commands {
                 .keyboardShortcut(ShortcutCatalog.moveTo.shortcut)
                 .disabled(!hasSelection)
             Divider()
-            Menu {
-                SnoozeMenuItems(
-                    onSnooze: { focusedMailbox?.snooze(until: $0) },
-                    onChooseDate: { focusedMailbox?.showSnoozeDate() }
-                )
-            } label: {
-                Label("Snooze", systemImage: "clock")
+            // A disabled submenu still opens from the menu bar, so with nothing
+            // to act on, Snooze and Share are plain disabled items.
+            if canSnooze {
+                Menu {
+                    SnoozeMenuItems(
+                        onSnooze: { focusedMailbox?.snooze(until: $0) },
+                        onChooseDate: { focusedMailbox?.showSnoozeDate() }
+                    )
+                } label: {
+                    Label("Snooze", systemImage: "clock")
+                        .labelStyle(.titleAndIcon)
+                }
+            } else {
+                Button("Snooze", systemImage: "clock") {}
                     .labelStyle(.titleAndIcon)
+                    .disabled(true)
             }
-            .disabled(!canSnooze)
             // A shortcut can't open the submenu, so it opens Choose Date & Time.
             Button("Snooze…", systemImage: "clock") { focusedMailbox?.showSnoozeDate() }
                 .labelStyle(.titleAndIcon)
@@ -259,7 +266,30 @@ struct MailCommands: Commands {
             Button("Open in Gmail", systemImage: "safari") { if let gmailURL { NSWorkspace.shared.open(gmailURL) } }
                 .labelStyle(.titleAndIcon)
                 .disabled(gmailURL == nil)
+            // Share opens the share picker, so its title ends in an ellipsis.
+            if let shareFile {
+                ShareLink(item: shareFile, preview: shareFile.preview) {
+                    Label("Share…", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon)
+                }
+            } else {
+                Button("Share…", systemImage: "square.and.arrow.up") {}
+                    .labelStyle(.titleAndIcon)
+                    .disabled(true)
+            }
         }
+    }
+
+    /// Share sends the selected message, or the one with selected text, or
+    /// else the conversation's newest message that isn't a draft. The file is
+    /// fetched only when a service asks for it, so the menu never waits.
+    private var shareFile: MessageFileItem? {
+        guard let link = selectedLink, let mailbox = focusedMailbox ?? (conversationLink == nil ? nil : app.mailbox),
+              mailbox.account(id: link.accountID) != nil else { return nil }
+        let quote = selectedQuote.flatMap {
+            $0.belongsTo(accountID: link.accountID, threadID: link.threadID, messageID: link.messageID) ? $0.messageID : nil
+        }
+        let thread = mailbox.listedThreads.first(where: { $0.accountID == link.accountID && $0.id == link.threadID })
+        return MessageFileItem(link: link, preferredMessageID: quote, previewTitle: thread?.subject, mailbox: mailbox)
     }
 
     private var formatMenu: some Commands {

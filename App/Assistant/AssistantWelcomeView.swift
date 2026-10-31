@@ -100,7 +100,6 @@ private struct AssistantSuggestionRow: View {
     let requirement: String?
     let action: () -> Void
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button(action: action) {
@@ -133,8 +132,8 @@ private struct AssistantSuggestionRow: View {
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         }
         .buttonStyle(.plain).disabled(requirement != nil)
-        .focused($isFocused)
-        .ternOutline(radius: Tokens.Radius.lg, focus: isFocused ? .accentColor : nil)
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .ternOutline(radius: Tokens.Radius.lg)
         .onHover { isHovered = $0 }
         .help(requirement ?? "Ask the assistant now")
         .accessibilityHint(requirement ?? "Ask the assistant now")

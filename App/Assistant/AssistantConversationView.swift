@@ -6,6 +6,7 @@ struct AssistantConversationView<Welcome: View>: View {
     let onOpenSource: (AssistantSource) -> Void
     let onOpenDraft: (String) -> Void
     @ViewBuilder let welcome: () -> Welcome
+    @Environment(\.openWindow) private var openWindow
     @State private var scrollTracking = AssistantScrollTracking()
 
     var body: some View {
@@ -73,10 +74,15 @@ struct AssistantConversationView<Welcome: View>: View {
         AssistantMessageView(message: message, startsGroup: startsGroup(at: index),
                              status: model.statusText, canRetry: model.canRetry(message.id),
                              onRetry: { scrollTracking.followLatest(); model.retry(message.id) },
-                             onOpenSource: onOpenSource, onOpenDraft: onOpenDraft)
+                             onOpenSource: onOpenSource, onOpenSourceInNewWindow: openInNewWindow,
+                             onOpenDraft: onOpenDraft)
         if !message.calendarProposals.isEmpty || !message.availabilityChoices.isEmpty {
             AssistantCalendarActionsView(message: message, model: model)
         }
+    }
+
+    private func openInNewWindow(_ source: AssistantSource) {
+        model.openSourceInNewWindow(source) { openWindow(id: ConversationWindow.sceneID, value: $0) }
     }
 
     private func daySeparator(_ date: Date) -> some View {
@@ -93,7 +99,7 @@ struct AssistantConversationView<Welcome: View>: View {
 
     @ViewBuilder private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
         if !model.messages.isEmpty, !scrollTracking.followsLatest {
-            Button("Jump to latest", systemImage: "arrow.down") {
+            Button("Jump to Latest", systemImage: "arrow.down") {
                 scrollTracking.followLatest()
                 proxy.scrollTo("assistant-bottom", anchor: .bottom)
             }

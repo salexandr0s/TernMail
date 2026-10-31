@@ -38,17 +38,31 @@ enum MailNextSelection: String, CaseIterable, Identifiable {
 enum MailSwipeAction: String, CaseIterable, Identifiable {
     case archive, trash, read, star, snooze, move, label, spam, none
     var id: String { rawValue }
+    /// The name in Settings, matching the menu command.
     var title: String {
         switch self {
         case .archive: "Archive"
-        case .trash: "Trash"
-        case .read: "Read / Unread"
-        case .star: "Star"
+        case .trash: "Move to Trash"
+        case .read: "Mark as Read or Unread"
+        case .star: "Star or Remove Star"
         case .snooze: "Snooze"
+        case .move: "Move to"
+        case .label: "Edit Labels"
+        case .spam: "Report Spam"
+        case .none: "None"
+        }
+    }
+
+    /// The short name on a swipe button, for the row's current state.
+    func buttonTitle(isUnread: Bool, isStarred: Bool) -> String {
+        switch self {
+        case .trash: "Trash"
+        case .read: isUnread ? "Read" : "Unread"
+        case .star: isStarred ? "Unstar" : "Star"
         case .move: "Move"
         case .label: "Label"
         case .spam: "Spam"
-        case .none: "None"
+        case .archive, .snooze, .none: title
         }
     }
     var symbol: String {

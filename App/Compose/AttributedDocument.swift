@@ -11,7 +11,7 @@ enum AttributedDocument {
     static func baseFont(_ choice: ComposeFont) -> NSFont {
         switch choice {
         case .sansSerif: baseFont
-        case .serif: NSFont(name: "Georgia", size: baseFont.pointSize) ?? baseFont
+        case .serif: baseFont.fontDescriptor.withDesign(.serif).flatMap { NSFont(descriptor: $0, size: baseFont.pointSize) } ?? baseFont
         case .fixedWidth: NSFont.monospacedSystemFont(ofSize: baseFont.pointSize, weight: .regular)
         }
     }

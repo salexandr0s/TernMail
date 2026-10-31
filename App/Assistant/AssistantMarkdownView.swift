@@ -55,10 +55,8 @@ struct AssistantMarkdownView: View {
                     Text(block.language == "mermaid" ? "Diagram source" : (block.language ?? "Code"))
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Copy code", systemImage: "doc.on.doc") {
-                        NSPasteboard.general.replaceContents(with: String(block.text.characters))
-                    }
-                    .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy code")
+                    Button("Copy Code", systemImage: "doc.on.doc") { copyCode(block) }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy Code")
                 }
                 .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
                 Divider()
@@ -71,6 +69,9 @@ struct AssistantMarkdownView: View {
             }
             .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .ternOutline(radius: Tokens.Radius.md)
+            .contextMenu {
+                Button("Copy", systemImage: "doc.on.doc") { copyCode(block) }
+            }
         case .heading:
             Text(block.text).font(headingFont(block.headingLevel))
                 .accessibilityAddTraits(.isHeader)
@@ -109,6 +110,10 @@ struct AssistantMarkdownView: View {
         case 2: .headline
         default: .headline
         }
+    }
+
+    private func copyCode(_ block: AssistantMarkdown.Block) {
+        NSPasteboard.general.replaceContents(with: String(block.text.characters))
     }
 
     private func spacing(before index: Int, in blocks: [AssistantMarkdown.Block]) -> CGFloat {

@@ -52,24 +52,24 @@ struct SingleKeyShortcuts {
 
     /// Every key, in the order Help lists them.
     static let keys = [
-        Key(characters: ["j"], action: .nextConversation, title: "Next conversation"),
-        Key(characters: ["k"], action: .previousConversation, title: "Previous conversation"),
-        Key(characters: ["o", "\r"], action: .openConversation, title: "Open conversation"),
+        Key(characters: ["j"], action: .nextConversation, title: "Next Conversation"),
+        Key(characters: ["k"], action: .previousConversation, title: "Previous Conversation"),
+        Key(characters: ["o", "\r"], action: .openConversation, title: "Open Conversation"),
         Key(characters: ["e"], action: .archive, title: "Archive"),
         Key(characters: ["#"], action: .trash, title: "Move to Trash"),
-        Key(characters: ["s"], action: .toggleStar, title: "Star or remove star"),
-        Key(characters: ["I"], action: .markRead, title: "Mark as read"),
-        Key(characters: ["U"], action: .markUnread, title: "Mark as unread"),
-        Key(characters: ["l"], action: .editLabels, title: "Edit labels"),
-        Key(characters: ["v"], action: .moveTo, title: "Move to"),
-        Key(characters: ["b"], action: .snooze, title: "Snooze"),
-        Key(characters: ["/"], action: .search, title: "Search"),
-        Key(characters: ["c"], action: .newMessage, title: "New message"),
+        Key(characters: ["s"], action: .toggleStar, title: "Star or Remove Star"),
+        Key(characters: ["I"], action: .markRead, title: "Mark as Read"),
+        Key(characters: ["U"], action: .markUnread, title: "Mark as Unread"),
+        Key(characters: ["l"], action: .editLabels, title: "Edit Labels…"),
+        Key(characters: ["v"], action: .moveTo, title: "Move to…"),
+        Key(characters: ["b"], action: .snooze, title: "Snooze…"),
+        Key(characters: ["/"], action: .search, title: "Search Mail"),
+        Key(characters: ["c"], action: .newMessage, title: "New Message"),
         Key(characters: ["r"], action: .reply, title: "Reply"),
-        Key(characters: ["a"], action: .replyAll, title: "Reply all"),
+        Key(characters: ["a"], action: .replyAll, title: "Reply All"),
         Key(characters: ["f"], action: .forward, title: "Forward"),
         Key(characters: ["z"], action: .undo, title: "Undo"),
-        Key(characters: ["?"], action: .showShortcuts, title: "Keyboard shortcuts"),
+        Key(characters: ["?"], action: .showShortcuts, title: "Keyboard Shortcuts"),
     ]
 
     /// The second key after "g", in the order Help lists them.

@@ -52,6 +52,48 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>New Tern Message with Selection</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>newMessageWithSelection</string>
+			<key>NSPortName</key>
+			<string>Tern</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>New Tern Message to Address</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>newMessageToAddress</string>
+			<key>NSPortName</key>
+			<string>Tern</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>dev.tern.mail.conversation</string>
+		<string>dev.tern.calendar.day</string>
+	</array>
 	<key>OSAScriptingDefinition</key>
 	<string>Tern.sdef</string>
 	<key>TernGoogleClientID</key>

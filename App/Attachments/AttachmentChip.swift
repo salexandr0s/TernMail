@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A file's icon, name and size, with a control after them. In a received
-/// message, clicking the icon or name opens the file.
+/// A file's icon, name and size, with a control after them. With `open`,
+/// clicking the icon or name opens the file in Quick Look.
 struct AttachmentChip<Accessory: View>: View {
     static var width: CGFloat { Tokens.Layout.attachmentWidth }
 

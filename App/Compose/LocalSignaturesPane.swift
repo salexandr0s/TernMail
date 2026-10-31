@@ -24,7 +24,7 @@ struct LocalSignaturesPane: View {
                     Text("Signature")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
                     Picker("Signature", selection: $selectedID) {
-                        Text("New signature").tag(String?.none)
+                        Text("New Signature").tag(String?.none)
                         ForEach(signatures) { Text($0.name).tag(Optional($0.id)) }
                     }
                     .labelsHidden()
@@ -63,7 +63,7 @@ struct LocalSignaturesPane: View {
                 }
                 SettingsControlRow("Address") {
                     Picker("Address", selection: $address) {
-                        Text("Account default").tag("")
+                        Text("Account Default").tag("")
                         ForEach(identities, id: \.lowercasedAddress) { Text($0.address).tag($0.lowercasedAddress) }
                     }
                     .frame(maxWidth: Tokens.Settings.pickerWidth)
@@ -91,7 +91,7 @@ struct LocalSignaturesPane: View {
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -108,7 +108,7 @@ struct LocalSignaturesPane: View {
     private func signaturePicker(_ title: String, selection: Binding<SignatureSelection>) -> some View {
         Picker(title, selection: selection) {
             Text("None").tag(SignatureSelection.none)
-            Text("Gmail signature").tag(SignatureSelection.gmail)
+            Text("Gmail Signature").tag(SignatureSelection.gmail)
             ForEach(signatures) { Text($0.name).tag(SignatureSelection.local(id: $0.id)) }
         }
     }

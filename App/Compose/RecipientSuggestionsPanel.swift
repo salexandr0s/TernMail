@@ -15,6 +15,8 @@ final class RecipientSuggestionsPanel: NSObject, NSTableViewDataSource, NSTableV
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private weak var owner: NSWindow?
+    /// The field the suggestions are for. It shares VoiceOver focus with the list.
+    private weak var field: NSTokenField?
     private(set) var rows: [RecipientSuggestion] = []
     var onChoose: ((RecipientSuggestion) -> Void)?
     var onDismiss: (() -> Void)?
@@ -84,12 +86,18 @@ final class RecipientSuggestionsPanel: NSObject, NSTableViewDataSource, NSTableV
         table.tableColumns.first?.width = scroll.contentSize.width
         if owner !== window { owner?.removeChildWindow(panel); owner = window; window.addChildWindow(panel, ordered: .above) }
         panel.orderFront(nil)
+        // VoiceOver stays in the field and follows the highlighted row from there.
+        if self.field !== field { self.field?.setAccessibilitySharedFocusElements(nil) }
+        self.field = field
+        field.setAccessibilitySharedFocusElements([table])
     }
 
     func close() {
         panel.orderOut(nil)
         owner?.removeChildWindow(panel)
         owner = nil
+        field?.setAccessibilitySharedFocusElements(nil)
+        field = nil
         rows = []
         table.reloadData()
     }
@@ -120,6 +128,8 @@ final class RecipientSuggestionsPanel: NSObject, NSTableViewDataSource, NSTableV
         table.enumerateAvailableRowViews { row, index in
             for cell in row.subviews.compactMap({ $0 as? RecipientSuggestionCell }) { cell.selected = index == self.table.selectedRow }
         }
+        // The panel never takes focus, so VoiceOver hears about the highlighted row from here.
+        NSAccessibility.post(element: table, notification: .selectedRowsChanged)
     }
 
     @objc private func chooseClickedRow() {
@@ -142,7 +152,17 @@ private final class RecipientCompletionWindow: NSPanel {
 
 @MainActor
 private final class RecipientSuggestionCell: NSView {
-    var suggestion: RecipientSuggestion? { didSet { needsDisplay = true } }
+    /// The row's text is ready for VoiceOver before the row is drawn.
+    var suggestion: RecipientSuggestion? {
+        didSet {
+            let text = suggestion.map { [$0.title, $0.subtitle].filter { !$0.isEmpty }.joined(separator: " ") }
+            toolTip = text
+            setAccessibilityElement(text != nil)
+            setAccessibilityRole(.staticText)
+            setAccessibilityValue(text)
+            needsDisplay = true
+        }
+    }
     var image: ((EmailAddress) -> NSImage?)?
     var selected = false { didSet { needsDisplay = true } }
     override var isFlipped: Bool { true }
@@ -166,8 +186,5 @@ private final class RecipientSuggestionCell: NSView {
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
         (suggestion.title as NSString).draw(in: titleRect, withAttributes: [.font: NSFont.preferredFont(forTextStyle: .callout), .foregroundColor: color, .paragraphStyle: paragraph])
         (suggestion.subtitle as NSString).draw(in: subtitleRect, withAttributes: [.font: NSFont.preferredFont(forTextStyle: .caption1), .foregroundColor: secondary, .paragraphStyle: paragraph])
-        toolTip = [suggestion.title, suggestion.subtitle].filter { !$0.isEmpty }.joined(separator: " ")
-        setAccessibilityElement(true)
-        setAccessibilityLabel(toolTip)
     }
 }

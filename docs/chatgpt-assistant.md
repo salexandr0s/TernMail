@@ -4,12 +4,12 @@ Tern uses Sign in with ChatGPT to connect its assistant to your ChatGPT plan. Mo
 
 ## Connect
 
-1. Open Tern, then **Settings → Assistant** or **Assistant → Options → Assistant settings**.
+1. Open Tern, then **Settings → Assistant**, or **Assistant Options → Assistant Settings…** in the assistant's header.
 2. Choose **Continue with ChatGPT** and finish signing in in your browser. Grant ChatGPT plan usage when offered. An identity-only connection cannot run the assistant.
 3. Enable the mail accounts the assistant may use and choose an available model.
 4. Select a conversation, open the assistant, and ask a question. Change the scope to use the current account or all enabled accounts when needed.
 
-Choose a suggestion to ask immediately, or write a request such as “What needs my attention this week?” Suggestions respect the selected scope. Summary and draft suggestions require selected conversations; drafting requires one conversation. Open an email card or source to read the supporting conversation. **Review draft** opens the normal Tern composer for editing and sending.
+Choose a suggestion to ask immediately, or write a request such as “What needs my attention this week?” Suggestions respect the selected scope. Summary and draft suggestions require selected conversations; drafting requires one conversation. Open an email card or source to read the supporting conversation. **Review Draft** opens the normal Tern composer for editing and sending.
 
 The assistant can search mail, read threads, extract supported attachments, and prepare drafts. Search results are paginated and subject to request limits; a single request does not read an entire mailbox. The initial attachment reader supports plain text, CSV, Markdown, JSON, XML, and PDFs with selectable text. Files are limited to 5 MB; extraction is limited to 60,000 characters and 40 PDF pages. Scans need OCR, which is not included.
 
@@ -21,7 +21,7 @@ Opening a conversation generates a short AI summary below its event cards when C
 
 Summaries automatically use GPT-6 Luna when the connected account lists it, then GPT-5.4 mini, then the selected chat model. This preference keeps summaries on a small, efficient model when one is available. Chat, calendar interpretation, and writing-style learning use the model selected in Assistant settings.
 
-Use **Summary options → Refresh summary** to generate it again, or **Retry** after a failure. New messages trigger a fresh summary. Reading, starring, labeling, and loading message bodies do not regenerate an unchanged conversation. Up to 16 summaries stay in memory for revisiting conversations; they are discarded on access loss, account replacement, connection or model changes, and app exit. Summaries do not enter chat history or persist to disk.
+Use **Summary Options → Refresh Summary** to generate it again, or **Retry** after a failure. New messages trigger a fresh summary. Reading, starring, labeling, and loading message bodies do not regenerate an unchanged conversation. Up to 16 summaries stay in memory for revisiting conversations; they are discarded on access loss, account replacement, connection or model changes, and app exit. Summaries do not enter chat history or persist to disk.
 
 The reader shows a coverage note when the mail read omitted messages or content. If Gmail returns a different message set from the open reader, sync mail and retry. Generated source references must match the retrieved messages before Tern displays the result.
 
@@ -37,27 +37,27 @@ If a draft is requested during learning, Tern waits briefly for the profile befo
 
 ## Chat controls and data
 
-Use the round Assistant icon at the far right of the window toolbar to open or close the sidebar. The button immediately to its left switches between Mail and Calendar. These controls stay in the same position in both views.
+Use the Assistant button at the far right of the window toolbar to open or close the sidebar. It stays in the same place in Mail and Calendar.
 
-The assistant opens as a right sidebar inside the existing window. Mailbox navigation and the conversation list shrink while it is open. At narrow widths, mailbox navigation temporarily closes. Closing the assistant restores the earlier layout. Drag its left edge to resize it, or use **Options** to open a separate window or full-screen view. All three views share the conversation and unfinished message.
+The assistant opens as a right sidebar inside the existing window. Mailbox navigation and the conversation list shrink while it is open. At narrow widths, mailbox navigation temporarily closes. Closing the assistant restores the earlier layout. Drag its left edge to resize it; the width is kept across launches. Press Esc to close it while the message field is empty. **Assistant Options → Open in a Window** or **Open Full Screen** moves it to a separate window or full screen. All three views share the conversation and unfinished message.
 
 The header shows the current model. Use the mail scope menu to choose which conversations to include, and the sliders button beside it to manage mail and calendar access. The welcome panel shows any setup step still needed, followed by suggestion cards with short descriptions. A new chat opens at the top of this panel, including in short windows.
 
-Press **Return** to send and **Shift-Return** to insert a new line. **⌘ Return** also sends. Your messages appear in trailing bubbles, while assistant replies use the conversation width for text and email cards. Copy controls remain beside message timestamps.
+Press **Return** to send and **Shift-Return** to insert a new line. **⌘ Return** also sends. Your messages appear in trailing bubbles, while assistant replies use the conversation width for text and email cards. Copy controls remain beside message timestamps. Control-click a reply for Copy, Copy as Markdown, Copy as Plain Text and Retry.
 
 Replies lead with the answer and default to short paragraphs or a few useful bullets. Ask for more detail when you need it. Headings, lists, emphasis, quotes, code, and tables have distinct formatting. Small workflows and decisions can include an embedded flowchart; its controls reveal or copy the diagram source. Unsupported or unfinished diagrams remain readable code.
 
 Email cards show verified sender details, dates, labels, unread/starred status, and a reason for inclusion. Available local profile pictures appear beside senders; otherwise Tern shows initials. Cards link to the original conversation. Generated text, images, and diagrams do not create navigation links; use the validated cards and sources.
 
-**Stop response** cancels the current request. **Try again** retries a failed reply while retaining email cards and drafts already created. Retrying cannot create another draft after one has succeeded; ask in a new message to prepare another. **New chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits. Scroll up to read earlier messages without following new output; **Jump to latest** resumes following it.
+**Stop response** cancels the current request. **Retry** repeats a failed reply while keeping email cards and drafts already created. Retrying cannot create another draft after one has succeeded; ask in a new message to prepare another. **New Chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits. Scroll up to read earlier messages without following new output; **Jump to Latest** resumes following it.
 
 Mail access starts disabled. Relevant content from enabled accounts is sent to OpenAI for your requests, automatic summaries and event interpretation in permitted open conversations, and writing-style setup when learning is enabled. Changing the effective scope or removing access clears retained chat content and cancels active work. Reading mail through the assistant does not mark it read. Sending remains an action in the compose window.
 
-Tern stores its own ChatGPT connection in macOS Keychain, separate from Gmail and other apps. **Disconnect** clears local authorization and requests remote revocation. If revocation fails, Tern reports it; local use remains disabled. **Manage usage** opens ChatGPT's usage controls.
+Tern stores its own ChatGPT connection in macOS Keychain, separate from Gmail and other apps. **Disconnect…** asks first, then clears local authorization and requests remote revocation. If revocation fails, Tern reports it; local use remains disabled. **Manage Usage** opens ChatGPT's usage controls.
 
 ## Calendar access
 
-Connect Google Calendar through an existing Tern Google account, then open Calendar → Manage calendars. Each calendar has independent assistant access: **Off**, **Availability only**, or **Event details**. Access starts Off. Showing a calendar in the sidebar does not grant assistant access. Select scheduling calendars separately and review working hours and time zone.
+Connect Google Calendar through an existing Tern Google account, then open **Settings → Calendar**, or choose **Manage Calendars…** in Calendar. Each calendar has independent assistant access: **Off**, **Availability Only**, or **Event Details**. Access starts Off. Showing a calendar in the sidebar does not grant assistant access. Select scheduling calendars separately and review working hours and time zone.
 
 The assistant can check availability, read permitted events and prepare editable event proposals. It cannot save a calendar change through a tool call. Open a proposal, review its fields and invitation recipients, then choose Save. Changing calendar access cancels active requests and discards retained calendar context and proposals.
 
@@ -67,9 +67,9 @@ Ordinary dated emails can offer Add event with AI disabled. Optional AI interpre
 
 ## Troubleshooting
 
-- **Keychain access unavailable:** Tern opens while saved connections load in the background. If access fails, open Settings → Assistant and choose **Retry Keychain access**. This retries the saved connection without starting a new browser sign-in.
+- **Keychain access unavailable:** Tern opens while saved connections load in the background. If access fails, open Settings → Assistant and choose **Retry Keychain Access**. This retries the saved connection without starting a new browser sign-in.
 - **Plan usage not enabled:** reconnect and grant plan usage. Availability depends on the ChatGPT account and the current Sign in with ChatGPT preview.
-- **No models or usage limit:** refresh the model list or open **Manage usage**. Tern does not substitute an API-key connection.
+- **No models or usage limit:** refresh the model list or open **Manage Usage**. Tern does not substitute an API-key connection.
 - **Sign-in interrupted or expired:** start sign-in again. Keep Tern open while the browser returns to the temporary local callback.
 - **Mail access changed:** select the intended accounts and scope, then start a new request.
 - **Context or reading limit:** narrow the request or start a new chat. Completed drafts remain available in Drafts.

@@ -20,7 +20,7 @@ struct DestructiveMailReview: View {
             Text("Google's full mail permission is required. If needed, Google will ask before deletion queues.")
                 .font(.caption).foregroundStyle(.secondary)
             if model.isDeleting { ProgressView().controlSize(.small) }
-            if let error = model.error { Text(error).font(.callout).foregroundStyle(Tokens.Status.error) }
+            if let error = model.error { Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(Tokens.Status.error) }
             HStack {
                 // Return keeps the mail. Deleting for good takes a click.
                 Button("Cancel") { model.deletionReview = nil }.keyboardShortcut(.defaultAction)

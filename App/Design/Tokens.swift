@@ -37,8 +37,8 @@ enum Tokens {
         static let focus: CGFloat = 2
     }
 
-    /// Status colors. System colors carry Increase Contrast and dark variants
-    /// that the literal `.red` and friends lack.
+    /// Status colors named by meaning, so errors, warnings and stars match
+    /// across the app. They resolve to the system colors.
     enum Status {
         static let error = Color(nsColor: .systemRed)
         static let warning = Color(nsColor: .systemOrange)
@@ -53,6 +53,10 @@ enum Tokens {
         static let pressed = 0.10
         static let tint = 0.14
         static let disabled = 0.5
+        /// A colored wash behind an icon, chip or banner, quieter than a selection.
+        static let wash = 0.08
+        /// Accent outlines, and outline symbols such as an unselected checkmark circle.
+        static let outline = 0.5
     }
 
     /// Generated reading aids sit more quietly than the original message cards.
@@ -121,6 +125,17 @@ enum Tokens {
         static let avatarLarge = Space.s10
         /// Message list rows show a smaller disc than headers do.
         static let listAvatar = Space.s5
+
+        /// Sidebar symbols follow the sidebar icon size in System Settings.
+        /// Apple sizes sidebar icons 16, 20 and 24 points for Small, Medium
+        /// and Large, so Medium keeps a symbol's base size.
+        static func sidebarIconScale(_ size: SidebarRowSize) -> CGFloat {
+            switch size {
+            case .small: Space.s4 / Space.s5
+            case .large: Space.s6 / Space.s5
+            default: 1
+            }
+        }
     }
 
     enum Layout {

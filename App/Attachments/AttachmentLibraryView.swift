@@ -1,3 +1,4 @@
+import AppKit
 import MailStore
 import QuickLook
 import SwiftUI
@@ -5,10 +6,9 @@ import SwiftUI
 struct AttachmentLibraryView: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: AttachmentLibraryModel
-    var onOpenSource: () -> Void
-    /// Moves focus to the window's search field, the library's only one.
-    var focusSearch: () -> Void
-    @AppStorage("attachments.viewMode") private var viewMode = "list"
+    let viewMode: AttachmentLibraryViewMode
+    /// Moves focus to the window's search field, which searches the library.
+    var focusSearch: () -> Void = {}
     @State private var showsFilters = false
     @State private var showsCoverage = false
 
@@ -22,14 +22,14 @@ struct AttachmentLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            filterBar
             Divider()
             if let error = model.errorMessage { errorBanner(error) }
             GeometryReader { geometry in
                 if model.items.isEmpty { emptyState }
                 else {
                     AttachmentLibraryCollection(model: model, viewMode: viewMode,
-                        availableWidth: geometry.size.width, onOpenSource: onOpenSource)
+                        availableWidth: geometry.size.width)
                 }
             }
             Divider()
@@ -37,27 +37,20 @@ struct AttachmentLibraryView: View {
         }
         .background(Tokens.Surface.canvas)
         .navigationTitle(app.destination == .mail ? "Attachments" : "Calendar")
-        .quickLookPreview($model.previewURL)
+        .quickLookPreview($model.previewURL, in: model.previewURLs)
         .protectAttachmentPreview(model.previewURL)
         .task(id: model.coverageKey) { await model.start() }
         .task(id: model.observationKey) { await model.reload() }
     }
 
-    /// The window title names the library and the window toolbar holds its
-    /// search field, so this bar keeps only the filter and display controls.
-    private var header: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s3) {
-                    AttachmentCategoryShortcuts(model: model).layoutPriority(1)
-                    Spacer(minLength: Tokens.Space.s2)
-                    filtersButton
-                    displayControls
-                }
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    AttachmentCategoryShortcuts(model: model)
-                    HStack(spacing: Tokens.Space.s3) { filtersButton; Spacer(minLength: Tokens.Space.s2); displayControls }
-                }
+    /// Category shortcuts and the Filters popover. Search, the layout and the
+    /// sort order are in the window's toolbar.
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(spacing: Tokens.Space.s3) {
+                AttachmentCategoryShortcuts(model: model)
+                Spacer(minLength: 0)
+                filtersButton
             }
             AttachmentActiveFilters(model: model)
         }
@@ -73,7 +66,7 @@ struct AttachmentLibraryView: View {
                 if filterCount > 0 {
                     Text(filterCount.formatted()).font(.caption.weight(.semibold))
                         .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
-                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                        .background(Color.accentColor.opacity(Tokens.Opacity.tint), in: Capsule())
                 }
             }
         }
@@ -82,35 +75,18 @@ struct AttachmentLibraryView: View {
         .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
     }
 
-    private var displayControls: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            Picker("Sort attachments", selection: $model.sort) {
-                ForEach(AttachmentLibrarySort.allCases, id: \.self) { sort in Text(sort.title).tag(sort) }
-            }
-            .labelsHidden().frame(width: Tokens.Layout.sidebarMinWidth)
-            .help("Sort attachments")
-            Picker("View", selection: $viewMode) {
-                Image(systemName: "list.bullet").tag("list").accessibilityLabel("List view")
-                Image(systemName: "square.grid.2x2").tag("grid").accessibilityLabel("Card view")
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: Tokens.Space.s10 * 2)
-            .help("Choose list or card view")
-        }
-        .fixedSize()
-    }
-
     @ViewBuilder private var emptyState: some View {
         if model.isLoading {
-            TernEmptyState(title: "Finding your files", systemImage: "doc.text.magnifyingglass",
+            TernEmptyState(title: "Finding Your Files", systemImage: "doc.text.magnifyingglass",
                 message: "Loading attachments from your mail library.")
         } else if hasFilters {
             VStack(spacing: 0) {
-                TernEmptyState(title: "No matching attachments", systemImage: "doc.text.magnifyingglass",
+                TernEmptyState(title: "No Matching Attachments", systemImage: "doc.text.magnifyingglass",
                     message: model.category == nil
                         ? "Try a different filename, sender or filter."
                         : "Try another category or clear your filters. Categories appear as attachments are indexed and read. You can correct a category from an attachment's menu.",
                     fillsSpace: false)
-                Button("Clear all filters") { model.clearFilters(); focusSearch() }
+                Button("Clear All Filters") { model.clearFilters(); focusSearch() }
                     .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -120,28 +96,28 @@ struct AttachmentLibraryView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            TernEmptyState(title: "Your files, together", systemImage: "paperclip",
+            TernEmptyState(title: "No Attachments Yet", systemImage: "paperclip",
                 message: "Attachments from your email will appear here, including archived mail. Inline images and email logos are left out.")
         }
     }
 
     private func errorBanner(_ error: String) -> some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tokens.Status.warning).accessibilityHidden(true)
             Text(error).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
             Button("Try Again") { Task { await model.retryLastAction() } }.disabled(model.isWorking)
             Button { model.errorMessage = nil } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain).help("Dismiss error").accessibilityLabel("Dismiss error")
         }
         .padding(Tokens.Space.s3)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
     }
 
     private var footer: some View {
         VStack(spacing: Tokens.Space.s3) {
             if !model.selection.isEmpty {
-                AttachmentSelectionActions(model: model, onOpenSource: onOpenSource)
+                AttachmentSelectionActions(model: model)
                 Divider()
             }
             ViewThatFits(in: .horizontal) {
@@ -182,7 +158,7 @@ struct AttachmentLibraryView: View {
                 Text(model.coverageDetail).font(.callout)
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if model.indexingNeedsRetry {
-                    Button("Retry indexing") { Task { await model.retryIndexing() } }
+                    Button("Retry Indexing") { Task { await model.retryIndexing() } }
                 }
             }
             .padding(Tokens.Space.s4).frame(width: Tokens.Popover.width)
@@ -192,7 +168,6 @@ struct AttachmentLibraryView: View {
 
 struct AttachmentSelectionActions: View {
     let model: AttachmentLibraryModel
-    let onOpenSource: () -> Void
 
     private var selected: AttachmentLibraryItem? {
         model.selection.count == 1 ? model.items.first { model.selection.contains($0.id) } : nil
@@ -218,11 +193,14 @@ struct AttachmentSelectionActions: View {
 
     private var actions: some View {
         HStack(spacing: Tokens.Space.s2) {
+            if let first = model.items.first(where: { model.selection.contains($0.id) }) {
+                Button("Quick Look", systemImage: "eye") { Task { await model.preview(first) } }.help("Quick Look (Space)")
+            }
             if let item = selected {
-                Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }.help("Preview (Space)")
-                Button("Show Email", systemImage: "envelope") {
-                    Task { if await model.openSource(item) { onOpenSource() } }
+                Button("Open Conversation", systemImage: "macwindow.badge.plus") {
+                    Task { await model.openSource(item) }
                 }
+                .help("Open Conversation in New Window")
             }
             Button(model.selection.count == 1 ? "Save…" : "Save Files…", systemImage: "arrow.down.to.line") {
                 Task { await model.saveSelection() }
@@ -236,20 +214,28 @@ struct AttachmentSelectionActions: View {
 struct AttachmentItemMenu: View {
     let item: AttachmentLibraryItem
     let model: AttachmentLibraryModel
-    let onOpenSource: () -> Void
 
     var body: some View {
-        Button("Preview", systemImage: "eye") { Task { await model.preview(item) } }
-        Button("Open with Default App", systemImage: "arrow.up.forward.app") { Task { await model.openFile(item) } }
+        // Commands on a file in a multiple selection act on the selection, as in Finder.
+        let files = model.selectedItems(with: item)
+        let saved = files.compactMap { model.savedFile(for: $0) }
+        Button("Open", systemImage: "arrow.up.forward.app") { Task { await model.openFiles(files) } }
         Button("Open With…") { Task { await model.openWith(item) } }
-        Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFile(item) } }
+        Button("Quick Look", systemImage: "eye") { Task { await model.preview(item) } }
+        Divider()
         Button("Save…", systemImage: "arrow.down.to.line") { Task { await model.save(item) } }
-        if model.selection.count > 1, model.selection.contains(item.id) {
+        if files.count > 1 {
             Button("Save Selected Files…") { Task { await model.saveSelection() } }
         }
+        if !saved.isEmpty {
+            Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(saved) }
+        }
+        Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFile(item) } }
+        ShareLink(items: files.map { AttachmentFileItem(attachment: $0.attachment, mailbox: model.mailbox) },
+                  preview: { SharePreview($0.attachment.filename) })
         Divider()
-        Button("Show Email", systemImage: "envelope") {
-            Task { if await model.openSource(item) { onOpenSource() } }
+        Button("Open Conversation in New Window", systemImage: "macwindow.badge.plus") {
+            Task { await model.openSource(item) }
         }
         Menu("Category") {
             ForEach(AttachmentCategory.allCases, id: \.self) { category in

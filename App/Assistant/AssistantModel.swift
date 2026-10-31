@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import MessageContent
 import Observation
 import SyncEngine
 import TernAI
@@ -311,6 +312,11 @@ final class AssistantModel {
     }
 
     func newChat() { clearConversation(); observedScope = scope(in: context()) }
+
+    /// Loads a mail card's conversation, then hands its link to `open`.
+    func openSourceInNewWindow(_ source: AssistantSource, using open: @escaping @MainActor (MailLink) -> Void) {
+        app?.openAssistantSourceInNewWindow(source, open: open)
+    }
 
     /// Allows callers to await a submitted turn without polling its UI state.
     func waitForCurrentTurn() async { await task?.value }

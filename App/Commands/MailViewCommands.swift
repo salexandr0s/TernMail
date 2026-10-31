@@ -16,13 +16,11 @@ struct ReaderAppearance {
     let toggle: @MainActor () -> Void
 }
 
-/// The View menu and the app's Window menu additions.
+/// The View menu.
 struct MailViewCommands: Commands {
-    @FocusedValue(\.mailboxModel) private var mailbox
     @FocusedValue(\.readerActions) private var reader
     @FocusedValue(\.readerAppearance) private var appearance
     @FocusedValue(\.sidebarToggle) private var sidebar
-    @Environment(\.openWindow) private var openWindow
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @AppStorage("showMessageSize") private var showsMessageSize = false
 
@@ -49,14 +47,6 @@ struct MailViewCommands: Commands {
                 .disabled(!(reader?.canCollapse ?? false))
             Toggle("Show with Light Background", isOn: Binding(appearance?.showsLightBackground ?? false) { _ in appearance?.toggle() })
                 .disabled(appearance == nil)
-        }
-        CommandGroup(after: .windowArrangement) {
-            Button("Tern", systemImage: "envelope") { openWindow(id: RootView.sceneID) }
-                .labelStyle(.titleAndIcon)
-                .keyboardShortcut(ShortcutCatalog.mainWindow.shortcut)
-            Button("Assistant", systemImage: "sparkles") { AssistantWindow.open(using: openWindow, fullScreen: false) }
-                .labelStyle(.titleAndIcon)
-                .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
         }
     }
 }

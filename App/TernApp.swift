@@ -1,3 +1,4 @@
+import AppIntents
 import AppKit
 import MailStore
 import MessageContent
@@ -28,6 +29,8 @@ struct TernApp: App {
                 .task { await model.start() }
         }
         .defaultSize(width: Tokens.Layout.windowWidth, height: Tokens.Layout.windowHeight)
+        // The catalog's shortcut goes on the scene's own Window ▸ Tern item.
+        .keyboardShortcut(ShortcutCatalog.mainWindow.shortcut)
         .commands { MailCommands(app: model) }
 
         WindowGroup("Conversation", id: ConversationWindow.sceneID, for: MailLink.self) { $link in
@@ -69,6 +72,8 @@ struct TernApp: App {
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .windowResizability(.contentMinSize)
+        // The catalog's shortcut goes on the scene's own Window ▸ Assistant item.
+        .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
 
         Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
             KeyboardShortcutsView()
@@ -85,9 +90,18 @@ struct TernApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
+    override init() {
+        super.init()
+        // Shortcuts actions reach the mailbox through this dependency.
+        AppDependencyManager.shared.add { [model = self.model] in model }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MailNotificationRouter.shared.install()
         MailScriptingBridge.shared.bind(model)
+        // The Info.plist NSServices entries call these handlers. NSApp keeps the provider.
+        NSApp.servicesProvider = MailServices(app: model)
+        NSUpdateDynamicServices()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -139,6 +153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where !model.auth.handleRedirect(url) { model.mailURLs.receive(url) }
+    }
+
+    /// Spotlight results and Handoff. SwiftUI hands these to the delegate even
+    /// with every window closed, and skips view handlers once it returns true.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        model.continueActivity(userActivity)
     }
 
     #if DEBUG
@@ -237,7 +258,7 @@ struct RootView: View {
             }
         case .failed(let message):
             TernEmptyState(
-                title: "Couldn't open your mail",
+                title: "Couldn't Open Your Mail",
                 systemImage: "exclamationmark.triangle",
                 message: message
             )
@@ -253,6 +274,6 @@ struct RootView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Tokens.Surface.canvas)
+        .background(Tokens.Surface.muted)
     }
 }

@@ -8,10 +8,11 @@ struct AssistantView: View {
     var onExpand: (() -> Void)?
     var onDetach: (() -> Void)?
     var onClose: (() -> Void)?
+    /// The Assistant window shows the header's actions in its toolbar instead.
+    var isDetached = false
 
     @Environment(\.openWindow) private var openWindow
     @FocusState private var isComposerFocused: Bool
-    @FocusState private var focusedToolbarButton: String?
     @State private var hasPlacedInitialFocus = false
     /// Where focus was as the panel appeared, so a composer that turns on
     /// later leaves alone focus the user has moved since.
@@ -22,9 +23,10 @@ struct AssistantView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                header
+                if !isDetached { header }
                 scopePicker
             }
+            .padding(.top, isDetached ? Tokens.Space.s3 : 0)
             .background(Tokens.Surface.muted)
             Divider()
             AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
@@ -38,6 +40,7 @@ struct AssistantView: View {
             composer
         }
         .background(Tokens.Surface.primary)
+        .onKeyPress(.escape) { closeOnEscape() }
         .task {
             guard !hasPlacedInitialFocus else { return }
             responderAtAppear = NSApp.keyWindow?.firstResponder.map(ObjectIdentifier.init)
@@ -57,8 +60,10 @@ struct AssistantView: View {
         }
         .onChange(of: model.availableAccounts.map(\.id)) { model.refreshAccess() }
         .sheet(isPresented: $showsSettings) {
-            AssistantSettingsView(model: model, showsIntroduction: false, isSheet: true)
+            AssistantSettingsView(model: model, isSheet: true)
         }
+        .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: modelName,
+                                         onNewChat: startNewChat, onSettings: { showsSettings = true }))
     }
 
     private var header: some View {
@@ -76,16 +81,12 @@ struct AssistantView: View {
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s0_5) {
-                iconButton("New chat", symbol: "plus") {
-                    model.newChat()
-                    scrollRequest = UUID()
-                    isComposerFocused = true
-                }
+                iconButton("New Chat", symbol: "plus", action: startNewChat)
                 Menu {
-                    Button("Assistant settings", systemImage: "gearshape") { showsSettings = true }
-                    if let onDetach { Button("Open in a window", systemImage: "macwindow", action: onDetach) }
+                    Button("Assistant Settings…", systemImage: "gearshape") { showsSettings = true }
+                    if let onDetach { Button("Open in a Window", systemImage: "macwindow", action: onDetach) }
                     if let onExpand {
-                        Button("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
+                        Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -93,8 +94,8 @@ struct AssistantView: View {
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
                 .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
-                .help("Assistant options").accessibilityLabel("Assistant options")
-                if let onClose { iconButton("Close assistant", symbol: "xmark", action: onClose) }
+                .help("Assistant Options").accessibilityLabel("Assistant Options")
+                if let onClose { iconButton("Close Assistant", symbol: "xmark", action: onClose) }
             }
             .foregroundStyle(.secondary)
         }
@@ -184,7 +185,7 @@ struct AssistantView: View {
             }
             .padding(Tokens.Space.s3)
             .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-            .ternOutline(radius: Tokens.Radius.lg, focus: isComposerFocused && setupPrompt == nil ? .accentColor : nil)
+            .ternOutline(radius: Tokens.Radius.lg)
             .padding(Tokens.Space.s3)
             .frame(maxWidth: Tokens.Assistant.contentWidth)
             .frame(maxWidth: .infinity)
@@ -247,6 +248,23 @@ struct AssistantView: View {
         isComposerFocused = true
     }
 
+    /// Esc closes the sidebar unless the composer holds a message or an unfinished
+    /// input-method entry. The detached window stays open, like any window.
+    private func closeOnEscape() -> KeyPress.Result {
+        guard let onClose, model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .ignored
+        }
+        if let editor = NSApp.keyWindow?.firstResponder as? NSTextInputClient, editor.hasMarkedText() { return .ignored }
+        onClose()
+        return .handled
+    }
+
+    private func startNewChat() {
+        model.newChat()
+        scrollRequest = UUID()
+        isComposerFocused = true
+    }
+
     private func openSource(_ source: AssistantSource) {
         onOpenSource(source)
         openWindow(id: RootView.sceneID)
@@ -258,29 +276,55 @@ struct AssistantView: View {
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
-        .buttonStyle(AssistantToolbarButtonStyle(isFocused: focusedToolbarButton == title))
-        .focused($focusedToolbarButton, equals: title)
+        .buttonStyle(AssistantToolbarButtonStyle())
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .help(title).accessibilityLabel(title)
     }
 }
 
+/// Hover and press feedback for the header's icon buttons. Keyboard focus
+/// shows the system focus ring.
 private struct AssistantToolbarButtonStyle: ButtonStyle {
-    let isFocused: Bool
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(isFocused || isHovered || configuration.isPressed ? Tokens.Surface.primary : .clear,
+            .background(isHovered || configuration.isPressed ? Tokens.Surface.primary : .clear,
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .overlay {
-                if isFocused || (contrast == .increased && (isHovered || configuration.isPressed)) {
+                if contrast == .increased && (isHovered || configuration.isPressed) {
                     RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(isFocused ? Color.accentColor : .primary,
-                                      lineWidth: isFocused ? Tokens.Border.focus : Tokens.Border.hairline)
+                        .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
                         .allowsHitTesting(false)
                 }
             }
             .onHover { isHovered = $0 }
+    }
+}
+
+/// The Assistant window's toolbar holds what the sidebar header shows. The
+/// sidebar sits in the main window, whose customizable toolbar it must not join.
+private struct AssistantWindowToolbar: ViewModifier {
+    let isEnabled: Bool
+    let subtitle: String
+    let onNewChat: () -> Void
+    let onSettings: () -> Void
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .navigationSubtitle(subtitle)
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        Button("New Chat", systemImage: "plus.bubble", action: onNewChat)
+                            .help("New Chat")
+                        Button("Assistant Settings", systemImage: "gearshape", action: onSettings)
+                            .help("Assistant Settings")
+                    }
+                }
+        } else {
+            content
+        }
     }
 }

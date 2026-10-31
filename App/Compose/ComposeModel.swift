@@ -52,6 +52,12 @@ final class ComposeModel {
         var isError = false
     }
 
+    /// What an alert says: what went wrong, then what to do or why.
+    struct Problem: Equatable {
+        var title: String
+        var message: String
+    }
+
     /// A sender the window picked by itself for the first recipient. The
     /// copy the move makes shows it, and Undo moves the message back.
     struct SenderChange: Equatable {
@@ -100,10 +106,15 @@ final class ComposeModel {
     /// The draft came from another app with formatting the editor can't keep.
     var droppedFormatting = false
     /// A problem to show in an alert, such as a missing recipient.
-    var alert: String?
+    var alert: Problem?
     /// Set by the toolbar or the menu bar to show the file picker or the link editor.
     var isChoosingFiles = false
-    var isEditingLink = false
+    var isEditingLink = false {
+        didSet { if isEditingLink, !oldValue { linkAnchor = editor?.selectionRect } }
+    }
+    /// The selection the link editor points at, read as it opens, in the
+    /// message editor's coordinates. Nil points it at the whole editor.
+    private(set) var linkAnchor: CGRect?
     private(set) var storeError: String?
     private(set) var hasPendingEdits = false
     /// Shown until it's undone, another sender is picked or the first recipient changes.
@@ -112,13 +123,14 @@ final class ComposeModel {
     @ObservationIgnored private(set) var copySenderChange: SenderChange?
     /// Changed in this window, so closing it keeps the draft. The stored
     /// revision can trail a store that just finished, so it can't tell.
-    @ObservationIgnored private var isTouched = false
+    private var isTouched = false
     /// Default sender insertion raises the stored revision without making the draft a user edit.
     @ObservationIgnored private var uneditedRevision = 0
     /// Changed since the last save to Gmail was asked for.
-    @ObservationIgnored private var changedSinceSave = false
+    private var changedSinceSave = false
     /// Files still being copied into the draft, which `attachments` doesn't list yet.
     private var attachmentsInProgress = 0
+    @ObservationIgnored private let attachmentFiles: OutgoingAttachmentFiles
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
     @ObservationIgnored private var isApplyingStoredContent = false
@@ -140,6 +152,7 @@ final class ComposeModel {
     init(localDraftID: String, mailbox: MailboxModel, senderChange: SenderChange? = nil) {
         self.localDraftID = localDraftID
         self.mailbox = mailbox
+        attachmentFiles = OutgoingAttachmentFiles(localDraftID: localDraftID)
         self.senderChange = senderChange
         switch mailbox.selectedMailbox {
         case .combined?, .scoped?: automaticAccountIDs = mailbox.selectedAccounts.map { $0.account.id }
@@ -171,6 +184,13 @@ final class ComposeModel {
     var canChangeAccount: Bool { draft?.kind == .new }
 
     var isEditable: Bool { phase == .open && draft?.state == .editing }
+
+    /// Gmail doesn't have the latest changes, so closing the window saves
+    /// them. The window's close button shows a dot meanwhile.
+    var isEdited: Bool {
+        guard isEditable, let draft else { return false }
+        return closingAction(for: draft) == .save
+    }
 
     var canFormat: Bool { isEditable && isEditingMessage }
     /// A new message gets a thread ID once Gmail saves it, but there is no
@@ -298,14 +318,17 @@ final class ComposeModel {
     @discardableResult
     func send(archive: Bool = false) async -> Bool {
         guard isEditable else { return false }
-        guard expandingGroups == 0 else { alert = "Wait for the contact group to finish loading."; return false }
+        guard expandingGroups == 0 else {
+            alert = Problem(title: "Can't Send Yet", message: "Wait for the contact group to finish loading.")
+            return false
+        }
         let recipients = content.to + content.cc + content.bcc
         if recipients.isEmpty {
-            alert = "Add at least one recipient."
+            alert = Problem(title: "Can't Send Message", message: "Add at least one recipient.")
             return false
         }
         if let invalid = recipients.first(where: { !$0.isValid }) {
-            alert = "“\(invalid.address)” isn't a valid email address."
+            alert = Problem(title: "Can't Send Message", message: "“\(invalid.address)” isn't a valid email address.")
             return false
         }
         guard let engine = owner?.engine else { return false }
@@ -382,9 +405,10 @@ final class ComposeModel {
                 copySenderChange = automaticChange
                 phase = .moved(to: moved.id)
             } catch let error as ComposeError {
-                alert = error.errorDescription
+                alert = Problem(title: "Can't Change Account", message: error.errorDescription ?? "")
             } catch {
-                alert = "Tern couldn't move this message to \(destination.account.email)."
+                alert = Problem(title: "Can't Change Account",
+                                message: "Tern couldn't move this message to \(destination.account.email).")
             }
         }
     }
@@ -429,9 +453,9 @@ final class ComposeModel {
                         else { content.body.blocks.append(.init(runs: [.init("", image: reference)])) }
                     }
                 } catch let error as ComposeError {
-                    alert = error.errorDescription
+                    alert = Problem(title: "Can't Attach File", message: error.errorDescription ?? "")
                 } catch {
-                    alert = "Tern couldn't attach “\(item.name)”."
+                    alert = Problem(title: "Can't Attach File", message: "Tern couldn't attach “\(item.name)”.")
                 }
             }
         }
@@ -441,15 +465,33 @@ final class ComposeModel {
     func removeAttachment(_ attachment: OutgoingAttachment) {
         guard isEditable, let rowID = attachment.id else { return }
         markChanged()
+        attachmentFiles.remove(attachment)
         guard let engine = owner?.engine else { return }
         serially { [self] in
             do {
                 try await engine.removeAttachment(id: rowID)
             } catch {
-                alert = "Tern couldn't remove “\(attachment.filename)”."
+                alert = Problem(title: "Can't Remove File", message: "Tern couldn't remove “\(attachment.filename)”.")
             }
         }
         scheduleAutosave()
+    }
+
+    /// A copy of the file under its own name, for Quick Look, dragging out and
+    /// Finder. Nil when the file can't be read.
+    func attachmentFileURL(_ attachment: OutgoingAttachment) async -> URL? {
+        guard let engine = owner?.engine else { return nil }
+        return await attachmentFiles.url(for: attachment) { try await engine.outgoingAttachmentData(attachment) }
+    }
+
+    /// Keeps `address` out of this account's recipient suggestions.
+    func blockSuggestion(_ address: EmailAddress) async {
+        guard address.isValid, let accountID = draft?.accountID, let store = mailbox.accountStore else { return }
+        do {
+            try await store.setSuggestionBlocked(true, address: address.address, accountID: accountID)
+        } catch {
+            alert = Problem(title: "Can't Hide This Address", message: "Tern couldn't save the change. Try again.")
+        }
     }
 
     /// Saves to Gmail now.
@@ -465,6 +507,7 @@ final class ComposeModel {
         integrationRefresh?.cancel()
         featureObservation?.cancel()
         recipientAccountTask?.cancel()
+        attachmentFiles.removeAll()
         guard isEditable else { return }
         phase = .closed
         keepOrDiscard()
@@ -480,18 +523,34 @@ final class ComposeModel {
 
     private func keepOrDiscard() {
         guard let draft else { return }
-        let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
-            && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
-            && attachments.isEmpty && attachmentsInProgress == 0
-        let untouched = draft.revision == uneditedRevision && !isTouched
-        if draft.gmailDraftID == nil, untouched || isBlank {
+        switch closingAction(for: draft) {
+        case .discard:
             cancelTimers()
             guard let engine = owner?.engine else { return }
             let id = localDraftID
             serially { _ = try? await engine.discardDraft(id, hold: 0) }
-        } else if changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges {
+        case .save:
             saveNow()
+        case .keep:
+            break
         }
+    }
+
+    private enum ClosingAction {
+        case discard, save, keep
+    }
+
+    /// A message that never reached Gmail goes away when it's blank or nobody
+    /// changed it. Any other draft is saved when Gmail lacks its latest changes.
+    private func closingAction(for draft: LocalDraft) -> ClosingAction {
+        if draft.gmailDraftID == nil {
+            let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
+                && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
+                && attachments.isEmpty && attachmentsInProgress == 0
+            let untouched = draft.revision == uneditedRevision && !isTouched
+            if untouched || isBlank { return .discard }
+        }
+        return changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges ? .save : .keep
     }
 
     private func saveNow() {
@@ -707,6 +766,7 @@ final class ComposeModel {
         integrationRefresh?.cancel()
         featureObservation?.cancel()
         recipientAccountTask?.cancel()
+        attachmentFiles.removeAll()
         phase = .closed
     }
 

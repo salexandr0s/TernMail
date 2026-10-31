@@ -7,70 +7,65 @@ struct AttachmentLibraryFilters: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Label("Filter attachments", systemImage: "line.3.horizontal.decrease").font(.headline)
-                Text("Results update as you choose.").font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(Tokens.Space.s4)
-            Divider()
+            PopupHeader(title: "Filter Attachments", systemImage: "line.3.horizontal.decrease",
+                subtitle: "Results update as you choose.")
             Form {
-                    Section("Email") {
-                        Picker("Account", selection: $model.accountID) {
-                            Text("All accounts").tag("")
-                            ForEach(model.availableAccounts) { account in
-                                Text(account.email).tag(account.id)
-                            }
-                        }
-                        TextField("Sender", text: $model.sender, prompt: Text("Name or email address"))
-                        Picker("Email label", selection: $model.label) {
-                            Text("Any label").tag(nil as AttachmentLibraryLabel?)
-                            ForEach(model.availableLabels, id: \.libraryIdentity) { label in
-                                Text(labelTitle(label))
-                                    .tag(AttachmentLibraryLabel(accountID: label.accountID, id: label.id) as AttachmentLibraryLabel?)
-                            }
+                Section("Email") {
+                    Picker("Account", selection: $model.accountID) {
+                        Text("All accounts").tag("")
+                        ForEach(model.availableAccounts) { account in
+                            Text(account.email).tag(account.id)
                         }
                     }
-                    Section("Document") {
-                        TextField("File format", text: $model.fileExtension, prompt: Text("Extension, such as pdf"))
-                        Picker("Category", selection: $model.category) {
-                            Text("Any category").tag(nil as AttachmentCategory?)
-                            ForEach(AttachmentCategory.allCases, id: \.self) { category in
-                                Text(category.title).tag(category as AttachmentCategory?)
-                            }
-                        }
-                        Text("Categories are detected automatically on this Mac. You can correct them from an attachment's menu. File format uses the extension, such as pdf or docx.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Section("Email date") {
-                        dateFilter("From", isOn: $model.hasStartDate, day: $model.startDay)
-                        dateFilter("Through", isOn: $model.hasEndDate, day: $model.endDay)
-                        if let start = model.startDate, let end = model.endDate, start > end {
-                            Label("The end date is before the start date.", systemImage: "exclamationmark.circle")
-                                .font(.caption).foregroundStyle(.orange)
+                    TextField("Sender", text: $model.sender, prompt: Text("Name or email address"))
+                    Picker("Email label", selection: $model.label) {
+                        Text("Any label").tag(nil as AttachmentLibraryLabel?)
+                        ForEach(model.availableLabels, id: \.libraryIdentity) { label in
+                            Text(labelTitle(label))
+                                .tag(AttachmentLibraryLabel(accountID: label.accountID, id: label.id) as AttachmentLibraryLabel?)
                         }
                     }
-                    Section("File size") {
-                        TextField("At least (MB)", value: $model.minimumMegabytes, format: .number.grouping(.never), prompt: Text("Any"))
-                        TextField("At most (MB)", value: $model.maximumMegabytes, format: .number.grouping(.never), prompt: Text("Any"))
-                        if let minimum = model.minimumSize, let maximum = model.maximumSize, minimum > maximum {
-                            Label("The maximum is smaller than the minimum.", systemImage: "exclamationmark.circle")
-                                .font(.caption).foregroundStyle(.orange)
+                }
+                Section("Document") {
+                    TextField("File format", text: $model.fileExtension, prompt: Text("Extension, such as pdf"))
+                    Picker("Category", selection: $model.category) {
+                        Text("Any category").tag(nil as AttachmentCategory?)
+                        ForEach(AttachmentCategory.allCases, id: \.self) { category in
+                            Text(category.title).tag(category as AttachmentCategory?)
                         }
                     }
+                    Text("Categories are detected automatically on this Mac. You can correct them from an attachment's menu. File format uses the extension, such as pdf or docx.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Email date") {
+                    dateFilter("From", isOn: $model.hasStartDate, day: $model.startDay)
+                    dateFilter("Through", isOn: $model.hasEndDate, day: $model.endDay)
+                    if let start = model.startDate, let end = model.endDate, start > end {
+                        Label("The end date is before the start date.", systemImage: "exclamationmark.circle")
+                            .font(.caption).foregroundStyle(Tokens.Status.warning)
+                    }
+                }
+                Section("File size") {
+                    TextField("At least (MB)", value: $model.minimumMegabytes, format: .number.grouping(.never), prompt: Text("Any"))
+                    TextField("At most (MB)", value: $model.maximumMegabytes, format: .number.grouping(.never), prompt: Text("Any"))
+                    if let minimum = model.minimumSize, let maximum = model.maximumSize, minimum > maximum {
+                        Label("The maximum is smaller than the minimum.", systemImage: "exclamationmark.circle")
+                            .font(.caption).foregroundStyle(Tokens.Status.warning)
+                    }
+                }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            Divider()
-            HStack {
-                Button("Clear all filters") { model.clearFilters() }
+            PopupFooter {
+                Button("Clear All Filters") { model.clearFilters() }
                     .disabled(AttachmentFilterChip.values(for: model).isEmpty)
-                Spacer()
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }
-            .padding(Tokens.Space.s4)
         }
-        .frame(width: Tokens.Sheet.smallWidth, height: Tokens.Layout.shortcutsHeight - Tokens.Space.s16)
+        .frame(width: Tokens.Sheet.smallWidth)
+        // As tall as the filters it holds, so nothing scrolls inside the popover.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func dateFilter(_ title: String, isOn: Binding<Bool>, day: Binding<Date>) -> some View {
@@ -155,7 +150,7 @@ struct AttachmentActiveFilters: View {
                                 }
                                 .font(.caption)
                                 .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s1_5)
-                                .background(Color.accentColor.opacity(0.08), in: Capsule())
+                                .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: Capsule())
                                 .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
                                 .frame(maxWidth: Tokens.Layout.attachmentWidth)
                             }
@@ -205,11 +200,11 @@ struct AttachmentCategoryShortcuts: View {
                 .font(.callout.weight(selected ? .semibold : .regular))
                 .foregroundStyle(selected ? Color.accentColor : .secondary)
                 .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
-                .background(selected ? Color.accentColor.opacity(0.12) : .clear,
+                .background(selected ? Color.accentColor.opacity(Tokens.Opacity.tint) : .clear,
                             in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .overlay {
                     RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(selected ? (contrast == .increased ? Color.primary : Color.accentColor.opacity(0.3)) : .clear,
+                        .strokeBorder(selected ? (contrast == .increased ? Color.primary : Color.accentColor.opacity(Tokens.Opacity.outline)) : .clear,
                                       lineWidth: Tokens.Border.hairline)
                         .allowsHitTesting(false)
                 }

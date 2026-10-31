@@ -21,7 +21,7 @@ struct ComposeTemplatesPane: View {
                     Text("Template")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
                     Picker("Template", selection: $selection) {
-                        Text("New template").tag(String?.none)
+                        Text("New Template").tag(String?.none)
                         ForEach(templates) { Text($0.name).tag(Optional($0.id)) }
                     }
                     .labelsHidden()
@@ -69,7 +69,7 @@ struct ComposeTemplatesPane: View {
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

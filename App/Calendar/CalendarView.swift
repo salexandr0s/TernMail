@@ -39,6 +39,12 @@ struct CalendarView: View {
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: { isCompact = $0 }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
+        .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
+            MailUserActivity.describeCalendarDay(
+                activity, date: model.date, calendar: model.calendar,
+                title: CalendarLayout.format(model.date, style: .dateTime.year().month(.wide).day(), calendar: model.calendar)
+            )
+        }
         .onAppear { model.mode = storedMode }
         .onChange(of: model.mode) { _, mode in storedMode = mode }
         .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
@@ -185,7 +191,7 @@ struct CalendarView: View {
             emptyCalendars
         } else if !model.calendars.isEmpty, !model.calendars.contains(where: \.isVisible) {
             VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(title: "No calendars selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
+                TernEmptyState(title: "No Calendars Selected", systemImage: "calendar.badge.minus", message: "Choose a calendar in the sidebar to show its events.", fillsSpace: false)
                 Button("Show All Calendars") {
                     for calendar in model.calendars { model.setVisible(id: calendar.id, visible: true) }
                 }.buttonStyle(.bordered)

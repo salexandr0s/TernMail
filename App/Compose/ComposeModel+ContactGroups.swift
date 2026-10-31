@@ -21,7 +21,8 @@ extension ComposeModel {
             let result = try await owner.engine.expandContactGroup(group)
             guard !Task.isCancelled, isEditable, draft?.accountID == group.accountID else { return nil }
             guard result.isComplete else {
-                alert = "Tern couldn't load every address in “\(group.name)”. No addresses were added."
+                alert = Problem(title: "Can't Add Group",
+                                message: "Tern couldn't load every address in “\(group.name)”. No addresses were added.")
                 return nil
             }
             let blocked = (try? await mailbox.accountStore?.blockedSuggestionAddresses(accountID: group.accountID)) ?? []
@@ -38,7 +39,7 @@ extension ComposeModel {
             return result.recipients.filter { !excluded.contains($0.normalized) }
         } catch {
             guard !Task.isCancelled else { return nil }
-            alert = "Couldn't load “\(group.name)”. No addresses were added."
+            alert = Problem(title: "Can't Add Group", message: "Couldn't load “\(group.name)”. No addresses were added.")
             return nil
         }
     }

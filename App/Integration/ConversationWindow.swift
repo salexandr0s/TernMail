@@ -44,7 +44,7 @@ struct ConversationWindow: View {
                         }
                     }
             } else {
-                ContentUnavailableView("Conversation unavailable", systemImage: "envelope",
+                ContentUnavailableView("Conversation Unavailable", systemImage: "envelope",
                     description: Text("Sign in to its account, then open the conversation again."))
             }
         }

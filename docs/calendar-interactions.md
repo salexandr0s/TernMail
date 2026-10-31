@@ -12,13 +12,13 @@ Tern supports the everyday event workflows below. The interaction reference was 
 | Resize | Select an event and drag its start or end handle. All-day events have first-day and last-day handles. |
 | Convert all-day/timed | Drag between the all-day lane and the time grid. An all-day event dropped into the grid becomes a one-hour event; a timed event dropped into the all-day lane covers its occupied days. |
 | Preview or cancel | The proposed range appears while dragging. Times snap to 15 minutes. Escape or release outside the calendar cancels. Holding near the scrolling area's edge scrolls the calendar. |
-| Edit details | Double-click an event, press Return with an event selected, or use Open event in its context menu. |
-| Duplicate/delete | Use the event context menu in the grid, Schedule, or search results. Delete also works from the keyboard. Read-only events can be opened and duplicated. |
+| Edit details | Double-click an event, press Return with an event selected, or use Open Event in its context menu. |
+| Duplicate/delete | Use the event context menu in the grid, Schedule, or search results. Delete also works from the keyboard. Read-only events can be opened and duplicated. Share sends the occurrence as an .ics file, as dragging a Schedule, agenda, or search row out does. |
 | Undo | Command-Z reverses supported calendar changes. Guest notifications are reviewed when required. |
-| Browse | Day, Week, Month, Year, and Schedule views; Today; previous/next period; a date picker; and a mini-calendar. Schedule lists the chosen month's events by day. |
+| Browse | Day, Week, Month, Year, and Schedule views; Today; previous/next period; a date picker; and a mini-calendar. The view switcher, Today, and the period arrows sit in the window toolbar. Schedule lists the chosen month's events by day. |
 | Search | Search visible calendars and open, duplicate, or delete a result. |
 
-Canvas shortcuts are D/1 (Day), W/2 (Week), M/3 (Month), Y/4 (Year), A/5 (Schedule), C (create), T (today), G (go to date), / (search), and the left/right arrows. They apply while the calendar canvas owns keyboard focus. Existing Command-T, Option-Command-N, and Command-Z shortcuts remain available.
+Canvas shortcuts are D/1 (Day), W/2 (Week), M/3 (Month), Y/4 (Year), A/5 (Schedule), C (create), T (today), G (go to date), and / (search). They apply while the calendar canvas owns keyboard focus and single-key shortcuts are on in Settings, the same setting Mail uses. Arrow keys work without that setting: Up and Down move between the day's events, Left and Right step by a day in Day and Week or by a week in Month, and Option-Left and Option-Right change the period. The Calendar menu has Today (Command-T), Go to Date (Shift-Command-T), and the views (Control-Command-1 through 5). New Event is Option-Command-N, and Command-Z undoes.
 
 ## Saving and sync
 

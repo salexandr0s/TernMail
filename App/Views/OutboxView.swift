@@ -105,10 +105,10 @@ private struct OutboxRow: View {
 
     private static func status(_ activity: DraftActivity) -> (title: String, detail: String?, icon: String, tint: Color) {
         if let error = activity.draft.sendError {
-            return ("Not Sent", error, "exclamationmark.triangle", .red)
+            return ("Not Sent", error, "exclamationmark.triangle", Tokens.Status.error)
         }
         if activity.isWaitingToRetry {
-            return ("Retrying", "Can't reach Gmail. Tern will keep trying.", "arrow.clockwise", .orange)
+            return ("Retrying", "Can't reach Gmail. Tern will keep trying.", "arrow.clockwise", Tokens.Status.warning)
         }
         if activity.rows.contains(where: { $0.kind == .sendDraft && $0.state == .sending }) {
             return ("Sending…", nil, "paperplane", .accentColor)

@@ -9,7 +9,7 @@ struct CalendarSearchResults: View {
     let duplicate: (CalendarDisplayEvent) -> Void
     var body: some View {
         if events.isEmpty {
-            TernEmptyState(title: "No matching events", systemImage: "magnifyingglass", message: "Try another title or location, or choose a different date window.")
+            TernEmptyState(title: "No Matching Events", systemImage: "magnifyingglass", message: "Try another title or location, or choose a different date window.")
         } else {
             List(events, selection: $selectedID) { event in
                 HStack(spacing: Tokens.Space.s3) {
@@ -54,11 +54,7 @@ struct CalendarSearchResults: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
                 .accessibilityAction { edit(event) }
-                .contextMenu {
-                    Button("Open Event") { edit(event) }
-                    Button("Duplicate") { duplicate(event) }
-                    Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
-                }
+                .contextMenu { CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete) }
             }
             .listStyle(.inset)
             .onDeleteCommand {

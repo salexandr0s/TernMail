@@ -17,11 +17,14 @@ struct ComposeWindow: View {
     @State private var handoff: ComposeView.Handoff?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
+    /// The draft differs from its last save, so the close button shows a dot.
+    @State private var isEdited = false
 
     var body: some View {
         Group {
             if let id = localDraftID, let mailbox = app.mailbox {
-                ComposeView(localDraftID: id, mailbox: mailbox, handoff: handoff?.localDraftID == id ? handoff : nil) {
+                ComposeView(localDraftID: id, mailbox: mailbox, isEdited: $isEdited,
+                            handoff: handoff?.localDraftID == id ? handoff : nil) {
                     handoff = $0
                     localDraftID = $0.localDraftID
                 }
@@ -34,6 +37,7 @@ struct ComposeWindow: View {
             }
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
+        .background(WindowEditedMarker(isEdited: isEdited))
         .background(ComposeWindowCascade())
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
@@ -112,13 +116,17 @@ struct ComposeView: View {
     @State private var keepsSubjectText = false
     @State private var highlightsFrom = false
     @Environment(\.dismiss) private var dismiss
+    /// Mirrors `model.isEdited` for the window's close button.
+    @Binding private var isEdited: Bool
     /// Where the cursor starts in a copy made by a move.
     private let restoredFocus: Field?
     /// Shows the copy the window's message became in another account.
     private let onMove: (Handoff) -> Void
 
-    init(localDraftID: String, mailbox: MailboxModel, handoff: Handoff? = nil, onMove: @escaping (Handoff) -> Void) {
+    init(localDraftID: String, mailbox: MailboxModel, isEdited: Binding<Bool>, handoff: Handoff? = nil,
+         onMove: @escaping (Handoff) -> Void) {
         _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox, senderChange: handoff?.senderChange))
+        _isEdited = isEdited
         restoredFocus = handoff?.focus
         self.onMove = onMove
     }
@@ -128,7 +136,7 @@ struct ComposeView: View {
             if model.phase == .loading {
                 if let error = model.storeError {
                     VStack(spacing: Tokens.Space.s4) {
-                        TernEmptyState(title: "Couldn't open this draft", systemImage: "exclamationmark.triangle",
+                        TernEmptyState(title: "Couldn't Open This Draft", systemImage: "exclamationmark.triangle",
                                        message: error, fillsSpace: false)
                         Button("Close") { dismiss() }
                             .keyboardShortcut(.cancelAction)
@@ -146,9 +154,12 @@ struct ComposeView: View {
         .navigationTitle(model.title)
         .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
-        .alert(model.alert ?? "", isPresented: $model.alert.isPresent()) {
+        .alert(model.alert?.title ?? "", isPresented: $model.alert.isPresent()) {
             Button("OK") {}
+        } message: {
+            Text(model.alert?.message ?? "")
         }
+        .onChange(of: model.isEdited, initial: true) { _, edited in isEdited = edited }
         .task { model.start() }
         .task(id: model.phase) {
             switch model.phase {
@@ -216,8 +227,19 @@ struct ComposeView: View {
             // Keep room to write when recipients, files and quoted text are visible.
             // The native window minimum grows with the other controls' intrinsic sizes.
             .frame(minHeight: Tokens.Layout.editorMinHeight)
+            // Cmd-K must also work while the formatting bar is hidden. The
+            // popover points at the selection, where the link goes.
+            .popover(isPresented: $model.isEditingLink, attachmentAnchor: linkAnchor, arrowEdge: .bottom) {
+                LinkEditor(existingURL: model.format.linkURL, width: Tokens.Layout.linkEditorWidth) { url in
+                    model.editor?.setLink(url)
+                }
+            }
             if model.attachments.contains(where: { $0.contentID == nil }) {
-                AttachmentStrip(attachments: model.attachments.filter { $0.contentID == nil }, isEditable: model.isEditable) {
+                AttachmentStrip(
+                    attachments: model.attachments.filter { $0.contentID == nil },
+                    isEditable: model.isEditable,
+                    fileURL: { [model] in await model.attachmentFileURL($0) }
+                ) {
                     model.removeAttachment($0)
                 }
             }
@@ -269,6 +291,7 @@ struct ComposeView: View {
                                 .contentShape(Rectangle())
                         }
                         .help("Add Cc recipients")
+                        .accessibilityLabel("Add Cc Recipients")
                     }
                     if !model.showsBcc {
                         Button { reveal(.bcc) } label: {
@@ -278,6 +301,7 @@ struct ComposeView: View {
                                 .contentShape(Rectangle())
                         }
                         .help("Add Bcc recipients")
+                        .accessibilityLabel("Add Bcc Recipients")
                     }
                 }
                 .buttonStyle(.borderless)
@@ -488,11 +512,18 @@ struct ComposeView: View {
             },
             directorySuggestions: { [model] text in await model.directorySuggestions(for: text) },
             groupSuggestions: { [model] text in await model.groupSuggestions(for: text) },
-            expandGroup: { [model] group in await model.expandGroup(group) }
+            expandGroup: { [model] group in await model.expandGroup(group) },
+            blockSuggestion: { [model] address in await model.blockSuggestion(address) }
         ) { [model] text in
             await model.suggestions(for: text)
         }
         .alignmentGuide(.firstTextBaseline) { _ in baseline }
+    }
+
+    /// Where the link popover points: the text it links, or the whole editor
+    /// when the selection isn't known.
+    private var linkAnchor: PopoverAttachmentAnchor {
+        model.linkAnchor.map { .rect(.rect($0)) } ?? .rect(.bounds)
     }
 
     private func reveal(_ field: Field) {
@@ -573,12 +604,6 @@ struct ComposeView: View {
             .accessibilityLabel("Formatting")
             .accessibilityValue(model.showsFormatting ? "Expanded" : "Collapsed")
             .disabled(!model.isEditable)
-            // Cmd-K must also work while the formatting bar is hidden.
-            .popover(isPresented: $model.isEditingLink, arrowEdge: .bottom) {
-                LinkEditor(existingURL: model.format.linkURL, width: Tokens.Layout.linkEditorWidth) { url in
-                    model.editor?.setLink(url)
-                }
-            }
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -609,7 +634,7 @@ struct ComposeView: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .controlSize(.regular)
             .help("Send (⇧⌘D)")
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
@@ -674,6 +699,32 @@ struct ComposeView: View {
     }
 }
 
+/// Sets the hosting window's edited state, which the close button shows as a dot.
+private struct WindowEditedMarker: NSViewRepresentable {
+    let isEdited: Bool
+
+    func makeNSView(context: Context) -> MarkerView {
+        let view = MarkerView()
+        view.isEdited = isEdited
+        return view
+    }
+
+    func updateNSView(_ view: MarkerView, context: Context) {
+        view.isEdited = isEdited
+    }
+
+    final class MarkerView: NSView {
+        var isEdited = false {
+            didSet { window?.isDocumentEdited = isEdited }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.isDocumentEdited = isEdited
+        }
+    }
+}
+
 /// A note across the top of the window.
 private struct Banner: View {
     let systemImage: String
@@ -684,7 +735,7 @@ private struct Banner: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
             Image(systemName: systemImage)
-                .foregroundStyle(isError ? Color(nsColor: .systemRed) : Color(nsColor: .systemOrange))
+                .foregroundStyle(isError ? Tokens.Status.error : Tokens.Status.warning)
                 .accessibilityHidden(true)
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)

@@ -147,11 +147,7 @@ struct CalendarMonthGrid: View {
                     resizeGrip(.end, event: event, day: day)
                 }
             }
-            .contextMenu {
-                Button("Open Event") { edit(event) }
-                Button("Duplicate") { duplicate(event) }
-                Button("Delete", role: .destructive) { delete(event) }.disabled(!event.canEdit)
-            }
+            .contextMenu { CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete) }
             .accessibilityAddTraits(.isButton).accessibilityAction { edit(event) }
             .accessibilityAction(named: "Duplicate") { duplicate(event) }
     }

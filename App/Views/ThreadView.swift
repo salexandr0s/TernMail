@@ -256,7 +256,7 @@ struct ThreadView: View {
             } else if loadFailed {
                 VStack(spacing: Tokens.Space.s4) {
                     TernEmptyState(
-                        title: "Couldn't open this conversation",
+                        title: "Couldn't Open This Conversation",
                         systemImage: "exclamationmark.bubble",
                         message: "Try again, or select another conversation.",
                         fillsSpace: false
@@ -267,7 +267,7 @@ struct ThreadView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if hasLoaded, readingDetail == nil {
                 TernEmptyState(
-                    title: "Conversation unavailable",
+                    title: "Conversation Unavailable",
                     systemImage: "envelope.badge",
                     message: "No longer available in this mailbox. Select another conversation."
                 )
@@ -280,6 +280,12 @@ struct ThreadView: View {
         .background(Tokens.Surface.canvas)
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
+        .userActivity(MailUserActivity.conversationType, isActive: isReaderActive && readingDetail != nil) { activity in
+            MailUserActivity.describeConversation(
+                activity, link: MailLink(accountID: key.accountID, threadID: key.threadID),
+                subject: readingDetail?.thread.subject ?? "", email: mailbox.account(id: key.accountID)?.account.email
+            )
+        }
         .focusedSceneValue(\.readerAppearance, isReaderActive ? readerAppearance : nil)
         .onChange(of: key) { _, _ in
             selectedMailQuote = nil

@@ -22,8 +22,9 @@ enum AssistantMarkdown {
         var diagram: AssistantDiagram?
     }
 
-    static func parse(_ input: String) -> [Block] {
-        let bounded = String(input.prefix(131_072))
+    /// `isBounded: false` lifts the display limits, for copying a whole reply.
+    static func parse(_ input: String, isBounded: Bool = true) -> [Block] {
+        let bounded = isBounded ? String(input.prefix(131_072)) : input
         guard let document = try? AttributedString(markdown: bounded, options: .init(
             interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible
         )) else { return [Block(id: 0, text: AttributedString(bounded))] }
@@ -42,7 +43,7 @@ enum AssistantMarkdown {
                 piece.font = .system(.body, design: .monospaced)
             }
             if activeID != identity {
-                guard blocks.count < 512 else {
+                guard !isBounded || blocks.count < 512 else {
                     blocks.append(Block(id: -1, text: AttributedString("Response too long to format. Use Copy response to read the full text.")))
                     break
                 }

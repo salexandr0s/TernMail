@@ -3,18 +3,29 @@ import SwiftUI
 
 struct AssistantSettingsView: View {
     @Bindable var model: AssistantModel
-    var showsIntroduction = true
     var isSheet = false
     var showsMailScope = false
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmsDisconnect = false
+    @State private var confirmsClearChat = false
+    @State private var accessChange: AccessChange?
+    @State private var turningOffStyle: AssistantWritingStyleEntry?
+
+    /// A pending access switch. Changing access clears the chat, so it waits for a yes.
+    private struct AccessChange {
+        let accountID: String
+        let email: String
+        let enabled: Bool
+    }
 
     var body: some View {
         Group {
             if isSheet {
-                SettingsEditorSheet(title: "Assistant Settings", width: Tokens.Settings.editorWideWidth) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) { sections }
-                } actions: {
-                    Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                SettingsEditorSheet(title: "Assistant Settings", width: Tokens.Settings.editorWideWidth,
+                                    scrolls: false, onDone: { dismiss() }) {
+                    Form { sections }
+                        .formStyle(.grouped)
+                        .frame(height: Tokens.Settings.editorMaxContentHeight)
                 }
             } else {
                 SettingsPage { sections }
@@ -25,10 +36,24 @@ struct AssistantSettingsView: View {
             model.refreshAccess()
             Task { await model.refreshConnection() }
         }
+        .ternConfirm("Disconnect from ChatGPT?", isPresented: $confirmsDisconnect, actionTitle: "Disconnect",
+                     message: "Tern signs out of ChatGPT and clears the current chat.", action: disconnect)
+        .ternConfirm("Clear this chat?", isPresented: $confirmsClearChat, actionTitle: "Clear Chat",
+                     message: "This stops any response in progress and deletes the conversation, including unsent text.") {
+            model.newChat()
+        }
+        .ternConfirm(accessChange.map { "\($0.enabled ? "Allow" : "Remove") assistant access to \($0.email)?" } ?? "",
+                     item: $accessChange, actionTitle: accessChange?.enabled == true ? "Allow Access" : "Remove Access",
+                     message: "Changing access clears the current chat.") { change in
+            model.setAccountEnabled(change.accountID, enabled: change.enabled)
+        }
+        .ternConfirm("Turn off writing style learning?", item: $turningOffStyle, actionTitle: "Turn Off",
+                     message: "Tern deletes the writing style it learned for \(turningOffStyle?.email ?? "this account"). Turning learning back on reads recent sent mail again.") { entry in
+            model.writingStyle.setEnabled(entry.id, enabled: false)
+        }
     }
 
     @ViewBuilder private var sections: some View {
-        if showsIntroduction { introduction }
         if showsMailScope {
             SettingsControlRow("Mail scope") {
                 Picker("Mail scope", selection: $model.selectedScope) {
@@ -39,25 +64,16 @@ struct AssistantSettingsView: View {
         connectionSection
         if model.connection.canUsePlan { modelSection }
         accountsSection
-        AssistantWritingStyleSettingsSection(model: model.writingStyle)
+        AssistantWritingStyleSettingsSection(model: model.writingStyle) { turningOffStyle = $0 }
         privacySection
     }
 
-    private var introduction: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text("Assistant")
-                .font(.title2.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
-            Text("Ask about your mail, summarize threads, and prepare replies.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
+    /// Clearing the chat or changing access only needs a confirmation when there is something to lose.
+    private var hasChat: Bool { !model.messages.isEmpty || !model.composerText.isEmpty }
 
     private var connectionSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            HStack(alignment: .center, spacing: Tokens.Space.s3) {
+        Section("ChatGPT") {
+            HStack(spacing: Tokens.Space.s3) {
                 ChatGPTBrand(size: Tokens.Space.s6)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
@@ -116,7 +132,6 @@ struct AssistantSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     Button("Cancel") { model.connection.cancelSignIn() }
-                        .buttonStyle(.bordered)
                         .accessibilityLabel("Cancel ChatGPT sign-in")
                 }
             } else if model.connection.isDisconnecting {
@@ -134,63 +149,49 @@ struct AssistantSettingsView: View {
                 errorMessage(error)
             }
             if model.connection.needsStorageRetry {
-                Button("Retry Keychain access") {
+                Button("Retry Keychain Access") {
                     Task {
                         await model.connection.retryStoredConnection()
                         await model.refreshConnection()
                     }
                 }
-                .buttonStyle(.bordered)
                 .disabled(model.connection.isRestoring || model.connection.isConnecting || model.connection.isDisconnecting)
             }
         }
-        .padding(Tokens.Space.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .ternSurface(radius: Tokens.Radius.md, style: .grouped)
     }
 
-    private var connectionActions: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            if model.connection.account != nil && !model.connection.canUsePlan {
-                ChatGPTSignInButton(action: connect)
-            }
-            if model.connection.account == nil {
-                Text("Eligible requests use your ChatGPT plan or credits.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if model.connection.account != nil {
-                HStack(spacing: Tokens.Space.s3) {
-                    if model.connection.canUsePlan {
-                        Button("Reconnect", action: connect)
-                            .buttonStyle(.bordered)
-                    }
-                    if let usageURL = URL(string: "https://chatgpt.com/settings/usage") {
-                        Link(destination: usageURL) {
-                            Label("Manage usage", systemImage: "arrow.up.forward")
-                        }
-                        .font(.callout)
-                        .accessibilityHint("Opens ChatGPT usage settings in your browser.")
-                    }
-                    Spacer(minLength: 0)
-                    Button("Disconnect", role: .destructive) {
-                        model.stop()
-                        Task {
-                            await model.connection.disconnect()
-                            model.refreshAccess()
-                        }
-                    }
-                    .buttonStyle(.borderless)
+    @ViewBuilder private var connectionActions: some View {
+        if model.connection.account != nil && !model.connection.canUsePlan {
+            ChatGPTSignInButton(action: connect)
+        }
+        if model.connection.account == nil {
+            SettingsNote("Eligible requests use your ChatGPT plan or credits.")
+        }
+        if model.connection.account != nil {
+            HStack(spacing: Tokens.Space.s3) {
+                if model.connection.canUsePlan {
+                    Button("Reconnect", action: connect)
                 }
-                .controlSize(.small)
+                if let usageURL = URL(string: "https://chatgpt.com/settings/usage") {
+                    Link(destination: usageURL) {
+                        Label("Manage Usage", systemImage: "arrow.up.forward")
+                    }
+                    .accessibilityHint("Opens ChatGPT usage settings in your browser.")
+                }
+                Spacer(minLength: 0)
+                Button("Disconnect…", role: .destructive) { confirmsDisconnect = true }
             }
         }
     }
 
     private var modelSection: some View {
         Section("Model") {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                HStack(spacing: Tokens.Space.s3) {
+            SettingsControlRow("ChatGPT model") {
+                HStack(spacing: Tokens.Space.s2) {
+                    if model.isLoadingModels {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel("Loading ChatGPT models")
+                    }
                     if !model.models.isEmpty {
                         Picker("ChatGPT model", selection: $model.selectedModelID) {
                             if model.selectedModelID.isEmpty { Text("Choose a model").tag("") }
@@ -199,124 +200,89 @@ struct AssistantSettingsView: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity)
+                        .fixedSize()
                         .disabled(model.isRunning || model.isLoadingModels)
-                        .accessibilityLabel("ChatGPT model")
                     } else {
                         Text(model.isLoadingModels ? "Loading models…" : "No models loaded")
-                            .font(.body)
-                        Spacer(minLength: 0)
-                    }
-                    if model.isLoadingModels {
-                        ProgressView().controlSize(.small)
-                            .accessibilityLabel("Loading ChatGPT models")
+                            .foregroundStyle(.secondary)
                     }
                     Button {
                         Task { await model.refreshConnection() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
                     .disabled(model.isRunning || model.isLoadingModels)
                     .help("Refresh available models")
                     .accessibilityLabel("Refresh available models")
                 }
-                Label("Using ChatGPT plan", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let error = model.modelErrorMessage {
-                    errorMessage(error)
-                }
             }
-            .padding(Tokens.Space.s3)
+            SettingsNote("Using ChatGPT plan", systemImage: "checkmark.circle")
+            if let error = model.modelErrorMessage {
+                errorMessage(error)
+            }
         }
     }
 
     private var accountsSection: some View {
         Section("Mail access") {
-            VStack(alignment: .leading, spacing: 0) {
-                if model.availableAccounts.isEmpty {
-                    Label("Add a mail account in Accounts settings.", systemImage: "person.crop.circle.badge.plus")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(Tokens.Space.s4)
-                } else {
-                    ForEach(model.availableAccounts, id: \.id) { account in
-                        if account.id != model.availableAccounts.first?.id {
-                            Divider()
-                                .padding(.leading, Tokens.Control.avatar + Tokens.Space.s3 * 2)
-                        }
-                        accountRow(account)
-                    }
-                }
-                Divider()
-                Text("Choose the accounts the assistant can read, including automatic summaries and event suggestions when you open a permitted conversation. Changing access clears the current chat.")
-                    .font(.caption)
+            if model.availableAccounts.isEmpty {
+                Label("Add a mail account in Accounts settings.", systemImage: "person.crop.circle.badge.plus")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(Tokens.Space.s3)
+            } else {
+                ForEach(model.availableAccounts, id: \.id) { account in
+                    accountRow(account)
+                }
             }
+            SettingsNote("Choose the accounts the assistant can read, including automatic summaries and event suggestions when you open a permitted conversation. Changing access clears the current chat.")
         }
     }
 
     private func accountRow(_ account: AccountRecord) -> some View {
         let name = account.displayName.flatMap { $0.isEmpty ? nil : $0 }
-        return HStack(spacing: Tokens.Space.s3) {
-            AddressAvatar(accountID: account.id, address: account.email, name: name ?? "", size: Tokens.Space.s6)
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(name ?? account.email)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(name ?? account.email)
-                if name != nil {
-                    Text(account.email)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        return Toggle(isOn: Binding(model.enabledAccountIDs.contains(account.id), set: { enabled in
+            if hasChat {
+                accessChange = AccessChange(accountID: account.id, email: account.email, enabled: enabled)
+            } else {
+                model.setAccountEnabled(account.id, enabled: enabled)
+            }
+        })) {
+            HStack(spacing: Tokens.Space.s3) {
+                AddressAvatar(accountID: account.id, address: account.email, name: name ?? "", size: Tokens.Space.s6)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(name ?? account.email)
+                        .font(.body.weight(.medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .help(account.email)
+                        .help(name ?? account.email)
+                    if name != nil {
+                        Text(account.email)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(account.email)
+                    }
                 }
             }
-            Spacer(minLength: Tokens.Space.s2)
-            Toggle("Allow assistant access", isOn: Binding(model.enabledAccountIDs.contains(account.id),
-                                                           set: { model.setAccountEnabled(account.id, enabled: $0) }))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .fixedSize()
-            .accessibilityLabel("Allow assistant access to \(account.email)")
-            .accessibilityHint("Changing access clears the current chat.")
         }
-        .padding(.horizontal, Tokens.Space.s3)
-        .padding(.vertical, Tokens.Space.s2)
+        .toggleStyle(.switch)
+        .accessibilityLabel("Allow assistant access to \(account.email)")
+        .accessibilityHint("Changing access clears the current chat.")
     }
 
     private var privacySection: some View {
         Section("Privacy") {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                Text("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Divider()
-                HStack(spacing: Tokens.Space.s3) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text("Chat history")
-                            .font(.body.weight(.medium))
-                        Text("Cleared when Tern quits.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                    Button("Clear chat") { model.newChat() }
-                        .buttonStyle(.bordered)
-                        .disabled(model.messages.isEmpty && model.composerText.isEmpty)
-                        .accessibilityHint("Stops the current response and clears this chat.")
-                }
+            SettingsNote("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.", systemImage: "lock")
+            LabeledContent {
+                Button("Clear Chat…") { confirmsClearChat = true }
+                    .disabled(!hasChat)
+                    .accessibilityHint("Stops the current response and clears this chat.")
+            } label: {
+                Text("Chat history")
+                Text("Cleared when Tern quits.")
             }
-            .padding(Tokens.Space.s3)
         }
     }
 
@@ -334,6 +300,14 @@ struct AssistantSettingsView: View {
             await model.connection.connect()
             model.refreshAccess()
             await model.refreshConnection()
+        }
+    }
+
+    private func disconnect() {
+        model.stop()
+        Task {
+            await model.connection.disconnect()
+            model.refreshAccess()
         }
     }
 }

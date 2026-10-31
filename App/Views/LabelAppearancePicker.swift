@@ -10,7 +10,7 @@ struct LabelColorPicker: View {
             HStack {
                 Text("Color").font(.subheadline.weight(.semibold))
                 Spacer()
-                Button("All colors…") { showsAllColors = true }
+                Button("All Colors…") { showsAllColors = true }
                     .buttonStyle(.link)
                     .focusable()
                     .onKeyPress(keys: [.return, .space]) { _ in
@@ -23,7 +23,7 @@ struct LabelColorPicker: View {
         }
         .popover(isPresented: $showsAllColors, arrowEdge: .bottom) {
             VStack(spacing: 0) {
-                PopupHeader(title: "Label color", systemImage: "paintpalette")
+                PopupHeader(title: "Label Color", systemImage: "paintpalette")
                 LabelColorGrid(selection: $selection, focusesSelection: true, onCancel: { showsAllColors = false })
                     .padding(.horizontal, Tokens.Space.s4)
                     .padding(.bottom, Tokens.Space.s4)
@@ -61,7 +61,7 @@ struct LabelColorGrid: View {
             }
             HStack {
                 Button { pendingChoice = nil; selection = nil } label: {
-                    Label("No color", systemImage: selection == nil ? "checkmark.circle.fill" : "circle.slash")
+                    Label("No Color", systemImage: selection == nil ? "checkmark.circle.fill" : "circle.slash")
                 }
                 .buttonStyle(.link)
                 .focusable()
@@ -70,7 +70,7 @@ struct LabelColorGrid: View {
                     handleKey($0.key, at: noColor)
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("No color")
+                .accessibilityLabel("No Color")
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAddTraits(selection == nil ? .isSelected : [])
                 Spacer()
@@ -185,7 +185,7 @@ struct LabelIconPicker: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PopupHeader(title: "Label icon", systemImage: "square.grid.2x2")
+            PopupHeader(title: "Label Icon", systemImage: "square.grid.2x2")
             LazyVGrid(columns: columns, spacing: Tokens.Space.s2) {
                 ForEach(LabelAppearance.icons) { icon in
                     Button {

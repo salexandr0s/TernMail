@@ -120,6 +120,39 @@ struct AssistantMarkdownTests {
         #expect(diagram.accessibleDescription.contains("Ask for changes leads to Review draft."))
     }
 
+    @Test func plainTextDropsSyntaxButKeepsListsTablesAndCode() {
+        let text = AssistantMarkdown.plainText("""
+        # Plan
+
+        Read **the proposal** and *reply*.
+
+        - First
+          - Nested
+        1. One
+
+        ---
+
+        | Name | Status |
+        | --- | --- |
+        | Alex | `Waiting` |
+
+        ```swift
+        let count = 2
+        ```
+        """)
+
+        #expect(text == "Plan\n\nRead the proposal and reply.\n\n• First\n\t• Nested\n1. One\n\nName\tStatus\nAlex\tWaiting\n\nlet count = 2")
+    }
+
+    @Test func copyingIgnoresTheDisplayLimits() {
+        let reply = (1...600).map { "- Item \($0)" }.joined(separator: "\n")
+
+        #expect(AssistantMarkdown.parse(reply).contains { $0.id < 0 })
+        let text = AssistantMarkdown.plainText(reply)
+        #expect(text.hasSuffix("• Item 600"))
+        #expect(!text.contains("Response too long"))
+    }
+
     @Test(arguments: ["TD", "BT", "LR", "RL"])
     func arrowsSkippingRanksAvoidOtherNodes(direction: String) throws {
         let diagram = try #require(AssistantDiagram.parse("""

@@ -12,7 +12,8 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @State private var showsCalendarAssistant = false
-    @State private var calendarAssistantWidth = Tokens.Assistant.sidebarWidth
+    /// Shared with the mail assistant, so the panel keeps one width across launches.
+    @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     let mailbox: MailboxModel
 
     var body: some View {
@@ -30,20 +31,20 @@ struct WorkspaceView: View {
                         .fill(Tokens.Surface.border)
                         .frame(width: Tokens.Border.hairline)
                         .overlay {
-                            AssistantSidebarResizeHandle(width: calendarAssistantWidth, onResize: resizeAssistant)
+                            AssistantSidebarResizeHandle(width: CGFloat(preferredAssistantWidth), onResize: resizeAssistant)
                                 .frame(width: Tokens.Space.s3)
                                 .accessibilityElement()
                                 .accessibilityLabel("Assistant width")
-                                .accessibilityValue("\(Int(calendarAssistantWidth)) points")
+                                .accessibilityValue("\(Int(preferredAssistantWidth)) points")
                                 .accessibilityAdjustableAction { direction in
-                                    resizeAssistant(calendarAssistantWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                                    resizeAssistant(CGFloat(preferredAssistantWidth) + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
                                 }
                         }
                     AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
                         onExpand: { openAssistant(fullScreen: true) },
                         onDetach: { openAssistant(fullScreen: false) },
                         onClose: { showsCalendarAssistant = false })
-                        .frame(width: calendarAssistantWidth)
+                        .frame(width: CGFloat(preferredAssistantWidth))
                 }
             }
             .opacity(app.destination == .calendar ? 1 : 0)
@@ -68,7 +69,7 @@ struct WorkspaceView: View {
     }
 
     private func resizeAssistant(_ width: CGFloat) {
-        calendarAssistantWidth = min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth)
+        preferredAssistantWidth = Double(min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth))
     }
 
     private func openAssistant(fullScreen: Bool) {
