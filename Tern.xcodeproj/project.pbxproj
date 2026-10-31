@@ -117,6 +117,7 @@
 		4D2F1E8F2BC13F964BADD173 /* SnoozeScheduleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */; };
 		4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2664304C0271DB6260097A /* MessageWebViewTests.swift */; };
 		4ECC8701550EF6C6E316EB62 /* ComposePreferencesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C011A22B6705DC9045ADAF5 /* ComposePreferencesPane.swift */; };
+		4F024F39E55258DC8632ACD5 /* EditableReminder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B772DE31F40EEE63C149E0 /* EditableReminder.swift */; };
 		51106442EE78AE4894E36DB4 /* AttachmentLibraryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E084EBEC496D72C477C9D2FB /* AttachmentLibraryModel.swift */; };
 		51B80E4C842E0EE5E43E19E4 /* CalendarAssistantToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42BDF357CF9AE44CDD3A4883 /* CalendarAssistantToolsTests.swift */; };
 		5291E9E0562A27884D49B63E /* CacheResetLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D01D1A44B8720E0E8FD0D175 /* CacheResetLifecycleTests.swift */; };
@@ -630,6 +631,7 @@
 		E3F97600EEF9D23D7785AE4A /* AssistantWritingStyleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleStore.swift; sourceTree = "<group>"; };
 		E47D7CA9AF8FF3339190A56B /* CalendarTimelineEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimelineEvent.swift; sourceTree = "<group>"; };
 		E58168BBE9F19A18A62CE8E1 /* ChatGPTConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGPTConnectionTests.swift; sourceTree = "<group>"; };
+		E6B772DE31F40EEE63C149E0 /* EditableReminder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditableReminder.swift; sourceTree = "<group>"; };
 		E7A186C0363F91FF748B71A9 /* AssistantCalendarBindings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCalendarBindings.swift; sourceTree = "<group>"; };
 		E96634180E4EC48612BC55EB /* AttachmentAuditFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentAuditFixtures.swift; sourceTree = "<group>"; };
 		EBB8E313E484591248110FD3 /* AssistantCalendarActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCalendarActionsView.swift; sourceTree = "<group>"; };
@@ -1061,6 +1063,7 @@
 				7A63CD87405C2C0A5B589C15 /* CalendarToolbar.swift */,
 				D026BAB4695A62CECFCFBD9A /* CalendarView.swift */,
 				546D9643F116D75E1C3F5A92 /* CalendarWeekdayHeader.swift */,
+				E6B772DE31F40EEE63C149E0 /* EditableReminder.swift */,
 				C7B0EB5313F474DF18231F04 /* EmailCalendarExtractionService.swift */,
 				A30C9DFB438128EA517F2F3E /* EmailCalendarModel.swift */,
 				CF9168AB9D186528609BC387 /* EmailCalendarPresentation.swift */,
@@ -1457,6 +1460,7 @@
 				1167C766EE6834C48D66D2BB /* DestructiveMailReview.swift in Sources */,
 				0525AB762C11278ED22B20F3 /* DomainLogoAvatar.swift in Sources */,
 				FD5BC0A9FAAFF1C7DEDB9685 /* DomainLogoImages.swift in Sources */,
+				4F024F39E55258DC8632ACD5 /* EditableReminder.swift in Sources */,
 				A0D37F45B1116ADC6D59BD5B /* EmailCalendarExtractionService.swift in Sources */,
 				F0DE66FDE73CDE0369674F37 /* EmailCalendarModel.swift in Sources */,
 				3F23C3555CE584681643645C /* EmailCalendarPresentation.swift in Sources */,
