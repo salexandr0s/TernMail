@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import Observation
 import Testing
 @testable import Tern
 
@@ -44,6 +45,66 @@ import Testing
         model.minimumSize = 2; model.maximumSize = 400; model.label = .init(accountID: "audit", id: "work")
         model.clearFilters()
         #expect(model.query == AttachmentLibraryQuery(accountIDs: ["audit"]))
+    }
+
+    @Test func returningKeepsMatchingResultsAndRefreshesChangesMadeWhileAway() async throws {
+        let mailbox = try mailbox()
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil,
+            grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(.second))
+        try await mailbox.cache.write { tx in
+            for (account, id) in [("audit", "kept"), ("audit", "removed"), ("second", "other")] {
+                let message = MessageRecord(accountID: account, id: id, threadID: id, historyID: 1,
+                    date: .now, snippet: "", sender: "Example", recipients: "", cc: nil,
+                    subject: "Documents", sizeEstimate: 32)
+                let file = AttachmentRecord(accountID: account, messageID: id, partID: "1", attachmentID: nil,
+                    filename: "\(id).pdf", mimeType: "application/pdf", size: 32, isInline: false)
+                try tx.replaceLibraryAttachments([file], message: message, labelIDs: [])
+            }
+        }
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        model.accountID = "audit"
+        let first = Task { await model.reload() }
+        try await waitUntil { model.totalCount == 2 && !model.isLoading }
+        first.cancel()
+        await first.value
+        let removed = try #require(model.items.first { $0.messageID == "removed" })
+        model.selection = [removed.id]
+        let cached = model.items
+        try await mailbox.cache.write { try $0.deleteLibraryAttachments(messageIDs: ["removed"], accountID: "audit") }
+        #expect(model.items == cached)
+
+        let changes = AsyncStream<Void>.makeStream()
+        withObservationTracking { _ = model.isLoading } onChange: { changes.continuation.yield() }
+        let loadingChanges = Task {
+            var count = 0
+            for await _ in changes.stream { count += 1 }
+            return count
+        }
+        let returning = Task { await model.reload() }
+        try await waitUntil { model.totalCount == 1 }
+        changes.continuation.finish()
+        #expect(await loadingChanges.value == 0)
+        #expect(model.selection.isEmpty)
+        #expect(model.items.map(\.messageID) == ["kept"])
+        returning.cancel()
+        await returning.value
+
+        model.accountID = "second"
+        #expect(model.items.isEmpty)
+        #expect(model.totalCount == 0)
+        let otherAccount = Task { await model.reload() }
+        try await waitUntil { model.items.map(\.messageID) == ["other"] }
+        otherAccount.cancel()
+        await otherAccount.value
+        await mailbox.removeAccount(id: "second")
+        #expect(model.items.isEmpty)
+        #expect(model.totalCount == 0)
+        model.accountID = ""
+        let remainingAccount = Task { await model.reload() }
+        defer { remainingAccount.cancel() }
+        try await waitUntil { model.items.map(\.messageID) == ["kept"] }
+        await mailbox.stop()
     }
 
     @Test func detectedCategoriesReachFiltersAndManualCorrectionSurvivesRefresh() async throws {

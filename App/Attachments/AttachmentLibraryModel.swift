@@ -10,9 +10,12 @@ import SyncEngine
 final class AttachmentLibraryModel {
     static let mailboxID = "TERN_ATTACHMENTS"
     let mailbox: MailboxModel
-    private(set) var items: [AttachmentLibraryItem] = []
-    private(set) var totalCount = 0
-    private(set) var hasMore = false
+    private var loadedPage: AttachmentLibraryPage?
+    private var loadedQuery: AttachmentLibraryQuery?
+    private var currentPage: AttachmentLibraryPage? { loadedQuery == query ? loadedPage : nil }
+    var items: [AttachmentLibraryItem] { currentPage?.items ?? [] }
+    var totalCount: Int { currentPage?.totalCount ?? 0 }
+    var hasMore: Bool { currentPage?.hasMore ?? false }
     private(set) var isLoading = true
     private(set) var isWorking = false
     private(set) var indexStates: [AttachmentIndexState] = []
@@ -34,8 +37,7 @@ final class AttachmentLibraryModel {
     var unavailableAccountIDs: Set<String> = [] {
         didSet {
             if oldValue != unavailableAccountIDs {
-                previewURL = nil
-                sourceThreadKey = nil
+                dismissPresentation()
                 selection.removeAll()
             }
         }
@@ -50,6 +52,8 @@ final class AttachmentLibraryModel {
     var hasPreviousPage: Bool { pageOffset > 0 }
     var rangeSummary: String { totalCount == 0 ? "0 attachments" : "\(pageOffset + 1)–\(pageEnd) of \(totalCount.formatted())" }
     @ObservationIgnored private var observationRevision = UUID()
+    @ObservationIgnored private var coverageRevision = UUID()
+    @ObservationIgnored private var presentationRevision = UUID()
     @ObservationIgnored private var lastFilter: AttachmentLibraryQuery?
     @ObservationIgnored private var lastAction: Action?
     private enum Action {
@@ -108,13 +112,18 @@ final class AttachmentLibraryModel {
     private var scopedStates: [AttachmentIndexState] { indexStates.filter { scopedAccountIDs.contains($0.accountID) } }
 
     func start() async {
+        let revision = UUID()
+        coverageRevision = revision
+        let accountIDs = availableAccounts.map(\.id)
         do {
-            for try await states in mailbox.cache.attachmentIndexStates(accountIDs: availableAccounts.map(\.id)) {
-                guard !Task.isCancelled else { return }
+            for try await states in mailbox.cache.attachmentIndexStates(accountIDs: accountIDs) {
+                guard !Task.isCancelled, coverageRevision == revision,
+                      availableAccounts.map(\.id) == accountIDs else { return }
                 indexStates = states
             }
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, coverageRevision == revision,
+                  availableAccounts.map(\.id) == accountIDs else { return }
             lastAction = nil
             errorMessage = "Couldn't read indexing progress. Try again."
         }
@@ -127,26 +136,28 @@ final class AttachmentLibraryModel {
         observationRevision = revision
         var filter = query
         filter.offset = 0
+        let textChanged = lastFilter.map { $0.search != filter.search || $0.sender != filter.sender } ?? false
         if lastFilter != filter {
             lastFilter = filter
             selection.removeAll()
-            items = []
             pageOffset = 0
         }
         let request = query
-        isLoading = true
+        if currentPage == nil { isLoading = true }
         do {
-            try await Task.sleep(for: .milliseconds(150))
+            // Only typing needs a pause. Cached pages and discrete filter changes load immediately.
+            if textChanged { try await Task.sleep(for: .milliseconds(150)) }
+            try Task.checkCancellation()
+            guard observationRevision == revision, query == request else { return }
             for try await page in mailbox.cache.observeAttachmentLibrary(query: request) {
-                guard !Task.isCancelled, observationRevision == revision else { return }
-                items = page.items
-                totalCount = page.totalCount
-                hasMore = page.hasMore
+                guard !Task.isCancelled, observationRevision == revision, query == request else { return }
+                if loadedPage != page { loadedPage = page }
+                if loadedQuery != request { loadedQuery = request }
                 selection.formIntersection(page.items.map(\.id))
-                isLoading = false
+                if isLoading { isLoading = false }
             }
         } catch {
-            guard !Task.isCancelled, observationRevision == revision else { return }
+            guard !Task.isCancelled, observationRevision == revision, query == request else { return }
             isLoading = false
             lastAction = nil
             errorMessage = "Couldn't load attachments. Try again."
@@ -208,8 +219,13 @@ final class AttachmentLibraryModel {
     }
 
     func preview(_ item: AttachmentLibraryItem) async {
+        let revision = presentationRevision
         lastAction = .preview(item)
-        await perform { previewURL = try await file(for: item) }
+        await perform {
+            let url = try await file(for: item)
+            guard presentationRevision == revision else { return }
+            previewURL = url
+        }
     }
 
     func openFile(_ item: AttachmentLibraryItem) async {
@@ -230,6 +246,7 @@ final class AttachmentLibraryModel {
 
     func openSource(_ item: AttachmentLibraryItem) async -> Bool {
         guard !isWorking else { return false }
+        let revision = presentationRevision
         errorMessage = nil
         lastAction = .source(item)
         isWorking = true
@@ -238,10 +255,17 @@ final class AttachmentLibraryModel {
             let owner = try owner(for: item)
             try await owner.engine.loadAttachmentSource(item.threadID)
             guard try self.owner(for: item) === owner else { throw AttachmentActionError.accountUnavailable }
+            guard presentationRevision == revision else { return false }
             sourceThreadKey = ThreadKey(accountID: item.accountID, threadID: item.threadID)
             lastAction = nil
             return true
         } catch { errorMessage = Self.message(for: error); return false }
+    }
+
+    func dismissPresentation() {
+        presentationRevision = UUID()
+        previewURL = nil
+        sourceThreadKey = nil
     }
 
     func save(_ item: AttachmentLibraryItem) async {
