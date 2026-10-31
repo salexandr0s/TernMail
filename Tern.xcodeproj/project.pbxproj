@@ -230,6 +230,7 @@
 		AAED3DF7D7420B2F0FD1FB7E /* AssistantCalendarActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB8E313E484591248110FD3 /* AssistantCalendarActionsView.swift */; };
 		AB23A5C1FBDAB6AA9E34EBB0 /* LabelNodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBCB6C2893A66D630A93636 /* LabelNodeTests.swift */; };
 		AB4FE50C8C5E7CFBCD6070AD /* LabelEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5652A353C2254FCFC5021C /* LabelEditorSheet.swift */; };
+		AB52F958D7851D71C88845D1 /* MailColumnProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2841241EFB888F8B83D1DAA /* MailColumnProbe.swift */; };
 		ABD192041FE184BDEDED14F4 /* MessagePrefetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B4E04D31384ACB84AF28056 /* MessagePrefetch.swift */; };
 		AC50D41E452C2A5CBC5D0364 /* CalendarManagementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A418838990827BF86B0361C /* CalendarManagementTests.swift */; };
 		AC923B2D6ECA74479BCD0D57 /* SplitDividerHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F164596E243171F4DF5361CD /* SplitDividerHandle.swift */; };
@@ -589,6 +590,7 @@
 		BC7311C0C3BAF5B0A8A043ED /* CalendarModel+EmailResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CalendarModel+EmailResponses.swift"; sourceTree = "<group>"; };
 		BCCE3B70E5FA0CF8A2FD63BB /* RecipientSuggestionsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientSuggestionsPanel.swift; sourceTree = "<group>"; };
 		BE892D00A83688026D463D87 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		C2841241EFB888F8B83D1DAA /* MailColumnProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailColumnProbe.swift; sourceTree = "<group>"; };
 		C37A5E839E58DC90380E2C4B /* MailWorkspaceColumns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWorkspaceColumns.swift; sourceTree = "<group>"; };
 		C38332F3065D9BF26F214CC6 /* MailboxModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxModelTests.swift; sourceTree = "<group>"; };
 		C3C3D66F81396CF7D41A4F18 /* AssistantSummaryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSummaryService.swift; sourceTree = "<group>"; };
@@ -796,6 +798,7 @@
 				8F5652A353C2254FCFC5021C /* LabelEditorSheet.swift */,
 				7614291A9BBAB3D4EA6F54B3 /* LabelPickerView.swift */,
 				9C59EE09046A89AC26C291FE /* MailboxSwitcher.swift */,
+				C2841241EFB888F8B83D1DAA /* MailColumnProbe.swift */,
 				F6E763B99120FDE987E6302E /* MailToolbar.swift */,
 				4F78C5270B0AE64BD13220AD /* MainView.swift */,
 				2712B79FFB5BAFF5FEEF516A /* MessageActions.swift */,
@@ -1505,6 +1508,7 @@
 				7ACDA60AEF3662C3C533BBAA /* LoopbackAuthListener.swift in Sources */,
 				F8BFADE9ABBA85FB519608E1 /* MailAssistantTools.swift in Sources */,
 				12F2FABAA9CA6CCEC2B70389 /* MailBadgeController.swift in Sources */,
+				AB52F958D7851D71C88845D1 /* MailColumnProbe.swift in Sources */,
 				7687C3F0FC62813AF8BCE982 /* MailCommands.swift in Sources */,
 				31D2943AC219F782486E63A6 /* MailFocusFilter.swift in Sources */,
 				355E1D538CBA16FDEE40487B /* MailNavigationModel.swift in Sources */,

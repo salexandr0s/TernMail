@@ -56,7 +56,7 @@ import Testing
 
     private func expectMailVisible(in rootView: NSView, window: NSWindow) async throws {
         let width = window.frame.width
-        let probes = descendants(in: rootView).compactMap { $0 as? AssistantMailPaneProbe.ProbeView }
+        let probes = descendants(in: rootView).compactMap { $0 as? MailColumnProbe.ProbeView }
         let mailTables = probes.flatMap { probe -> [NSTableView] in
             var child: NSView = probe
             while let parent = child.superview {
