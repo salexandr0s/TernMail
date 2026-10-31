@@ -3,15 +3,15 @@ import MailStore
 import SwiftUI
 
 /// Rows for one account's Google connections, placed inside the account's section.
+/// Permanent deletion has a section of its own, `PermanentDeletionSection`.
 struct ConnectionsView: View {
     let app: AppModel
     let accountID: String
     @State private var connection: SettingsAccountState
     @State private var busy = false
     @State private var error: String?
-    @State private var confirmsPermanentDeletion = false
 
-    private let features: [AccountFeature] = [.calendar, .gmailSettings, .contacts, .inboxUpdates, .permanentDeletion]
+    private let features: [AccountFeature] = [.calendar, .gmailSettings, .contacts, .inboxUpdates]
 
     init(account: AccountRecord, app: AppModel) {
         self.app = app
@@ -22,11 +22,7 @@ struct ConnectionsView: View {
     var body: some View {
         ForEach(features, id: \.rawValue) { feature in
             SettingsAsyncToggleRow(title(feature), detail: detail(feature), isOn: connection.isEnabled(feature)) { enabled in
-                if feature == .permanentDeletion, enabled {
-                    confirmsPermanentDeletion = true
-                } else {
-                    await set(feature, enabled: enabled)
-                }
+                await set(feature, enabled: enabled)
             }
             .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(accountID))
         }
@@ -46,28 +42,13 @@ struct ConnectionsView: View {
             }
         }
         .task { await connection.observe() }
-        .ternConfirm(
-            "Allow permanent deletion?",
-            isPresented: $confirmsPermanentDeletion,
-            actionTitle: "Allow",
-            message: "Tern can then delete messages from Trash and Spam for good. Google asks for its full mail permission, and deleted messages can't be recovered."
-        ) {
-            Task { await set(.permanentDeletion, enabled: true) }
-        }
     }
 
     private func set(_ feature: AccountFeature, enabled: Bool) async {
         busy = true
         error = nil
         defer { busy = false }
-        do {
-            if enabled {
-                if let grant = try await app.enableFeature(feature, for: accountID), !grant.features.contains(feature) {
-                    error = "Google didn't grant the permission this connection needs. Turn it on again to retry."
-                }
-            } else { try await app.disableFeature(feature, for: accountID) }
-            try await connection.refresh()
-        } catch { self.error = "Couldn't change this connection. Try signing in again." }
+        error = await connection.set(feature, enabled: enabled, app: app)
     }
 
     private func title(_ feature: AccountFeature) -> String {
@@ -75,7 +56,6 @@ struct ConnectionsView: View {
         case .gmailSettings: "Gmail Settings"
         case .contacts: "Contacts"
         case .inboxUpdates: "Inbox Updates"
-        case .permanentDeletion: "Permanent Deletion"
         default: "Calendar"
         }
     }
@@ -85,7 +65,6 @@ struct ConnectionsView: View {
         case .gmailSettings: "Edit filters, your primary signature and the vacation responder."
         case .contacts: "Suggest saved and other contacts, plus your Workspace directory when available."
         case .inboxUpdates: "Check for Inbox changes immediately. This requires Google's full mail permission."
-        case .permanentDeletion: "Delete messages forever from Trash and Spam. This requires Google's full mail permission."
         case .calendar: "View and edit Google Calendar events, and check availability."
         default: "Connect your Google calendars."
         }
@@ -98,5 +77,94 @@ struct ConnectionsView: View {
         case .unavailable(let reason): "Inbox Updates: \(reason)"
         case .stopped: "Inbox Updates: stopped"
         }
+    }
+}
+
+/// Permanent deletion for every account, apart from the ordinary connections
+/// because what it deletes can't be recovered.
+struct PermanentDeletionSection: View {
+    let accounts: [AccountRecord]
+    let app: AppModel
+    /// Shown below the rows: a grouped form crashes when a `ForEach` element
+    /// adds an optional row of its own.
+    @State private var error: String?
+
+    var body: some View {
+        Section {
+            ForEach(accounts) { account in
+                PermanentDeletionRow(account: account, app: app, error: $error)
+            }
+            if let error { SettingsErrorLabel(error) }
+        } header: {
+            Text("Permanent deletion")
+        } footer: {
+            Label {
+                Text("Lets Tern delete messages in Trash and Spam forever. They can't be recovered. This requires Google's full mail permission.")
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Tokens.Status.warning)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+private struct PermanentDeletionRow: View {
+    let app: AppModel
+    let account: AccountRecord
+    @Binding var error: String?
+    @State private var connection: SettingsAccountState
+    @State private var busy = false
+    @State private var confirms = false
+
+    init(account: AccountRecord, app: AppModel, error: Binding<String?>) {
+        self.app = app
+        self.account = account
+        _error = error
+        _connection = State(initialValue: SettingsAccountState(accountID: account.id, store: app.settingsAccountStore, initial: account))
+    }
+
+    var body: some View {
+        let name = account.displayName.flatMap { $0.isEmpty ? nil : $0 }
+        SettingsAsyncToggleRow(name ?? account.email, detail: name == nil ? nil : account.email,
+                               isOn: connection.isEnabled(.permanentDeletion)) { enabled in
+            if enabled { confirms = true } else { await set(enabled: false) }
+        }
+        .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(account.id))
+        .accessibilityLabel("Permanent deletion for \(account.email)")
+        .task { await connection.observe() }
+        .ternConfirm(
+            "Allow permanent deletion for \(account.email)?",
+            isPresented: $confirms,
+            actionTitle: "Allow",
+            message: "Tern can then delete messages from Trash and Spam for good. Google asks for its full mail permission, and deleted messages can't be recovered."
+        ) {
+            Task { await set(enabled: true) }
+        }
+    }
+
+    private func set(enabled: Bool) async {
+        busy = true
+        error = nil
+        defer { busy = false }
+        error = await connection.set(.permanentDeletion, enabled: enabled, app: app)
+    }
+}
+
+private extension SettingsAccountState {
+    /// Turns a connection on or off, then reloads the account. Returns the
+    /// message to show, or `nil` when the change went through.
+    func set(_ feature: AccountFeature, enabled: Bool, app: AppModel) async -> String? {
+        var message: String?
+        do {
+            if enabled {
+                if let grant = try await app.enableFeature(feature, for: accountID), !grant.features.contains(feature) {
+                    message = "Google didn't grant the permission this connection needs. Turn it on again to retry."
+                }
+            } else { try await app.disableFeature(feature, for: accountID) }
+            try await refresh()
+        } catch { message = "Couldn't change this connection. Try signing in again." }
+        return message
     }
 }
