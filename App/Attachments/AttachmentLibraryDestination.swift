@@ -15,7 +15,7 @@ struct AttachmentLibraryDestination: View {
                 .navigationSplitViewColumnWidth(min: Tokens.Layout.sidebarMinWidth,
                     ideal: Tokens.Layout.sidebarWidth, max: Tokens.Layout.sidebarMaxWidth)
         } detail: {
-            AttachmentLibraryView(model: model, onOpenSource: {}, searchFocusRequest: toolbar.searchFocusRequest)
+            AttachmentLibraryView(model: model, onOpenSource: {}, focusSearch: { toolbar.searchFocusRequest += 1 })
         }
         .toolbar(removing: .sidebarToggle)
         .onDisappear { model.dismissPresentation() }

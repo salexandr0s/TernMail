@@ -50,7 +50,11 @@ final class AttachmentLibraryModel {
     var coverageKey: CoverageKey { .init(accountIDs: availableAccounts.map(\.id), revision: reloadRevision) }
     var pageEnd: Int { min(pageOffset + items.count, totalCount) }
     var hasPreviousPage: Bool { pageOffset > 0 }
-    var rangeSummary: String { totalCount == 0 ? "0 attachments" : "\(pageOffset + 1)–\(pageEnd) of \(totalCount.formatted())" }
+    /// The library's only count, shown in the status bar.
+    var rangeSummary: String {
+        if hasPreviousPage || hasMore { return "\(pageOffset + 1)–\(pageEnd) of \(totalCount.formatted()) attachments" }
+        return totalCount == 1 ? "1 attachment" : "\(totalCount.formatted()) attachments"
+    }
     @ObservationIgnored private var observationRevision = UUID()
     @ObservationIgnored private var coverageRevision = UUID()
     @ObservationIgnored private var presentationRevision = UUID()
@@ -108,6 +112,14 @@ final class AttachmentLibraryModel {
     }
 
     var indexingNeedsRetry: Bool { scopedStates.contains { $0.lastError != nil } }
+    /// True while an account in scope that can sync hasn't finished its first
+    /// pass over mail history. A failed pass doesn't count; the footer offers a retry.
+    var isBuildingIndex: Bool {
+        scopedAccountIDs.subtracting(unavailableAccountIDs).contains { id in
+            guard let state = indexStates.first(where: { $0.accountID == id }) else { return true }
+            return !state.isComplete && state.lastError == nil
+        }
+    }
     private var scopedAccountIDs: Set<String> { Set(query.accountIDs) }
     private var scopedStates: [AttachmentIndexState] { indexStates.filter { scopedAccountIDs.contains($0.accountID) } }
 
