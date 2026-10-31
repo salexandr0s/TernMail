@@ -287,6 +287,38 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func searchScopeNarrowsToTheMailboxOrOneAccountUntilTheSearchEnds() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.addAccount(second, gmail: AuditGmail())
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 4 }
+
+        // Two letters stay on this Mac, so Gmail can't add mail from outside the scope.
+        mailbox.search.update("pl")
+        try await waitUntil { mailbox.listedThreads.count == 4 }
+        #expect(mailbox.sidebarSelection == nil)
+        let scope = try #require(mailbox.searchMailboxScope)
+        #expect(scope == MailboxSearchScope(title: "Inbox", restriction: "in:inbox"))
+        mailbox.search.restrict(to: scope.restriction)
+        try await waitUntil { mailbox.listedThreads.count == 2 }
+        #expect(Set(mailbox.listedThreads.map(\.key.threadID)) == ["t2"])
+        mailbox.search.restrict(toAccount: "second")
+        try await waitUntil { mailbox.listedThreads.count == 1 }
+        #expect(mailbox.listedThreads.first?.accountID == "second")
+        #expect(!mailbox.listMixesAccounts)
+
+        // Choosing the selected mailbox again ends the search, and the next search starts from all mail.
+        mailbox.sidebarSelection = .combined(SystemLabel.inbox)
+        #expect(!mailbox.search.isActive)
+        #expect(mailbox.search.restriction == nil && mailbox.search.accountID == nil)
+        #expect(mailbox.sidebarSelection == .combined(SystemLabel.inbox))
+        await mailbox.stop()
+    }
+
     @Test func undoIsAvailableBeforePersistenceAndCommandsHaveSeparateGroups() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)

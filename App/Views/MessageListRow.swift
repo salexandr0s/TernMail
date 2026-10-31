@@ -10,6 +10,7 @@ struct MessageListRow: View {
     let accountMark: String?
     let accountColor: Color
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
+    @Environment(\.backgroundProminence) private var prominence
     @State private var isHovered = false
 
     private var compact: Bool { mailbox.listPreferences.density == .compact }
@@ -90,14 +91,14 @@ struct MessageListRow: View {
             .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
             Text(ThreadDate.short(thread.lastDate)).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
             if mailbox.listPreferences.showsAccountBadges, mailbox.listMixesAccounts, let accountMark {
-                Text(accountMark).font(scaledFont(.caption2, weight: .medium)).padding(.horizontal, Tokens.Space.s1)
-                    // Stays legible on the badge's own fill when the row's text turns white.
-                    .foregroundStyle(Color(nsColor: .labelColor))
-                    .frame(minWidth: Tokens.Space.s5, minHeight: Tokens.Space.s4)
-                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                    .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(accountColor, lineWidth: Tokens.Border.hairline) }
-                    .fixedSize()
-                    .help(mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } ?? item.id.accountID)
+                HStack(spacing: Tokens.Space.s0_5) {
+                    // The account's color would vanish on an accent-colored selection.
+                    Circle().fill(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(accountColor))
+                        .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
+                    Text(accountMark).font(scaledFont(.caption2, weight: .medium)).foregroundStyle(.secondary)
+                }
+                .fixedSize()
+                .help(mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } ?? item.id.accountID)
             }
         }
     }
@@ -107,7 +108,7 @@ struct MessageListRow: View {
             if item.labels.contains(SystemLabel.draft) {
                 Text("Draft").font(scaledFont(.caption1, weight: .medium)).foregroundStyle(Tokens.Status.error)
             }
-            Text(thread.subject.isEmpty ? "No Subject" : thread.subject)
+            Text(thread.subject.isEmpty ? AttributedString("No Subject") : mailbox.search.highlights.subject(thread.subject))
                 .font(scaledFont(.callout, weight: thread.isUnread ? .medium : .regular))
                 .foregroundStyle(thread.subject.isEmpty ? Color.secondary : Color.primary)
                 .lineLimit(1)
@@ -118,7 +119,7 @@ struct MessageListRow: View {
         if let wake = wakeTime {
             Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock").font(scaledFont(.caption1)).foregroundStyle(.secondary)
         } else if !thread.snippet.isEmpty {
-            Text(thread.snippet).font(scaledFont(.callout)).foregroundStyle(.secondary).lineLimit(1)
+            Text(mailbox.search.highlights.preview(thread.snippet)).font(scaledFont(.callout)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 
