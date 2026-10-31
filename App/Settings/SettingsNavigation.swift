@@ -24,7 +24,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .mailActions: "Mail Actions"
         case .notifications: "Notifications"
         case .connections: "Connections"
-        case .accountPreferences: "Preferences"
+        case .accountPreferences: "Account Settings"
         case .profiles: "Profiles"
         case .reading: "Reading"
         case .messageList: "Message List"
