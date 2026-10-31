@@ -36,6 +36,11 @@ struct MainView: View {
 
     private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
 
+    // With no profiles the picker would offer All Accounts alone.
+    private var showsProfilePicker: Bool {
+        isActive && !showsLibrary && app.accountPreferences?.profiles.isEmpty == false
+    }
+
     private var showsLibrary: Bool { mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID }
     /// Mail menu items act on this window while it shows mail, not the attachment library.
     private var focusedMailbox: MailboxModel? { isActive && !showsLibrary ? mailbox : nil }
@@ -232,13 +237,13 @@ struct MainView: View {
                 .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
-                    .help("New Message")
+                    .help("New Message (\(ShortcutCatalog.newMessage.label))")
             }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID)
+            .mailToolbarVisible(isActive)
             ToolbarItem(id: "mail.profile", placement: .navigation) {
                 if let preferences = app.accountPreferences { ProfilePicker(model: preferences) }
             }
-            .mailToolbarVisible(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && app.accountPreferences != nil)
+            .mailToolbarVisible(showsProfilePicker)
             MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
             WorkspaceSearchToolbar(
                 mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
