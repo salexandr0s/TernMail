@@ -1,5 +1,4 @@
 import AppKit
-import Observation
 import SwiftUI
 
 /// Allocate the assistant inside the existing window. At narrow widths the
@@ -34,23 +33,20 @@ struct AssistantSidebarLayout {
 
 /// Keeps the native split controller and its constraints in charge. Probes find
 /// only their own ancestors, so a detached assistant never affects another window.
-@Observable @MainActor
+@MainActor
 final class AssistantMailPaneSizing {
     enum Pane: CaseIterable { case navigation, list }
-    private(set) var contentTopInset: CGFloat = 0
     private struct SplitDivider {
         weak var split: NSSplitView?
         weak var pane: NSView?
         let index: Int
     }
     private enum Mode: Equatable { case normal, compressed, restoring }
-    @ObservationIgnored private var dividers: [Pane: SplitDivider] = [:]
-    @ObservationIgnored private var originalWidths: [Pane: CGFloat] = [:]
-    @ObservationIgnored private var mode = Mode.normal
-    @ObservationIgnored private var remainingAttempts = 0
-    @ObservationIgnored private var scheduled = false
-    @ObservationIgnored private weak var safeAreaSplit: NSSplitView?
-    @ObservationIgnored private var safeAreaUpdateScheduled = false
+    private var dividers: [Pane: SplitDivider] = [:]
+    private var originalWidths: [Pane: CGFloat] = [:]
+    private var mode = Mode.normal
+    private var remainingAttempts = 0
+    private var scheduled = false
 
     func beginPresentation() {
         guard mode != .compressed else { return }
@@ -70,43 +66,10 @@ final class AssistantMailPaneSizing {
         requestApply()
     }
 
-    func attach(_ view: NSView, pane role: Pane) {
-        var child = view
-        while let parent = child.superview {
-            if let split = parent as? NSSplitView, split.isVertical,
-               let index = split.arrangedSubviews.firstIndex(where: { $0 === child }),
-               index < split.arrangedSubviews.count - 1 {
-                updateWindowSafeArea(from: split)
-                let old = dividers[role]
-                dividers[role] = SplitDivider(split: split, pane: child, index: index)
-                if old?.split !== split || old?.pane !== child { requestApply() }
-                return
-            }
-            child = parent
-        }
-    }
-
-    func refreshWindowSafeArea() {
-        guard let split = safeAreaSplit else { return }
-        updateWindowSafeArea(from: split)
-    }
-
-    /// Nested split views extend beneath the toolbar even when a rendering host
-    /// drops their native top inset. Measure the unpadded split once layout has
-    /// settled, then let each SwiftUI column reserve the missing safe area.
-    private func updateWindowSafeArea(from split: NSSplitView) {
-        safeAreaSplit = split
-        guard !safeAreaUpdateScheduled else { return }
-        safeAreaUpdateScheduled = true
-        Task { @MainActor [weak self] in
-            await Task.yield()
-            guard let self else { return }
-            safeAreaUpdateScheduled = false
-            guard let split = safeAreaSplit, let window = split.window else { return }
-            let overlap = split.convert(split.bounds, to: nil).maxY - window.contentLayoutRect.maxY
-            let missingTop = max(0, overlap - split.safeAreaInsets.top)
-            if abs(contentTopInset - missingTop) > 0.5 { contentTopInset = missingTop }
-        }
+    func attach(_ divider: EnclosingSplitDivider, as role: Pane) {
+        let old = dividers[role]
+        dividers[role] = SplitDivider(split: divider.split, pane: divider.pane, index: divider.index)
+        if old?.split !== divider.split || old?.pane !== divider.pane { requestApply() }
     }
 
     /// SwiftUI can apply column constraints after updating the representable.
@@ -160,16 +123,19 @@ final class AssistantMailPaneSizing {
     }
 }
 
+/// Reports the native split around a mail column to the pane sizing and the
+/// toolbar inset. Each probe sees only its own ancestors.
 struct AssistantMailPaneProbe: NSViewRepresentable {
     let sizing: AssistantMailPaneSizing
+    let toolbarInset: ClippedSplitToolbarInset
     let pane: AssistantMailPaneSizing.Pane
     let isPresented: Bool
 
     func makeNSView(context: Context) -> ProbeView { ProbeView() }
 
     func updateNSView(_ view: ProbeView, context: Context) {
-        view.sizing = sizing; view.pane = pane
-        sizing.attach(view, pane: pane)
+        view.sizing = sizing; view.toolbarInset = toolbarInset; view.pane = pane
+        view.attach()
         if view.isPresented != isPresented {
             view.isPresented = isPresented
             sizing.requestApply()
@@ -178,17 +144,24 @@ struct AssistantMailPaneProbe: NSViewRepresentable {
 
     final class ProbeView: NSView {
         weak var sizing: AssistantMailPaneSizing?
+        weak var toolbarInset: ClippedSplitToolbarInset?
         var pane = AssistantMailPaneSizing.Pane.navigation
         var isPresented = false
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            sizing?.attach(self, pane: pane)
+            attach()
         }
         override func layout() {
             super.layout()
-            sizing?.attach(self, pane: pane)
+            attach()
             sizing?.schedulePendingApply()
+        }
+
+        func attach() {
+            guard let divider = EnclosingSplitDivider(of: self) else { return }
+            toolbarInset?.measure(divider.split)
+            sizing?.attach(divider, as: pane)
         }
     }
 }

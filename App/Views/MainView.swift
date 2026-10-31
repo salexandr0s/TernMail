@@ -24,6 +24,7 @@ struct MainView: View {
     @SceneStorage("selectedMailbox") private var storedMailbox = ""
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
     @State private var paneSizing = AssistantMailPaneSizing()
+    @State private var toolbarInset = ClippedSplitToolbarInset()
     @State private var libraryToolbar = AttachmentLibraryToolbarState()
     @FocusState private var outboxFocused: Bool
     let mailbox: MailboxModel
@@ -103,7 +104,7 @@ struct MainView: View {
     }
 
     var body: some View {
-        let contentTopInset = paneSizing.contentTopInset
+        let contentTopInset = toolbarInset.top
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
                 preferredWidth: CGFloat(preferredAssistantWidth), isPresented: showsAssistant)
@@ -146,7 +147,7 @@ struct MainView: View {
                 fitSidebar(fit)
             }
             .onChange(of: geometry.size.height, initial: true) { _, _ in
-                paneSizing.refreshWindowSafeArea()
+                toolbarInset.refresh()
             }
         }
         .background {
@@ -192,7 +193,7 @@ struct MainView: View {
                 // the content toolbar carries its own sidebar button.
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-                .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .navigation, isPresented: showsAssistant) }
+                .background { AssistantMailPaneProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation, isPresented: showsAssistant) }
                 .padding(.trailing, Tokens.Layout.columnGutter)
                 .overlay(alignment: .trailing) {
                     SplitDividerHandle()
@@ -212,7 +213,7 @@ struct MainView: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-            .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .list, isPresented: showsAssistant) }
+            .background { AssistantMailPaneProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .list, isPresented: showsAssistant) }
             .onChange(of: mailbox.search.listFocusRequest) {
                 outboxFocused = showsOutbox
             }
