@@ -15,6 +15,22 @@ struct EmailCalendarMessage: Sendable, Equatable {
     /// Gmail's Promotions and Social mail is full of sale periods, opening hours
     /// and notification times, so its dates are not read as events locally.
     var allowsDateDetection = true
+    /// Seconds east of UTC in the message's `Date` header. Nil when the header
+    /// names no zone, and for messages cached before the offset was stored.
+    var dateHeaderOffset: Int?
+}
+
+extension EmailCalendarMessage {
+    /// A time without a zone is worth checking only when the sender's clock
+    /// read differently from the reader's. Nil when nothing suggests that.
+    func timeZoneWarning(readerTimeZone: TimeZone) -> String? {
+        guard let difference = CalendarDetection.senderClockDifference(
+            dateHeaderOffset: dateHeaderOffset, sentAt: date, readerTimeZone: readerTimeZone) else { return nil }
+        // The sentence is English, so the amount is too.
+        let amount = Duration.seconds(abs(difference))
+            .formatted(.units(allowed: [.hours, .minutes], width: .wide).locale(Locale(identifier: "en")))
+        return "Check the time zone. The sender's clock is \(amount) \(difference < 0 ? "behind" : "ahead of") yours."
+    }
 }
 
 struct EmailCalendarItem: Identifiable, Sendable, Equatable, Codable {
@@ -112,17 +128,18 @@ final class EmailCalendarModel {
             // Structured data supplies the precise event; text detection must not
             // create another candidate for the invitation's readable alternative.
             guard invitations.isEmpty, message.allowsDateDetection else { continue }
+            let zoneWarning = message.timeZoneWarning(readerTimeZone: timeZone)
             for suggestion in CalendarDetection.suggestions(in: message.text, messageDate: message.date, timeZone: timeZone) {
                 var event = GoogleCalendarEvent(summary: message.subject)
                 event.start = CalendarDateTime(date: suggestion.start, timeZone: timeZone, allDay: suggestion.isAllDay)
                 if let end = suggestion.end {
                     event.end = CalendarDateTime(date: end, timeZone: timeZone, allDay: suggestion.isAllDay)
                 }
-                let warnings = suggestion.uncertainties.map { uncertainty in
+                let warnings = suggestion.uncertainties.compactMap { uncertainty -> String? in
                     switch uncertainty {
                     case .dateNeedsReview: "Check the intended date."
                     case .timeNeedsReview: "Check the intended time."
-                    case .timeZoneMissing: "Check the time zone."
+                    case .timeZoneMissing: zoneWarning
                     case .durationMissing: "Choose an event duration."
                     }
                 }
@@ -245,13 +262,19 @@ final class EmailCalendarModel {
         item.invitation?.attendee(matchingAnyOf: addresses)
     }
 
+    /// Part of every revision. Raise it when the same mail should give different
+    /// cards, so readings the assistant cached under the old rules are not reused.
+    private static let rulesVersion = 1
+
     private static func fingerprint(_ messages: [EmailCalendarMessage], timeZone: TimeZone) -> String {
         var hash = SHA256()
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
+        hash.update(data: Data("rules-\(rulesVersion)".utf8))
         hash.update(data: Data(timeZone.identifier.utf8))
         for message in messages {
-            for part in [message.id, message.subject, String(message.date.timeIntervalSince1970), message.text, message.sender] {
+            let offset = message.dateHeaderOffset.map { String($0) } ?? ""
+            for part in [message.id, message.subject, String(message.date.timeIntervalSince1970), message.text, message.sender, offset] {
                 hash.update(data: Data("\(part.utf8.count):".utf8))
                 hash.update(data: Data(part.utf8))
             }

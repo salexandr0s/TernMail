@@ -85,6 +85,26 @@ import TernAI
         #expect(later.items.isEmpty)
     }
 
+    @Test func onlyASenderInAnotherZoneGetsATimeZoneWarning() async throws {
+        let paris = try #require(TimeZone(identifier: "Europe/Paris"))
+        var elsewhere = message()
+        elsewhere.dateHeaderOffset = -28_800
+        let cases: [(EmailCalendarMessage, [String])] = [
+            (message(), []), (elsewhere, ["Check the time zone. The sender's clock is 9 hours behind yours."]),
+        ]
+        let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response(timeZone: nil)),
+                                                     model: "fixture", isScopeValid: { true })
+        // One model for both, so an offset that arrives for mail it already read must refresh the cards.
+        let model = EmailCalendarModel()
+        for (source, expected) in cases {
+            model.update(messages: [source], addresses: [], timeZone: paris)
+            let extracted = try await service.extract(messages: [source], timeZone: paris)
+            for item in [try #require(model.items.first), try #require(extracted.first)] {
+                #expect(item.uncertainties.filter { $0.hasPrefix("Check the time zone") } == expected)
+            }
+        }
+    }
+
     @Test func cachedCancellationReplacesEarlierSuggestionAndRejectsInventedRelatedSource() throws {
         let model = EmailCalendarModel()
         let cancellation = EmailCalendarMessage(id: "later", subject: "Cancelled", date: message().date.addingTimeInterval(60), text: "The planning meeting is cancelled.")
@@ -205,12 +225,12 @@ import TernAI
     }
 
     private func response(source: String = "message", quote: String = "Meet July 15, 2031 at 14:00.",
-                          start: String? = "2031-07-15T14:00:00Z") throws -> String {
+                          start: String? = "2031-07-15T14:00:00Z", timeZone: String? = "Etc/UTC") throws -> String {
         try AIJSON.object(["events": .array([.object([
             "title": .string("Planning"), "source_message_id": .string(source), "supporting_text": .string(quote),
             "superseded_message_ids": .array([]), "status": .string("proposed"),
             "start": start.map(AIJSON.string) ?? .null, "end": .null, "all_day": .bool(false),
-            "time_zone": .string("Etc/UTC"), "uncertainties": .array([.string("Choose a duration.")]),
+            "time_zone": timeZone.map(AIJSON.string) ?? .null, "uncertainties": .array([.string("Choose a duration.")]),
         ])])]).jsonString()
     }
 }

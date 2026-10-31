@@ -59,6 +59,7 @@ struct EmailCalendarExtractionService {
             Use status proposed, updated, or cancelled. Put null for an end or time zone the evidence does not establish.
             Timed dates must be RFC3339 with offsets; all-day dates must be YYYY-MM-DD with an exclusive end date.
             Do not invent durations, invitees, or facts. List missing or uncertain details in uncertainties.
+            Leave an unstated time zone out of uncertainties; the app checks it against the sender's clock.
             All results are editable proposals. Do not claim any event has been saved or any invitation sent.
             """, responseSchema: Self.schema)
         var completed: AIResponse?
@@ -93,7 +94,9 @@ struct EmailCalendarExtractionService {
             var warnings = event.uncertainties
             if start == nil { warnings.append("Choose the intended date.") }
             if end == nil, !event.allDay { warnings.append("Choose an event duration.") }
-            if event.timeZone == nil, !event.allDay { warnings.append("Check the time zone.") }
+            if start != nil, event.timeZone == nil, !event.allDay, let warning = source.timeZoneWarning(readerTimeZone: timeZone) {
+                warnings.append(warning)
+            }
             let identity = [source.id, event.supportingText, event.title, event.start ?? "", event.end ?? "", event.status].joined(separator: "\u{0}")
             let digest = SHA256.hash(data: Data(identity.utf8))
                 .map { String(format: "%02x", $0) }.joined()
