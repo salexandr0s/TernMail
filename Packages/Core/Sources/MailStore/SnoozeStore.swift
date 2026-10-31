@@ -69,16 +69,32 @@ extension CacheTransaction {
         try effectiveLabels(threadID: threadID, accountID: accountID, actions: try pendingActions(accountID: accountID))
     }
 
-    /// Sorts a woken conversation by `wokeAt` until it leaves the Inbox.
+    /// Sorts a woken conversation by `wokeAt` until it leaves the Inbox. The
+    /// list rows already written for it move at once; `rebuildThreads` keeps
+    /// them there.
     public func recordWake(threadID: String, at wokeAt: Date, accountID: String) throws {
         try db.execute(
             sql: "INSERT OR REPLACE INTO wokenThread (accountID, threadID, wokeAt) VALUES (?, ?, ?)",
             arguments: [accountID, threadID, wokeAt]
         )
+        try db.execute(
+            sql: "UPDATE threadLabel SET listDate = MAX(lastDate, ?) WHERE accountID = ? AND threadID = ?",
+            arguments: [wokeAt, accountID, threadID]
+        )
     }
 
     func forgetWake(threadID: String, accountID: String) throws {
         try db.execute(sql: "DELETE FROM wokenThread WHERE accountID = ? AND threadID = ?", arguments: [accountID, threadID])
+        try db.execute(
+            sql: "UPDATE threadLabel SET listDate = lastDate WHERE accountID = ? AND threadID = ?",
+            arguments: [accountID, threadID]
+        )
+    }
+
+    func wakeTime(threadID: String, accountID: String) throws -> Date? {
+        try Date.fetchOne(
+            db, sql: "SELECT wokeAt FROM wokenThread WHERE accountID = ? AND threadID = ?", arguments: [accountID, threadID]
+        )
     }
 }
 

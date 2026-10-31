@@ -58,8 +58,15 @@ private let acct = "acct"
         let queue = try DatabaseQueue()
         try Schema.cacheMigrator.migrate(queue, upTo: "compose-v1")
         try await queue.write { db in
-            try CacheTransaction(db: db).upsertMessages([stored("m1", thread: "t1", subject: "Trail map")])
-            try CacheTransaction(db: db).rebuildThreads(["t1"], accountID: acct)
+            let message = stored("m1", thread: "t1", subject: "Trail map")
+            try CacheTransaction(db: db).upsertMessages([message])
+            // The derived row as that schema stored it; `rebuildThreads` now
+            // writes columns later migrations add.
+            try ThreadRecord(
+                accountID: acct, id: "t1", lastDate: message.record.date, subject: message.record.subject,
+                snippet: message.record.snippet, participants: message.record.sender, messageCount: 1,
+                isUnread: false, isStarred: false
+            ).insert(db)
             try MessageBodyRecord(accountID: acct, messageID: "m1", html: nil, plainText: "Bring the summit permit", fetchedAt: .now)
                 .insert(db)
         }

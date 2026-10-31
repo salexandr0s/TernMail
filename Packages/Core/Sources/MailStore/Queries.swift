@@ -15,6 +15,14 @@ public struct MessageDetail: Sendable, Equatable, Identifiable {
     public var id: String { record.id }
     public var isUnread: Bool { labels.contains(SystemLabel.unread) }
     public var isStarred: Bool { labels.contains(SystemLabel.starred) }
+
+    /// Bodies compare by fetch, not by text: a body only changes when it is
+    /// fetched again, and comparing the HTML of every message on each
+    /// observation value is what made large conversations slow to open.
+    public static func == (lhs: MessageDetail, rhs: MessageDetail) -> Bool {
+        lhs.record == rhs.record && lhs.labels == rhs.labels && lhs.attachments == rhs.attachments
+            && lhs.draftID == rhs.draftID && MessageBodyRecord.sameFetch(lhs.body, rhs.body)
+    }
 }
 
 public struct ThreadDetail: Sendable, Equatable {
@@ -60,22 +68,13 @@ extension MailCache {
     }
 
     /// Threads listed under `labelID` in any of the accounts, as one list for
-    /// a combined mailbox.
+    /// a combined mailbox. Each account's rows come off `threadLabel_list` in
+    /// order and SQLite merges them, so no account is read past the page.
     public func threads(accountIDs: [String], labelID: String, limit: Int) -> AsyncThrowingStream<[ThreadRecord], any Error> {
-        let placeholders = Array(repeating: "?", count: accountIDs.count).joined(separator: ", ")
-        let arguments = StatementArguments(accountIDs) + [labelID, limit]
-        return observe { db in
-            try ThreadRecord.fetchAll(db, sql: """
-                SELECT thread.*
-                FROM threadLabel
-                JOIN thread ON thread.accountID = threadLabel.accountID AND thread.id = threadLabel.threadID
-                LEFT JOIN wokenThread ON wokenThread.accountID = threadLabel.accountID AND wokenThread.threadID = threadLabel.threadID
-                WHERE threadLabel.accountID IN (\(placeholders)) AND threadLabel.labelID = ?
-                ORDER BY MAX(threadLabel.lastDate, COALESCE(wokenThread.wokeAt, threadLabel.lastDate)) DESC,
-                    threadLabel.threadID, threadLabel.accountID
-                LIMIT ?
-                """, arguments: arguments)
-        }
+        guard !accountIDs.isEmpty else { return observe { _ in [] } }
+        let sql = ThreadListQuery.sql(accountCount: accountIDs.count)
+        let arguments = ThreadListQuery.arguments(accountIDs: accountIDs, labelID: labelID, limit: limit)
+        return observe { db in try ThreadRecord.fetchAll(db, sql: sql, arguments: arguments) }
     }
 
     public func thread(accountID: String, threadID: String) -> AsyncThrowingStream<ThreadDetail?, any Error> {
@@ -95,17 +94,29 @@ extension MailCache {
                 .fetchAll(db)
             let bodiesByID = Dictionary(bodies.map { ($0.messageID, $0) }, uniquingKeysWith: { first, _ in first })
             let hidden = try transaction.hiddenDraftMessageIDs(accountID: accountID)
-            let messages = try transaction.messages(threadID: threadID, accountID: accountID)
+            let records = try transaction.messages(threadID: threadID, accountID: accountID)
                 .filter { !hidden.contains($0.id) }
-                .map { record in
-                    MessageDetail(
-                        record: record,
-                        labels: labels[record.id] ?? [],
-                        body: bodiesByID[record.id],
-                        attachments: try transaction.attachments(messageID: record.id, accountID: accountID),
-                        draftID: try transaction.draft(messageID: record.id, accountID: accountID)?.id
-                    )
-                }
+            let messageIDs = records.map(\.id)
+            let attachments = Dictionary(grouping: try AttachmentRecord
+                .filter(Column("accountID") == accountID && messageIDs.contains(Column("messageID")))
+                .order(Column.rowID) // payload order, as stored
+                .fetchAll(db), by: \.messageID)
+            let draftIDs = Dictionary(
+                try DraftRecord
+                    .filter(Column("accountID") == accountID && messageIDs.contains(Column("messageID")))
+                    .fetchAll(db)
+                    .map { ($0.messageID, $0.id) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let messages = records.map { record in
+                MessageDetail(
+                    record: record,
+                    labels: labels[record.id] ?? [],
+                    body: bodiesByID[record.id],
+                    attachments: attachments[record.id] ?? [],
+                    draftID: draftIDs[record.id]
+                )
+            }
             return ThreadDetail(thread: thread, messages: messages)
         }
     }
@@ -213,6 +224,45 @@ extension MessageBodyRecord {
         MessageRecord.self,
         using: ForeignKey(["accountID", "messageID"], to: ["accountID", "id"])
     )
+
+    /// Whether two bodies are the same fetch, judged without reading the text.
+    static func sameFetch(_ lhs: MessageBodyRecord?, _ rhs: MessageBodyRecord?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (lhs?, rhs?):
+            return lhs.fetchedAt == rhs.fetchedAt
+                && lhs.html?.utf8.count == rhs.html?.utf8.count
+                && lhs.plainText?.utf8.count == rhs.plainText?.utf8.count
+        default:
+            return false
+        }
+    }
+}
+
+/// The thread list's SQL: one arm per account, each ordered by the list
+/// index, merged by SQLite. Accounts are sorted so ties between them fall
+/// the same way every time.
+enum ThreadListQuery {
+    static func sql(accountCount: Int) -> String {
+        let arm = """
+            SELECT thread.*, threadLabel.listDate AS listDate, threadLabel.threadID AS sortID
+            FROM threadLabel
+            JOIN thread ON thread.accountID = threadLabel.accountID AND thread.id = threadLabel.threadID
+            WHERE threadLabel.accountID = ? AND threadLabel.labelID = ?
+            """
+        let arms = Array(repeating: arm, count: accountCount).joined(separator: "UNION ALL\n")
+        return arms + "ORDER BY listDate DESC, sortID LIMIT ?"
+    }
+
+    static func arguments(accountIDs: [String], labelID: String, limit: Int) -> StatementArguments {
+        var arguments = StatementArguments()
+        for accountID in accountIDs.sorted() {
+            arguments += [accountID, labelID]
+        }
+        arguments += [limit]
+        return arguments
+    }
 }
 
 /// Account settings that survive a cache reset (`config.sqlite`).

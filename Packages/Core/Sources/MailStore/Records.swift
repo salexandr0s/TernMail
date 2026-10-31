@@ -119,6 +119,9 @@ struct ThreadLabelRecord: Codable, FetchableRecord, PersistableRecord {
     var threadID: String
     var labelID: String
     var lastDate: Date
+    /// What the list sorts by: `lastDate`, or the wake time of a conversation
+    /// a snooze brought back. Stored so `threadLabel_list` can serve the sort.
+    var listDate: Date
 }
 
 /// Decoded body parts of one message, stored raw and sanitized when rendered.

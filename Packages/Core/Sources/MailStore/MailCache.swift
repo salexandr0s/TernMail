@@ -499,11 +499,20 @@ public struct CacheTransaction {
                 isStarred: allLabels.contains(SystemLabel.starred)
             )
             try thread.insert(db)
-            for labelID in threadLabels {
-                try ThreadLabelRecord(accountID: accountID, threadID: threadID, labelID: labelID, lastDate: last.date).insert(db)
-            }
-            if !threadLabels.contains(SystemLabel.inbox) {
+            // A conversation a snooze brought back sorts by its wake time
+            // until it leaves the Inbox.
+            let wokeAt: Date?
+            if threadLabels.contains(SystemLabel.inbox) {
+                wokeAt = try wakeTime(threadID: threadID, accountID: accountID)
+            } else {
                 try forgetWake(threadID: threadID, accountID: accountID)
+                wokeAt = nil
+            }
+            let listDate = max(last.date, wokeAt ?? last.date)
+            for labelID in threadLabels {
+                try ThreadLabelRecord(
+                    accountID: accountID, threadID: threadID, labelID: labelID, lastDate: last.date, listDate: listDate
+                ).insert(db)
             }
         }
     }

@@ -371,6 +371,32 @@ enum Schema {
         Milestone5CacheSchema.register(in: &migrator)
         MessageSnoozeSchema.registerCache(in: &migrator)
         AttachmentClassificationSchema.register(in: &migrator)
+
+        migrator.registerMigration("list-performance-v1") { db in
+            // The list sorted on MAX(lastDate, wokeAt), which no index could
+            // serve. The value now lives on the row (see `rebuildThreads` and
+            // `recordWake`), and the index orders by it.
+            try db.alter(table: "threadLabel") { t in
+                t.add(column: "listDate", .datetime)
+            }
+            try db.execute(sql: """
+                UPDATE threadLabel SET listDate = COALESCE(
+                    (SELECT MAX(threadLabel.lastDate, wokenThread.wokeAt) FROM wokenThread
+                     WHERE wokenThread.accountID = threadLabel.accountID AND wokenThread.threadID = threadLabel.threadID),
+                    threadLabel.lastDate);
+                DROP INDEX threadLabel_list;
+                CREATE INDEX threadLabel_list ON threadLabel(accountID, labelID, listDate DESC, threadID);
+                CREATE INDEX thread_list ON thread(accountID, lastDate DESC, id);
+                CREATE INDEX message_date ON message(accountID, date);
+                -- With message_date present, a conversation's messages ordered
+                -- by date would otherwise be read off that index, scanning the
+                -- whole account. The thread index now serves the order too.
+                DROP INDEX message_thread;
+                CREATE INDEX message_thread ON message(accountID, threadID, date, id);
+                CREATE INDEX messageLabel_label ON messageLabel(accountID, labelID, messageID);
+                CREATE INDEX pendingAction_account ON pendingAction(accountID, state);
+                """)
+        }
         return migrator
     }
 
