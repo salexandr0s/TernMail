@@ -76,7 +76,7 @@ struct AttachmentPreferencesView: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("Opening attachments", systemImage: "folder") {
+            Section("Opening attachments") {
                 SettingsControlRow("Open attachments from") {
                     Picker("Open attachments from", selection: $location) {
                         Text("Tern's attachment folder").tag(AttachmentOpenLocation.application.rawValue)

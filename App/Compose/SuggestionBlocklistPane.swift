@@ -11,7 +11,7 @@ struct SuggestionBlocklistPane: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("Recipient suggestions", systemImage: "person.crop.circle.badge.checkmark") {
+            Section("Recipient suggestions") {
                 SettingsControlRow("Account") {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
@@ -33,7 +33,7 @@ struct SuggestionBlocklistPane: View {
                 .padding(.vertical, Tokens.Space.s2)
             }
 
-            SettingsGroup("Hidden addresses", systemImage: "eye.slash") {
+            Section("Hidden addresses") {
                 if blocked.isEmpty {
                     HStack(alignment: .top, spacing: Tokens.Space.s2) {
                         Image(systemName: "info.circle")

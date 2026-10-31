@@ -50,7 +50,7 @@ struct TriagePreferencesPane: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup("Keyboard action", systemImage: "delete.left") {
+            Section("Keyboard action") {
                 HStack(alignment: .top, spacing: Tokens.Space.s3) {
                     Text("Delete key")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
@@ -64,7 +64,7 @@ struct TriagePreferencesPane: View {
                 .padding(.horizontal, Tokens.Space.s4)
                 .padding(.vertical, Tokens.Space.s2)
             }
-            SettingsGroup("Sound", systemImage: "speaker.wave.2") {
+            Section("Sound") {
                 SettingsToggleRow("Play mail sounds", detail: "Use macOS sounds for archive, Trash, sent mail and new mail.", isOn: $sounds)
             }
         }
