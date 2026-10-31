@@ -24,6 +24,9 @@ struct WorkspaceView: View {
                 .opacity(app.destination == .mail ? 1 : 0)
                 .allowsHitTesting(app.destination == .mail)
                 .accessibilityHidden(app.destination != .mail)
+                .background {
+                    MailWorkspacePerformance(mailbox: mailbox, isActive: app.destination == .mail)
+                }
             HStack(spacing: 0) {
                 CalendarView(model: app.calendar, isActive: app.destination == .calendar)
                 if showsCalendarAssistant {
@@ -50,6 +53,9 @@ struct WorkspaceView: View {
             .opacity(app.destination == .calendar ? 1 : 0)
             .allowsHitTesting(app.destination == .calendar)
             .accessibilityHidden(app.destination != .calendar)
+            .background {
+                CalendarWorkspacePerformance(model: app.calendar, isActive: app.destination == .calendar)
+            }
         }
         .toolbar(removing: .sidebarToggle)
         .navigationTitle(app.destination == .calendar ? "Calendar"
@@ -75,5 +81,47 @@ struct WorkspaceView: View {
     private func openAssistant(fullScreen: Bool) {
         showsCalendarAssistant = false
         AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
+    }
+}
+
+/// Keep diagnostics' observation dependencies outside the expensive workspace
+/// body. A new data revision should not re-evaluate both destination trees.
+private struct MailWorkspacePerformance: View {
+    let mailbox: MailboxModel
+    let isActive: Bool
+
+    private var ready: Bool {
+        isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && mailbox.isListPresentationReady
+    }
+
+    var body: some View {
+        ZStack {
+            VisibleContentProbe(kind: .workspace, isActive: ready, revision: mailbox.listPresentationRevision)
+            VisibleContentProbe(kind: .mailbox, isActive: ready, revision: mailbox.listPresentationRevision)
+            VisibleContentProbe(kind: .selectionFeedback, isActive: ready, revision: mailbox.listPresentationRevision)
+        }
+        .onChange(of: ready, initial: true) { _, value in
+            if value { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained) }
+        }
+        .onChange(of: mailbox.listPresentationRevision) { _, _ in
+            if ready { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .local) }
+        }
+    }
+}
+
+private struct CalendarWorkspacePerformance: View {
+    let model: CalendarModel
+    let isActive: Bool
+
+    private var ready: Bool { isActive && model.presentation != nil }
+
+    var body: some View {
+        VisibleContentProbe(kind: .workspace, isActive: ready, revision: model.presentationRevision)
+            .onChange(of: ready, initial: true) { _, value in
+                if value { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained) }
+            }
+            .onChange(of: model.presentationRevision) { _, _ in
+                if ready { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .local) }
+            }
     }
 }
