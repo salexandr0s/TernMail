@@ -5,8 +5,8 @@ import SwiftUI
 /// Allocate the assistant inside the existing window. At narrow widths the
 /// mailbox navigation closes temporarily, leaving the list and reader usable.
 struct AssistantSidebarLayout {
-    static let navigationMinimum = Tokens.Layout.sidebarMinWidth + Tokens.Space.s3
-    static let listMinimum = Tokens.Layout.listMinWidth + Tokens.Space.s3
+    static let navigationMinimum = Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter
+    static let listMinimum = Tokens.Layout.listMinWidth + Tokens.Layout.columnGutter
     static let threeColumnMinimum = navigationMinimum + listMinimum + Tokens.Assistant.readerMinWidth + 2 * Tokens.Border.hairline
 
     let sidebarWidth: CGFloat

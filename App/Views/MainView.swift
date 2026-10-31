@@ -143,15 +143,15 @@ struct MainView: View {
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
                 .background { AssistantMailPaneProbe(sizing: paneSizing, pane: .navigation, isPresented: showsAssistant) }
-                .padding(.trailing, Tokens.Space.s3)
+                .padding(.trailing, Tokens.Layout.columnGutter)
                 .overlay(alignment: .trailing) {
                     SplitDividerHandle()
-                        .frame(width: Tokens.Space.s3)
+                        .frame(width: Tokens.Layout.columnGutter)
                 }
                 .navigationSplitViewColumnWidth(
-                    min: Tokens.Layout.sidebarMinWidth + Tokens.Space.s3,
-                    ideal: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Space.s3,
-                    max: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarMaxWidth + Tokens.Space.s3
+                    min: Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter,
+                    ideal: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter,
+                    max: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarMaxWidth + Tokens.Layout.columnGutter
                 )
         } content: {
             Group {
@@ -166,14 +166,14 @@ struct MainView: View {
             .onChange(of: mailbox.search.listFocusRequest) {
                 outboxFocused = showsOutbox
             }
-            .padding(.trailing, Tokens.Space.s3)
+            .padding(.trailing, Tokens.Layout.columnGutter)
             .overlay(alignment: .trailing) {
                 SplitDividerHandle()
-                    .frame(width: Tokens.Space.s3)
+                    .frame(width: Tokens.Layout.columnGutter)
             }
             .navigationSplitViewColumnWidth(
-                min: Tokens.Layout.listMinWidth + Tokens.Space.s3,
-                ideal: showsAssistant ? AssistantSidebarLayout.listMinimum : Tokens.Layout.listWidth + Tokens.Space.s3,
+                min: Tokens.Layout.listMinWidth + Tokens.Layout.columnGutter,
+                ideal: showsAssistant ? AssistantSidebarLayout.listMinimum : Tokens.Layout.listWidth + Tokens.Layout.columnGutter,
                 max: showsAssistant ? AssistantSidebarLayout.listMinimum : nil
             )
         } detail: {

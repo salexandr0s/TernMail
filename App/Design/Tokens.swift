@@ -137,6 +137,8 @@ enum Tokens {
         static let sidebarMaxWidth: CGFloat = 320
         static let listMinWidth: CGFloat = 300
         static let listWidth: CGFloat = 360
+        /// Grab gutter beside the sidebar and the list, outside their scroll views.
+        static let columnGutter = Space.s2
         static let searchMinWidth: CGFloat = 180
         static let searchWidth: CGFloat = 200
         static let searchMaxWidth: CGFloat = 420

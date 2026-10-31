@@ -23,6 +23,12 @@ The unread dot has a reserved gutter and changes to the selection foreground whe
 
 `--ui-audit-list` adds synthetic conversations with long names/subjects, empty subjects/previews, and mixed read/star states. It is Debug-only and uses no live Gmail data.
 
+## Refinement, 2026-10-31
+
+A second pass kept the three lines and tightened the rest. The list uses the inset style, so a selected row gets the rounded, inset highlight, and the scroll content starts 8 points below the header. The unread dot and the avatar sit centered on the row, text starts 8 points after the avatar, and the row separator starts with the text. Unstarred rows show the star only on hover or when selected. Dates use monospaced digits, an empty subject reads as secondary text, attachment names use the caption size, and label chips are capsules. Rows keep 4 points of padding on each side inside the highlight; a three-line row is about 59 points tall, 4 more than before. The grab gutter beside the sidebar and the list is 8 points (`Tokens.Layout.columnGutter`), down from 12.
+
+Checked in the synthetic list in light and dark appearance, with the selection both emphasized and not. Badge text stays in the label color so it survives the white selection text.
+
 ## Verification
 
 - Final Debug build passed: `/tmp/tern-list-density-final-build.log`.

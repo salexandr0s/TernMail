@@ -30,7 +30,7 @@ Severity is noted where it changes the order of work. Everything else is medium 
 
 `App/Views/ThreadListView.swift`
 
-- L330-442 `ThreadRow` and L483-517 `ThreadMenuItems` have no call sites in `App/` or `Tests/`. About 190 lines of dead code; the live row is `MessageListRow`. `ThreadDate` (L519) is used elsewhere and stays.
+- L330-442 `ThreadRow` and L483-517 `ThreadMenuItems` have no call sites in `App/` or `Tests/`. About 190 lines of dead code; the live row is `MessageListRow`. `ThreadDate` (L519) is used elsewhere and stays. Removed in `c1b7537`.
 - L174-226 the `list` property decodes `storedColors` from `@AppStorage` and computes `compactAccountMarks` on every evaluation. Keep decoded colors on a stored property updated from `onChange(of: storedColors)`.
 - L181 `List(selection:)` goes through `Binding(get:set:)` to reach `selectListRows`. Expose the validated binding from `MailboxModel` instead of building it in body.
 - L197-205 pagination lives in `onAppear`. Move the "near the end" test into the model.
@@ -230,8 +230,8 @@ Order matters. Phases 0 and 1 unblock everything after them. Phase 2 fixes behav
 
 ### Phase 0: cleanup, no behavior change
 
-- Delete `ThreadRow` and `ThreadMenuItems` from `ThreadListView.swift`.
-- `MessageListRow.swift` reads `ReadingPreferences.textScaleKey`. `TernApp.swift` L45 takes its size from `Tokens.Layout`.
+- Delete `ThreadRow` and `ThreadMenuItems` from `ThreadListView.swift`. Done in `c1b7537`.
+- `MessageListRow.swift` reads `ReadingPreferences.textScaleKey` (done with the list refinement). `TernApp.swift` L45 takes its size from `Tokens.Layout`.
 - Remove `Connection.route`; rename the private `Divider` in `AssistantSidebarLayout.swift`; drop or render the `systemImage` parameter on `SettingsGroup`.
 - Make the six non-private `@State` properties private. Convert the three old-form overlays. Replace the manual `EnvironmentKey` in `AddressAvatar.swift` with `@Entry`.
 - Move `LabelNode`, `Color(gmailHex:)`, `FlowLayout`, `searchSuggestions`, `AssistantMarkdown`, `AssistantDiagramLayout`, the three non-web types in `MessageWebView.swift`, `AttachmentChip`, `ProfilePicker` and the shared calendar grid types into their own files. One PR per area.

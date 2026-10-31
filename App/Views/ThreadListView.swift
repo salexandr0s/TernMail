@@ -217,8 +217,9 @@ struct ThreadListView: View {
                 }
             }
         }
-        .listStyle(.plain)
+        .listStyle(.inset)
         .contentMargins(.horizontal, 0, for: .scrollContent)
+        .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
         .contextMenu(forSelectionType: MailListRowID.self) { ids in
             MessageListMenu(mailbox: mailbox, rows: ids)
         }
