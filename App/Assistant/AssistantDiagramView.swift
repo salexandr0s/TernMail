@@ -113,7 +113,6 @@ struct AssistantDiagramLayout {
         let arrow: Path
         let label: String?
         let labelPosition: CGPoint
-        let route: [CGPoint]
     }
     let size: CGSize
     let nodeSize: CGSize
@@ -207,7 +206,7 @@ struct AssistantDiagramLayout {
                 arrow.closeSubpath()
             }
             return Connection(id: edge.id, path: path, arrow: arrow, label: edge.label,
-                              labelPosition: labelPosition, route: points)
+                              labelPosition: labelPosition)
         }
     }
 

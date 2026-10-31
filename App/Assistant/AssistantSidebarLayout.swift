@@ -36,13 +36,13 @@ struct AssistantSidebarLayout {
 final class AssistantMailPaneSizing {
     enum Pane: CaseIterable { case navigation, list }
     private(set) var contentTopInset: CGFloat = 0
-    private struct Divider {
+    private struct SplitDivider {
         weak var split: NSSplitView?
         weak var pane: NSView?
         let index: Int
     }
     private enum Mode: Equatable { case normal, compressed, restoring }
-    @ObservationIgnored private var dividers: [Pane: Divider] = [:]
+    @ObservationIgnored private var dividers: [Pane: SplitDivider] = [:]
     @ObservationIgnored private var originalWidths: [Pane: CGFloat] = [:]
     @ObservationIgnored private var mode = Mode.normal
     @ObservationIgnored private var remainingAttempts = 0
@@ -76,7 +76,7 @@ final class AssistantMailPaneSizing {
                index < split.arrangedSubviews.count - 1 {
                 updateWindowSafeArea(from: split)
                 let old = dividers[role]
-                dividers[role] = Divider(split: split, pane: child, index: index)
+                dividers[role] = SplitDivider(split: split, pane: child, index: index)
                 if old?.split !== split || old?.pane !== child { requestApply() }
                 return
             }
