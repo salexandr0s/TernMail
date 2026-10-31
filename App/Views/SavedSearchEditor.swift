@@ -1,7 +1,8 @@
 import MailStore
 import SwiftUI
 
-/// Pops over from the sidebar's "+" or a saved search's Edit… item.
+/// A sheet for a new saved search, or a popover from a saved search's Edit…
+/// item or the search results' Save button.
 struct SavedSearchEditor: View {
     let mailbox: MailboxModel
     let existing: SavedMailSearch?
@@ -76,9 +77,15 @@ struct SavedSearchEditor: View {
     }
 }
 
+/// The sidebar's saved searches. The section hides while there are none;
+/// File > New Saved Search… and the search results' Save button add one.
 struct SavedSearchRows: View {
     let mailbox: MailboxModel
     var body: some View {
+        if !mailbox.navigation.searches.isEmpty { section }
+    }
+
+    private var section: some View {
         Section {
             ForEach(mailbox.navigation.searches) { search in
                 if let target = mailbox.favoriteMailboxID(.savedSearch(id: search.id)) {
@@ -100,9 +107,6 @@ struct SavedSearchRows: View {
                 Spacer()
                 Button { mailbox.navigation.isCreatingSearch = true } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless).help("New Saved Search").accessibilityLabel("New Saved Search")
-                    .popover(isPresented: Bindable(mailbox.navigation).isCreatingSearch, arrowEdge: .trailing) {
-                        SavedSearchEditor(mailbox: mailbox, existing: nil)
-                    }
             }
         }
     }

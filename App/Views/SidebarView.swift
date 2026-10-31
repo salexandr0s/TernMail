@@ -4,35 +4,28 @@ import SwiftUI
 
 struct SidebarView: View {
     @Bindable var mailbox: MailboxModel
-    @Environment(AppModel.self) private var app
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
 
     var body: some View {
-        // During a search the sidebar shows no selection, since results can
-        // come from outside the selected mailbox.
+        // Calendar and Attachments live in the toolbar's section switcher, so
+        // the sidebar starts with Favorites. During a search it shows no
+        // selection, since results can come from outside the selected mailbox.
         List(selection: $mailbox.sidebarSelection) {
-            Section("Library") {
-                Button { app.destination = .calendar } label: {
-                    Label("Calendar", systemImage: "calendar")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Open Calendar")
-                Label("Attachments", systemImage: "paperclip")
-                    .tag(MailboxID.combined(AttachmentLibraryModel.mailboxID))
-            }
             FavoritesView(mailbox: mailbox)
             SavedSearchRows(mailbox: mailbox)
             if mailbox.presentedAccounts.count > 1 {
                 let colors = accountColors
                 let names = mailbox.sidebarAccountNames
-                Section("Mailboxes") {
-                    ForEach(boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))) { box in
-                        CombinedMailboxRows(
-                            mailbox: mailbox, box: box, colors: colors, names: names, isExpanded: expansion(of: box.id)
-                        )
+                let combined = boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))
+                // Favorites can hold every system mailbox, which leaves no rows here.
+                if !combined.isEmpty {
+                    Section("Mailboxes") {
+                        ForEach(combined) { box in
+                            CombinedMailboxRows(
+                                mailbox: mailbox, box: box, colors: colors, names: names, isExpanded: expansion(of: box.id)
+                            )
+                        }
                     }
                 }
                 ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
@@ -43,16 +36,18 @@ struct SidebarView: View {
                         AccountHeader(mailbox: mailbox, owner: owner, color: colors[owner.account.id] ?? .secondary)
                     }
                 }
-            } else {
-                if let owner = mailbox.presentedAccounts.first {
-                Section("Mailboxes") {
-                    let outboxID = MailboxID.account(owner.account.id, MailboxModel.outboxID)
-                    ForEach(boxes(showingOutbox: mailbox.showsOutbox(outboxID))) { box in
-                        let boxID = MailboxID.account(owner.account.id, box.id)
-                        MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
-                            .conversationDropTarget(boxID, mailbox: mailbox)
-                            .tag(boxID)
-                        if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
+            } else if let owner = mailbox.presentedAccounts.first {
+                let outboxID = MailboxID.account(owner.account.id, MailboxModel.outboxID)
+                let accountBoxes = boxes(showingOutbox: mailbox.showsOutbox(outboxID))
+                if !accountBoxes.isEmpty {
+                    Section("Mailboxes") {
+                        ForEach(accountBoxes) { box in
+                            let boxID = MailboxID.account(owner.account.id, box.id)
+                            MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
+                                .conversationDropTarget(boxID, mailbox: mailbox)
+                                .tag(boxID)
+                            if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
+                        }
                     }
                 }
                 Section {
@@ -74,12 +69,16 @@ struct SidebarView: View {
                         .accessibilityLabel("New Label")
                     }
                 }
-                }
             }
         }
         .listStyle(.sidebar)
         .sheet(isPresented: Bindable(mailbox.navigation).isShowingSwitcher) {
             MailboxSwitcher(mailbox: mailbox)
+        }
+        // The File menu, the Favorites menu and the Saved Searches header
+        // open this. Search results pop the same editor over their Save button.
+        .sheet(isPresented: Bindable(mailbox.navigation).isCreatingSearch) {
+            SavedSearchEditor(mailbox: mailbox, existing: nil)
         }
         .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
         // Rows scroll under the status line; the bar's hard edge effect keeps
