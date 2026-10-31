@@ -142,7 +142,6 @@ private struct ProfileEditor: View {
         ("person.2", "People"), ("briefcase", "Work"), ("house", "Home"), ("leaf", "Leaf"),
         ("graduationcap", "Study"), ("star", "Star"), ("heart", "Heart"), ("tray.2", "Mail")
     ]
-    private let colors = ["Blue", "Pink", "Orange", "Green", "Purple", "Teal", "Indigo", "Brown"]
     private var isNew: Bool { !model.profiles.contains { $0.id == profile.id } }
 
     @FocusState private var nameFocused: Bool
@@ -214,25 +213,7 @@ private struct ProfileEditor: View {
             }
             GridRow {
                 fieldLabel("Color")
-                HStack(spacing: Tokens.Space.s2) {
-                    ForEach(AccountAppearance.palette.indices, id: \.self) { index in
-                        Button { profile.colorIndex = index } label: {
-                            Circle().fill(AccountAppearance.palette[index])
-                                .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
-                                .overlay {
-                                    if profile.colorIndex == index {
-                                        Image(systemName: "checkmark")
-                                            .font(.caption.weight(.bold)).foregroundStyle(.white)
-                                    }
-                                }
-                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(colors[index]).accessibilityLabel(colors[index])
-                        .accessibilityAddTraits(profile.colorIndex == index ? .isSelected : [])
-                    }
-                }
+                SwatchPicker(selection: Binding($profile.colorIndex), spacing: Tokens.Space.s2, targetSize: Tokens.Control.iconButton)
             }
         }
     }
