@@ -72,6 +72,30 @@ import TernAI
         }
     }
 
+    @Test func replyAddressChangeKeepsInterpretation() async throws {
+        let model = EmailCalendarModel()
+        model.update(messages: [message()], addresses: [])
+        await model.interpret(using: EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response()), model: "fixture", isScopeValid: { true }))
+        model.update(messages: [message()], addresses: ["river@example.invalid"])
+        #expect(model.items.map(\.kind) == [.proposed])
+        #expect(model.cachedInterpretation != nil)
+    }
+
+    @Test func replyAddressChangeKeepsRunningInterpretation() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        let model = EmailCalendarModel()
+        model.update(messages: [message()], addresses: [])
+        let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response(), gate: gate.stream),
+                                                     model: "fixture", isScopeValid: { true })
+        let interpretation = Task { await model.interpret(using: service) }
+        for _ in 0..<10 where !model.isInterpreting { await Task.yield() }
+        #expect(model.isInterpreting)
+        model.update(messages: [message()], addresses: ["river@example.invalid"])
+        gate.continuation.finish()
+        await interpretation.value
+        #expect(model.items.map(\.kind) == [.proposed])
+    }
+
     @Test func localDetectionSkipsPromotionsAndEndedEvents() {
         var promotion = message()
         promotion.allowsDateDetection = false
@@ -217,11 +241,21 @@ import TernAI
 
 private struct EmailCalendarProvider: AIProvider {
     let text: String
+    var gate: AsyncStream<Void>? = nil
     func models() async throws -> [AIModel] { [] }
     func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
         AsyncThrowingStream { continuation in
-            continuation.yield(.completed(AIResponse(output: [], text: text, toolCalls: [])))
-            continuation.finish()
+            let response = AIResponse(output: [], text: text, toolCalls: [])
+            guard let gate else {
+                continuation.yield(.completed(response))
+                continuation.finish()
+                return
+            }
+            Task {
+                for await _ in gate { break }
+                continuation.yield(.completed(response))
+                continuation.finish()
+            }
         }
     }
 }
