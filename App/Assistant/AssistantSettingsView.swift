@@ -280,10 +280,8 @@ struct AssistantSettingsView: View {
                 }
             }
             Spacer(minLength: Tokens.Space.s2)
-            Toggle("Allow assistant access", isOn: Binding(
-                get: { model.enabledAccountIDs.contains(account.id) },
-                set: { model.setAccountEnabled(account.id, enabled: $0) }
-            ))
+            Toggle("Allow assistant access", isOn: Binding(model.enabledAccountIDs.contains(account.id),
+                                                           set: { model.setAccountEnabled(account.id, enabled: $0) }))
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.small)

@@ -12,12 +12,10 @@ struct SignaturesPane: View {
         SettingsPage {
             header
             Section("Signature defaults") {
-                SettingsToggleRow("Include in Replies and Forwards", isOn: Binding(
-                    get: { signatureOnReplies },
-                    set: { enabled in
-                        signatureOnReplies = enabled
-                        Task { await model.setSignatureOnReplies(enabled) }
-                    }))
+                SettingsAsyncToggleRow("Include in Replies and Forwards", isOn: signatureOnReplies) { enabled in
+                    signatureOnReplies = enabled
+                    await model.setSignatureOnReplies(enabled)
+                }
                 Picker("From address", selection: $selectedAddress) {
                     ForEach(model.identities, id: \.lowercasedAddress) { identity in
                         Text(identity.address + (identity.isPrimary ? " (primary)" : "")).tag(identity.address)

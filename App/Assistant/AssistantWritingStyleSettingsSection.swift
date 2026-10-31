@@ -66,10 +66,8 @@ struct AssistantWritingStyleSettingsSection: View {
                     }
                 }
                 Spacer(minLength: Tokens.Space.s2)
-                Toggle("Learn my writing style", isOn: Binding(
-                    get: { model.isEnabled(entry.id) },
-                    set: { model.setEnabled(entry.id, enabled: $0) }
-                ))
+                Toggle("Learn my writing style", isOn: Binding(model.isEnabled(entry.id),
+                                                               set: { model.setEnabled(entry.id, enabled: $0) }))
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
