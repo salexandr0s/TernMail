@@ -115,6 +115,34 @@ final class MailURLRouter {
     private enum MailRoutingError: Error { case invalidLink, accountMissing }
 }
 
+extension AppModel {
+    /// Opens what a Spotlight result or a Handoff names, bringing the main
+    /// window back if it was closed. Returns false for any other activity.
+    /// The app delegate calls this, so it works with every window closed.
+    @discardableResult
+    func continueActivity(_ activity: NSUserActivity) -> Bool {
+        switch activity.activityType {
+        case CSSearchableItemActionType:
+            // A Spotlight result names its conversation by the item's `tern://` link.
+            guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+                  let url = URL(string: identifier) else { return false }
+            mailURLs.receive(url)
+        case MailUserActivity.conversationType:
+            guard let url = MailUserActivity.conversationLink(in: activity) else { return false }
+            mailURLs.receive(url)
+        case MailUserActivity.calendarDayType:
+            guard let day = MailUserActivity.calendarDay(in: activity, calendar: calendar.calendar) else { return false }
+            showMainWindow()
+            NSApp.activate()
+            showCalendar()
+            calendar.date = day
+        default:
+            return false
+        }
+        return true
+    }
+}
+
 struct MailURLHandling: ViewModifier {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
@@ -126,21 +154,6 @@ struct MailURLHandling: ViewModifier {
                 app.mailURLs.resume()
             }
             .onChange(of: app.phase) { _, _ in app.mailURLs.resume() }
-            // A Spotlight result names its conversation by the item's `tern://` link.
-            .onContinueUserActivity(CSSearchableItemActionType) { activity in
-                guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
-                      let url = URL(string: identifier) else { return }
-                app.mailURLs.receive(url)
-            }
-            .onContinueUserActivity(MailUserActivity.conversationType) { activity in
-                guard let url = MailUserActivity.conversationLink(in: activity) else { return }
-                app.mailURLs.receive(url)
-            }
-            .onContinueUserActivity(MailUserActivity.calendarDayType) { activity in
-                guard let day = MailUserActivity.calendarDay(in: activity, calendar: app.calendar.calendar) else { return }
-                app.showCalendar()
-                app.calendar.date = day
-            }
             .onChange(of: app.mailURLs.composeDraftID, initial: true) { _, id in
                 guard let id else { return }
                 openWindow(id: ComposeWindow.sceneID, value: id)

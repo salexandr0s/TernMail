@@ -151,6 +151,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in urls where !model.auth.handleRedirect(url) { model.mailURLs.receive(url) }
     }
 
+    /// Spotlight results and Handoff. SwiftUI hands these to the delegate even
+    /// with every window closed, and skips view handlers once it returns true.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        model.continueActivity(userActivity)
+    }
+
     #if DEBUG
     /// Appearance checks affect only the synthetic audit app, never system preferences.
     func applicationWillFinishLaunching(_ notification: Notification) {
