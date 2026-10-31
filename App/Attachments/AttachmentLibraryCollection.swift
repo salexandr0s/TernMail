@@ -94,6 +94,7 @@ struct AttachmentLibraryCollection: View {
     private func listRow(_ item: AttachmentLibraryItem) -> some View {
         AttachmentLibraryRow(item: item, accountName: model.accountName(item),
             accounts: model.availableAccounts, compact: availableWidth < Tokens.Layout.readableWidth)
+            .equatable()
             .tag(item.id)
             .draggable(containerItemID: item.id, containerNamespace: dragNamespace)
             .attachmentAccessibilityActions(item, model: model) { Task { await model.openFile(item) } }
@@ -188,6 +189,7 @@ private struct AttachmentCardCell: View {
     var body: some View {
         AttachmentLibraryCard(item: item, accountName: model.accountName(item),
             accounts: model.availableAccounts, selected: model.selection.contains(item.id))
+            .equatable()
             .onTapGesture(count: 2, perform: onOpen)
             .onTapGesture(perform: onClick)
             .contextMenu { AttachmentItemMenu(item: item, model: model) }

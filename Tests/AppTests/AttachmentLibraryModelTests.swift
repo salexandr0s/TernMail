@@ -6,6 +6,27 @@ import Testing
 @testable import Tern
 
 @MainActor @Suite struct AttachmentLibraryModelTests {
+    @Test func returningToAnUnchangedEmptyPageKeepsReadinessAndRevision() async throws {
+        let mailbox = try mailbox()
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        #expect(!model.isPageReady)
+        let first = Task { await model.reload() }
+        try await waitUntil { model.isPageReady }
+        #expect(model.items.isEmpty)
+        let revision = model.pagePresentationRevision
+        first.cancel()
+        await first.value
+        #expect(model.isPageReady)
+        let reopened = Task { await model.reload() }
+        defer { reopened.cancel() }
+        for _ in 0..<10 { await Task.yield() }
+        #expect(model.isPageReady)
+        #expect(model.pagePresentationRevision == revision)
+        model.search = "changed query"
+        #expect(!model.isPageReady)
+        await mailbox.stop()
+    }
+
     @Test func pagesPastFiveHundredAndFilterChangesResetPage() async throws {
         let mailbox = try mailbox()
         try await mailbox.cache.write { tx in
