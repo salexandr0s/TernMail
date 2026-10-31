@@ -110,7 +110,7 @@ struct FavoritesView: View {
     private func title(_ favorite: MailFavorite) -> String {
         switch favorite.target {
         case .mailbox(let label, _): return SystemMailbox.all.first { $0.id == label }?.title ?? label
-        case .label(let account, let label): return mailbox.account(id: account)?.labels.first { $0.id == label }?.name ?? "Missing Label"
+        case .label(let account, let label): return mailbox.account(id: account)?.labels.first { $0.id == label }?.title ?? "Missing Label"
         case .savedSearch(let id): return mailbox.navigation.searches.first { $0.id == id }?.name ?? "Saved Search"
         }
     }
@@ -118,7 +118,8 @@ struct FavoritesView: View {
     private func symbol(_ favorite: MailFavorite) -> String {
         switch favorite.target {
         case .mailbox(let label, _): SystemMailbox.all.first { $0.id == label }?.systemImage ?? "tray"
-        case .label: "tag"
+        case .label(let account, let label):
+            mailbox.account(id: account)?.labels.first { $0.id == label }?.isSystem == true ? SystemMailbox(labelID: label).systemImage : "tag"
         case .savedSearch: "magnifyingglass"
         }
     }
@@ -180,7 +181,8 @@ struct InboxCategoryRows: View {
     let accountID: String
     var body: some View {
         ForEach(InboxCategory.allCases.filter { mailbox.accountPresentation[accountID]?.inboxCategories.contains($0) == true }, id: \.rawValue) { category in
-            Label(category.rawValue.capitalized, systemImage: "tray.full")
+            let box = SystemMailbox(labelID: category.labelID)
+            Label(box.title, systemImage: box.systemImage)
                 .padding(.leading, Tokens.Space.s12)
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
                 .tag(MailboxID.account(accountID, category.labelID))

@@ -53,15 +53,18 @@ import Testing
         try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: false)
         try await settleMail(in: controller.view, window: window)
         try await expectMailVisible(in: controller.view, window: window, searchFolds: false)
-        // Beside the assistant the list and reader can need more than the mail area.
-        // The split then runs under the assistant or off the trailing edge, never off
-        // the leading edge.
+        // Opening the assistant widens a window too narrow for the list and reader
+        // beside it, and the window keeps that width while the assistant shows.
+        window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
+        try await settle()
         try await toggleAssistant(in: window, rootView: controller.view, opens: true)
+        try await settle()
+        try expectColumnsBesideAssistant(in: controller.view, window: window, label: "opening at 720 points")
         for width in [CGFloat(960), Tokens.Layout.windowMinWidth] {
             window.setContentSize(NSSize(width: width, height: 760))
             try await settle()
             try await settle()
-            try expectLeadingEdgeVisible(in: controller.view, label: "\(Int(width)) points with the assistant")
+            try expectColumnsBesideAssistant(in: controller.view, window: window, label: "\(Int(width)) points")
         }
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await settle()
@@ -178,24 +181,37 @@ import Testing
         }
     }
 
-    /// Clicks the assistant button and waits for the mail split to make room
-    /// for the assistant or take the room back. Under load a click can land
+    /// Checks that the window has room for the list and reader beside the
+    /// assistant, which keeps its minimum width at these sizes, and that no
+    /// mail column runs under it.
+    private func expectColumnsBesideAssistant(in rootView: NSView, window: NSWindow, label: String) throws {
+        #expect(window.frame.width >= AssistantSidebarLayout.windowMinimum - 1,
+            "The window is \(window.frame.width) points wide after \(label) with the assistant")
+        let split = try mailSplit(in: rootView)
+        let assistantEdge = window.frame.width - Tokens.Assistant.sidebarMinWidth
+        for column in split.arrangedSubviews where !column.isHidden && !split.isSubviewCollapsed(column) {
+            #expect(column.convert(column.bounds, to: nil).maxX <= assistantEdge + 1,
+                "A mail column runs under the assistant after \(label)")
+        }
+        try expectLeadingEdgeVisible(in: rootView, label: "\(label) with the assistant")
+    }
+
+    /// Clicks the assistant button and waits for the mail split to give the
+    /// assistant room or take the room back. Under load a click can land
     /// while the toolbar still replaces its items after a resize and do
     /// nothing, so a click that changes nothing within three seconds is sent
     /// once more.
     private func toggleAssistant(in window: NSWindow, rootView: NSView, opens: Bool) async throws {
-        let openWidth = window.frame.width - Tokens.Assistant.sidebarMinWidth
-        var splitWidth = try mailSplit(in: rootView).frame.width
-        for _ in 0..<2 where (splitWidth <= openWidth) != opens {
+        // A closed assistant leaves the split at least as wide as the window.
+        func isOpen() throws -> Bool { try mailSplit(in: rootView).frame.width < window.frame.width - Tokens.Border.hairline }
+        for _ in 0..<2 {
+            guard try isOpen() != opens else { break }
             try await clickAssistantButton(in: window)
             let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-            repeat {
-                try await settle()
-                splitWidth = try mailSplit(in: rootView).frame.width
-            } while (splitWidth <= openWidth) != opens && ContinuousClock.now < deadline
+            repeat { try await settle() } while try isOpen() != opens && ContinuousClock.now < deadline
         }
-        #expect((splitWidth <= openWidth) == opens,
-            "The mail split is \(splitWidth) points wide after the assistant \(opens ? "opened" : "closed")")
+        let state = "\(try mailSplit(in: rootView).frame.width)-point split in a \(window.frame.width)-point window"
+        #expect(try isOpen() == opens, "The assistant didn't \(opens ? "open" : "close"): \(state)")
     }
 
     private func clickAssistantButton(in window: NSWindow) async throws {

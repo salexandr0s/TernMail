@@ -60,7 +60,7 @@ struct MessageListItem: Identifiable, Equatable {
             let rightSelected = !rhs.isSystem && rhs.id == mailboxID
             if leftSelected != rightSelected { return leftSelected }
             if lhs.isSystem != rhs.isSystem { return !lhs.isSystem }
-            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
         }
     }
 

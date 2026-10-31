@@ -7,6 +7,8 @@ public struct RenderedMessage: Sendable, Equatable {
     public let html: String
     /// Remote images, stylesheets and other loads that were removed.
     public let blockedRemoteContent: Int
+    /// Blocked images that `allowsRemoteImages` would show.
+    public var blockedRemoteImages: Int = 0
     public var blockedTrackers: Int = 0
     public var hasAuthoredDarkStyles: Bool = false
 }
@@ -37,6 +39,7 @@ public enum MessageDocument {
             let document = try SwiftSoup.parse(html)
             let authoredDark = try document.select("style").contains { $0.data().lowercased().contains("prefers-color-scheme") }
             var trackers = 0
+            var hiddenImages = 0
             for image in try document.select("img[src]") {
                 let source = try image.attr("src").trimmingCharacters(in: .whitespacesAndNewlines)
                 if source.lowercased().hasPrefix("cid:") {
@@ -48,6 +51,8 @@ public enum MessageDocument {
                     try image.removeAttr("src")
                     try image.removeAttr("srcset")
                     trackers += 1
+                } else if !policy.allowsRemoteImages, let url = URL(string: source), HTMLSanitizer.isConsentLoadable(url) {
+                    hiddenImages += 1
                 }
             }
             let blocked = try HTMLSanitizer.clean(document, policy: policy)
@@ -55,7 +60,7 @@ public enum MessageDocument {
             try head.prepend(headMarkup(style: htmlStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))
             document.outputSettings().prettyPrint(pretty: false)
             return RenderedMessage(html: try document.outerHtml(), blockedRemoteContent: blocked,
-                blockedTrackers: trackers, hasAuthoredDarkStyles: authoredDark)
+                blockedRemoteImages: hiddenImages, blockedTrackers: trackers, hasAuthoredDarkStyles: authoredDark)
         } catch {
             // Showing the escaped source is safe; showing nothing would hide the mail.
             return render(plainText: html)

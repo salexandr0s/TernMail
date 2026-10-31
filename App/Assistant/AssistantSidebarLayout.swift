@@ -9,6 +9,10 @@ struct AssistantSidebarLayout {
     static let navigationMinimum = Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter
     static let listMinimum = Tokens.Layout.listMinWidth + Tokens.Layout.columnGutter
     static let threeColumnMinimum = navigationMinimum + listMinimum + Tokens.Assistant.readerMinWidth + 2 * Tokens.Border.hairline
+    /// The narrowest window that keeps the list and reader beside the
+    /// assistant at its minimum width, with mailbox navigation hidden.
+    static let windowMinimum = listMinimum + Tokens.Assistant.readerMinWidth + 2 * Tokens.Border.hairline
+        + Tokens.Assistant.sidebarMinWidth
 
     let sidebarWidth: CGFloat
     let mailWidth: CGFloat

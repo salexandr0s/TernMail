@@ -26,7 +26,7 @@ Implemented on `feat/ui-design-review` on 2026-10-31. Item 4 did not reproduce i
 | 14. The empty reader text gives odd advice | Done | `709e632` |
 | 15. Every message stays expanded | Done | `5483c97` |
 | 16. AI summary and Connect prompts before setup | Done, differs | `84da4ae`, `4486d1d`, `ea8b5ab` |
-| 17. Per-message controls stack up | Done | `f87678c`, `8e1b631`, `1c6756c` |
+| 17. Per-message controls stack up | Done, differs | `f87678c`, `8e1b631`, `1c6756c`, `9566195` |
 | 18. The Inbox chip's X archives the thread | Done | `137fe46` |
 | 19. Header fields look like a web form | Done | `b164338` |
 | 20. Discard sits next to Send | Done, differs | `68d6133` |
@@ -47,6 +47,7 @@ Implemented on `feat/ui-design-review` on 2026-10-31. Item 4 did not reproduce i
 - Item 8: done here rather than in Phase 5 of `docs/plans/swiftui-improvements.md`. The profile picker shows the profile name only in the widest tier and stays hidden when there are no profiles.
 - Item 13: the window title reads "Search Results" and the subtitle gives the count, as in "12 results". AppKit shows window titles in the Window menu and Mission Control and can keep them in saved window state, and search terms are meant to stay unstored. The scope bar sits under the list header, not under the search field. It offers All Mail or the selected mailbox, an account menu when search covers several accounts, and Save. The scope wraps the whole query, as in `in:inbox (trail OR lake)`. Gmail's search syntax has no escapes, so a label whose name contains a double quote gets no scope and no search suggestion.
 - Item 16: after setup, the summary card also stays hidden in threads from accounts without AI access or outside the assistant's scope, instead of showing a prompt there.
+- Item 17: blocked images get one bar above each open message's body, not a line per thread. Reading settings describe Load Images as acting on one message, and the thread-wide button also loaded images in messages opened later. The bar holds Load Images and Always Load from Sender, and it shows only when Load Images would load something. The tracker count is a hand icon beside the message time, with a popover saying trackers stay blocked after Load Images.
 - Item 20: Discard Draft moved to the leading side of the toolbar, before the title. Send and Archive sits in its own arrow item after Send and shows only for replies and forwards. A toolbar menu with a primary action renders without the prominent style, so Send stays a separate prominent button.
 - Item 21: a new compose window steps away from the open ones through a small view that moves it as it opens, not `defaultWindowPlacement`. Windows that open as tabs or in full screen don't step. The sender note's Undo button hides when the previous account has signed out.
 - Item 26: the Calendar sidebar keeps its per-account Cancel Sign-In and Retry buttons.

@@ -17,6 +17,7 @@ struct MainView: View {
     /// The sidebar column's last width while visible, gutter included.
     @State private var sidebarColumnWidth = Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter
     @State private var showsAssistant = false
+    @State private var hostWindow: NSWindow?
     /// `Double`, because `@AppStorage` cannot store `CGFloat`.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -98,6 +99,11 @@ struct MainView: View {
         sidebarColumnWidth + Tokens.Border.hairline + Tokens.Layout.windowMinWidth
     }
 
+    /// While the assistant shows, the window keeps room for the list and reader beside it.
+    private var minimumWidth: CGFloat {
+        showsAssistant && !hidesReader ? AssistantSidebarLayout.windowMinimum : Tokens.Layout.windowMinWidth
+    }
+
     private var section: WorkspaceSection {
         guard isActive else { return .calendar }
         return showsLibrary ? .attachments : .mail
@@ -164,7 +170,8 @@ struct MainView: View {
         .background {
             ShortcutMonitor(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
         }
-        .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)
+        .background { WindowReader { hostWindow = $0 } }
+        .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
         .focusedSceneValue(\.mailboxModel, focusedMailbox)
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
@@ -295,7 +302,22 @@ struct MainView: View {
         // Capture divider positions before narrowing or hiding a native column.
         paneSizing.beginPresentation()
         previousColumnVisibility = columnVisibility
+        widenForAssistant()
         showsAssistant = true
+    }
+
+    /// AppKit widens a window to show a sidebar that doesn't fit, so opening
+    /// the assistant widens a window too narrow for the list and reader beside
+    /// it, keeping the window's right edge on its screen.
+    private func widenForAssistant() {
+        guard !hidesReader, let hostWindow, !hostWindow.styleMask.contains(.fullScreen) else { return }
+        let screen = hostWindow.screen?.visibleFrame
+        let width = min(AssistantSidebarLayout.windowMinimum, screen?.width ?? .greatestFiniteMagnitude)
+        let content = hostWindow.contentRect(forFrameRect: hostWindow.frame)
+        guard content.width < width else { return }
+        var frame = hostWindow.frameRect(forContentRect: NSRect(origin: content.origin, size: NSSize(width: width, height: content.height)))
+        if let screen, frame.maxX > screen.maxX { frame.origin.x = max(screen.minX, screen.maxX - frame.width) }
+        hostWindow.setFrame(frame, display: true, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
     private func closeAssistant() {
