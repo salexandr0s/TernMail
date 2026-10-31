@@ -804,7 +804,9 @@ private struct MessageView: View {
                 .lineLimit(1)
                 .help(Self.dateFormatter.string(from: message.record.date))
             if isExpanded {
-                MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose)
+                MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose) {
+                    senderMenuItems
+                }
             } else if message.isStarred {
                 Image(systemName: "star.fill")
                     .imageScale(.small)
