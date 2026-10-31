@@ -3,13 +3,10 @@ import GmailAPI
 import SwiftUI
 
 struct SidebarView: View {
-    /// The `UserDefaults` key listing the mailboxes expanded to show each account.
-    static let expandedKey = "sidebarExpandedMailboxes"
-
     @Bindable var mailbox: MailboxModel
     @Environment(AppModel.self) private var app
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
-    @AppStorage(Self.expandedKey) private var expandedIDs = SystemLabel.inbox
+    @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
 
     var body: some View {
         List(selection: $mailbox.selectedMailbox) {
@@ -79,7 +76,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .sheet(isPresented: Binding(get: { mailbox.navigation.isShowingSwitcher }, set: { mailbox.navigation.isShowingSwitcher = $0 })) {
+        .sheet(isPresented: Bindable(mailbox.navigation).isShowingSwitcher) {
             MailboxSwitcher(mailbox: mailbox)
         }
         .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
@@ -115,16 +112,13 @@ struct SidebarView: View {
                 onCancel: { mailbox.labelEditor = nil }
             )
         }
-        .confirmationDialog(
+        .ternConfirm(
             "Delete the label “\(mailbox.labelToDelete?.name ?? "")”?",
-            isPresented: Binding(
-                get: { mailbox.labelToDelete != nil },
-                set: { if !$0 { mailbox.labelToDelete = nil } }
-            )
-        ) {
-            Button("Delete Label", role: .destructive) { mailbox.deleteConfirmedLabel() }
-        } message: {
-            Text("Conversations keep their other labels. This can't be undone.")
+            item: $mailbox.labelToDelete,
+            actionTitle: "Delete Label",
+            message: "Conversations keep their other labels. This can't be undone."
+        ) { _ in
+            mailbox.deleteConfirmedLabel()
         }
     }
 
@@ -161,14 +155,7 @@ struct SidebarView: View {
     }
 
     private func expansion(of id: String) -> Binding<Bool> {
-        Binding(
-            get: { expandedIDs.split(separator: ",").contains { $0 == id } },
-            set: { isExpanded in
-                var ids = Set(expandedIDs.split(separator: ",").map(String.init))
-                if isExpanded { ids.insert(id) } else { ids.remove(id) }
-                expandedIDs = ids.sorted().joined(separator: ",")
-            }
-        )
+        $expanded.ids.contains(id)
     }
 
     private func labelOutline(_ owner: AccountMailbox) -> some View {

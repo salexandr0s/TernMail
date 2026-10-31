@@ -3,7 +3,7 @@ import SwiftUI
 
 struct FavoritesView: View {
     let mailbox: MailboxModel
-    @AppStorage(SidebarView.expandedKey) private var expanded = SystemLabel.inbox
+    @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
 
     var body: some View {
@@ -33,7 +33,7 @@ struct FavoritesView: View {
     }
 
     @ViewBuilder private func favoriteRows(_ favorite: MailFavorite, box: MailboxID) -> some View {
-        let isExpanded = expanded.split(separator: ",").contains { $0 == box.id }
+        let isExpanded = expanded.ids.contains(box.id)
         let canExpand = accounts(for: box).count > 1
         HStack(spacing: Tokens.Space.s1) {
             if canExpand { Image(systemName: isExpanded ? "chevron.down" : "chevron.right").font(.caption2).foregroundStyle(.secondary) }
@@ -45,9 +45,7 @@ struct FavoritesView: View {
         .onTapGesture {
             mailbox.selectedMailbox = box
             if canExpand {
-                var ids = Set(expanded.split(separator: ",").map(String.init))
-                if isExpanded { ids.remove(box.id) } else { ids.insert(box.id) }
-                expanded = ids.sorted().joined(separator: ",")
+                if isExpanded { expanded.ids.remove(box.id) } else { expanded.ids.insert(box.id) }
             }
         }
         .accessibilityLabel(title(favorite))
