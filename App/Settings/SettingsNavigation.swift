@@ -5,8 +5,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     case general, mailActions, notifications
     case connections, accountPreferences, profiles
     case reading, messageList, attachments
-    case writing, templates, localSignatures, suggestions
-    case signatures, filters, blocked, vacation, calendar
+    case writing, templates, signatures, suggestions
+    case filters, blocked, vacation, calendar
     case assistant, failedChanges, maintenance
     var id: String { rawValue }
     /// The `UserDefaults` key holding the pane the window shows. Other windows
@@ -31,9 +31,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .attachments: "Attachments"
         case .writing: "Writing"
         case .templates: "Templates"
-        case .localSignatures: "Signatures"
+        case .signatures: "Signatures"
         case .suggestions: "Suggestions"
-        case .signatures: "Gmail Signatures"
         case .filters: "Filters"
         case .blocked: "Blocked Senders"
         case .vacation: "Vacation Responder"
@@ -57,9 +56,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .attachments: "paperclip"
         case .writing: "square.and.pencil"
         case .templates: "doc.on.doc"
-        case .localSignatures: "pencil.line"
-        case .suggestions: "person.crop.circle.badge.checkmark"
         case .signatures: "signature"
+        case .suggestions: "person.crop.circle.badge.checkmark"
         case .filters: "line.3.horizontal.decrease.circle"
         case .blocked: "person.crop.circle.badge.xmark"
         case .vacation: "sun.max"
@@ -77,8 +75,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .connections: "Add Google accounts and choose what each one shares with Tern."
         case .profiles: "Group your accounts and set notification hours."
         case .templates: "Save reusable messages to insert while writing."
-        case .localSignatures: "Signatures stored on this Mac and where Tern adds them."
-        case .signatures: "Manage the signatures saved to your Gmail accounts."
+        case .signatures: "Signatures on this Mac stay in Tern. Gmail signatures are saved to your Google account."
         case .assistant: "Ask about your mail, summarize threads, and prepare replies."
         default: nil
         }
@@ -91,7 +88,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .connections, .accountPreferences, .profiles, .assistant: .indigo
         case .reading, .messageList: .blue
         case .attachments: .cyan
-        case .writing, .templates, .localSignatures, .suggestions, .signatures: .purple
+        case .writing, .templates, .signatures, .suggestions: .purple
         case .filters, .blocked, .failedChanges: .orange
         case .vacation: .teal
         case .calendar: .mint
@@ -111,9 +108,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .attachments: "download open files preview cache"
         case .writing: "font reply format markdown quote recipients sender send from default account"
         case .templates: "reusable replies canned responses"
-        case .localSignatures: "local signatures new messages replies separator"
+        case .signatures: "local gmail new messages replies separator send as identity footer"
         case .suggestions: "recipients autocomplete hide hidden addresses"
-        case .signatures: "gmail send as identity footer"
         case .filters: "gmail rules incoming forwarding labels delete archive"
         case .blocked: "gmail spam block email address"
         case .vacation: "automatic reply away out of office autoresponder dates"
@@ -142,8 +138,8 @@ struct SettingsNavigationSection: Identifiable, Sendable {
         SettingsNavigationSection(title: "", destinations: [.general, .mailActions, .notifications]),
         SettingsNavigationSection(title: "Accounts", destinations: [.connections, .accountPreferences, .profiles]),
         SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .attachments]),
-        SettingsNavigationSection(title: "Composing", destinations: [.writing, .templates, .localSignatures, .suggestions]),
-        SettingsNavigationSection(title: "Google", destinations: [.signatures, .filters, .blocked, .vacation, .calendar]),
+        SettingsNavigationSection(title: "Composing", destinations: [.writing, .templates, .signatures, .suggestions]),
+        SettingsNavigationSection(title: "Google", destinations: [.filters, .blocked, .vacation, .calendar]),
         SettingsNavigationSection(title: "Tools", destinations: [.assistant, .failedChanges, .maintenance])
     ]
 

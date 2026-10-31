@@ -19,7 +19,7 @@ struct LocalSignaturesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("Local signatures") {
+            Section {
                 HStack(spacing: Tokens.Space.s3) {
                     Text("Signature")
                         .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
