@@ -7,6 +7,11 @@ import Testing
 
     private func word(_ text: String, prefix: Bool = false) -> Node { .term(.word(text, isPrefix: prefix)) }
 
+    @Test func quotedOperandsParseBackWhole() {
+        #expect(SearchQuery("label:" + SearchQuery.quoted("Project notes")).root == .term(.labelName("Project notes")))
+        #expect(SearchQuery("from:" + SearchQuery.quoted("ann@example.com")).root == .term(.field(.from, "ann@example.com")))
+    }
+
     @Test func orBindsTighterThanTheImpliedAnd() {
         #expect(SearchQuery("hike trail OR lake map").root == .all([
             word("hike"), .any([word("trail"), word("lake")]), word("map", prefix: true),

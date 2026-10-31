@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MessageContent
 
 struct MailSearchSuggestion: Identifiable, Equatable {
     let title: String
@@ -21,8 +22,7 @@ extension MailboxModel {
         }
         for owner in presentedAccounts {
             for label in owner.labels where label.name.lowercased().contains(query) && !label.isSystem {
-                let escaped = label.name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-                result.append(.init(title: label.name, query: "label:\"\(escaped)\"", symbol: "tag"))
+                result.append(.init(title: label.name, query: "label:" + SearchQuery.quoted(label.name), symbol: "tag"))
             }
             let account = try? await accountStore?.accounts().first { $0.id == owner.account.id }
             let includeContacts = account.map { $0.enabledFeatures.contains(AccountFeature.contacts.rawValue) && GoogleScopes.isCovered(.contacts, by: $0.grantedScopes) } ?? false
@@ -36,8 +36,7 @@ extension MailboxModel {
                 }
             }
             for address in addresses {
-                let escaped = address.address.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-                result.append(.init(title: address.displayString, query: "from:\"\(escaped)\"", symbol: "person"))
+                result.append(.init(title: address.displayString, query: "from:" + SearchQuery.quoted(address.address), symbol: "person"))
             }
         }
         var seen = Set<String>()

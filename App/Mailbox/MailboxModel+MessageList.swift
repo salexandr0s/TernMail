@@ -130,8 +130,7 @@ extension MailboxModel {
     private func searchAddress(_ address: String, accountID: String, field: String) {
         guard let address = EmailAddress.parseList(address).first, address.isValid else { return }
         selectedMailbox = .account(accountID, SystemLabel.allMail)
-        let escaped = address.address.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        search.update("\(field):\"\(escaped)\"")
+        search.update("\(field):" + SearchQuery.quoted(address.address))
         search.submit()
     }
 
