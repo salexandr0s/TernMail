@@ -138,17 +138,18 @@ import WebKit
         settings.set("", forKey: ReadingPreferences.lightBackgroundSendersKey)
         settings.set(false, forKey: DomainLogoImages.preferenceKey)
         defer { settings.removePersistentDomain(forName: suite) }
-        let controller = NSHostingController(rootView: ThreadView(key: key, mailbox: mailbox,
+        let hosting = NSHostingView(rootView: ThreadView(key: key, mailbox: mailbox,
             selectedMessageID: "m1", isReaderActive: true).environment(app).defaultAppStorage(settings))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
-        window.contentViewController = controller
+        window.contentView = hosting
+        window.level = .floating
         window.orderFront(nil)
         defer { window.close() }
 
-        let (darkView, dark) = try await readerColors(in: controller.view, dark: true)
+        let (darkView, dark) = try await readerColors(in: hosting, dark: true)
         expectReadable(dark)
         #expect(dark.samples.first { $0.id == "panel" }?.background == [24, 28, 36])
         #expect(dark.samples.first { $0.id == "panel" }?.fill == "rgb(238, 242, 250)")
@@ -159,17 +160,17 @@ import WebKit
         #expect(dark.hiddenCurrentFill == "rgba(0, 0, 0, 0)")
 
         window.appearance = NSAppearance(named: .aqua)
-        let (_, light) = try await readerColors(in: controller.view, dark: false)
+        let (_, light) = try await readerColors(in: hosting, dark: false)
         expectReadable(light)
         #expect(light.samples.first { $0.id == "copy" }?.fill == "rgb(25, 28, 31)")
         #expect(light.samples.first { $0.id == "copy" }?.background == [255, 255, 255])
 
         window.appearance = NSAppearance(named: .darkAqua)
-        _ = try await readerColors(in: controller.view, dark: true)
+        _ = try await readerColors(in: hosting, dark: true)
         var senders = LightBackgroundSenders(storage: "")
         senders.set(true, for: "river@example.invalid")
         settings.set(senders.storage, forKey: ReadingPreferences.lightBackgroundSendersKey)
-        let (_, forcedLight) = try await readerColors(in: controller.view, dark: false, excluding: darkView)
+        let (_, forcedLight) = try await readerColors(in: hosting, dark: false, excluding: darkView)
         expectReadable(forcedLight)
         #expect(forcedLight.samples.first { $0.id == "copy" }?.fill == "rgb(25, 28, 31)")
         #expect(forcedLight.samples.first { $0.id == "copy" }?.background == [255, 255, 255])
