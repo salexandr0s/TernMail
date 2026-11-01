@@ -344,7 +344,7 @@ final class ContentSizedWebView: WKWebView {
         // WebKit can put focus in an internal descendant instead of this
         // wrapper. Native hiding removes the whole subtree from the key-view
         // loop while retaining its document and measured geometry.
-        isHidden = !active
+        if isHidden != !active { isHidden = !active }
         guard !active, let window, ownsResponder(window.firstResponder) else { return }
         // Hiding may already have moved focus to another control. Never
         // clear another reader's responder or the window's search field.
