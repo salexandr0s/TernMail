@@ -1,7 +1,11 @@
+import AppKit
 import Foundation
 import MailStore
 import MessageContent
+import Observation
 import SyncEngine
+import SwiftUI
+import Synchronization
 import Testing
 @testable import Tern
 
@@ -271,6 +275,223 @@ import Testing
         #expect(mailbox.listProjection.preparationCount == count)
         #expect(mailbox.listItems.first?.sender?.address == "sender@example.com")
     }
+
+    #if DEBUG || TERN_PERFORMANCE
+    @Test func nativeSelectionUpdatesRealizedRowsWithoutRebuildingTheListContent() async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        try await cache.write { tx in
+            let other = MessageRecord(accountID: "b", id: "m1", threadID: "t", historyID: 1,
+                date: Date(timeIntervalSince1970: 3), snippet: "", sender: "Other <other@example.com>",
+                recipients: "second@example.com", cc: nil, subject: "Other account", sizeEstimate: 1)
+            try tx.upsertMessages([.init(record: other, labelIDs: [SystemLabel.inbox])])
+            try tx.rebuildThreads(["t"], accountID: "b")
+            for index in 0..<40 {
+                let message = MessageRecord(accountID: "a", id: "filler-\(index)", threadID: "filler-\(index)", historyID: 1,
+                    date: Date(timeIntervalSince1970: Double(-index)), snippet: "", sender: "Sender <sender@example.com>",
+                    recipients: "me@example.com", cc: nil, subject: "Scroll row \(index)", sizeEstimate: 1)
+                try tx.upsertMessages([.init(record: message, labelIDs: [SystemLabel.inbox])])
+                try tx.rebuildThreads([message.threadID], accountID: "a")
+            }
+        }
+        let otherAccount = AccountRecord(id: "b", email: "second@example.com", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(otherAccount, gmail: AuditGmail(), syncEnabled: false)
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await awaitListState("combined conversation page", details: {
+            "ready=\(mailbox.isListPresentationReady), rows=\(mailbox.listItems.count)"
+        }) { mailbox.isListPresentationReady && mailbox.listItems.count == 42 }
+        let conversationObservation = selectionObservationCounts(mailbox, target: .init(accountID: "a", threadID: "t"))
+
+        var contentBuilds = 0
+        var listBodyBuilds = 0
+        var dragBodyBuilds = 0
+        var rendered: [MailListRowID: MessageListRow.RenderState] = [:]
+        ThreadListView.onRowContentBuild = { owner, _ in if owner === mailbox { contentBuilds += 1 } }
+        ThreadListView.onBodyBuild = { owner, phase in
+            guard owner === mailbox else { return }
+            switch phase {
+            case .list: listBodyBuilds += 1
+            case .dragSelection: dragBodyBuilds += 1
+            }
+        }
+        MessageListRow.onBodyEvaluation = { owner, id, state in if owner === mailbox { rendered[id] = state } }
+        defer {
+            ThreadListView.onRowContentBuild = nil
+            ThreadListView.onBodyBuild = nil
+            MessageListRow.onBodyEvaluation = nil
+        }
+        // The isolated List has no workspace minimum size. Give its hosting
+        // controller a real viewport instead of its tiny intrinsic fitting size.
+        let controller = NSHostingController(rootView: ThreadListView(mailbox: mailbox)
+            .frame(width: 520, height: 540).environment(AppModel()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 540),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderFront(nil)
+        defer { window.close() }
+        try await awaitListState("native conversation table", details: {
+            "tableRows=\(self.listTables(in: controller.view).map(\.numberOfRows))"
+        }) { self.listTables(in: controller.view).first?.numberOfRows == 42 }
+        let table = try #require(listTables(in: controller.view).first)
+        let scroll = try #require(table.enclosingScrollView)
+        try await awaitListState("fixed mailbox fixture viewport and initial realized rows", details: {
+            "viewport=\(table.visibleRect), clip=\(scroll.contentView.bounds), host=\(controller.view.bounds), "
+                + "realized=\((0..<2).map { table.view(atColumn: 0, row: $0, makeIfNecessary: false) != nil })"
+        }) {
+            table.window === window && table.visibleRect.width >= 400 && table.visibleRect.height >= 400
+                && (0..<2).allSatisfy {
+                    table.view(atColumn: 0, row: $0, makeIfNecessary: false) != nil
+                        && table.rect(ofRow: $0).intersects(table.visibleRect)
+                }
+        }
+
+        func indexes(for ids: Set<MailListRowID>) -> IndexSet {
+            IndexSet(mailbox.listItems.indices.filter { ids.contains(mailbox.listItems[$0].id) })
+        }
+        func expectSelection(_ ids: Set<MailListRowID>, native: Bool, visibleRows: [MailListRowID],
+                             sourceLocation: SourceLocation = #_sourceLocation) async throws {
+            let expected = indexes(for: ids)
+            if native { table.selectRowIndexes(expected, byExtendingSelection: false) }
+            else { mailbox.selectListRows(ids) }
+            try await awaitListState(native ? "native selection publication" : "model selection publication", details: {
+                let rows = visibleRows.map { id in
+                    let index = mailbox.listItems.firstIndex { $0.id == id }
+                    let view = index.flatMap { table.view(atColumn: 0, row: $0, makeIfNecessary: false) }
+                    let rect = index.map { table.rect(ofRow: $0) }
+                    return "\(id): body=\(String(describing: rendered[id])), nativeView=\(view != nil), rect=\(String(describing: rect))"
+                }.joined(separator: "; ")
+                return "conversations=\(mailbox.listPreferences.conversations), expected=\(Array(expected)), "
+                    + "native=\(Array(table.selectedRowIndexes)), model=\(mailbox.selectedListRowIDs.sorted()), "
+                    + "viewport=\(table.visibleRect), columns=\(table.numberOfColumns), window=\(table.window === window); \(rows)"
+            }, sourceLocation: sourceLocation) {
+                mailbox.selectedListRowIDs == ids && table.selectedRowIndexes == expected
+                    && visibleRows.allSatisfy { id in
+                        guard let row = mailbox.listItems.firstIndex(where: { $0.id == id }) else { return false }
+                        return rendered[id]?.selected == ids.contains(id)
+                            && table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil
+                            && table.rect(ofRow: row).intersects(table.visibleRect)
+                    }
+            }
+            for id in visibleRows {
+                let row = try #require(mailbox.listItems.firstIndex { $0.id == id })
+                try #require(table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil)
+                #expect(table.rect(ofRow: row).intersects(table.visibleRect))
+            }
+        }
+
+        let conversationA = MailListRowID(accountID: "a", threadID: "t")
+        let conversationB = MailListRowID(accountID: "b", threadID: "t")
+        let conversations = [conversationA, conversationB]
+        try await expectSelection([conversationA], native: true, visibleRows: conversations)
+        try await expectSelection(Set(conversations), native: true, visibleRows: conversations)
+        try await expectSelection([conversationB], native: false, visibleRows: conversations)
+        #expect(mailbox.selectedThreadIDs == [conversationB.threadKey])
+        let buildsBeforeConversationSwitching = contentBuilds
+        let conversationBodies = (listBodyBuilds, dragBodyBuilds)
+        for index in 0..<12 {
+            try await expectSelection([conversations[index % conversations.count]],
+                native: index.isMultiple(of: 3), visibleRows: conversations)
+        }
+        #expect(contentBuilds == buildsBeforeConversationSwitching,
+            "Conversation selection must not rebuild ForEach; root delta=\(listBodyBuilds - conversationBodies.0), drag delta=\(dragBodyBuilds - conversationBodies.1), observation=\(conversationObservation)")
+
+        mailbox.listPreferences.conversations = false
+        try await awaitListState("message mode table and cleared selection", details: {
+            "rows=\(table.numberOfRows), selected=\(mailbox.selectedListRowIDs.sorted())"
+        }) { table.numberOfRows == 43 && mailbox.selectedListRowIDs.isEmpty }
+        let first = MailListRowID(accountID: "a", threadID: "t", messageID: "m1")
+        let sibling = MailListRowID(accountID: "a", threadID: "t", messageID: "m2")
+        let other = MailListRowID(accountID: "b", threadID: "t", messageID: "m1")
+        let messages = [first, sibling, other]
+        let messageObservation = selectionObservationCounts(mailbox, target: first)
+        // Warm the row/focus graph before measuring selection-only updates.
+        for id in messages { try await expectSelection([id], native: true, visibleRows: messages) }
+        let buildsBeforeSwitching = contentBuilds
+        let messageBodies = (listBodyBuilds, dragBodyBuilds)
+        for index in 0..<24 {
+            try await expectSelection([messages[index % messages.count]], native: index.isMultiple(of: 2), visibleRows: messages)
+        }
+        #expect(contentBuilds == buildsBeforeSwitching,
+            "Message selection must not rebuild ForEach; root delta=\(listBodyBuilds - messageBodies.0), drag delta=\(dragBodyBuilds - messageBodies.1), observation=\(messageObservation)")
+        #expect(listTables(in: controller.view).first === table)
+        #expect(table.enclosingScrollView === scroll)
+        try await expectSelection(Set(messages), native: true, visibleRows: messages)
+        #expect(mailbox.selectedMessageRows == Set(messages))
+        #expect(mailbox.selectedActionTargets.first { $0.accountID == "a" }?.target == .messages(["m1", "m2"]))
+        #expect(mailbox.selectedActionTargets.first { $0.accountID == "b" }?.target == .messages(["m1"]))
+
+        // Both selected rows remain inside a scrolled viewport; switching must
+        // keep its native table and current scroll anchor.
+        table.scrollRowToVisible(12)
+        try await awaitListState("scrolled native viewport", details: {
+            "clip=\(scroll.contentView.bounds), document=\(table.bounds)"
+        }) { scroll.contentView.bounds.minY > 0 }
+        let visible = table.rows(in: table.visibleRect)
+        try #require(visible.length >= 4 && visible.location + 2 < mailbox.listItems.count)
+        let lowerRows = [visible.location + 1, visible.location + 2].map { mailbox.listItems[$0].id }
+        try await expectSelection([lowerRows[0]], native: true, visibleRows: lowerRows)
+        let anchor = scroll.contentView.bounds.origin
+        try await expectSelection([lowerRows[1]], native: false, visibleRows: lowerRows)
+        #expect(abs(scroll.contentView.bounds.origin.y - anchor.y) < 1)
+        #expect(listTables(in: controller.view).first === table)
+
+        table.scrollRowToVisible(0)
+        try await expectSelection([sibling], native: true, visibleRows: messages)
+        try #require(rendered[sibling]?.unread == true && rendered[sibling]?.starred == false)
+        await mailbox.performListAction(.markRead, rows: [sibling])?.value
+        await mailbox.performListAction(.star, rows: [sibling])?.value
+        // This hook is inside the actual realized row body. It records the
+        // values used by production content, not a model-only projection.
+        try await awaitListState("read and star publication in realized message row", details: {
+            "body=\(String(describing: rendered[sibling]))"
+        }) { rendered[sibling]?.unread == false && rendered[sibling]?.starred == true }
+        let siblingIndex = try #require(mailbox.listItems.firstIndex { $0.id == sibling })
+        #expect(table.view(atColumn: 0, row: siblingIndex, makeIfNecessary: false) != nil)
+        #expect(table.rect(ofRow: siblingIndex).intersects(table.visibleRect))
+        #expect(table.selectedRowIndexes == indexes(for: [sibling]))
+        #expect(listTables(in: controller.view).first === table)
+    }
+
+    private func listTables(in view: NSView) -> [NSTableView] {
+        if let table = view as? NSTableView { return [table] }
+        return view.subviews.flatMap { listTables(in: $0) }
+    }
+
+    /// Distinguishes an eager binding read from List's later binding use.
+    /// This is an API dependency probe, separate from the hosted row counts.
+    private func selectionObservationCounts(_ mailbox: MailboxModel, target: MailListRowID) -> String {
+        let previousSelection = mailbox.selectedListRowIDs
+        let previousNotice = mailbox.notice
+        mailbox.selectListRows([])
+        defer { mailbox.selectListRows(previousSelection); mailbox.notice = previousNotice }
+        let bindingReads = Mutex(0), listReads = Mutex(0), directReads = Mutex(0)
+        let binding = Bindable(mailbox).selectedListRowIDs
+        withObservationTracking { _ = Bindable(mailbox).selectedListRowIDs } onChange: {
+            bindingReads.withLock { $0 += 1 }
+        }
+        withObservationTracking { _ = List(selection: binding) { Text("Probe").tag(target) } } onChange: {
+            listReads.withLock { $0 += 1 }
+        }
+        withObservationTracking { _ = mailbox.selectedListRowIDs } onChange: {
+            directReads.withLock { $0 += 1 }
+        }
+        mailbox.notice = .init(message: "Synthetic unrelated list probe")
+        #expect(bindingReads.withLock { $0 } == 0 && listReads.withLock { $0 } == 0 && directReads.withLock { $0 } == 0,
+            "An unrelated notice must not invalidate selection dependencies")
+        mailbox.selectListRows([target])
+        #expect(directReads.withLock { $0 } == 1, "Direct selection read is the positive observation control")
+        return "binding=\(bindingReads.withLock { $0 }), list=\(listReads.withLock { $0 }), direct=\(directReads.withLock { $0 })"
+    }
+
+    private func awaitListState(_ phase: String, details: () -> String,
+                                sourceLocation: SourceLocation = #_sourceLocation,
+                                _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(condition(), "\(phase): \(details())", sourceLocation: sourceLocation)
+    }
+    #endif
 
     @Test func databaseChangesPublishThreadsAndMessagesTogetherWithoutAListView() async throws {
         let (mailbox, cache) = try await fixture()

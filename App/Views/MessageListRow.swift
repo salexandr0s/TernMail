@@ -6,12 +6,27 @@ import SwiftUI
 struct MessageListRow: View {
     let item: MessageListItem
     let mailbox: MailboxModel
-    let isSelected: Bool
     let accountMark: String?
     let accountColor: Color
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @Environment(\.backgroundProminence) private var prominence
     @State private var isHovered = false
+
+    #if DEBUG || TERN_PERFORMANCE
+    struct RenderState: Equatable {
+        let selected: Bool
+        let unread: Bool
+        let starred: Bool
+    }
+    static var onBodyEvaluation: ((MailboxModel, MailListRowID, RenderState) -> Void)?
+    #endif
+
+    /// Observe selection at the realized row, outside the ForEach content closure.
+    private var isSelected: Bool {
+        mailbox.listPreferences.conversations
+            ? mailbox.selectedThreadIDs.contains(item.id.threadKey)
+            : mailbox.selectedMessageRows.contains(item.id)
+    }
 
     private var compact: Bool { mailbox.listPreferences.density == .compact }
     private let avatarSize = Tokens.Control.listAvatar
@@ -20,7 +35,6 @@ struct MessageListRow: View {
     private var displayedLabels: [LabelRecord] { item.visibleLabels }
     /// Text starts past the unread dot and the avatar; the separator starts with it.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s1_5 * 3 + Tokens.Space.s0_5 + avatarSize }
-    private var showsStar: Bool { thread.isStarred || isHovered || isSelected }
     /// Set in Snoozed, where the row shows when the conversation returns.
     private var wakeTime: Date? {
         guard mailbox.showsSnoozed else { return nil }
@@ -35,13 +49,18 @@ struct MessageListRow: View {
     var body: some View {
         // alignmentGuide closures are Sendable, so they take a copy rather than reading the view.
         let separatorLeading = textLeading
+        let selected = isSelected
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = Self.onBodyEvaluation?(mailbox, item.id,
+            RenderState(selected: selected, unread: thread.isUnread, starred: thread.isStarred))
+        #endif
         HStack(alignment: .center, spacing: Tokens.Space.s1_5) {
-            Circle().fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+            Circle().fill(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
                 .opacity(thread.isUnread ? 1 : 0)
             avatar
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                senderLine
+                senderLine(selected: selected)
                 subjectLine
                 if !compact { previewLine }
                 if !displayedLabels.isEmpty || !item.attachments.isEmpty { detailLine }
@@ -67,7 +86,7 @@ struct MessageListRow: View {
         }
     }
 
-    private var senderLine: some View {
+    private func senderLine(selected: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
             Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .regular)).lineLimit(1)
             if thread.messageCount > 1 {
@@ -85,7 +104,7 @@ struct MessageListRow: View {
             }
             .buttonStyle(.borderless)
             // Unstarred rows show the star on hover, so the date column stays quiet.
-            .opacity(showsStar ? 1 : 0)
+            .opacity(thread.isStarred || isHovered || selected ? 1 : 0)
             .help(thread.isStarred ? "Remove Star" : "Star")
             .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
             Text(ThreadDate.short(thread.lastDate)).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
