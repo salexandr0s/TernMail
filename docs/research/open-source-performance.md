@@ -204,6 +204,48 @@ checks passed. No toolbar change is adopted. The exact experiment and failures
 are archived under `evidence/tern-outer-toolbar-owner-verification/`; these are
 diagnostic CPU measurements, not accepted visible-switch timings.
 
+## Future transport shortlist: SwiftMail
+
+[Cocoanetics/SwiftMail](https://github.com/Cocoanetics/SwiftMail) is shortlisted
+for a future IMAP transport experiment. Reference version: **1.16.0**
+([versioned source](https://github.com/Cocoanetics/SwiftMail/tree/1.16.0),
+[documentation](https://swiftpackageindex.com/Cocoanetics/SwiftMail/1.16.0/documentation/swiftmail)).
+Status: documented candidate only. No dependency, prototype or migration is being
+introduced as part of this entry.
+
+Potential benefits to evaluate:
+
+- Resilient IMAP IDLE connections for earlier mailbox-change detection.
+- Pipelined body-part retrieval for uncached messages.
+- Partial `BODY.PEEK` retrieval that preserves unread state.
+- Gmail message/thread IDs and labels that can map to existing Gmail API data;
+  verify the actual public API support and mapping in the reviewed version.
+
+Proposed future experiment:
+
+1. Assess authentication scopes, account lifecycle, reconnect behavior and Gmail
+   identifier/label mapping, including account isolation and sign-out cleanup.
+2. Compare uncached loading against Tern's existing **batched Gmail API** path
+   using identical messages, cache states and network conditions.
+3. Measure time to readable content in the visible viewport, new-mail detection
+   latency, transferred bytes, CPU and memory. Separate retrieval time from
+   local preparation/rendering, and report reconnect and failure cases.
+4. Evaluate a hybrid in which IDLE notifications trigger the existing Gmail
+   synchronization process, preserving its reconciliation and action queue.
+5. Before implementation, define numeric adoption thresholds for latency gains,
+   detection latency, bandwidth, CPU and memory, plus correctness and reconnect
+   requirements. Promote the candidate only when assessment and measurements
+   justify a bounded prototype; adoption requires evidence against Tern's baseline.
+
+The upstream “3–5× faster” source comment compares pipelined with sequential
+**IMAP fetching**. It does not demonstrate an advantage over Tern's batched Gmail
+API implementation.
+
+This transport candidate is separate from the ongoing cached-navigation and
+scrolling fixes. IMAP cannot remove expensive local list updates, reader
+recreation or layout work. Existing performance work and cache/identity/policy
+constraints remain in place.
+
 ## Measurement and adoption
 
 Keep source revisions, cache tiers, memory and renderer counts with every report.
