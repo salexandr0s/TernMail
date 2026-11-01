@@ -11,16 +11,25 @@ struct ConversationWindow: View {
     @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @State private var subject = ""
     @State private var participants = ""
+    @State private var isWindowVisible = false
+
+    private struct ReaderIdentity: Hashable {
+        let key: ThreadKey
+        let messageID: String?
+        let owner: ObjectIdentifier
+        let lifecycle: Int
+    }
 
     var body: some View {
         Group {
-            if let link, let mailbox = app.mailbox, mailbox.account(id: link.accountID) != nil {
+            if let link, let mailbox = app.mailbox, let owner = mailbox.account(id: link.accountID) {
                 let key = ThreadKey(accountID: link.accountID, threadID: link.threadID)
-                ThreadView(key: key, mailbox: mailbox, selectedMessageID: link.messageID) { detail in
+                ThreadView(key: key, mailbox: mailbox, selectedMessageID: link.messageID, isReaderActive: isWindowVisible) { detail in
                     subject = detail.thread.subject
                     participants = detail.thread.participants
                 }
-                    .id(key)
+                    .id(ReaderIdentity(key: key, messageID: link.messageID, owner: ObjectIdentifier(owner),
+                                       lifecycle: ReaderCacheLifecycle.shared.revision))
                     .onAppear { app.conversationBecameVisible(key) }
                     .onDisappear { app.conversationStoppedBeingVisible(key) }
                     .toolbar {
@@ -48,6 +57,7 @@ struct ConversationWindow: View {
                     description: Text("Sign in to its account, then open the conversation again."))
             }
         }
+        .background(ReaderWindowVisibility { isWindowVisible = $0 })
         .navigationTitle(subject.isEmpty ? "Conversation" : subject)
         .navigationSubtitle(participants)
         .frame(minWidth: Tokens.Layout.conversationMinWidth, minHeight: Tokens.Layout.conversationMinHeight)

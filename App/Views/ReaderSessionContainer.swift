@@ -23,6 +23,8 @@ final class ReaderSessionStore {
     private var costs: [ReaderSessionID: Int] = [:]
     private var lastUse: [ReaderSessionID: UInt64] = [:]
     private var selected: ReaderSessionID?
+    private var isVisible = false
+    private var discardedSources: Set<ReaderSessionID> = []
     let countLimit = 3
     let byteLimit = 8 * 1_024 * 1_024
 
@@ -35,6 +37,7 @@ final class ReaderSessionStore {
 
     func activate(_ id: ReaderSessionID) {
         selected = id
+        if isVisible { discardedSources.remove(id) }
         Self.clock &+= 1
         lastUse[id] = Self.clock
         sessions.removeAll { $0 == id }
@@ -43,13 +46,27 @@ final class ReaderSessionStore {
     }
 
     func record(_ detail: ThreadDetail, for id: ReaderSessionID, selected: ReaderSessionID) {
+        if discardedSources.contains(id) {
+            guard isVisible, id == selected else { return }
+            discardedSources.remove(id)
+        }
         var bytes = 0
         for message in detail.messages {
             let htmlBytes = message.body?.html?.utf8.count ?? 0
             let textBytes = message.body?.plainText?.utf8.count ?? 0
-            bytes += (htmlBytes + textBytes) * 2 + 2_048
+            // Include independent Find and calendar extraction strings even if
+            // their prepared-cache entries have already been evicted.
+            bytes += (htmlBytes + textBytes) * 3 + 2_048
         }
         costs[id] = bytes
+        trim(keeping: selected)
+    }
+
+    func retainsSource(for id: ReaderSessionID) -> Bool { !discardedSources.contains(id) }
+
+    func setVisible(_ visible: Bool, selected: ReaderSessionID) {
+        isVisible = visible
+        if visible { discardedSources.remove(selected) }
         trim(keeping: selected)
     }
 
@@ -59,18 +76,20 @@ final class ReaderSessionStore {
             guard let index = sessions.firstIndex(where: { $0 != selected }) else { break }
             let removed = sessions.remove(at: index)
             costs[removed] = nil; lastUse[removed] = nil
+            discardedSources.remove(removed)
         }
         Self.stores.removeAll { $0.value == nil }
         // Only the currently displayed source is working memory. All hidden
         // source snapshots across every window share this eight-MiB budget.
         while true {
             let hidden = Self.stores.compactMap(\.value).flatMap { store in
-                store.sessions.filter { $0 != store.selected }.map { (store: store, id: $0, bytes: store.costs[$0] ?? 0, used: store.lastUse[$0] ?? 0) }
+                store.sessions.filter { !(store.isVisible && $0 == store.selected)
+                    && !store.discardedSources.contains($0) && (store.costs[$0] ?? 0) > 0 }
+                    .map { (store: store, id: $0, bytes: store.costs[$0] ?? 0, used: store.lastUse[$0] ?? 0) }
             }
             guard hidden.reduce(0, { $0 + $1.bytes }) > byteLimit,
                   let oldest = hidden.min(by: { $0.used < $1.used }) else { break }
-            oldest.store.sessions.removeAll { $0 == oldest.id }
-            oldest.store.costs[oldest.id] = nil; oldest.store.lastUse[oldest.id] = nil
+            oldest.store.discardedSources.insert(oldest.id)
         }
     }
 
@@ -78,6 +97,7 @@ final class ReaderSessionStore {
         sessions = sessions.filter { $0 == selected }
         costs = costs.filter { $0.key == selected }
         lastUse = lastUse.filter { $0.key == selected }
+        discardedSources = discardedSources.intersection([selected])
     }
 }
 
@@ -87,6 +107,8 @@ struct ReaderSessionContainer: View {
     let mailbox: MailboxModel
     let isActive: Bool
     @State private var store = ReaderSessionStore()
+    @State private var isWindowVisible = false
+    @State private var allowsHiddenBodyRetention = true
 
     private var selection: ReaderSessionID {
         ReaderSessionID(key: key, messageID: messageID,
@@ -96,11 +118,15 @@ struct ReaderSessionContainer: View {
     var body: some View {
         let selected = selection
         let sessions = store.presenting(selected)
+        let visible = isActive && isWindowVisible
         ZStack {
             ForEach(sessions) { session in
-                let active = isActive && session == selected
+                let active = visible && session == selected
                 ThreadView(key: session.key, mailbox: mailbox, selectedMessageID: session.messageID,
-                           isReaderActive: active, retainsHiddenBody: !active && (isActive || sessions.suffix(2).contains(session)),
+                           isReaderActive: active,
+                           retainsHiddenBody: !active && allowsHiddenBodyRetention && store.retainsSource(for: session)
+                               && (visible || sessions.suffix(2).contains(session)),
+                           retainsSourceSnapshot: store.retainsSource(for: session),
                            interaction: active ? ReaderInteraction(body: NavigationPerformance.shared.currentGeneration(for: .reader),
                                header: NavigationPerformance.shared.currentGeneration(for: .readerHeader)) : nil,
                            onDetailChange: { store.record($0, for: session, selected: selected) })
@@ -110,7 +136,18 @@ struct ReaderSessionContainer: View {
                     .zIndex(session == selected ? 1 : 0)
             }
         }
-        .onChange(of: selected, initial: true) { _, id in store.activate(id) }
-        .onChange(of: ReaderCacheLifecycle.shared.pressureRevision) { _, _ in store.releaseHidden(keeping: selected) }
+        .background(ReaderWindowVisibility { isWindowVisible = $0 })
+        .onChange(of: selected, initial: true) { _, id in
+            store.activate(id)
+            if visible { allowsHiddenBodyRetention = true }
+        }
+        .onChange(of: visible, initial: true) { _, visible in
+            store.setVisible(visible, selected: selected)
+            if visible { allowsHiddenBodyRetention = true }
+        }
+        .onChange(of: ReaderCacheLifecycle.shared.pressureRevision) { _, _ in
+            allowsHiddenBodyRetention = false
+            store.releaseHidden(keeping: selected)
+        }
     }
 }

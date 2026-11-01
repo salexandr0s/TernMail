@@ -37,6 +37,11 @@ final class ReaderFindModel {
 
     func setSearchableText(_ text: String, for messageID: String) { searchableText[messageID] = text }
 
+    func discardSourceText() {
+        hide()
+        searchableText.removeAll(); versions.removeAll()
+    }
+
     func prepareSearch(messages: [MessageDetail]) async {
         for message in messages {
             guard !Task.isCancelled, let body = message.body else { continue }

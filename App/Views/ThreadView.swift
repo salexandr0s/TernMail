@@ -11,6 +11,7 @@ struct ThreadView: View {
     var selectedMessageID: String? = nil
     var isReaderActive = true
     var retainsHiddenBody = false
+    var retainsSourceSnapshot = true
     var interaction: ReaderInteraction? = nil
     /// A conversation window titles itself from this.
     var onDetailChange: ((ThreadDetail) -> Void)? = nil
@@ -31,6 +32,9 @@ struct ThreadView: View {
     @State private var lastVisibleMessageID: String?
     @State private var primaryBodyReady = false
     @State private var initiallyMissingBodies: Set<String> = []
+    @State private var availabilityGeneration: UInt64?
+    private struct BodyAvailability { let fetchedAt: Date; let instant: ContinuousClock.Instant }
+    @State private var bodyAvailability: [String: BodyAvailability] = [:]
     @State private var delayedRead = DelayedReadController()
     @State private var selectedMailQuote: SelectedMailQuote?
     @State private var focusedMessageID: String?
@@ -126,7 +130,61 @@ struct ThreadView: View {
         }
     }
 
-    var body: some View {
+    private func messageRow(_ message: MessageDetail, in detail: ThreadDetail) -> some View {
+        MessageView(
+            message: message,
+            blocker: blocker,
+            isExpanded: expanded.contains(message.id),
+            isFocused: readerFocused && focusedMessageID == message.id,
+            isReaderActive: isReaderActive,
+            retainsHiddenBody: retainsHiddenBody && lastVisibleMessageID == message.id,
+            bodyLoadFailed: bodyLoadFailed,
+            requiredNetwork: availabilityGeneration == interaction?.body && initiallyMissingBodies.contains(message.id),
+            bodyAvailableAt: bodyAvailability[message.id]?.instant,
+            mailbox: mailbox,
+            finder: finder,
+            onVisible: { if isReaderActive { lastVisibleMessageID = message.id } },
+            onReadable: { tier, readyAt in
+                guard isReaderActive else { return }
+                primaryBodyReady = true
+                if let generation = interaction?.body {
+                    if let readyAt {
+                        NavigationPerformance.shared.requiredContentReady(.reader, generation: generation, at: readyAt)
+                    }
+                    NavigationPerformance.shared.contentReady(.reader, cacheTier: tier, generation: generation)
+                }
+            },
+            compose: compose,
+            onRetry: { loadAttempt += 1 },
+            reportSelection: { text in
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if selectedMailQuote?.belongsTo(accountID: message.record.accountID,
+                        threadID: message.record.threadID, messageID: message.id) == true { selectedMailQuote = nil }
+                } else {
+                    selectedMailQuote = SelectedMailQuote(accountID: message.record.accountID,
+                        threadID: message.record.threadID, messageID: message.id, text: text)
+                }
+            },
+            onHoverLink: { url in
+                if let url { hoveredLink = (message.id, url) }
+                else if hoveredLink?.messageID == message.id { hoveredLink = nil }
+            },
+            onMarkUnreadFromHere: {
+                // This message and every later one, whichever way the list reads.
+                mailbox.markUnread(messageIDs: detail.messages.drop { $0.id != message.id }.map(\.id),
+                                   accountID: key.accountID)
+            }
+        ) {
+            if expanded.contains(message.id) {
+                expanded.remove(message.id)
+            } else {
+                expanded.insert(message.id)
+            }
+        }
+        .id(message.id)
+    }
+
+    private var conversationContent: some View {
         Group {
             if let detail = readingDetail {
                 ScrollViewReader { scroll in
@@ -176,58 +234,13 @@ struct ThreadView: View {
                             }
                             LazyVStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                                 ForEach(messages) { message in
-                                    MessageView(
-                                        message: message,
-                                        blocker: blocker,
-                                        isExpanded: expanded.contains(message.id),
-                                        isFocused: readerFocused && focusedMessageID == message.id,
-                                        isReaderActive: isReaderActive,
-                                        retainsHiddenBody: retainsHiddenBody && lastVisibleMessageID == message.id,
-                                        bodyLoadFailed: bodyLoadFailed,
-                                        requiredNetwork: initiallyMissingBodies.contains(message.id),
-                                        mailbox: mailbox,
-                                        finder: finder,
-                                        onVisible: { if isReaderActive { lastVisibleMessageID = message.id } },
-                                        onReadable: { tier in
-                                            guard isReaderActive else { return }
-                                            primaryBodyReady = true
-                                            if let generation = interaction?.body {
-                                                NavigationPerformance.shared.contentReady(.reader, cacheTier: tier, generation: generation)
-                                            }
-                                        },
-                                        compose: compose,
-                                        onRetry: { loadAttempt += 1 },
-                                        reportSelection: { text in
-                                            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                                if selectedMailQuote?.belongsTo(accountID: message.record.accountID,
-                                                    threadID: message.record.threadID, messageID: message.id) == true { selectedMailQuote = nil }
-                                            } else {
-                                                selectedMailQuote = SelectedMailQuote(accountID: message.record.accountID,
-                                                    threadID: message.record.threadID, messageID: message.id, text: text)
-                                            }
-                                        },
-                                        onHoverLink: { url in
-                                            if let url { hoveredLink = (message.id, url) }
-                                            else if hoveredLink?.messageID == message.id { hoveredLink = nil }
-                                        },
-                                        onMarkUnreadFromHere: {
-                                            // This message and every later one, whichever way the list reads.
-                                            mailbox.markUnread(messageIDs: detail.messages.drop { $0.id != message.id }.map(\.id),
-                                                               accountID: key.accountID)
-                                        }
-                                    ) {
-                                        if expanded.contains(message.id) {
-                                            expanded.remove(message.id)
-                                        } else {
-                                            expanded.insert(message.id)
-                                        }
-                                    }
-                                    .id(message.id)
+                                    messageRow(message, in: detail)
                                 }
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
+                        .background(PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive))
                     }
                     .scrollPosition($scrollPosition)
                     .onScrollGeometryChange(for: ReaderPage.self, of: ReaderPage.init) { _, page in paging.page = page }
@@ -295,6 +308,10 @@ struct ThreadView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+
+    var body: some View {
+        conversationContent
         .background(Tokens.Surface.canvas)
         .background(VisibleContentProbe(kind: .reader, isActive: isReaderActive && primaryBodyReady,
             revision: Int(truncatingIfNeeded: interaction?.body ?? 0)))
@@ -315,6 +332,13 @@ struct ThreadView: View {
         }
         .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
+        .onChange(of: retainsSourceSnapshot) { _, retain in
+            guard !retain, !isReaderActive else { return }
+            detail = nil; hasLoaded = false; primaryBodyReady = false
+            bodyAvailability.removeAll()
+            finder.discardSourceText()
+            calendarSuggestions = EmailCalendarModel()
+        }
         .task {
             blocker = await RemoteContentBlocker.ruleList()
         }
@@ -324,12 +348,23 @@ struct ThreadView: View {
             bodyLoadFailed = false
             if let selectedMessageID { expanded.insert(selectedMessageID) }
             var loading: Task<Void, Never>?
+            var recordedAvailability = false
             defer { loading?.cancel() }
             do {
                 for try await detail in mailbox.threadDetail(key) {
                     guard !Task.isCancelled else { return }
-                    if !initializedExpansion, let messages = detail?.messages, !messages.isEmpty {
+                    let deliveredAt = ContinuousClock.now
+                    for message in detail?.messages ?? [] {
+                        if let body = message.body, bodyAvailability[message.id]?.fetchedAt != body.fetchedAt {
+                            bodyAvailability[message.id] = BodyAvailability(fetchedAt: body.fetchedAt, instant: deliveredAt)
+                        }
+                    }
+                    if !recordedAvailability, let messages = detail?.messages, !messages.isEmpty {
                         initiallyMissingBodies = Set(messages.filter { $0.body == nil }.map(\.id))
+                        availabilityGeneration = interaction?.body
+                        recordedAvailability = true
+                    }
+                    if !initializedExpansion, let messages = detail?.messages, !messages.isEmpty {
                         expanded = ReadingPreferences.initiallyExpanded(ids: messages.map(\.id),
                             unread: Set(messages.filter(\.isUnread).map(\.id)), selected: selectedMessageID)
                         initializedExpansion = true
@@ -639,10 +674,11 @@ private struct MessageView: View {
     let retainsHiddenBody: Bool
     let bodyLoadFailed: Bool
     let requiredNetwork: Bool
+    let bodyAvailableAt: ContinuousClock.Instant?
     let mailbox: MailboxModel
     let finder: ReaderFindModel
     let onVisible: () -> Void
-    let onReadable: (NavigationCacheTier) -> Void
+    let onReadable: (NavigationCacheTier, ContinuousClock.Instant?) -> Void
     let compose: (MailboxModel.ComposeStart) -> Void
     let onRetry: () -> Void
     let reportSelection: (String) -> Void
@@ -652,6 +688,7 @@ private struct MessageView: View {
 
     @State private var rendered: RenderedMessage?
     @State private var hasNoText = false
+    @State private var hasShownNoText = false
     @State private var height: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
     @State private var inlineResources = InlineResourceMap()
@@ -661,8 +698,10 @@ private struct MessageView: View {
     @State private var selectedText = ""
     @State private var activeBlocker: WKContentRuleList?
     @State private var resourceSnapshot: ReadingResourceSnapshot?
+    @State private var resourcesAvailableAt: ContinuousClock.Instant?
     @State private var isInViewport = true
     @State private var preparationTier: NavigationCacheTier = .local
+    @State private var requiredContentReadyAt: ContinuousClock.Instant?
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(ReadingPreferences.blockImagesKey) private var blocksImages = true
@@ -732,6 +771,7 @@ private struct MessageView: View {
                 for try await snapshot in mailbox.cache.readingResources(messageID: message.id, accountID: message.record.accountID) {
                     guard !Task.isCancelled else { return }
                     if !received { TernSignposts.end(token); received = true }
+                    resourcesAvailableAt = .now
                     resourceSnapshot = snapshot
                 }
             } catch { /* Keep the last safely prepared body on a transient store error. */ }
@@ -931,7 +971,7 @@ private struct MessageView: View {
                     onReadable: { retained in
                         finder.didBecomeReadable(message.id)
                         guard isReaderActive, isInViewport else { return }
-                        onReadable(retained ? .retained : preparationTier)
+                        onReadable(retained ? .retained : preparationTier, retained ? nil : requiredContentReadyAt)
                     },
                     onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
                     onOpenMailLink: { app.mailURLs.receive($0) },
@@ -948,7 +988,12 @@ private struct MessageView: View {
         } else if hasNoText {
             Text("This message has no text.")
                 .foregroundStyle(.secondary)
-                .onAppear { if isReaderActive { onReadable(preparationTier) } }
+                .onChange(of: isReaderActive, initial: true) { _, active in
+                    if active, isInViewport {
+                        onReadable(hasShownNoText ? .retained : preparationTier, hasShownNoText ? nil : requiredContentReadyAt)
+                        hasShownNoText = true
+                    }
+                }
         } else if message.body == nil, bodyLoadFailed {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 Label("Couldn't load this message", systemImage: "exclamationmark.bubble")
@@ -1009,6 +1054,7 @@ private struct MessageView: View {
             return
         }
         guard let snapshot = resourceSnapshot, let owner = mailbox.account(id: message.record.accountID) else { return }
+        let readyAt = max(bodyAvailableAt ?? .now, resourcesAvailableAt ?? .now)
         let rules = await RemoteContentBlocker.ruleList(allowsRemoteImages: allowsImages)
         guard !Task.isCancelled else { return }
         activeBlocker = rules
@@ -1023,9 +1069,11 @@ private struct MessageView: View {
             if let cached { result = cached }
             else { result = try await cache.prepare(key: key, body: body, resources: snapshot.resources) }
             guard !Task.isCancelled else { return }
-            preparationTier = cached == nil ? (requiredNetwork ? .network : .local) : .prepared
+            requiredContentReadyAt = readyAt
+            preparationTier = requiredNetwork ? .network : (cached == nil ? .local : .prepared)
             inlineResources = result.resources
             rendered = result.rendered
+            if !hasNoText { hasShownNoText = false }
             hasNoText = result.rendered == nil
             finder.setSearchableText(result.searchableText, for: message.id)
             return
