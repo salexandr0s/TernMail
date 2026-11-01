@@ -8,13 +8,29 @@ public struct PeopleClient: Sendable {
         case connections
         /// People the user has written to, `otherContacts.list`. Needs `contacts.other.readonly`.
         case otherContacts
+
+        /// The request parameters associated with a persisted sync token.
+        /// Saved contacts keep their existing signature because their request is unchanged.
+        public var syncSignature: String {
+            guard !readSources.isEmpty else { return PeopleClient.fields }
+            return PeopleClient.fields + ";sources=" + readSources.joined(separator: ",")
+        }
+
+        /// Other Contacts defaults to contact data only. Profile data supplies
+        /// photos that aren't saved on the contact itself.
+        var readSources: [String] {
+            switch self {
+            case .connections: []
+            case .otherContacts: ["READ_SOURCE_TYPE_CONTACT", "READ_SOURCE_TYPE_PROFILE"]
+            }
+        }
     }
 
     static let host = "people.googleapis.com"
     /// The largest page both lists allow.
     static let pageSize = 1000
-    /// Fields asked for on every person. A sync token works only with the
-    /// fields that issued it, so callers store this with the token.
+    /// Fields asked for on every person. Callers store `Source.syncSignature`
+    /// with the token, since sources must also match the request that issued it.
     public static let fields = "names,emailAddresses,metadata,photos"
 
     let session: GoogleSession
@@ -40,6 +56,7 @@ public struct PeopleClient: Sendable {
             URLQueryItem(name: "pageSize", value: String(Self.pageSize)),
             URLQueryItem(name: "requestSyncToken", value: "true"),
         ]
+        query += source.readSources.map { URLQueryItem(name: "sources", value: $0) }
         if let syncToken { query.append(URLQueryItem(name: "syncToken", value: syncToken)) }
         if let pageToken { query.append(URLQueryItem(name: "pageToken", value: pageToken)) }
         let path = source == .connections ? "/v1/people/me/connections" : "/v1/otherContacts"

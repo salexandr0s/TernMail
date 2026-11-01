@@ -63,8 +63,8 @@ import Testing
         let other = try await cache.read { try $0.contactSync(source: .other, accountID: account.id) }
         #expect(connection?.syncToken == "saved-contacts")
         #expect(other?.syncToken == "other-contacts")
-        #expect(connection?.fields == PeopleClient.fields)
-        #expect(other?.fields == PeopleClient.fields)
+        #expect(connection?.fields == PeopleClient.Source.connections.syncSignature)
+        #expect(other?.fields == PeopleClient.Source.otherContacts.syncSignature)
         let groups = try await cache.contactGroupSuggestions(accountID: account.id, matching: "Team")
         let group = try #require(groups.first)
         #expect(groups.count == 1)
