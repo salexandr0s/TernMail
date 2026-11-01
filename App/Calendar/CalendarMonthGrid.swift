@@ -47,6 +47,7 @@ struct CalendarMonthGrid: View {
                     }
                     .background(frameReader(.content))
                     .background(CalendarDragAutoScroll(direction: scrollDirection))
+                    .background(PerformanceScrollSurfaceMarker(name: "calendar", isActive: true))
                 }
                 .background(frameReader(.viewport))
             }

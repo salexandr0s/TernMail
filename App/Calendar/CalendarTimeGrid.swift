@@ -125,6 +125,7 @@ struct CalendarTimeGrid: View {
                 }
                 .calendarTimelineFrame(.content)
                 .background(CalendarDragAutoScroll(direction: scrollDirection))
+                .background(PerformanceScrollSurfaceMarker(name: "calendar", isActive: true))
                 .padding(.top, Tokens.Space.s2)
             }
             .scrollPosition($hourScroll)
