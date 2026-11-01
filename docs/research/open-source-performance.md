@@ -82,15 +82,25 @@ through momentum. That routing must remain intact.
 [Apple's compatibility documentation](https://developer.apple.com/documentation/appkit/nsview/iscompatiblewithresponsivescrolling)
 identifies the NSScrollView, NSClipView, and embedded document view. It does not
 establish that every incompatible nested descendant disables the outer scroller.
-Tern's actual hierarchy needs inspection before adding an override. Record the
-outer triplet, WebKit's ancestors/internal scrollers, compatibility values,
-gesture phases, routing, and scroll bounds. Test vertical, horizontal, diagonal,
-mouse-wheel and momentum behavior, including controlled main-thread load.
+The recovered reader on macOS 27.2 has one outer SwiftUI.HostingScrollView whose
+compatibility value is false, a HostingClipView reporting true, and a document
+view reporting true. The nested ContentSizedWebView reports false but is not the
+outer document view. Its complete ancestry was nonhidden with alpha one in the
+key, visible window. Adding an override only to ContentSizedWebView would leave
+the outer scroll view's false value unchanged. No override has been added.
+
+This public-property inspection does not prove the effective asynchronous state
+or explain observed hitches. It used a main-thread idle debugger stop, not a
+timing run. Evidence: `/tmp/tern-list-guard-reader-hierarchy/hierarchy-valid.txt`.
+Real vertical, horizontal, diagonal and momentum input under controlled load
+remains a separate behavioral check.
 
 Tern's current realization gate uses viewport intersection, Find targets, and
 bounded hidden retention. It has no explicit surrounding realization margin.
 [Apple's content-preparation API](https://developer.apple.com/documentation/appkit/nsview/preparecontent(in:))
-describes rendering beyond the visible region. Compare prepared coverage,
+describes rendering beyond the visible region. The static hierarchy snapshot's
+prepared rectangles were zero; that alone does not establish missing pixels.
+Compare prepared coverage,
 readable body rectangles and placeholder exposure with hitches before changing
 the realization policy. A margin must remain bounded by existing budgets.
 
