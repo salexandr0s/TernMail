@@ -27,6 +27,8 @@ Reader processing latency starts when a required body or resource reaches the
 view's data observer. It includes subsequent state publication and layout, but
 does not include the interval between network delivery and that observer.
 Reports retain full input-to-visible latency alongside this narrower measure.
+Synthetic transport scenarios also record the complete response before
+persistence and identify that earlier origin separately in the report.
 
 ## Repeatable measurements
 
@@ -119,9 +121,15 @@ forced extra layout passes; their numbers do not represent navigation latency.
 The optimized control using natural layout invalidation recorded 281–295 ms of
 Mail CPU and 137–152 ms of Calendar CPU outside the sampled interval. Inset
 publications stayed at zero. This hosted default fixture also emits SceneStorage
-warnings and differs from the large foreground corpus. These are diagnostic CPU
-measurements, not foreground navigation percentiles. Remaining toolbar/layout
-cost is still under investigation.
+warnings and contains four mail rows and no calendar events. Keeping Mail at
+constant opacity beneath Calendar did not reduce this cost: Mail used 277–330 ms
+and Calendar 142–156 ms outside the sampled interval. That experiment was removed.
+These are diagnostic CPU measurements, not foreground navigation percentiles.
+Consolidating three identical Mail timing probes into one preserved all metrics
+and passed nine navigation tests plus the workspace test. The same control still
+used 275–303 ms of Mail CPU and 135–148 ms of Calendar CPU after its first sample,
+so the probe hosts were not the dominant cost.
+Remaining toolbar/layout cost is still under investigation.
 
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
@@ -141,7 +149,7 @@ reader lifecycle/viewport tests passed focused hosted runs. The full hosted suit
 still needs a clean final run: the sidebar's native focus/resize test has been
 interrupted by foreground changes and has also exposed a geometry settle delay.
 The expanded synthetic transport/corpus suite passed seven optimized tests, and
-navigation diagnostics passed eight. The retained-reader focus regression passed
+navigation diagnostics passed nine. The retained-reader focus regression passed
 in a background window; internal WebKit descendant focus still needs foreground
 validation. Actual reader latency, scrolling targets, active-sync/offline timing,
 memory plateau, and the final installed universal Release remain unverified. The user
