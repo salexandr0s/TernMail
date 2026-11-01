@@ -306,6 +306,8 @@ import Testing
         var listBodyBuilds = 0
         var dragBodyBuilds = 0
         var rendered: [MailListRowID: MessageListRow.RenderState] = [:]
+        var visualBodyBuilds: [MailListRowID: Int] = [:]
+        var selectionObserverBuilds: [MailListRowID: Int] = [:]
         ThreadListView.onRowContentBuild = { owner, _ in if owner === mailbox { contentBuilds += 1 } }
         ThreadListView.onBodyBuild = { owner, phase in
             guard owner === mailbox else { return }
@@ -314,16 +316,27 @@ import Testing
             case .dragSelection: dragBodyBuilds += 1
             }
         }
-        MessageListRow.onBodyEvaluation = { owner, id, state in if owner === mailbox { rendered[id] = state } }
+        MessageListRow.onBodyEvaluation = { owner, id, state in
+            guard owner === mailbox else { return }
+            rendered[id] = state
+            visualBodyBuilds[id, default: 0] += 1
+        }
+        MessageListRow.onSelectionObserverEvaluation = { owner, id in
+            if owner === mailbox { selectionObserverBuilds[id, default: 0] += 1 }
+        }
         defer {
             ThreadListView.onRowContentBuild = nil
             ThreadListView.onBodyBuild = nil
             MessageListRow.onBodyEvaluation = nil
+            MessageListRow.onSelectionObserverEvaluation = nil
         }
         // The isolated List has no workspace minimum size. Give its hosting
         // controller a real viewport instead of its tiny intrinsic fitting size.
+        let viewDefaultsName = "tern.message-list.row-views." + UUID().uuidString
+        let viewDefaults = try #require(UserDefaults(suiteName: viewDefaultsName))
+        defer { viewDefaults.removePersistentDomain(forName: viewDefaultsName) }
         let controller = NSHostingController(rootView: ThreadListView(mailbox: mailbox)
-            .frame(width: 520, height: 540).environment(AppModel()))
+            .frame(width: 520, height: 540).environment(AppModel()).defaultAppStorage(viewDefaults))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 540),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -348,6 +361,17 @@ import Testing
 
         func indexes(for ids: Set<MailListRowID>) -> IndexSet {
             IndexSet(mailbox.listItems.indices.filter { ids.contains(mailbox.listItems[$0].id) })
+        }
+        func realizedSentinelCounts(_ id: MailListRowID, sourceLocation: SourceLocation = #_sourceLocation) async throws -> (visual: Int, observer: Int) {
+            try await awaitListState("unchanged visible row sentinel", details: {
+                "id=\(id), visual=\(visualBodyBuilds[id, default: 0]), observer=\(selectionObserverBuilds[id, default: 0]), body=\(String(describing: rendered[id]))"
+            }, sourceLocation: sourceLocation) {
+                guard let index = mailbox.listItems.firstIndex(where: { $0.id == id }) else { return false }
+                return visualBodyBuilds[id, default: 0] > 0 && rendered[id]?.selected == false
+                    && table.view(atColumn: 0, row: index, makeIfNecessary: false) != nil
+                    && table.rect(ofRow: index).intersects(table.visibleRect)
+            }
+            return (visualBodyBuilds[id, default: 0], selectionObserverBuilds[id, default: 0])
         }
         func expectSelection(_ ids: Set<MailListRowID>, native: Bool, visibleRows: [MailListRowID],
                              sourceLocation: SourceLocation = #_sourceLocation) async throws {
@@ -438,12 +462,18 @@ import Testing
         #expect(mailbox.selectedThreadIDs == [conversationB.threadKey])
         let buildsBeforeConversationSwitching = contentBuilds
         let conversationBodies = (listBodyBuilds, dragBodyBuilds)
+        let conversationSentinel = MailListRowID(accountID: "a", threadID: "filler-0")
+        let conversationSentinelBefore = try await realizedSentinelCounts(conversationSentinel)
         for index in 0..<12 {
             try await expectSelection([conversations[index % conversations.count]],
                 native: index.isMultiple(of: 3), visibleRows: conversations)
         }
         #expect(contentBuilds == buildsBeforeConversationSwitching,
             "Conversation selection must not rebuild ForEach; root delta=\(listBodyBuilds - conversationBodies.0), drag delta=\(dragBodyBuilds - conversationBodies.1), observation=\(conversationObservation)")
+        let conversationSentinelAfter = try await realizedSentinelCounts(conversationSentinel)
+        #expect(conversationSentinelAfter.observer > conversationSentinelBefore.observer)
+        #expect(conversationSentinelAfter.visual == conversationSentinelBefore.visual,
+            "Conversation selection must preserve unchanged visible row content")
         try await expectRapidSelection(conversations)
 
         mailbox.listPreferences.conversations = false
@@ -459,11 +489,17 @@ import Testing
         for id in messages { try await expectSelection([id], native: true, visibleRows: messages) }
         let buildsBeforeSwitching = contentBuilds
         let messageBodies = (listBodyBuilds, dragBodyBuilds)
+        let messageSentinel = MailListRowID(accountID: "a", threadID: "filler-0", messageID: "filler-0")
+        let messageSentinelBefore = try await realizedSentinelCounts(messageSentinel)
         for index in 0..<24 {
             try await expectSelection([messages[index % messages.count]], native: index.isMultiple(of: 2), visibleRows: messages)
         }
         #expect(contentBuilds == buildsBeforeSwitching,
             "Message selection must not rebuild ForEach; root delta=\(listBodyBuilds - messageBodies.0), drag delta=\(dragBodyBuilds - messageBodies.1), observation=\(messageObservation)")
+        let messageSentinelAfter = try await realizedSentinelCounts(messageSentinel)
+        #expect(messageSentinelAfter.observer > messageSentinelBefore.observer)
+        #expect(messageSentinelAfter.visual == messageSentinelBefore.visual,
+            "Message selection must preserve unchanged visible row content")
         try await expectRapidSelection(messages)
         #expect(listTables(in: controller.view).first === table)
         #expect(table.enclosingScrollView === scroll)
@@ -502,6 +538,21 @@ import Testing
         #expect(table.rect(ofRow: siblingIndex).intersects(table.visibleRect))
         #expect(table.selectedRowIndexes == indexes(for: [sibling]))
         #expect(listTables(in: controller.view).first === table)
+
+        // The visual leaf still observes settings even when its immutable row
+        // and selection inputs remain unchanged.
+        viewDefaults.set(1.25, forKey: ReadingPreferences.textScaleKey)
+        try await awaitListState("text scale reaches the unselected visual row", details: {
+            "body=\(String(describing: rendered[first]))"
+        }) { rendered[first]?.textScale == 1.25 && rendered[first]?.selected == false }
+        mailbox.listPreferences.density = .compact
+        try await awaitListState("density reaches the unselected visual row", details: {
+            "body=\(String(describing: rendered[first]))"
+        }) { rendered[first]?.compact == true && rendered[first]?.selected == false }
+        let firstIndex = try #require(mailbox.listItems.firstIndex { $0.id == first })
+        #expect(table.view(atColumn: 0, row: firstIndex, makeIfNecessary: false) != nil)
+        #expect(table.rect(ofRow: firstIndex).intersects(table.visibleRect))
+        #expect(table.selectedRowIndexes == indexes(for: [sibling]))
     }
 
     private func listTables(in view: NSView) -> [NSTableView] {

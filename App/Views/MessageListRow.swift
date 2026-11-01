@@ -8,17 +8,17 @@ struct MessageListRow: View {
     let mailbox: MailboxModel
     let accountMark: String?
     let accountColor: Color
-    @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
-    @Environment(\.backgroundProminence) private var prominence
-    @State private var isHovered = false
 
     #if DEBUG || TERN_PERFORMANCE
     struct RenderState: Equatable {
         let selected: Bool
         let unread: Bool
         let starred: Bool
+        let textScale: Double
+        let compact: Bool
     }
     static var onBodyEvaluation: ((MailboxModel, MailListRowID, RenderState) -> Void)?
+    static var onSelectionObserverEvaluation: ((MailboxModel, MailListRowID) -> Void)?
     #endif
 
     /// Observe selection at the realized row, outside the ForEach content closure.
@@ -26,6 +26,51 @@ struct MessageListRow: View {
         mailbox.listPreferences.conversations
             ? mailbox.selectedThreadIDs.contains(item.id.threadKey)
             : mailbox.selectedMessageRows.contains(item.id)
+    }
+
+    var body: some View {
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = Self.onSelectionObserverEvaluation?(mailbox, item.id)
+        #endif
+        MessageListVisualRow(item: item, mailbox: mailbox, selected: isSelected,
+            dateKey: ThreadDate.short(item.thread.lastDate), accountMark: accountMark, accountColor: accountColor)
+    }
+
+    /// VoiceOver reads the row as one line: state first, then who, what and when.
+    static func accessibilitySummary(unread: Bool, sender: String, subject: String, date: String,
+                                     messageCount: Int, starred: Bool, important: Bool = false,
+                                     labels: [String] = [], attachments: Int = 0, account: String? = nil) -> String {
+        var parts: [String] = []
+        if unread { parts.append("Unread") }
+        parts.append(sender)
+        parts.append(subject.isEmpty ? "No Subject" : subject)
+        parts.append(date)
+        if messageCount > 1 { parts.append("\(messageCount) messages") }
+        if starred { parts.append("starred") }
+        if important { parts.append("important") }
+        if attachments == 1 { parts.append("1 attachment") } else if attachments > 1 { parts.append("\(attachments) attachments") }
+        if !labels.isEmpty { parts.append("labels " + labels.joined(separator: ", ")) }
+        if let account { parts.append("in \(account)") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// Selection changes reach each observer, while unchanged visual content keeps
+/// its existing view graph. Settings and row interaction state remain live here.
+private struct MessageListVisualRow: View, Equatable {
+    let item: MessageListItem
+    let mailbox: MailboxModel
+    let selected: Bool
+    let dateKey: String
+    let accountMark: String?
+    let accountColor: Color
+    @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
+    @Environment(\.backgroundProminence) private var prominence
+    @State private var isHovered = false
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.mailbox === rhs.mailbox && lhs.selected == rhs.selected && lhs.dateKey == rhs.dateKey
+            && lhs.accountMark == rhs.accountMark && lhs.accountColor == rhs.accountColor && lhs.item == rhs.item
     }
 
     private var compact: Bool { mailbox.listPreferences.density == .compact }
@@ -49,10 +94,11 @@ struct MessageListRow: View {
     var body: some View {
         // alignmentGuide closures are Sendable, so they take a copy rather than reading the view.
         let separatorLeading = textLeading
-        let selected = isSelected
+        let dateLabel = ThreadDate.short(thread.lastDate)
         #if DEBUG || TERN_PERFORMANCE
-        let _ = Self.onBodyEvaluation?(mailbox, item.id,
-            RenderState(selected: selected, unread: thread.isUnread, starred: thread.isStarred))
+        let _ = MessageListRow.onBodyEvaluation?(mailbox, item.id,
+            MessageListRow.RenderState(selected: selected, unread: thread.isUnread, starred: thread.isStarred,
+                                       textScale: scale, compact: compact))
         #endif
         HStack(alignment: .center, spacing: Tokens.Space.s1_5) {
             Circle().fill(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
@@ -60,7 +106,7 @@ struct MessageListRow: View {
                 .opacity(thread.isUnread ? 1 : 0)
             avatar
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                senderLine(selected: selected)
+                senderLine(selected: selected, dateLabel: dateLabel)
                 subjectLine
                 if !compact { previewLine }
                 if !displayedLabels.isEmpty || !item.attachments.isEmpty { detailLine }
@@ -74,7 +120,7 @@ struct MessageListRow: View {
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilitySummary)
+        .accessibilityLabel(accessibilitySummary(dateLabel: dateLabel))
     }
 
     @ViewBuilder private var avatar: some View {
@@ -86,7 +132,7 @@ struct MessageListRow: View {
         }
     }
 
-    private func senderLine(selected: Bool) -> some View {
+    private func senderLine(selected: Bool, dateLabel: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
             Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .regular)).lineLimit(1)
             if thread.messageCount > 1 {
@@ -107,7 +153,7 @@ struct MessageListRow: View {
             .opacity(thread.isStarred || isHovered || selected ? 1 : 0)
             .help(thread.isStarred ? "Remove Star" : "Star")
             .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
-            Text(ThreadDate.short(thread.lastDate)).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+            Text(dateLabel).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
             if mailbox.listPreferences.showsAccountBadges, mailbox.listMixesAccounts, let accountMark {
                 HStack(spacing: Tokens.Space.s0_5) {
                     // The account's color would vanish on an accent-colored selection.
@@ -165,33 +211,15 @@ struct MessageListRow: View {
         return thread.participants.isEmpty ? "No Sender" : thread.participants
     }
 
-    private var accessibilitySummary: String {
+    private func accessibilitySummary(dateLabel: String) -> String {
         let account = mailbox.listMixesAccounts
             ? mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } : nil
-        return Self.accessibilitySummary(
+        return MessageListRow.accessibilitySummary(
             unread: thread.isUnread, sender: senderText, subject: thread.subject,
-            date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? ThreadDate.short(thread.lastDate),
+            date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? dateLabel,
             messageCount: thread.messageCount, starred: thread.isStarred,
             important: mailbox.listPreferences.showsImportance && item.labels.contains(SystemLabel.important),
             labels: displayedLabels.map(\.title), attachments: item.attachments.count, account: account)
-    }
-
-    /// VoiceOver reads the row as one line: state first, then who, what and when.
-    static func accessibilitySummary(unread: Bool, sender: String, subject: String, date: String,
-                                     messageCount: Int, starred: Bool, important: Bool = false,
-                                     labels: [String] = [], attachments: Int = 0, account: String? = nil) -> String {
-        var parts: [String] = []
-        if unread { parts.append("Unread") }
-        parts.append(sender)
-        parts.append(subject.isEmpty ? "No Subject" : subject)
-        parts.append(date)
-        if messageCount > 1 { parts.append("\(messageCount) messages") }
-        if starred { parts.append("starred") }
-        if important { parts.append("important") }
-        if attachments == 1 { parts.append("1 attachment") } else if attachments > 1 { parts.append("\(attachments) attachments") }
-        if !labels.isEmpty { parts.append("labels " + labels.joined(separator: ", ")) }
-        if let account { parts.append("in \(account)") }
-        return parts.joined(separator: ", ")
     }
 
     private func attachmentSymbol(_ type: String) -> String {
