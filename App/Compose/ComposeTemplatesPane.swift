@@ -16,29 +16,22 @@ struct ComposeTemplatesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("Templates") {
-                HStack(spacing: Tokens.Space.s3) {
-                    Text("Template")
-                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
-                    Picker("Template", selection: $selection) {
-                        Text("New Template").tag(String?.none)
-                        ForEach(templates) { Text($0.name).tag(Optional($0.id)) }
+            Section("Template") {
+                SettingsControlRow("Template") {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Picker("Template", selection: $selection) {
+                            Text("New Template").tag(String?.none)
+                            ForEach(templates) { Text($0.name).tag(Optional($0.id)) }
+                        }
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
+                        Button("New", systemImage: "plus") { selection = nil; name = ""; document = ComposeDocument() }
+                            .help("Create a new template")
+                            .accessibilityLabel("Create a new template")
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                    Button("New", systemImage: "plus") { selection = nil; name = ""; document = ComposeDocument() }
-                        .help("Create a new template")
                 }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
-                HStack(spacing: Tokens.Space.s3) {
-                    Text("Name")
-                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
-                    TextField("Template name", text: $name)
-                        .textFieldStyle(.roundedBorder)
-                }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
+                TextField("Name", text: $name, prompt: Text("Template name"))
+            }
+            Section {
                 VStack(alignment: .leading, spacing: 0) {
                     FormatBar(format: format, isEnabled: focused, editor: editor) { editingLink = true }
                         .popover(isPresented: $editingLink) {
@@ -50,34 +43,36 @@ struct ComposeTemplatesPane: View {
                         .frame(minHeight: Tokens.Layout.quoteMaxHeight)
                 }
                 .ternSurface(radius: Tokens.Radius.sm)
-                .padding(.horizontal, Tokens.Space.s3)
-                HStack {
-                    Button("Delete", role: .destructive) {
-                        guard let selection else { return }
-                        Task { await delete(selection) }
-                    }
-                    .disabled(selection == nil)
-                    Spacer()
-                    Button("Save Template") { Task { await save() } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
-            }
-            SettingsNote("Templates hold text and formatting. Add attachments when composing a message.", systemImage: "doc.text")
-            if let error {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout)
-                    .foregroundStyle(Tokens.Status.error)
-                    .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Template message")
+            } header: {
+                Text("Message")
+            } footer: {
+                Text("Templates hold text and formatting. Add attachments when composing a message.")
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) { SettingsFooter { saveBar } }
         .task { await reload() }
         .focusedValue(\.settingsEditor, focusedEditor)
         .onChange(of: selection) { _, id in
             if let template = templates.first(where: { $0.id == id }) { name = template.name; document = template.document }
             else { name = ""; document = ComposeDocument() }
+        }
+    }
+
+    private var saveBar: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            if let error { SettingsErrorLabel(error) }
+            HStack(spacing: Tokens.Space.s2) {
+                Button("Delete Template", role: .destructive) {
+                    guard let selection else { return }
+                    Task { await delete(selection) }
+                }
+                .disabled(selection == nil)
+                Spacer(minLength: Tokens.Space.s2)
+                Button("Save Template") { Task { await save() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 

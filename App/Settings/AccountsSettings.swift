@@ -19,10 +19,7 @@ struct AccountsSettings: View {
                     PermanentDeletionSection(accounts: mailbox.accounts.map(\.account), app: app)
                     if let error = app.signInError {
                         Section {
-                            Label(error, systemImage: "exclamationmark.triangle")
-                                .font(.callout)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
+                            SettingsErrorLabel(error)
                         }
                     }
                 }
@@ -48,8 +45,7 @@ struct AccountsSettings: View {
     }
 
     private var accountFooter: some View {
-        VStack(spacing: 0) {
-            Divider()
+        SettingsFooter {
             HStack(spacing: Tokens.Space.s3) {
                 if app.isSigningIn {
                     ProgressView().controlSize(.small)
@@ -74,10 +70,7 @@ struct AccountsSettings: View {
                 .disabled(app.isSigningIn || !app.auth.isConfigured)
                 .fixedSize()
             }
-            .padding(.horizontal, Tokens.Space.s4)
-            .padding(.vertical, Tokens.Space.s2)
         }
-        .background(Tokens.Surface.muted)
     }
 
     private func row(_ account: AccountRecord) -> some View {
@@ -102,7 +95,7 @@ struct AccountsSettings: View {
                 if needsSignIn {
                     Label("Sign-in required", systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Tokens.Status.warning)
                 }
             }
             Spacer(minLength: 0)

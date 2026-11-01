@@ -19,7 +19,7 @@ struct MaintenanceSettingsView: View {
     var body: some View {
         SettingsPage {
             usageSummary
-            Section("Cache management") {
+            Section {
                 SettingsControlRow("Cache budget", detail: "Older mail and managed attachment copies are trimmed first.") {
                     Picker("Cache budget", selection: $budget) {
                         ForEach(CacheMaintenanceModel.budgetChoices, id: \.self) { size in
@@ -32,35 +32,45 @@ struct MaintenanceSettingsView: View {
                     HStack(spacing: Tokens.Space.s2) {
                         if app.maintenance.isRefreshing || app.maintenance.isTrimming {
                             ProgressView().controlSize(.small)
+                                .accessibilityLabel(app.maintenance.isTrimming ? "Trimming cache" : "Measuring cache")
                         }
                         Button("Refresh Size") { Task { await app.maintenance.refresh() } }
+                            .fixedSize()
                             .disabled(app.maintenance.isRefreshing)
                         Button("Trim Now…") { trimRequest = .manual }
+                            .fixedSize()
                             .disabled(app.maintenance.readiness?.canReset != true)
                     }
                     .disabled(app.maintenance.isTrimming || app.isResettingCache)
                 } label: {
-                    Text("Trim")
-                    Text("Open conversations, drafts, pending changes and pending alerts stay protected.")
+                    Text("Downloaded mail")
                 }
                 if let status = app.maintenance.status {
                     SettingsNote(status, systemImage: app.maintenance.protectedBudgetLimit ? "lock.shield" : "checkmark.circle")
                 }
                 if let error = app.maintenance.error { SettingsErrorLabel(error) }
+            } header: {
+                Text("Cache management")
+            } footer: {
+                Text("Open conversations, drafts, pending changes and pending alerts stay protected.")
             }
-            Section("Reset") {
+            Section {
                 LabeledContent {
                     Button("Reset Mail Cache…", role: .destructive) { confirmsReset = true }
+                        .fixedSize()
                         .disabled(app.maintenance.readiness?.canReset != true || app.maintenance.isTrimming || app.isResettingCache)
                 } label: {
                     Text("Downloaded mail")
-                    Text("Rebuild downloaded mail from Gmail. Accounts, profiles, templates, signatures, saved searches and Calendar data stay on this Mac.")
                 }
                 if let readiness = app.maintenance.readiness, !readiness.canReset {
                     SettingsNote("Reset is unavailable: \(readiness.localDraftCount) local drafts, \(readiness.activeActionCount) pending changes and \(readiness.failedActionCount) failed changes. Send or discard drafts, and finish or discard changes first.", systemImage: "exclamationmark.circle")
                 }
                 if app.isResettingCache { ProgressView("Rebuilding mail…").controlSize(.small) }
                 if let resetError { SettingsErrorLabel(resetError) }
+            } header: {
+                Text("Reset")
+            } footer: {
+                Text("Rebuild downloaded mail from Gmail. Accounts, profiles, templates, signatures, saved searches and Calendar data stay on this Mac.")
             }
         }
         .task { await app.maintenance.refresh() }
@@ -87,7 +97,7 @@ struct MaintenanceSettingsView: View {
                     Text("Used")
                     Spacer(minLength: Tokens.Space.s3)
                     Text("\(bytes(app.maintenance.totalBytes)) of \(bytes(budgetBytes))")
-                        .font(.body.weight(.medium))
+                        .font(.title3.weight(.medium))
                         .monospacedDigit()
                 }
                 ProgressView(value: Double(min(app.maintenance.totalBytes, budgetBytes)), total: Double(budgetBytes))
@@ -97,6 +107,7 @@ struct MaintenanceSettingsView: View {
             }
             LabeledContent("Database", value: bytes(app.maintenance.usage.databaseBytes))
             LabeledContent("Downloaded attachments", value: bytes(app.maintenance.usage.downloadedAttachmentBytes))
+                .monospacedDigit()
         } header: {
             Text("On this Mac")
         } footer: {

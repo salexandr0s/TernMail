@@ -12,7 +12,7 @@ struct ComposePreferencesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("New messages") {
+            Section {
                 SettingsControlRow("Send from") {
                     Picker("New messages from", selection: $defaultAccount) {
                         Text("Automatic").tag("")
@@ -21,9 +21,10 @@ struct ComposePreferencesPane: View {
                     .labelsHidden()
                     .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                SettingsNote("Automatic uses the selected mailbox's account. In combined mailboxes, it uses the account that last exchanged mail with the first recipient.")
-                    .padding(.horizontal, Tokens.Space.s4)
-                    .padding(.bottom, Tokens.Space.s2)
+            } header: {
+                Text("New messages")
+            } footer: {
+                Text("Automatic uses the selected mailbox's account. In combined mailboxes, it uses the account that last exchanged mail with the first recipient.")
             }
 
             Section("Writing") {

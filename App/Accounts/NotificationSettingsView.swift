@@ -13,7 +13,7 @@ struct NotificationSettingsView: View {
 
     var body: some View {
         SettingsPage {
-            Section {
+            Section("macOS permission") {
                 permissionRow
                 if let error = notifications.error {
                     SettingsErrorLabel(error)
@@ -28,7 +28,8 @@ struct NotificationSettingsView: View {
                         Picker("Account", selection: $selectedAccount) {
                             ForEach(preferences.orderedRecords) { account in Text(account.email).tag(account.id) }
                         }
-                        .fixedSize()
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
+                        .help(preferences.orderedRecords.first(where: { $0.id == selectedAccount })?.email ?? "")
                     }
                     if !selectedAccount.isEmpty {
                         SettingsControlRow("Notify me about") {
@@ -41,7 +42,7 @@ struct NotificationSettingsView: View {
                                 Text("Inbox without categories").tag(MailNotificationRule.inboxWithoutCategories)
                                 Text("All Mail").tag(MailNotificationRule.allMail)
                             }
-                            .fixedSize()
+                            .frame(maxWidth: Tokens.Settings.pickerWidth)
                         }
                     }
                 }
@@ -56,7 +57,7 @@ struct NotificationSettingsView: View {
                     Picker("Notification action", selection: $action) {
                         ForEach(MailNotificationAction.allCases, id: \.rawValue) { action in Text(action.title).tag(action.rawValue) }
                     }
-                    .fixedSize()
+                    .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
                 SettingsToggleRow("Play a Sound", isOn: $sound)
             }

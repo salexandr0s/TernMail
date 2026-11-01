@@ -52,29 +52,39 @@ struct FailedChangesView: View {
     }
 
     private func failedRow(_ row: PendingAction) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                Image(systemName: "exclamationmark.circle")
+                    .foregroundStyle(Tokens.Status.warning)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text(title(row.kind)).font(.body.weight(.semibold))
+                    Text(title(row.kind)).font(.body.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed")
                 }
-                Spacer(minLength: 0)
-                if row.id.map(busy.contains) == true {
-                    ProgressView().controlSize(.small)
-                }
-                Button("Retry", systemImage: "arrow.clockwise") { Task { await retry(row) } }
-                Button("Discard…", role: .destructive) { discarding = row }
             }
-            .controlSize(.small)
             Text(row.lastError ?? "Gmail refused this change.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+            HStack(spacing: Tokens.Space.s2) {
+                Spacer(minLength: 0)
+                if row.id.map(busy.contains) == true {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Updating failed change")
+                }
+                Button("Retry", systemImage: "arrow.clockwise") { Task { await retry(row) } }
+                    .accessibilityLabel("Retry: \(title(row.kind))")
+                Button("Discard…", role: .destructive) { discarding = row }
+                    .accessibilityLabel("Discard: \(title(row.kind))")
+            }
+            .controlSize(.small)
         }
         .disabled(row.id.map(busy.contains) == true)
         .padding(.vertical, Tokens.Space.s1)

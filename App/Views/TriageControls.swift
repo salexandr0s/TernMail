@@ -52,18 +52,14 @@ struct TriagePreferencesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("Keyboard action") {
-                HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                    Text("Delete key")
-                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
-                    Picker("Delete key", selection: $deleteBehavior) {
-                        Text("Archive, or remove the current label").tag(DeleteKeyBehavior.archive.rawValue)
-                        Text("Move to Trash").tag(DeleteKeyBehavior.trash.rawValue)
-                    }
-                    .pickerStyle(.radioGroup)
-                    .labelsHidden()
+            Section("Delete key") {
+                Picker("Delete key", selection: $deleteBehavior) {
+                    Text("Archive, or remove the current label").tag(DeleteKeyBehavior.archive.rawValue)
+                    Text("Move to Trash").tag(DeleteKeyBehavior.trash.rawValue)
                 }
-                .padding(.horizontal, Tokens.Space.s4)
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                .accessibilityLabel("Delete key action")
                 .padding(.vertical, Tokens.Space.s2)
             }
             Section("Sound") {

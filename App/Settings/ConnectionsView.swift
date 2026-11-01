@@ -26,11 +26,13 @@ struct ConnectionsView: View {
             }
             .disabled(busy || app.isSigningIn || connection.account == nil || app.accountsNeedingSignIn.contains(accountID))
         }
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if let state = app.inboxWatcher(for: accountID)?.state {
-                Text(watcherStatus(state)).font(.caption).foregroundStyle(.secondary)
+                Text(watcherStatus(state))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let error { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Tokens.Status.error) }
+            if let error { SettingsErrorLabel(error) }
             Text("Turning connections off stops their use in Tern. Remove Tern from your Google Account to revoke permissions.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -38,7 +40,11 @@ struct ConnectionsView: View {
                 if let url = URL(string: "https://myaccount.google.com/permissions") {
                     Link("Review Google Permissions", destination: url).font(.caption)
                 }
-                if busy { ProgressView().controlSize(.small) }
+                Spacer(minLength: Tokens.Space.s2)
+                if busy {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Updating connection")
+                }
             }
         }
         .task { await connection.observe() }

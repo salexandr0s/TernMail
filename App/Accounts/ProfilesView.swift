@@ -28,22 +28,27 @@ struct ProfilesView: View {
                     ForEach(model.profiles) { profile in profileCard(profile) }
                 }
             } header: {
-                HStack {
-                    Text("Your profiles")
-                    Text("\(model.profiles.count)").foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Add Profile", systemImage: "plus") {
-                        editing = MailProfile(name: "", sortOrder: model.profiles.count)
-                    }
-                    .controlSize(.small)
-                }
+                Text("Your profiles")
             } footer: {
-                Text("Assign accounts in Accounts → Preferences. Switch profiles from the mailbox toolbar. Each profile can have its own notification hours.")
+                Text("Assign accounts in Account Settings. Switch profiles from the mailbox toolbar. Each profile can have its own notification hours.")
             }
 
             if let error = model.error {
                 Section {
                     SettingsErrorLabel(error)
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SettingsFooter {
+                HStack(spacing: Tokens.Space.s3) {
+                    Text(model.profiles.count == 1 ? "1 profile" : "\(model.profiles.count) profiles")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Add Profile…", systemImage: "plus") {
+                        editing = MailProfile(name: "", sortOrder: model.profiles.count)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -76,11 +81,13 @@ struct ProfilesView: View {
                 profileIcon(profile.symbol, color: AccountAppearance.color(at: profile.colorIndex))
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(profile.name).font(.body.weight(.medium)).lineLimit(2)
+                        .help(profile.name)
                     Text(accountCount(accounts.count)).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: Tokens.Space.s2)
                 if model.activeProfileID == profile.id { activeBadge }
                 Button("Edit") { editing = profile }
+                    .fixedSize()
                     .accessibilityLabel("Edit \(profile.name)")
                 Menu {
                     Button("Delete Profile…", role: .destructive) { deleting = profile }
@@ -93,10 +100,10 @@ struct ProfilesView: View {
                 .accessibilityLabel("More options for \(profile.name)")
             }
             Divider()
-            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Label(accounts.isEmpty ? "No accounts assigned" : accounts.map { model.displayName(for: $0) }.joined(separator: ", "), systemImage: "envelope")
                     .lineLimit(2)
-                Spacer(minLength: Tokens.Space.s2)
+                    .help(accounts.map { model.displayName(for: $0) }.joined(separator: ", "))
                 Label(scheduleSummary(profile.notificationSchedule), systemImage: "bell")
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -116,7 +123,7 @@ struct ProfilesView: View {
             .font(.body.weight(.medium))
             .foregroundStyle(color)
             .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
-            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .background(color.opacity(Tokens.Opacity.pressed), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .accessibilityHidden(true)
     }
 
@@ -199,7 +206,7 @@ private struct ProfileEditor: View {
                             Image(systemName: symbol)
                                 .font(.body)
                                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                                .background(profile.symbol == symbol ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                                .background(profile.symbol == symbol ? Color.accentColor.opacity(Tokens.Opacity.tint) : Color.clear, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                                 .overlay {
                                     RoundedRectangle(cornerRadius: Tokens.Radius.sm)
                                         .strokeBorder(profile.symbol == symbol ? Color.accentColor : Color.clear, lineWidth: Tokens.Border.hairline)

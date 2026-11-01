@@ -53,7 +53,10 @@ struct SignaturesSettingsPane: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .padding(.top, Tokens.Space.s3)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.top, Tokens.Space.s4)
+            .padding(.bottom, Tokens.Space.s2)
             switch source {
             case .local: ComposeSettingsPane(destination: .signatures)
             case .gmail: IntegrationSettingsView(pane: .signatures)

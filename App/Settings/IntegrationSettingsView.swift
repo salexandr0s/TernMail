@@ -94,7 +94,7 @@ struct GmailSettingsHeader: View {
     @Binding var selectedAccount: String
 
     var body: some View {
-        Section {
+        Section("Google account") {
             LabeledContent {
                 HStack(spacing: Tokens.Space.s2) {
                     Picker("Account", selection: $selectedAccount) {
@@ -104,8 +104,10 @@ struct GmailSettingsHeader: View {
                     }
                     .labelsHidden()
                     .frame(maxWidth: Tokens.Settings.pickerWidth)
+                    .help(accounts.first(where: { $0.id == selectedAccount })?.email ?? "")
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load() } }
                         .labelStyle(.iconOnly)
+                        .accessibilityLabel("Refresh Gmail settings")
                         .help("Refresh Gmail settings")
                         .disabled(model.isLoading || model.isSaving)
                 }

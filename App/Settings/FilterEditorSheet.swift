@@ -26,6 +26,7 @@ struct FilterEditorSheet: View {
                 actionsSection
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             .frame(height: Tokens.Settings.editorMaxContentHeight)
         } actions: {
             Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -60,38 +61,48 @@ struct FilterEditorSheet: View {
                         .accessibilityLabel("Size in bytes")
                 }
             }
-            Toggle("Has Attachment", isOn: $draft.hasAttachment)
-            Toggle("Exclude Chats", isOn: $draft.excludeChats)
+            Toggle("Has attachment", isOn: $draft.hasAttachment)
+            Toggle("Exclude chats", isOn: $draft.excludeChats)
         }
     }
 
     private var actionsSection: some View {
         Section {
             Toggle("Skip the Inbox", isOn: $draft.skipInbox)
-            Toggle("Mark as Read", isOn: $draft.markRead)
+            Toggle("Mark as read", isOn: $draft.markRead)
             Toggle("Star", isOn: $draft.star)
-            Toggle("Never Send to Spam", isOn: $draft.neverSpam)
+            Toggle("Never send to Spam", isOn: $draft.neverSpam)
             Toggle("Move to Trash", isOn: $draft.trash)
-            Picker("Importance", selection: $draft.importance) {
-                Text("Leave unchanged").tag(0)
-                Text("Always important").tag(1)
-                Text("Never important").tag(-1)
+            SettingsControlRow("Importance") {
+                Picker("Importance", selection: $draft.importance) {
+                    Text("Leave unchanged").tag(0)
+                    Text("Always important").tag(1)
+                    Text("Never important").tag(-1)
+                }
+                .frame(maxWidth: Tokens.Settings.pickerWidth)
             }
-            Picker("Apply label", selection: $draft.labelID) {
-                Text("None").tag("")
-                ForEach(model.labels.filter { !$0.isSystem }, id: \.id) { label in
-                    Text(label.name).tag(label.id)
+            SettingsControlRow("Apply label") {
+                Picker("Apply label", selection: $draft.labelID) {
+                    Text("None").tag("")
+                    ForEach(model.labels.filter { !$0.isSystem }, id: \.id) { label in
+                        Text(label.name).tag(label.id)
+                    }
                 }
+                .frame(maxWidth: Tokens.Settings.pickerWidth)
             }
-            Picker("Forward to", selection: $draft.forward) {
-                Text("No forwarding").tag("")
-                ForEach(model.forwarding, id: \.forwardingEmail) { address in
-                    Text(address.forwardingEmail + (address.isAccepted ? "" : " (waiting for verification)"))
-                        .tag(address.forwardingEmail).disabled(!address.isAccepted)
+            SettingsControlRow("Forward to") {
+                Picker("Forward to", selection: $draft.forward) {
+                    Text("No forwarding").tag("")
+                    ForEach(model.forwarding, id: \.forwardingEmail) { address in
+                        Text(address.forwardingEmail + (address.isAccepted ? "" : " (waiting for verification)"))
+                            .tag(address.forwardingEmail).disabled(!address.isAccepted)
+                    }
+                    if !draft.forward.isEmpty, !model.forwarding.contains(where: { $0.forwardingEmail == draft.forward }) {
+                        Text(draft.forward + " (unavailable)").tag(draft.forward).disabled(true)
+                    }
                 }
-                if !draft.forward.isEmpty, !model.forwarding.contains(where: { $0.forwardingEmail == draft.forward }) {
-                    Text(draft.forward + " (unavailable)").tag(draft.forward).disabled(true)
-                }
+                .frame(maxWidth: Tokens.Settings.pickerWidth)
+                .help(draft.forward)
             }
         } header: {
             Text("Then")

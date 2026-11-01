@@ -12,19 +12,30 @@ struct BlockedSendersPane: View {
             header
             Section {
                 if blocked.isEmpty {
-                    Text("This account has no sender-blocking filters.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    Label {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                            Text("No sender-blocking filters")
+                            Text("Filters that block individual senders appear here.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "person.crop.circle.badge.checkmark")
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     ForEach(Array(blocked.enumerated()), id: \.offset) { _, filter in
                         LabeledContent {
                             Button("Unblock…") { unblocking = filter }
                                 .controlSize(.small)
+                                .accessibilityLabel("Unblock \(filter.criteria.from ?? "sender")")
                                 .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
                         } label: {
                             Text(filter.criteria.from ?? "")
                                 .lineLimit(2)
+                                .truncationMode(.middle)
                                 .textSelection(.enabled)
+                                .help(filter.criteria.from ?? "")
                         }
                     }
                 }

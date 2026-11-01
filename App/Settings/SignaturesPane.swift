@@ -12,14 +12,18 @@ struct SignaturesPane: View {
         SettingsPage {
             header
             Section("Signature defaults") {
-                SettingsAsyncToggleRow("Include in Replies and Forwards", isOn: signatureOnReplies) { enabled in
+                SettingsAsyncToggleRow("Include in replies and forwards", isOn: signatureOnReplies) { enabled in
                     signatureOnReplies = enabled
                     await model.setSignatureOnReplies(enabled)
                 }
-                Picker("From address", selection: $selectedAddress) {
-                    ForEach(model.identities, id: \.lowercasedAddress) { identity in
-                        Text(identity.address + (identity.isPrimary ? " (primary)" : "")).tag(identity.address)
+                SettingsControlRow("From address") {
+                    Picker("From address", selection: $selectedAddress) {
+                        ForEach(model.identities, id: \.lowercasedAddress) { identity in
+                            Text(identity.address + (identity.isPrimary ? " (primary)" : "")).tag(identity.address)
+                        }
                     }
+                    .frame(maxWidth: Tokens.Settings.pickerWidth)
+                    .help(selectedAddress)
                 }
             }
             if let identity = model.identities.first(where: { $0.address == selectedAddress }) {
@@ -54,6 +58,7 @@ private struct SignatureEditor: View {
                 SettingsNote("Gmail lets Tern edit the primary address's signature. Change alias signatures in Gmail.", systemImage: "lock")
             }
             SettingsMessageEditor(draft: draft, isEditable: isEditable)
+                .accessibilityLabel("Gmail signature")
         } header: {
             Text("Signature")
         } footer: {

@@ -11,26 +11,24 @@ struct SuggestionBlocklistPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("Recipient suggestions") {
+            Section {
                 SettingsControlRow("Account") {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    HStack(spacing: Tokens.Space.s2) {
-                        TextField("Email address", text: $address)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Hide Address") { Task { await change(address, blocked: true) } }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(accountID.isEmpty || address.isEmpty)
-                    }
-                    Text("Hidden addresses stay out of recipient suggestions for this account.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Tokens.Space.s2) {
+                    TextField("Email address", text: $address)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Email address to hide")
+                    Button("Hide Address") { Task { await change(address, blocked: true) } }
+                        .buttonStyle(.borderedProminent)
+                        .fixedSize()
+                        .disabled(accountID.isEmpty || address.isEmpty)
                 }
-                .padding(.horizontal, Tokens.Space.s4)
-                .padding(.vertical, Tokens.Space.s2)
+            } header: {
+                Text("Recipient suggestions")
+            } footer: {
+                Text("Hidden addresses stay out of recipient suggestions for this account.")
             }
 
             Section("Hidden addresses") {
@@ -42,7 +40,7 @@ struct SuggestionBlocklistPane: View {
                         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                             Text(accountID.isEmpty ? "No account selected" : "No hidden addresses")
                             Text(accountID.isEmpty
-                                ? "Add a mail account in Accounts settings to manage its recipient suggestions."
+                                ? "Add a mail account in Connections to manage its recipient suggestions."
                                 : "Addresses you hide will appear here. You can show them again at any time.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -50,8 +48,7 @@ struct SuggestionBlocklistPane: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Tokens.Space.s4)
-                    .padding(.vertical, Tokens.Space.s3)
+                    .padding(.vertical, Tokens.Space.s1)
                 } else {
                     ForEach(blocked, id: \.self) { entry in
                         HStack(spacing: Tokens.Space.s3) {
@@ -68,17 +65,11 @@ struct SuggestionBlocklistPane: View {
                                 .controlSize(.small)
                                 .accessibilityLabel("Show \(entry) in recipient suggestions")
                         }
-                        .padding(.horizontal, Tokens.Space.s4)
-                        .padding(.vertical, Tokens.Space.s2)
+                        .padding(.vertical, Tokens.Space.s1)
                     }
                 }
             }
-            if let error {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout)
-                    .foregroundStyle(Tokens.Status.error)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            if let error { SettingsErrorLabel(error) }
         }
         .task { accountID = accounts.first?.id ?? ""; await reload() }
         .task(id: accountID) { await reload() }

@@ -98,6 +98,21 @@ struct SettingsPage<Content: View>: View {
             content
         }
         .formStyle(.grouped)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
+/// Actions stay reachable while the settings above them scroll.
+struct SettingsFooter<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.vertical, Tokens.Space.s3)
+            .background(Tokens.Surface.muted)
+            .overlay(alignment: .top) { Divider() }
     }
 }
 
@@ -118,8 +133,10 @@ struct SettingsControlRow<Control: View>: View {
                 .labelsHidden()
         } label: {
             Text(title)
+                .fixedSize(horizontal: false, vertical: true)
             if let detail {
                 Text(detail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -139,11 +156,15 @@ struct SettingsToggleRow: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             Text(title)
+                .fixedSize(horizontal: false, vertical: true)
             if let detail {
                 Text(detail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .toggleStyle(.switch)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail ?? "")
     }
 }
 

@@ -6,14 +6,13 @@ struct MessageListSettingsView: View {
     var body: some View {
         SettingsPage {
             Section("Appearance") {
-                SettingsControlRow("Density") {
+                SettingsControlRow("Density", detail: "Compact hides message previews.") {
                     Picker("Density", selection: $preferences.density) {
                         ForEach(MailListDensity.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
-                    .help("Compact density hides message previews.")
                 }
                 SettingsToggleRow("Show account badges", isOn: $preferences.showsAccountBadges)
                 SettingsToggleRow("Show importance markers", isOn: $preferences.showsImportance)
@@ -22,7 +21,7 @@ struct MessageListSettingsView: View {
 
             Section("Selection") {
                 SettingsToggleRow("Group messages into conversations", isOn: $preferences.conversations)
-                SettingsControlRow("After archiving or moving to Trash") {
+                SettingsControlRow("After Archive or Trash") {
                     Picker("After archiving or moving to Trash", selection: $preferences.nextSelection) {
                         ForEach(MailNextSelection.allCases) { Text(nextSelectionTitle($0)).tag($0) }
                     }
@@ -32,25 +31,18 @@ struct MessageListSettingsView: View {
             }
 
             Section("Swipe actions") {
-                Grid(alignment: .leading, horizontalSpacing: Tokens.Space.s3, verticalSpacing: Tokens.Space.s2) {
-                    GridRow {
-                        Text("")
-                        Text("First action").font(.caption).foregroundStyle(.secondary)
-                        Text("Second action").font(.caption).foregroundStyle(.secondary)
-                    }
-                    GridRow {
-                        Text("Leading")
-                        swipePicker("Leading first", selection: $preferences.leadingFirst)
-                        swipePicker("Leading second", selection: $preferences.leadingSecond)
-                    }
-                    GridRow {
-                        Text("Trailing")
-                        swipePicker("Trailing first", selection: $preferences.trailingFirst)
-                        swipePicker("Trailing second", selection: $preferences.trailingSecond)
-                    }
+                SettingsControlRow("Leading edge, first action") {
+                    swipePicker("Leading edge, first action", selection: $preferences.leadingFirst)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, Tokens.Space.s2)
+                SettingsControlRow("Leading edge, second action") {
+                    swipePicker("Leading edge, second action", selection: $preferences.leadingSecond)
+                }
+                SettingsControlRow("Trailing edge, first action") {
+                    swipePicker("Trailing edge, first action", selection: $preferences.trailingFirst)
+                }
+                SettingsControlRow("Trailing edge, second action") {
+                    swipePicker("Trailing edge, second action", selection: $preferences.trailingSecond)
+                }
             }
 
             Section("Sidebar") {
@@ -73,14 +65,14 @@ struct MessageListSettingsView: View {
         }
     }
 
-    /// Popups start at their column's leading edge, under its header.
+    /// Each action has a full row so long menu choices fit at the minimum window width.
     private func swipePicker(_ title: String, selection: Binding<MailSwipeAction>) -> some View {
         Picker(title, selection: selection) {
             ForEach(MailSwipeAction.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
         }
+        .pickerStyle(.menu)
         .labelsHidden()
         .fixedSize()
-        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(title)
     }
 }

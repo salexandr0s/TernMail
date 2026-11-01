@@ -23,22 +23,23 @@ struct VacationPane: View {
         SettingsPage {
             header
             Section("Automatic reply") {
-                SettingsToggleRow("Vacation Responder", detail: "Reply automatically while you're away.", isOn: $settings.enableAutoReply)
+                SettingsToggleRow("Vacation responder", detail: "Reply automatically while you're away.", isOn: $settings.enableAutoReply)
                 TextField("Subject", text: $settings.responseSubject.or(""))
                 SettingsMessageEditor(draft: draft, isEditable: model.canEdit)
+                    .accessibilityLabel("Vacation reply message")
             }
             Section("Recipients") {
-                SettingsToggleRow("Only Reply to Contacts", isOn: $settings.restrictToContacts)
+                SettingsToggleRow("Only reply to contacts", isOn: $settings.restrictToContacts)
                 if model.account?.hostedDomain != nil {
-                    SettingsToggleRow("Only Reply Within My Organization", isOn: $settings.restrictToDomain)
+                    SettingsToggleRow("Only reply within my organization", isOn: $settings.restrictToDomain)
                 }
             }
             Section("Schedule") {
-                dateRows(toggle: "Start Date", picker: "Starts", date: $settings.startTime)
-                dateRows(toggle: "End Date", picker: "Ends", date: $settings.endTime)
+                dateRows(toggle: "Start date", picker: "Starts", date: $settings.startTime)
+                dateRows(toggle: "End date", picker: "Ends", date: $settings.endTime)
             }
         }
-        .safeAreaInset(edge: .bottom) { saveBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) { SettingsFooter { saveBar } }
         .onChange(of: model.revision) { _, _ in
             guard !hasChanges else { return }
             settings = model.vacation
@@ -52,29 +53,29 @@ struct VacationPane: View {
     }
 
     private var saveBar: some View {
-        HStack(spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if let validationMessage {
                 SettingsErrorLabel(validationMessage)
-            } else if hasChanges {
-                Text("Unsaved changes")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 0)
-            if model.isSaving { ProgressView().controlSize(.small) }
-            Button("Save Vacation Responder") {
-                let edited = editedSettings
-                Task {
-                    if await model.saveVacation(edited, previous: previous) { previous = edited }
+            HStack(spacing: Tokens.Space.s3) {
+                if hasChanges {
+                    Text("Unsaved changes")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
+                Spacer(minLength: Tokens.Space.s2)
+                if model.isSaving { ProgressView().controlSize(.small) }
+                Button("Save Changes") {
+                    let edited = editedSettings
+                    Task {
+                        if await model.saveVacation(edited, previous: previous) { previous = edited }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Save vacation responder")
+                .disabled(!model.canEdit || validationMessage != nil || !hasChanges)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canEdit || validationMessage != nil || !hasChanges)
         }
-        .padding(.horizontal, Tokens.Space.s5)
-        .padding(.vertical, Tokens.Space.s3)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
     }
 
     @ViewBuilder private func dateRows(toggle: String, picker: String, date: Binding<Date?>) -> some View {

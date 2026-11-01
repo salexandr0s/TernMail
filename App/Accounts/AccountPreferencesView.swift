@@ -53,11 +53,14 @@ struct AccountPreferencesView: View {
                 Text(model.displayName(for: account))
                     .font(.body.weight(.medium))
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(model.displayName(for: account))
                 Text(account.email)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help(account.email)
             }
         }
         .padding(.vertical, Tokens.Space.s1)
@@ -79,6 +82,7 @@ private struct AccountPreferenceEditor: View {
                         ProgressView().controlSize(.small).accessibilityLabel("Saving")
                     }
                     TextField("Nickname", text: $nickname, prompt: Text("Optional"))
+                        .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
                         .onAppear { nickname = preferences.nickname ?? "" }
                         .onChange(of: nickname) { _, _ in
@@ -111,7 +115,8 @@ private struct AccountPreferenceEditor: View {
                     Text("All accounts only").tag(String?.none)
                     ForEach(model.profiles) { profile in Text(profile.name).tag(Optional(profile.id)) }
                 }
-                .fixedSize()
+                .frame(maxWidth: Tokens.Settings.pickerWidth)
+                .help(model.profiles.first(where: { $0.id == preferences.profileID })?.name ?? "All accounts only")
             }
         }
     }

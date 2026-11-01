@@ -22,11 +22,13 @@ struct GeneralSettings: View {
             }
             Section("Keyboard") {
                 SettingsToggleRow("Single-Key Shortcuts", detail: "Use letter keys when you aren't typing.", isOn: $usesSingleKeys)
-                Button("All Keyboard Shortcuts…") {
-                    openWindow(id: KeyboardShortcutsView.sceneID)
+                SettingsControlRow("Shortcut reference") {
+                    Button("View Shortcuts…") {
+                        openWindow(id: KeyboardShortcutsView.sceneID)
+                    }
+                    .accessibilityLabel("View all keyboard shortcuts")
+                    .accessibilityHint("Opens the Keyboard Shortcuts window")
                 }
-                .buttonStyle(.link)
-                .accessibilityHint("Opens the Keyboard Shortcuts window")
             }
         }
     }

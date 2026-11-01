@@ -4,13 +4,20 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarManagementTests {
-    @Test func personalColorDoesNotRequireOwnerOrManagementAccess() async throws {
+    @Test(arguments: [false, true])
+    func personalColorDoesNotRequireOwnerOrManagementAccess(hasDisplayAlias: Bool) async throws {
         let service = ManagementCalendarService(role: "reader")
-        let snapshot = await service.entry
+        var snapshot = await service.entry
+        if hasDisplayAlias { snapshot.summaryOverride = "My team calendar" }
+        var draft = CalendarSettingsDraft(calendar: CalendarDisplayCalendar(entry: snapshot, accountID: "account", accountName: "Account"))
+        #expect(!draft.hasChanges)
+        #expect(draft.title == "Team")
+        draft.colorHex = "#00ff00"
+        #expect(draft.hasChanges)
         let client = CalendarManagementClient(service: service) { feature in
             guard feature == .calendar else { throw CalendarModelError.readOnly }
         }
-        try await client.update(snapshot, title: "Team", colorHex: "#00ff00")
+        try await client.update(snapshot, title: draft.title, colorHex: draft.colorHex)
         let calls = await service.writes
         #expect(calls == [.init(kind: "list", etag: "list-version", fields: ["backgroundColor": .string("#00ff00")])])
     }

@@ -12,25 +12,41 @@ struct FiltersPane: View {
             header
             Section {
                 if model.filters.isEmpty {
-                    Text("Create a filter to choose which messages to match and what happens when they arrive.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Label {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                            Text("No filters")
+                            Text("Choose which messages to match and what happens when they arrive.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } icon: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     ForEach(Array(model.filters.enumerated()), id: \.offset) { _, filter in
                         filterRow(filter)
                     }
                 }
             } header: {
-                HStack {
-                    Text(model.filters.isEmpty ? "Filters" : "\(model.filters.count) \(model.filters.count == 1 ? "filter" : "filters")")
-                    Spacer()
-                    Button("Add Filter…", systemImage: "plus") { editor = FilterEditorSelection(filter: nil) }
-                        .controlSize(.small)
-                        .disabled(!model.canEdit || model.filters.count >= 1_000)
-                }
+                Text(model.filters.isEmpty ? "Filters" : "\(model.filters.count) \(model.filters.count == 1 ? "filter" : "filters")")
             } footer: {
                 Text("Filters apply to new mail as it arrives.")
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SettingsFooter {
+                HStack(spacing: Tokens.Space.s2) {
+                    if model.filters.count >= 1_000 {
+                        Text("Gmail allows up to 1,000 filters.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Add Filter…", systemImage: "plus") { editor = FilterEditorSelection(filter: nil) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.canEdit || model.filters.count >= 1_000)
+                }
             }
         }
         .sheet(item: $editor) { selection in
@@ -60,7 +76,9 @@ struct FiltersPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: Tokens.Space.s2) {
                 Button("Edit…") { editor = FilterEditorSelection(filter: filter) }
+                    .accessibilityLabel("Edit filter: \(summary(filter))")
                 Button("Delete…", role: .destructive) { deleting = filter }
+                    .accessibilityLabel("Delete filter: \(summary(filter))")
             }
             .controlSize(.small)
             .fixedSize()

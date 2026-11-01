@@ -19,44 +19,34 @@ struct LocalSignaturesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section {
-                HStack(spacing: Tokens.Space.s3) {
-                    Text("Signature")
-                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
-                    Picker("Signature", selection: $selectedID) {
-                        Text("New Signature").tag(String?.none)
-                        ForEach(signatures) { Text($0.name).tag(Optional($0.id)) }
+            Section("Signature") {
+                SettingsControlRow("Signature") {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Picker("Signature", selection: $selectedID) {
+                            Text("New Signature").tag(String?.none)
+                            ForEach(signatures) { Text($0.name).tag(Optional($0.id)) }
+                        }
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
+                        Button("New", systemImage: "plus") { selectedID = nil; name = ""; draft = SettingsMessageDraft(html: nil) }
+                            .help("Create a new signature")
+                            .accessibilityLabel("Create a new signature")
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                    Button("New", systemImage: "plus") { selectedID = nil; name = ""; draft = SettingsMessageDraft(html: nil) }
-                        .help("Create a new signature")
                 }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
-                HStack(spacing: Tokens.Space.s3) {
-                    Text("Name")
-                        .frame(width: Tokens.Settings.editorLabelWidth, alignment: .leading)
-                    TextField("Signature name", text: $name)
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
+                TextField("Name", text: $name, prompt: Text("Signature name"))
+            }
+            Section("Signature text") {
                 SettingsMessageEditor(draft: draft, isEditable: true)
                     .frame(minHeight: Tokens.Layout.quoteMaxHeight)
-                    .padding(.horizontal, Tokens.Space.s3)
+                    .accessibilityLabel("Signature text")
                 HStack {
-                    Button("Delete", role: .destructive) { Task { await delete() } }.disabled(selectedID == nil)
+                    Button("Delete Signature", role: .destructive) { Task { await delete() } }.disabled(selectedID == nil)
                     Spacer()
                     Button("Save Signature") { Task { await save() } }
                         .buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
             }
 
-            Section("Signature defaults") {
+            Section {
                 SettingsControlRow("Account") {
                     Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
@@ -84,16 +74,12 @@ struct LocalSignaturesPane: View {
                     Button("Save Defaults") { Task { await saveAssignment() } }
                         .disabled(accountID.isEmpty || loadingAssignment)
                 }
-                .padding(.horizontal, Tokens.Space.s4)
-                .padding(.vertical, Tokens.Space.s2)
+            } header: {
+                Text("Signature defaults")
+            } footer: {
+                Text("Existing drafts keep their current signature. An address without its own defaults uses the account default, then Gmail's signature setting.")
             }
-            SettingsNote("Existing drafts keep the signature they already contain. An address without its own defaults uses the account default, then Gmail's signature setting.")
-            if let error {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout)
-                    .foregroundStyle(Tokens.Status.error)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            if let error { SettingsErrorLabel(error) }
         }
         .task { accountID = accounts.first?.id ?? ""; await reload() }
         .task(id: accountID) { address = ""; await loadAssignment() }

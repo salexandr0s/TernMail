@@ -8,7 +8,7 @@ struct SidebarSettingsView: View {
         ForEach(mailbox.accounts, id: \.account.id) { owner in
             Section(mailbox.accountTitle(owner.account)) {
                 DisclosureGroup("Inbox categories") {
-                    VStack(spacing: 0) {
+                    VStack(spacing: Tokens.Space.s3) {
                         ForEach(InboxCategory.allCases, id: \.rawValue) { category in
                             SettingsAsyncToggleRow(SystemMailbox(labelID: category.labelID).title,
                                                    isOn: mailbox.accountPresentation[owner.account.id]?.inboxCategories.contains(category) == true) { enabled in
@@ -16,18 +16,16 @@ struct SidebarSettingsView: View {
                             }
                         }
                     }
+                    .padding(.vertical, Tokens.Space.s2)
                 }
-                .padding(.horizontal, Tokens.Space.s4)
-                .padding(.vertical, Tokens.Space.s2)
                 DisclosureGroup("Label visibility") {
-                    VStack(spacing: 0) {
+                    VStack(spacing: Tokens.Space.s3) {
                         let labels = owner.labels.filter { !$0.isSystem }
                         if labels.isEmpty {
                             Text("No custom labels")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, Tokens.Space.s2)
                         }
                         ForEach(labels, id: \.id) { label in
                             SettingsControlRow(label.name) {
@@ -37,12 +35,12 @@ struct SidebarSettingsView: View {
                                 }
                                 .labelsHidden()
                                 .fixedSize()
+                                .accessibilityLabel("Visibility of \(label.name)")
                             }
                         }
                     }
+                    .padding(.vertical, Tokens.Space.s2)
                 }
-                .padding(.horizontal, Tokens.Space.s4)
-                .padding(.vertical, Tokens.Space.s2)
             }
         }
     }

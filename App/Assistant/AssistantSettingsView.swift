@@ -55,9 +55,12 @@ struct AssistantSettingsView: View {
 
     @ViewBuilder private var sections: some View {
         if showsMailScope {
-            SettingsControlRow("Mail scope") {
-                Picker("Mail scope", selection: $model.selectedScope) {
-                    ForEach(AssistantScope.allCases) { scope in Text(scope.title).tag(scope) }
+            Section {
+                SettingsControlRow("Mail scope") {
+                    Picker("Mail scope", selection: $model.selectedScope) {
+                        ForEach(AssistantScope.allCases) { scope in Text(scope.title).tag(scope) }
+                    }
+                    .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
             }
         }
@@ -72,7 +75,7 @@ struct AssistantSettingsView: View {
     private var hasChat: Bool { !model.messages.isEmpty || !model.composerText.isEmpty }
 
     private var connectionSection: some View {
-        Section("ChatGPT") {
+        Section("Connection") {
             HStack(spacing: Tokens.Space.s3) {
                 ChatGPTBrand(size: Tokens.Space.s6)
                     .accessibilityHidden(true)
@@ -146,7 +149,7 @@ struct AssistantSettingsView: View {
             }
 
             if let error = model.connection.errorMessage {
-                errorMessage(error)
+                SettingsErrorLabel(error)
             }
             if model.connection.needsStorageRetry {
                 Button("Retry Keychain Access") {
@@ -200,7 +203,8 @@ struct AssistantSettingsView: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        .fixedSize()
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
+                        .help(model.models.first(where: { $0.id == model.selectedModelID })?.displayName ?? "Choose a model")
                         .disabled(model.isRunning || model.isLoadingModels)
                     } else {
                         Text(model.isLoadingModels ? "Loading models…" : "No models loaded")
@@ -219,15 +223,15 @@ struct AssistantSettingsView: View {
             }
             SettingsNote("Using ChatGPT plan", systemImage: "checkmark.circle")
             if let error = model.modelErrorMessage {
-                errorMessage(error)
+                SettingsErrorLabel(error)
             }
         }
     }
 
     private var accountsSection: some View {
-        Section("Mail access") {
+        Section {
             if model.availableAccounts.isEmpty {
-                Label("Add a mail account in Accounts settings.", systemImage: "person.crop.circle.badge.plus")
+                Label("Add a mail account in Connections.", systemImage: "person.crop.circle.badge.plus")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
@@ -235,7 +239,10 @@ struct AssistantSettingsView: View {
                     accountRow(account)
                 }
             }
-            SettingsNote("Choose the accounts the assistant can read, including automatic summaries and event suggestions when you open a permitted conversation. Changing access clears the current chat.")
+        } header: {
+            Text("Mail access")
+        } footer: {
+            Text("Choose the accounts the assistant can read, including automatic summaries and event suggestions when you open a permitted conversation. Changing access clears the current chat.")
         }
     }
 
@@ -273,8 +280,7 @@ struct AssistantSettingsView: View {
     }
 
     private var privacySection: some View {
-        Section("Privacy") {
-            SettingsNote("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.", systemImage: "lock")
+        Section {
             LabeledContent {
                 Button("Clear Chat…") { confirmsClearChat = true }
                     .disabled(!hasChat)
@@ -283,16 +289,11 @@ struct AssistantSettingsView: View {
                 Text("Chat history")
                 Text("Cleared when Tern quits.")
             }
+        } header: {
+            Text("Privacy")
+        } footer: {
+            SettingsNote("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.", systemImage: "lock")
         }
-    }
-
-    private func errorMessage(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.circle")
-            .font(.callout)
-            .foregroundStyle(.primary)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
-            .accessibilityLabel("\(message)")
     }
 
     private func connect() {

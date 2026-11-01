@@ -6,7 +6,7 @@ struct AssistantWritingStyleSettingsSection: View {
     let confirmTurnOff: (AssistantWritingStyleEntry) -> Void
 
     var body: some View {
-        Section("Writing style") {
+        Section {
             SettingsNote("Learn how you write from up to 100 recent sent emails in each enabled account. Replies use that account’s style and follow any tone you request.", systemImage: "text.quote")
             ForEach(model.entries) { entry in
                 accountRow(entry)
@@ -17,11 +17,11 @@ struct AssistantWritingStyleSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
             if let error = model.storageErrorMessage {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                SettingsErrorLabel(error)
             }
+        } header: {
+            Text("Writing style")
+        } footer: {
             SettingsNote("Excerpts are sent to ChatGPT during setup. Only the learned preferences are saved on this device. Turning learning off deletes the profile.", systemImage: "lock")
         }
     }
@@ -88,11 +88,14 @@ struct AssistantWritingStyleSettingsSection: View {
                 Spacer(minLength: Tokens.Space.s2)
                 if entry.isMailAccessEnabled && model.isEnabled(entry.id) {
                     Button("Relearn") { model.relearn(entry.id) }
+                        .fixedSize()
                         .disabled(!model.canRelearn(entry.id))
                         .accessibilityLabel("Relearn writing style for \(entry.email)")
                         .help("Read recent sent mail and replace this account’s writing profile.")
                 }
             }
+            .padding(.leading, Tokens.Space.s6 + Tokens.Space.s3)
         }
+        .padding(.vertical, Tokens.Space.s1)
     }
 }

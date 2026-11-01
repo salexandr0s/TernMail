@@ -4,7 +4,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(SettingsDestination.storageKey) private var storedDestination = SettingsDestination.general.rawValue
     @State private var search = ""
     @State private var unsaved = SettingsUnsavedChanges()
@@ -29,6 +28,7 @@ struct SettingsView: View {
                 SettingsSearchField(text: $search) { selectSearchResult() }
                     .frame(height: Tokens.Settings.rowHeight)
                     .padding(Tokens.Space.s3)
+                Divider()
                 sidebar
             }
             .frame(width: Tokens.Settings.sidebarWidth)
@@ -40,7 +40,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, Tokens.Space.s4)
+                        .padding(.horizontal, Tokens.Space.s5)
                         .padding(.top, Tokens.Space.s3)
                 }
                 detail
@@ -49,7 +49,7 @@ struct SettingsView: View {
             }
             .frame(maxWidth: Tokens.Settings.contentWidth + Tokens.Space.s4 * 2)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(colorScheme == .dark ? Color(nsColor: .textBackgroundColor) : Tokens.Surface.canvas)
+            .background(Tokens.Surface.muted)
             .navigationTitle(destination.title)
             .navigationSubtitle(sectionTitle)
         }
@@ -67,7 +67,7 @@ struct SettingsView: View {
             "Discard changes to the \(unsaved.subject ?? "pane")?",
             item: $pendingLeave,
             actionTitle: "Discard Changes",
-            message: "Your unsaved edits are lost. Gmail keeps what it last saved."
+            message: "Your unsaved edits will be lost."
         ) { leave in
             unsaved.clear()
             switch leave {
