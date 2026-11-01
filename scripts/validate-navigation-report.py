@@ -70,7 +70,12 @@ def validate(report):
                     check_budget(name + '.preparation-miss', preparation_misses, 200)
             check_budget(name + '.header', [r['elapsedMilliseconds'] for r in records if r['kind'] == 'readerHeader'], 100)
             if name in {'reader-recent', 'reader-offline', 'reader-activeSync', 'reader-delayed'}:
-                check_budget(name + '.selection-feedback', [r['elapsedMilliseconds'] for r in records if r['kind'] == 'selectionFeedback'], 50)
+                measurement = scenario['timings'].get('selectionFeedbackMeasurement')
+                if not isinstance(measurement, dict) or measurement.get('endpoint') != 'selectedNativeRowDrawingProxyV1':
+                    errors.append(name + ': native selected-row feedback was not measured; legacy workspace or disabled proxies cannot establish this budget')
+                else:
+                    check_budget(name + '.selected-native-row-drawing-proxy',
+                                 [r['elapsedMilliseconds'] for r in records if r['kind'] == 'selectionFeedback'], 50)
         start, end = scenario.get('transportAtStart'), scenario.get('transportAtEnd')
         if start and end:
             mode = end['mode']
@@ -117,5 +122,5 @@ if __name__ == '__main__':
                     tier = record.get('cacheTier', 'unknown')
                     tiers[tier] = tiers.get(tier, 0) + 1
             print(scenario['name'] + ' visible cache tiers: ' + json.dumps(tiers, sort_keys=True))
-    print('GPU frame presentation, normal-mailbox performance and memory-plateau slope still require separate evidence.')
+    print('Selection feedback is a native-row drawing proxy. GPU frame presentation, normal-mailbox performance and memory-plateau slope still require separate evidence.')
     sys.exit(bool(errors))
