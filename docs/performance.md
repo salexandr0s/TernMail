@@ -348,3 +348,45 @@ comparison had strong monotonic CPU drift across normal/outer/normal fixtures
 and four cross-window generated-UUID assertion failures. That control was also
 removed; its CPU values do not establish either a benefit or a regression.
 Details and evidence locations are in `docs/research/open-source-performance.md`.
+
+## Complete guarded baseline before the visual-row change
+
+The schema-4 run at `4077af18c898e08feabe61f1d18b3d8306d84943` completed 100/100
+retained and 100/100 local selections with zero failures and zero unexpected
+native input. It contains the verified selection/list boundary and audit guards,
+and excludes the later `f0d5692` visual-row leaf.
+
+| Measurement | p50 | p95 | p99 | Target result |
+| --- | --- | --- | --- | --- |
+| Retained readable-content commit | 63.23 ms | 70.30 ms | 76.72 ms | 100/200 ms met |
+| Local preparation miss | 330.32 ms | 480.50 ms | 491.09 ms | 200 ms not met |
+
+Retained selection feedback p95 was 61.21 ms, still above 50 ms. The local
+scenario intentionally cancels selection-feedback spans when the selected list
+row is offscreen; only its reader/header endpoints are assessed. Local header
+p95 was 110.86 ms. Preparation itself remained cheap: 501 preparations at p95
+0.460 ms; 209 list projections at p95 1.921 ms.
+
+Retained counters were zero row factories, 1,100 visual bodies and 208 prepared
+hits. Two WebViews stayed attached without churn; prepared documents, stored
+bodies and inline resources stayed at 31,757/5,340/19,184 bytes. App footprint
+went from 285.36 to 283.38 MB. Local loading recorded 118,800 factories and 3,278
+visual bodies, with 100 renderer creations/99 destructions and three attached
+WebViews. Prepared data grew to 1.624 MB as the corpus grew; this does not prove
+a memory plateau. App-only local footprint peaked at 296.57 MB and ended at
+264.49 MB. WebKit child-process ownership remains unattributed.
+
+The whole run recorded 127 main-actor heartbeat waits ≥100 ms, maximum 232.96 ms.
+These are not per-scenario GPU frame measurements. Window bounds, display refresh
+rate and native visible-row count were not recorded. The earlier retained run
+evaluated 1,200 visual bodies rather than 1,100, so equal geometry cannot be
+asserted retrospectively. Historical deltas are descriptive combined-change
+comparisons, not an isolated attribution. Future runs must record geometry.
+
+The normal hardened arm64 executable hash is
+`7293e518febb4bbbcfa6458a92a2899a6792c556fa98fea318d364bae0cbec36`.
+Evidence and complete cache/memory/stage reports are in
+`~/.codex/backups/tern-performance-20261101/evidence/20261101T153445Z-100-reader-only-normal/`.
+The later visual-row candidate passed 28 focused tests and built successfully,
+but no after timings were collected within the three-minute user slot. No new
+production installation has occurred.
