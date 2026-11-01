@@ -6,6 +6,19 @@ struct ReaderSessionID: Hashable, Identifiable {
     let messageID: String?
     let owner: ObjectIdentifier
     var id: Self { self }
+
+    /// Presentation stays independent of cache recency, so switching between
+    /// retained sessions does not move their existing native subtrees.
+    func precedesInPresentation(_ other: Self) -> Bool {
+        if key.accountID != other.key.accountID { return key.accountID < other.key.accountID }
+        if key.threadID != other.key.threadID { return key.threadID < other.key.threadID }
+        switch (messageID, other.messageID) {
+        case (nil, .some): return true
+        case (.some, nil): return false
+        case (let lhs?, let rhs?) where lhs != rhs: return lhs < rhs
+        default: return owner < other.owner
+        }
+    }
 }
 
 struct ReaderInteraction {
@@ -119,15 +132,16 @@ struct ReaderSessionContainer: View {
 
     var body: some View {
         let selected = selection
-        let sessions = store.presenting(selected)
+        let recentSessions = store.presenting(selected)
+        let displaySessions = recentSessions.sorted { $0.precedesInPresentation($1) }
         let visible = isActive && isWindowVisible
         ZStack {
-            ForEach(sessions) { session in
+            ForEach(displaySessions) { session in
                 let active = visible && session == selected
                 ThreadView(key: session.key, mailbox: mailbox, selectedMessageID: session.messageID,
                            isReaderActive: active,
                            retainsHiddenBody: !active && allowsHiddenBodyRetention && store.retainsSource(for: session)
-                               && (visible || sessions.suffix(2).contains(session)),
+                               && (visible || recentSessions.suffix(2).contains(session)),
                            retainsSourceSnapshot: store.retainsSource(for: session),
                            interaction: active && reportsNavigation ? ReaderInteraction(body: NavigationPerformance.shared.currentGeneration(for: .reader),
                                header: NavigationPerformance.shared.currentGeneration(for: .readerHeader)) : nil,

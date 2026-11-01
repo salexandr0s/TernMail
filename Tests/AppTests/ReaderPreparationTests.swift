@@ -92,12 +92,56 @@ import Testing
     @Test func sessionsRetainThreeRecentIdentitiesAndReuseTheReturningSession() {
         let owner = NSObject(), store = ReaderSessionStore()
         let ids = (0..<4).map { ReaderSessionID(key: ThreadKey(accountID: "a", threadID: "t\($0)"), messageID: nil, owner: ObjectIdentifier(owner)) }
-        store.activate(ids[0]); store.activate(ids[1]); store.activate(ids[0])
-        #expect(store.sessions == [ids[1], ids[0]])
-        store.activate(ids[2]); store.activate(ids[3])
-        #expect(store.sessions == [ids[0], ids[2], ids[3]])
+        for id in ids.prefix(3) { store.activate(id) }
+        let originalDisplay = store.presenting(ids[2]).sorted { $0.precedesInPresentation($1) }
+        #expect(originalDisplay == Array(ids.prefix(3)))
+
+        store.activate(ids[0])
+        #expect(store.sessions == [ids[1], ids[2], ids[0]])
+        #expect(store.presenting(ids[0]).sorted { $0.precedesInPresentation($1) } == originalDisplay)
+
+        // The provisional presentation must retain the next selected session
+        // without changing recency until activation. B remains the eviction.
+        let pending = store.presenting(ids[3])
+        #expect(pending == [ids[2], ids[0], ids[3]])
+        #expect(store.sessions == [ids[1], ids[2], ids[0]])
+        store.activate(ids[3])
+        let recent = store.presenting(ids[3])
+        let display = recent.sorted { $0.precedesInPresentation($1) }
+        #expect(recent == pending)
+        #expect(store.sessions == [ids[2], ids[0], ids[3]])
+        #expect(display == [ids[0], ids[2], ids[3]])
+        // Whole-window inactivity keeps the most recent two renderers. Using
+        // the display suffix instead would incorrectly retain C rather than A.
+        #expect(Array(recent.suffix(2)) == [ids[0], ids[3]])
+        #expect(Array(display.suffix(2)) == [ids[2], ids[3]])
         store.releaseHidden(keeping: ids[3])
         #expect(store.sessions == [ids[3]])
+    }
+
+    @Test func presentationOrderPreservesDistinctMessagesAndAccountOwners() {
+        let owner = NSObject(), replacement = NSObject()
+        let key = ThreadKey(accountID: "a", threadID: "a")
+        let conversation = ReaderSessionID(key: key, messageID: nil, owner: ObjectIdentifier(owner))
+        let replacedConversation = ReaderSessionID(key: key, messageID: nil, owner: ObjectIdentifier(replacement))
+        let emptyMessage = ReaderSessionID(key: key, messageID: "", owner: ObjectIdentifier(owner))
+        let message = ReaderSessionID(key: key, messageID: "message", owner: ObjectIdentifier(owner))
+        let otherThread = ReaderSessionID(key: ThreadKey(accountID: "a", threadID: "b"), messageID: nil, owner: ObjectIdentifier(owner))
+        let otherAccount = ReaderSessionID(key: ThreadKey(accountID: "b", threadID: "a"), messageID: nil, owner: ObjectIdentifier(owner))
+        let identities = [message, otherAccount, replacedConversation, otherThread, emptyMessage, conversation]
+        let display = identities.sorted { $0.precedesInPresentation($1) }
+        #expect(Set(display).count == identities.count)
+        #expect(Set(display.prefix(2)) == [conversation, replacedConversation])
+        #expect(display[0].owner < display[1].owner)
+        #expect(Array(display.dropFirst(2)) == [emptyMessage, message, otherThread, otherAccount])
+        #expect(identities.reversed().sorted { $0.precedesInPresentation($1) } == display)
+        for (index, id) in display.enumerated() {
+            #expect(!id.precedesInPresentation(id))
+            for later in display.dropFirst(index + 1) {
+                #expect(id.precedesInPresentation(later))
+                #expect(!later.precedesInPresentation(id))
+            }
+        }
     }
 
     @Test func everyFindRequestCanRematerializeTheSameOffscreenMessage() async throws {
