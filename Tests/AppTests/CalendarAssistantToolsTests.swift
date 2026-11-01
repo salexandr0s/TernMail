@@ -89,6 +89,74 @@ import TernAI
         #expect(result.availabilityChoices.isEmpty)
     }
 
+    @Test(arguments: ["2030-01-11T19:07:00+01:00", "2030-01-13T15:07:00+01:00", "2030-01-11T23:07:00+01:00"])
+    func requestedIntervalsIncludeDinnerWeekendsAndMidnight(startText: String) async throws {
+        let fixture = Fixture(access: .availability)
+        let start = try #require(CalendarAssistantTools.parseDate(startText))
+        let arguments: [String: AIJSON] = ["calendars": .null, "start": .string(startText),
+            "end": .string(CalendarAssistantTools.timestamp(start.addingTimeInterval(2 * 3600))),
+            "time_zone": .string("Europe/Vienna")]
+        let result = try await fixture.tools.execute(Self.call("check_requested_availability", arguments))
+        #expect(result.data["is_complete"] == .bool(true))
+        #expect(result.data["is_available"] == .bool(true))
+        #expect(result.data["duration_minutes"] == .number(120))
+        #expect(result.data["reserves_time"] == .bool(false))
+        #expect(result.availabilityChoices.isEmpty)
+        #expect(result.calendarProposals.isEmpty)
+        #expect(result.sources.isEmpty)
+        #expect(fixture.readCount == 0)
+        #expect(fixture.proposalCount == 0)
+        let workHours = try await fixture.tools.execute(Self.call("check_availability",
+            arguments.merging(["duration_minutes": .number(120)]) { _, new in new }))
+        #expect(workHours.availabilityChoices.isEmpty)
+    }
+
+    @Test func requestedIntervalDetectsOverlapButAllowsAdjacentAppointments() async throws {
+        let fixture = Fixture(access: .availability)
+        let start = try #require(CalendarAssistantTools.parseDate("2030-01-11T19:00:00Z"))
+        let end = start.addingTimeInterval(2 * 3600)
+        let arguments: [String: AIJSON] = ["calendars": .null, "start": .string(CalendarAssistantTools.timestamp(start)),
+            "end": .string(CalendarAssistantTools.timestamp(end)), "time_zone": .string("UTC")]
+        fixture.newBusy = [.init(start: start.addingTimeInterval(3600), end: end)]
+        let busy = try await fixture.tools.execute(Self.call("check_requested_availability", arguments))
+        #expect(busy.data["is_complete"] == .bool(true))
+        #expect(busy.data["is_available"] == .bool(false))
+        fixture.newBusy = [.init(start: start.addingTimeInterval(-3600), end: start),
+                           .init(start: end, end: end.addingTimeInterval(3600))]
+        let adjacent = try await fixture.tools.execute(Self.call("check_requested_availability", arguments))
+        #expect(adjacent.data["is_available"] == .bool(true))
+    }
+
+    @Test(arguments: ["failure", "missing", "malformed"])
+    func requestedIntervalNeverTreatsIncompleteBusyDataAsFree(problem: String) async throws {
+        let fixture = Fixture(access: .availability)
+        fixture.availabilityFails = problem == "failure"
+        fixture.omitCalendar = problem == "missing"
+        if problem == "malformed" { fixture.newBusy = [.init(start: "invalid", end: "invalid")] }
+        var arguments = Self.availabilityArguments
+        arguments.removeValue(forKey: "duration_minutes")
+        let result = try await fixture.tools.execute(Self.call("check_requested_availability", arguments))
+        #expect(result.data["is_complete"] == .bool(false))
+        #expect(result.data["is_available"] == .null)
+        #expect(result.data["failures"]?.objectValue?.isEmpty == false)
+        #expect(result.availabilityChoices.isEmpty)
+    }
+
+    @Test func requestedIntervalRejectsRevokedAndUnpermittedCalendars() async throws {
+        let fixture = Fixture(access: .availability)
+        var arguments = Self.availabilityArguments
+        arguments.removeValue(forKey: "duration_minutes")
+        fixture.revokeDuringAvailability = true
+        await #expect(throws: CalendarAssistantTools.ToolError.self) {
+            try await fixture.tools.execute(Self.call("check_requested_availability", arguments))
+        }
+        let disabled = Fixture(access: .off)
+        arguments["calendars"] = .array([.object(["account_id": .string("a"), "calendar_id": .string("work")])])
+        await #expect(throws: CalendarAssistantTools.ToolError.self) {
+            try await disabled.tools.execute(Self.call("check_requested_availability", arguments))
+        }
+    }
+
     @Test func proposalsAreIdempotentAndDoNotSaveEvents() async throws {
         let fixture = Fixture()
         let call = try Self.call("prepare_calendar_event", [
@@ -249,6 +317,7 @@ import TernAI
         let access: CalendarAssistantAccess
         var valid = true
         var revokeDuringRead = false
+        var revokeDuringAvailability = false
         var availabilityFails = false
         var omitCalendar = false
         var newBusy: [CalendarBusyInterval] = []
@@ -273,7 +342,8 @@ import TernAI
                   },
                   query: { _, _, _ in .init(events: [], isStale: false, isComplete: true) },
                   availability: { [self] _, ids, start, end, hours in
-                      .init(calendarIDs: omitCalendar ? [] : ids, timeZone: hours.timeZoneIdentifier, busy: newBusy,
+                      if revokeDuringAvailability { valid = false }
+                      return .init(calendarIDs: omitCalendar ? [] : ids, timeZone: hours.timeZoneIdentifier, busy: newBusy,
                             slots: [], failures: availabilityFails ? ["work": "Unavailable"] : [:])
                   },
                   prepare: { [self] _, event, _ in proposalCount += 1; proposed = event; return UUID() },

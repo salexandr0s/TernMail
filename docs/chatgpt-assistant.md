@@ -15,6 +15,16 @@ The assistant can search mail, read threads, extract supported attachments, and 
 
 Broad requests review a bounded selection of conversations. Tern reserves the end of each request for displaying relevant emails and answering from the results already gathered; replies should identify incomplete coverage.
 
+## Write in the compose window
+
+Choose the sparkle button in a compose or reply window, or press **Shift-Command-J**, to open a small chat bar above the quoted text. Ask for a reply, a revision, or an invitation such as “Invite her to dinner next Friday.” The assistant uses the current unsaved draft, recipients and reply thread. It can search other mail in the sending account and check calendars you have allowed in Assistant Settings. Changing the conversation selected in the main window does not change this context.
+
+**Review Draft** shows the suggested subject and body alongside the conversation. Ask follow-up questions in the same panel, then choose **Apply to Draft** to replace the message text. **Undo** restores the previous rich text while no later edits have been made. Recipients, signatures, quoted messages and attached files stay in the draft; inline images move below the rewritten text. If you edit the draft after requesting a suggestion, ask for an updated suggestion before applying it.
+
+For invitations, the assistant can check an explicit evening or weekend interval as well as working-hours availability. It should state the date, timezone and any assumed time or duration. Missing calendar access or failed checks remain unknown. Suggestions reserve no time, create no events and send no mail. Review the draft and use the usual Send button when ready.
+
+Each compose window keeps its own conversation in memory. Closing the assistant stops the current response and keeps the conversation available until the compose window closes. **New Chat** clears it. Removing access clears retained context and suggestions. **Stop response** cancels a request; **Try Again** repeats it using the current draft.
+
 ## Conversation summaries
 
 Opening a conversation generates a short AI summary below its event cards when ChatGPT, a model, and the account’s assistant access are ready. The current assistant scope still applies. The summary sits in a subtle translucent card matching the events above it and shows up to three lines; **Details** reveals the full text, decisions, open tasks, and supporting messages. Source links expand and scroll to the original message. Tasks are extracted from the conversation and do not change mail or create reminders.

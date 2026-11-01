@@ -46,6 +46,7 @@ final class CalendarAssistantTools {
         case "read_calendar_events": result = try await readEvents(args)
         case "read_calendar_event": result = try await readEvent(args)
         case "check_availability": result = try await availability(args)
+        case "check_requested_availability": result = try await requestedAvailability(args)
         case "prepare_calendar_event": result = try await prepare(args, callID: call.id)
         case "prepare_calendar_deletion": result = try await prepareDeletion(args, callID: call.id)
         default: throw ToolError.invalidArguments
@@ -140,6 +141,37 @@ final class CalendarAssistantTools {
                 "start": .string(Self.timestamp($0.start)), "end": .string(Self.timestamp($0.end))]) }),
             "requires_user_selection": .bool(true), "reserves_time": .bool(false)
         ]), availabilityChoices: choices)
+    }
+
+    /// Checks the whole requested interval, including evenings, weekends and
+    /// intervals spanning midnight. No working-hours or slot-grid filter applies.
+    private func requestedAvailability(_ args: [String: AIJSON]) async throws -> AssistantToolResult {
+        let (start, end) = try range(args)
+        let zoneName = try string(args, "time_zone", max: 128)
+        guard let zone = TimeZone(identifier: zoneName) else { throw ToolError.invalidArguments }
+        let keys = try schedulingKeys(args["calendars"])
+        let hours = CalendarWorkingHours(timeZoneIdentifier: zone.identifier, weekdays: Set(1...7),
+            startMinute: 0, endMinute: 1440)
+        let result = try await Self.check(keys: keys, start: start, end: end, hours: hours,
+            bindings: bindings, validate: checkScope)
+        var failures = result.failures
+        var hasConflict = false
+        for interval in result.busy {
+            guard let busyStart = interval.startDate, let busyEnd = interval.endDate, busyStart <= busyEnd else {
+                failures["busy_intervals"] = "The calendar returned unreadable busy times."
+                continue
+            }
+            if busyStart < busyEnd, busyStart < end, busyEnd > start { hasConflict = true }
+        }
+        let complete = result.isComplete && failures.isEmpty
+        return .init(data: .object([
+            "is_complete": .bool(complete), "is_available": complete ? .bool(!hasConflict) : .null,
+            "start": .string(Self.timestamp(start)), "end": .string(Self.timestamp(end)),
+            "time_zone": .string(zone.identifier), "duration_minutes": .number(end.timeIntervalSince(start) / 60),
+            "checked_at": .string(Self.timestamp(result.checkedAt)),
+            "checked_calendars": .array(keys.map { .object(["account_id": .string($0.accountID), "calendar_id": .string($0.calendarID)]) }),
+            "failures": .object(failures.mapValues(AIJSON.string)), "reserves_time": .bool(false)
+        ]))
     }
 
     /// Checking several Google accounts must succeed for all calendars before
@@ -335,6 +367,10 @@ final class CalendarAssistantTools {
                 "calendars": .object(["type": .array([.string("array"), .string("null")]), "items": schema(identity), "maxItems": .number(50), "description": .string("Enabled calendars to check. Null uses calendars the user selected for scheduling.")]),
                 "time_zone": string("IANA zone, such as Europe/Vienna."),
                 "duration_minutes": .object(["type": .string("integer"), "minimum": .number(5), "maximum": .number(480), "description": .string("Meeting duration. Use 30 when unspecified and say that assumption.")])
+            ]) { _, new in new })),
+            .init(name: "check_requested_availability", description: "Check whether one exact requested interval is free, including evenings and weekends. Start and end define its duration; working hours do not restrict this check. Use for a time the user requested or an assumption you clearly state, such as Friday dinner. Incomplete checks return unknown availability. This does not reserve time or create an invitation.", parameters: schema(dates.merging([
+                "calendars": .object(["type": .array([.string("array"), .string("null")]), "items": schema(identity), "maxItems": .number(50), "description": .string("Enabled calendars to check. Null uses calendars the user selected for scheduling.")]),
+                "time_zone": string("IANA zone for the requested interval, such as Europe/Vienna.")
             ]) { _, new in new })),
             .init(name: "prepare_calendar_event", description: "Prepare an editable event proposal when asked. Never saves or sends invitations. User must review and save. Preserve existing attendee lists with null; never infer invitees from email recipients. Dates for all-day events use YYYY-MM-DD with exclusive end.", parameters: schema(identity.merging([
                 "event_id": string("Existing event ID to edit, or null for new event.", nullable: true),

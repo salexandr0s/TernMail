@@ -70,6 +70,9 @@ final class AssistantWritingStyleModel {
     typealias Analyze = @Sendable ([String], String, Date) async throws -> WritingStyleProfile?
 
     private(set) var storageErrorMessage: String?
+    /// Consent changes invalidate retained compose context even if access is
+    /// disabled and re-enabled before the next observation update.
+    private(set) var accessRevision = 0
     private var accounts: [AssistantWritingStyleAccount] = []
     private var archive = AssistantWritingStyleArchive()
     private var phases: [String: AssistantWritingStyleEntry.State] = [:]
@@ -142,6 +145,7 @@ final class AssistantWritingStyleModel {
 
     func setEnabled(_ id: String, enabled: Bool) {
         guard accounts.contains(where: { $0.id == id }) else { return }
+        if isEnabled(id) != enabled { accessRevision += 1 }
         if enabled { archive.disabledAccountIDs.remove(id) }
         else { archive.disabledAccountIDs.insert(id); archive.profiles.removeAll { $0.accountID == id } }
         phases.removeValue(forKey: id); sampleCounts.removeValue(forKey: id); attempts.removeValue(forKey: id)
@@ -155,6 +159,7 @@ final class AssistantWritingStyleModel {
     }
 
     func forgetAccount(_ id: String) {
+        accessRevision += 1
         archive.profiles.removeAll { $0.accountID == id }
         archive.disabledAccountIDs.remove(id)
         accounts.removeAll { $0.id == id }

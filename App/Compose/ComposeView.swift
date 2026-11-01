@@ -101,7 +101,10 @@ struct ComposeView: View {
     }
 
     @State private var model: ComposeModel
+    @State private var composeAssistant: ComposeAssistantModel?
+    @State private var showsAssistant = false
     @State private var senderAvatars = SenderAvatarModels()
+    @Environment(AppModel.self) private var app
     @Environment(\.addressAvatarContext) private var avatarContext
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
     @State private var showsQuote = false
@@ -169,6 +172,13 @@ struct ComposeView: View {
         .task {
             closer.model = model
             model.start()
+            if composeAssistant == nil {
+                composeAssistant = ComposeAssistantModel(compose: model, assistant: app.assistant)
+            }
+        }
+        .onChange(of: app.assistant.composeAccessRevision) { composeAssistant?.refreshAccess() }
+        .onChange(of: model.isEditable) { _, isEditable in
+            if !isEditable { composeAssistant?.clear(); showsAssistant = false }
         }
         .task(id: model.phase) {
             switch model.phase {
@@ -191,7 +201,7 @@ struct ComposeView: View {
         .onChange(of: model.isEditingMessage) { _, isEditing in if isEditing { noteFocus(.message) } }
         .onAppear(perform: configureSenderAvatars)
         .onChange(of: senderAvatarIdentity) { _, _ in configureSenderAvatars() }
-        .onDisappear { senderAvatars.stop(); model.windowClosed() }
+        .onDisappear { composeAssistant?.clear(); senderAvatars.stop(); model.windowClosed() }
         .focusedSceneValue(\.composeModel, model)
     }
 
@@ -233,6 +243,14 @@ struct ComposeView: View {
                 font: model.content.composeFont,
                 inlineImages: model.inlineImageData
             ) { model.editor = $0 } onAttach: { model.attach($0, inlineImages: true) } onFocusChange: { model.isEditingMessage = $0 }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if showsAssistant, let composeAssistant {
+                    ComposeAssistantView(model: composeAssistant, assistant: app.assistant) {
+                        closeAssistant()
+                    }
+                    .padding(Tokens.Space.s3)
+                }
+            }
             // Keep room to write when recipients, files and quoted text are visible.
             // The native window minimum grows with the other controls' intrinsic sizes.
             .frame(minHeight: Tokens.Layout.editorMinHeight)
@@ -607,6 +625,20 @@ struct ComposeView: View {
             .disabled(!model.isEditable)
         }
         ToolbarItem(placement: .primaryAction) {
+            Button {
+                if showsAssistant { closeAssistant() }
+                else { showsAssistant = true }
+            } label: {
+                Label("Compose Assistant", systemImage: "sparkles")
+            }
+            .labelStyle(.iconOnly)
+            .keyboardShortcut("j", modifiers: [.command, .shift])
+            .help(showsAssistant ? "Close compose assistant (⇧⌘J)" : "Ask the assistant to help write (⇧⌘J)")
+            .accessibilityLabel("Compose Assistant")
+            .accessibilityValue(showsAssistant ? "Open" : "Closed")
+            .disabled(!model.isEditable)
+        }
+        ToolbarItem(placement: .primaryAction) {
             Toggle(isOn: $model.showsFormatting) {
                 Label("Formatting", systemImage: "textformat")
             }
@@ -676,6 +708,12 @@ struct ComposeView: View {
     }
 
     // MARK: Private
+
+    private func closeAssistant() {
+        composeAssistant?.stop()
+        showsAssistant = false
+        model.editor?.focus()
+    }
 
     /// A reply starts in the message; anything without recipients starts in To.
     /// A copy made by a move starts where the cursor was, so the next Tab
