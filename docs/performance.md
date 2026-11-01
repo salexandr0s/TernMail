@@ -23,6 +23,14 @@ presentation timestamp. Display-link callback gaps are a main-run-loop proxy;
 Instruments is required to verify actual frame hitches. No subjects, addresses,
 message identifiers, or message bodies enter diagnostic reports.
 
+Selection-feedback correction: the historical `selectionFeedback` endpoint used
+the workspace's probe. It checked list readiness and a visible workspace redraw,
+but did not check the selected native row or its highlight. The 308.83, 65.90 and
+61.21 ms p95 values below are workspace-redraw proxies, not measurements of visible
+selection. They cannot establish whether the 50 ms highlight target was met.
+A row-local native-selection check is planned; it will still need to distinguish
+its drawing-commit proxy from actual presented pixels.
+
 Reader processing latency starts when a required body or resource reaches the
 view's data observer. It includes subsequent state publication and layout, but
 does not include the interval between network delivery and that observer.
@@ -202,7 +210,7 @@ zero failures, but missed the latency targets:
 | Retained renderer | 100 | 326.27 ms | 353.63 ms | 404.70 ms |
 | Local preparation miss | 100 | 699.93 ms | 959.37 ms | 987.06 ms |
 
-Retained selection feedback p95 was 308.83 ms even though its data-ready marker
+The retained workspace-redraw proxy p95 was 308.83 ms even though its data-ready marker
 arrived within 0.009 ms in every sample. HTML preparation p95 was 0.527 ms across
 501 preparations; the local run also prepares neighbors. The heartbeat recorded
 333 stalls of at least 100 ms, max 396.85 ms. This points to main-thread display
@@ -284,7 +292,7 @@ It meets the warm-reader latency target for this synthetic scenario:
 | Measurement | Before p50 / p95 / p99 | After p50 / p95 / p99 | Target |
 | --- | --- | --- | --- |
 | Retained readable content | 326.27 / 353.63 / 404.70 ms | 81.77 / 95.55 / 98.97 ms | p95 ≤100 ms; p99 ≤200 ms: met |
-| Selection feedback | p95 308.83 ms | 58.27 / 65.90 / 71.17 ms | p95 ≤50 ms: not met |
+| Workspace-redraw proxy after selection | p95 308.83 ms | 58.27 / 65.90 / 71.17 ms | Actual highlight target unverified |
 
 Retained p95 is 73% lower. The comparison includes the native visibility guard,
 stable reader order, selection isolation and functional fixes; it does not isolate
@@ -325,7 +333,7 @@ debugger or profiler overlapped measurement. The audit endpoint requires ready
 content in the visible viewport followed by a native drawing commit; it does not
 measure GPU presentation or input-queue delay before programmatic selection.
 This historical schema has no native-input monitor. The whole report fails the
-contract because feedback misses its target and local measurements are incomplete.
+contract because actual highlight latency is unverified and local measurements are incomplete.
 The test app was terminated after reporting; this run does not verify graceful
 quit. No production installation has occurred.
 
@@ -361,8 +369,8 @@ and excludes the later `f0d5692` visual-row leaf.
 | Retained readable-content commit | 63.23 ms | 70.30 ms | 76.72 ms | 100/200 ms met |
 | Local preparation miss | 330.32 ms | 480.50 ms | 491.09 ms | 200 ms not met |
 
-Retained selection feedback p95 was 61.21 ms, still above 50 ms. The local
-scenario intentionally cancels selection-feedback spans when the selected list
+The retained workspace-redraw proxy p95 was 61.21 ms; actual highlight latency
+was not measured. The local scenario intentionally cancels selection-feedback spans when the selected list
 row is offscreen; only its reader/header endpoints are assessed. Local header
 p95 was 110.86 ms. Preparation itself remained cheap: 501 preparations at p95
 0.460 ms; 209 list projections at p95 1.921 ms.
