@@ -77,6 +77,7 @@ final class NavigationPerformance {
     enum Counter: String, Codable, Sendable {
         case preparedCacheHit, preparedCacheMiss, renderStarted, renderCancelled
         case webViewCreated, webViewDestroyed, heightReport, thumbnailDecoded
+        case mailRowConstructed, mailRowBodyEvaluated
     }
 
     private struct Pending {

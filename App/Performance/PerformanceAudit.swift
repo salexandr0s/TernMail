@@ -96,6 +96,20 @@ enum PerformanceAudit {
             writeFailure("Audit never obtained foreground activation and a key window; no timings were accepted.")
             return
         }
+        let previousRowConstructionHook = ThreadListView.onRowContentBuild
+        let previousRowBodyHook = MessageListRow.onBodyEvaluation
+        ThreadListView.onRowContentBuild = { [weak mailbox] source, _ in
+            guard source === mailbox else { return }
+            NavigationPerformance.shared.increment(.mailRowConstructed)
+        }
+        MessageListRow.onBodyEvaluation = { [weak mailbox] source, _, _ in
+            guard source === mailbox else { return }
+            NavigationPerformance.shared.increment(.mailRowBodyEvaluated)
+        }
+        defer {
+            ThreadListView.onRowContentBuild = previousRowConstructionHook
+            MessageListRow.onBodyEvaluation = previousRowBodyHook
+        }
         let heartbeat = PerformanceMainThreadAudit()
         let initialMemory = NavigationPerformance.physicalFootprint()
         let count = max(100, min(1_000, argumentInteger("--performance-iterations=") ?? 100))
@@ -393,6 +407,10 @@ enum PerformanceAudit {
             }
         }
         performance.reset()
+        // Reset after warmup; an explicit zero distinguishes no work from an
+        // unavailable measurement. These counters do not measure native List diff CPU.
+        performance.increment(.mailRowConstructed, by: 0)
+        performance.increment(.mailRowBodyEvaluated, by: 0)
         var failures = 0
         var completed = 0
         var failureReason: String?
