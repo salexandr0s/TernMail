@@ -22,13 +22,15 @@ struct ReceivedAttachmentsView: View {
     @State private var savedFiles: [String: URL] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Divider()
             HStack {
                 Label(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments", systemImage: "paperclip")
                     .font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 Spacer()
                 if attachments.count > 1 {
-                    Button("Save All…") { saveAll() }.font(.callout)
+                    Button("Save All…") { saveAll() }
+                        .controlSize(.small)
                         .disabled(isSavingAll)
                 }
             }
@@ -71,7 +73,7 @@ struct ReceivedAttachmentsView: View {
                 }
             }
         }
-        .padding(.top, Tokens.Space.s1)
+        .padding(.top, Tokens.Space.s3)
         .quickLookPreview($previewURL, in: previewItems)
         .protectAttachmentPreview(previewURL)
         .accessibilityElement(children: .contain)

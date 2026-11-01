@@ -62,9 +62,14 @@ actor AuditGmail: GmailService {
             userLabels = [UserLabel(id: "Label_1", name: "Projects")]
         }
         if ProcessInfo.processInfo.arguments.contains("--ui-audit-list") {
+            userLabels += [
+                UserLabel(id: "Label_2", name: "Field research"),
+                UserLabel(id: "Label_3", name: "Equipment planning"),
+            ]
+            nextLabel = 4
             mail += [
-                Message(id: "list1", thread: "list1", subject: "Planning the next field visit and reviewing the equipment checklist", text: "Please review the route and let us know which equipment you can bring.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], from: "Alexandra Morgan and the field research team <team@example.invalid>"),
-                Message(id: "list2", thread: "list1", subject: "Planning the next field visit and reviewing the equipment checklist", text: "The revised checklist is ready for review.", html: false, labels: ["INBOX", "UNREAD", "STARRED"], from: "Alexandra Morgan and the field research team <team@example.invalid>"),
+                Message(id: "list1", thread: "list1", subject: "Planning the next field visit and reviewing the equipment checklist", text: "Please review the route and let us know which equipment you can bring.", html: false, labels: ["INBOX", "UNREAD", "STARRED", "Label_1", "Label_2", "Label_3"], from: "Alexandra Morgan and the field research team <team@example.invalid>", attachment: "Field visit equipment checklist and route notes.txt"),
+                Message(id: "list2", thread: "list1", subject: "Planning the next field visit and reviewing the equipment checklist", text: "The revised checklist is ready for review.", html: false, labels: ["INBOX", "UNREAD", "STARRED", "Label_1", "Label_2", "Label_3"], from: "Alexandra Morgan and the field research team <team@example.invalid>"),
                 Message(id: "list3", thread: "list2", subject: "", text: "", html: false, labels: ["INBOX"], from: "Sam <sam@example.invalid>"),
                 Message(id: "list4", thread: "list3", subject: "Workshop registration", text: "Your place is confirmed. The workshop starts at nine.", html: false, labels: ["INBOX", "UNREAD"], from: "Community workshop <workshop@example.invalid>"),
                 Message(id: "list5", thread: "list4", subject: "Notes from Monday", text: "Here are the notes and next steps from our conversation.", html: false, labels: ["INBOX"], from: "Rowan <rowan@example.invalid>"),

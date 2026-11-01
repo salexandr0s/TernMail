@@ -481,41 +481,58 @@ private struct ThreadHeading: View {
     var messageID: String? = nil
 
     var body: some View {
-        FlowLayout(spacing: Tokens.Space.s2) {
-            Text(detail.thread.subject.isEmpty ? "No Subject" : detail.thread.subject)
-                .font(.title2.weight(.semibold))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(chips, id: \.id) { label in
-                if label.id == SystemLabel.inbox {
-                    LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive", showTitle: "Show Inbox",
-                              showsRemoveButton: false, onShow: { show(label.id) }) {
-                        if let messageID { mailbox.performReadingAction(.archive, name: "Archive", messageID: messageID, accountID: key.accountID) }
-                        else { mailbox.perform(.archive, on: [key]) }
-                    }
-                } else {
-                    let icon = LabelAppearance.shared.icon(for: label)
-                    LabelChip(
-                        name: label.name, symbol: icon == "tag" ? "tag.fill" : icon,
-                        tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label", showTitle: "Show Label",
-                        onShow: { show(label.id) }
-                    ) {
-                        if let messageID { mailbox.removeReadingLabel(label.id, messageID: messageID, accountID: key.accountID) }
-                        else { mailbox.removeLabel(label.id, from: key) }
-                    }
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                Text(detail.thread.subject.isEmpty ? "No Subject" : detail.thread.subject)
+                    .font(.title2.weight(.semibold))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
+                let canPrint = !detail.messages.contains { $0.body == nil }
+                Menu {
+                    Button("Print Conversation…") { printConversation() }
+                    Button("Export Conversation as PDF…") { printConversation(pdf: true) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("Conversation actions")
+                .disabled(!canPrint)
+                .help(canPrint ? "Print or export the conversation" : "Print after all message bodies have loaded")
+            }
+            if !chips.isEmpty {
+                FlowLayout(spacing: Tokens.Space.s1_5) {
+                    labelChips
                 }
             }
-            let canPrint = !detail.messages.contains { $0.body == nil }
-            Menu {
-                Button("Print Conversation…") { printConversation() }
-                Button("Export Conversation as PDF…") { printConversation(pdf: true) }
-            } label: { Image(systemName: "ellipsis.circle") }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden)
-            .accessibilityLabel("Conversation actions")
-            .disabled(!canPrint)
-            .help(canPrint ? "Print or export the conversation" : "Print after all message bodies have loaded")
         }
         .padding(.bottom, Tokens.Space.s0_5)
+    }
+
+    private var labelChips: some View {
+        ForEach(chips, id: \.id) { label in
+            if label.id == SystemLabel.inbox {
+                LabelChip(name: "Inbox", symbol: "tray", tint: .accentColor, removeHelp: "Archive", showTitle: "Show Inbox",
+                          showsRemoveButton: false, onShow: { show(label.id) }) {
+                    if let messageID { mailbox.performReadingAction(.archive, name: "Archive", messageID: messageID, accountID: key.accountID) }
+                    else { mailbox.perform(.archive, on: [key]) }
+                }
+            } else {
+                let icon = LabelAppearance.shared.icon(for: label)
+                LabelChip(
+                    name: label.name, symbol: icon == "tag" ? "tag.fill" : icon,
+                    tint: Color(gmailHex: label.backgroundColor) ?? .secondary, removeHelp: "Remove Label", showTitle: "Show Label",
+                    onShow: { show(label.id) }
+                ) {
+                    if let messageID { mailbox.removeReadingLabel(label.id, messageID: messageID, accountID: key.accountID) }
+                    else { mailbox.removeLabel(label.id, from: key) }
+                }
+            }
+        }
     }
 
     /// Show Label and Show Inbox take the main window to that mailbox.

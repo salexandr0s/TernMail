@@ -126,17 +126,34 @@ struct MessageListRow: View {
     }
 
     private var detailLine: some View {
-        HStack(spacing: Tokens.Space.s1) {
-            ForEach(Array(displayedLabels.prefix(2)), id: \.id) { label in
+        let labels = displayedLabels
+        return HStack(spacing: Tokens.Space.s1) {
+            ForEach(Array(labels.prefix(2)), id: \.id) { label in
                 let icon = LabelAppearance.shared.icon(for: label)
                 TernBadge(text: label.title, systemImage: icon == "tag" ? "tag.fill" : icon,
                           tint: Color(gmailHex: label.backgroundColor) ?? .secondary)
             }
+            if labels.count > 2 {
+                Text("+\(labels.count - 2)")
+                    .font(scaledFont(.caption1).monospacedDigit())
+                    .fixedSize()
+                    .help(labels.dropFirst(2).map(\.title).joined(separator: ", "))
+            }
             if let attachment = item.attachments.first {
-                Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType)).font(scaledFont(.caption1))
-                    .lineLimit(1).help(attachment.filename)
-                if item.attachments.count > 1 {
-                    Text("+\(item.attachments.count - 1)").font(scaledFont(.caption1).monospacedDigit()).fixedSize()
+                if labels.isEmpty {
+                    Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType))
+                        .font(scaledFont(.caption1))
+                        .lineLimit(1).help(attachment.filename)
+                    if item.attachments.count > 1 {
+                        Text("+\(item.attachments.count - 1)")
+                            .font(scaledFont(.caption1).monospacedDigit()).fixedSize()
+                    }
+                } else {
+                    Label("\(item.attachments.count)", systemImage: "paperclip")
+                        .font(scaledFont(.caption1).monospacedDigit())
+                        .fixedSize()
+                        .help(item.attachments.map(\.filename).joined(separator: "\n"))
+                        .accessibilityLabel(item.attachments.map(\.filename).joined(separator: ", "))
                 }
             }
         }

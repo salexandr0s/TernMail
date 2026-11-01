@@ -25,17 +25,16 @@ struct MessageListHeader: View {
     private var actionHeader: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if mailbox.listPreferences.showsQuickFilters {
-                ScrollView(.horizontal) {
-                    HStack(spacing: Tokens.Space.s1) {
-                        ForEach(MailQuickFilter.allCases) { filter in
-                            Toggle(isOn: Bindable(mailbox.listPreferences).filters.contains(filter)) {
-                                Label(filter.title, systemImage: filter.symbol)
-                            }
-                                .toggleStyle(.button).controlSize(.small).help(filter.title)
-                        }
-                        if !mailbox.listPreferences.filters.isEmpty {
-                            Button("Clear") { mailbox.listPreferences.filters = [] }.controlSize(.small)
-                        }
+                HStack(spacing: Tokens.Space.s2) {
+                    ViewThatFits(in: .horizontal) {
+                        quickFilters.labelStyle(.titleAndIcon).fixedSize()
+                        quickFilters.labelStyle(.iconOnly).fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                    if !mailbox.listPreferences.filters.isEmpty {
+                        Button("Clear") { mailbox.listPreferences.filters = [] }
+                            .controlSize(.small)
+                            .fixedSize()
                     }
                 }
             }
@@ -48,6 +47,20 @@ struct MessageListHeader: View {
                     }
                     .controlSize(.small).disabled(mailbox.triage.isPreparing)
                 }
+            }
+        }
+    }
+
+    private var quickFilters: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            ForEach(MailQuickFilter.allCases) { filter in
+                Toggle(isOn: Bindable(mailbox.listPreferences).filters.contains(filter)) {
+                    Label(filter.title, systemImage: filter.symbol)
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help(filter.title)
+                .accessibilityLabel(filter.title)
             }
         }
     }
