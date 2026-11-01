@@ -194,7 +194,28 @@ not exercise the actions.
 The audit also supports a reader-only scope with 100 recent selections and
 100 locally stored messages requiring preparation. Local selections are spaced
 beyond neighbor prefetch, and validation requires actual preparation misses.
-Reader timing remains unmeasured until that foreground run completes.
+The first complete run at `cee3a90-dirty` passed all 200 visibility checks with
+zero failures, but missed the latency targets:
+
+| Reader tier | Samples | p50 | p95 | p99 |
+| --- | --- | --- | --- | --- |
+| Retained renderer | 100 | 326.27 ms | 353.63 ms | 404.70 ms |
+| Local preparation miss | 100 | 699.93 ms | 959.37 ms | 987.06 ms |
+
+Retained selection feedback p95 was 308.83 ms even though its data-ready marker
+arrived within 0.009 ms in every sample. HTML preparation p95 was 0.527 ms across
+501 preparations; the local run also prepares neighbors. The heartbeat recorded
+333 stalls of at least 100 ms, max 396.85 ms. This points to main-thread display
+and scheduling work rather than expensive HTML preparation. Retained navigation
+kept two WebViews attached with no creates or destroys; the local scenario kept
+three, creating 100 and destroying 99 as expected while cycling the cache.
+Raw results, stage distributions and exact dirty-source provenance are retained
+under `evidence/20261101T112207Z-100-reader-only-normal/`. No profiler ran during
+this measurement. GPU presentation remains unmeasured.
+
+A subsequent Time Profiler launch attempt failed to connect to DTServiceHub.
+The exported trace has zero duration and no process or data tables; it provides
+no performance evidence. Process sampling is the current profiling fallback.
 
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
@@ -219,7 +240,7 @@ needs a clean final result.
 The expanded synthetic transport/corpus suite passed seven optimized tests, and
 navigation diagnostics passed nine. The retained-reader focus regression passed
 in a background window; internal WebKit descendant focus still needs foreground
-validation. Actual reader latency, scrolling targets, active-sync/offline timing,
+validation. Reader latency is measured above and fails; scrolling targets, active-sync/offline timing,
 memory plateau, and the final installed universal Release remain unverified.
 Foreground testing was authorized and the completed mode run is recorded above.
 
