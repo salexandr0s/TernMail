@@ -108,13 +108,30 @@ of 1,458.2 ms. Warm switches did not repeat calendar or mail-list preparation.
 Process samples instead showed repeated native hosting-view layout, key-view-loop
 work, and toolbar updates. A background structural test preserved both mail-table
 identities and scroll offsets and recorded no transient table or probe detachments.
-It did not reproduce the foreground layout cost or establish an opacity fix.
+Attachment counters alone did not explain the layout cost. A subsequent
+background test forced graph updates and reproduced heavy main-thread CPU work.
+Neither nonzero inactive opacity nor disabling automatic key-loop recalculation
+removed that work, so neither is a production remedy.
+
+Isolating the mail columns from toolbar inputs passed background checks for
+Outbox, search, reader selection and reader-pane visibility. Early Debug controls
+forced extra layout passes; their numbers do not represent navigation latency.
+The optimized control using natural layout invalidation recorded 281–295 ms of
+Mail CPU and 137–152 ms of Calendar CPU outside the sampled interval. Inset
+publications stayed at zero. This hosted default fixture also emits SceneStorage
+warnings and differs from the large foreground corpus. These are diagnostic CPU
+measurements, not foreground navigation percentiles. Remaining toolbar/layout
+cost is still under investigation.
 
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
 `/tmp/tern-performance-audit-build/reports/20261101T004216Z-workspace-diagnostic/`.
 Background retention test logs are in
 `/tmp/tern-workspace-retention-verification-2/test.log`.
+The background CPU baseline and column-isolation results are in
+`/tmp/tern-workspace-background-cpu-2/test.log` and
+`/tmp/tern-workspace-isolation-verification/test.log`.
+The optimized control is in `/tmp/tern-performance-release-background-4/`.
 A copy of these reports, the original process samples, and the final Core log is
 kept in `~/.codex/backups/tern-performance-20261101/evidence/`.
 
@@ -123,6 +140,9 @@ The full Core suite passed 590 tests in 101 suites
 reader lifecycle/viewport tests passed focused hosted runs. The full hosted suite
 still needs a clean final run: the sidebar's native focus/resize test has been
 interrupted by foreground changes and has also exposed a geometry settle delay.
-Actual reader latency, scrolling targets, active-sync/offline scenarios, memory
-plateau, and the final installed universal Release remain unverified. The user
+The expanded synthetic transport/corpus suite passed seven optimized tests, and
+navigation diagnostics passed eight. The retained-reader focus regression passed
+in a background window; internal WebKit descendant focus still needs foreground
+validation. Actual reader latency, scrolling targets, active-sync/offline timing,
+memory plateau, and the final installed universal Release remain unverified. The user
 requested background work while foreground timing runs are deferred.
