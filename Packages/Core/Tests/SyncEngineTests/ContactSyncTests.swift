@@ -22,6 +22,28 @@ private let day: TimeInterval = 24 * 60 * 60
         #expect(try await state(cache, .other)?.syncToken == "kept")
     }
 
+    @Test func addingProfileSourcesResyncsOnlyOtherContactsBeforeUsingTheNewToken() async throws {
+        let (engine, cache, _, people, clock, _) = try await makeContactsEngine()
+        try await seedState(cache, .connection, token: "saved", fields: PeopleClient.fields, fullSyncAt: baseDate)
+        try await seedState(cache, .other, token: "contact-only", fields: PeopleClient.fields, fullSyncAt: baseDate)
+        await people.fail("otherContacts full", with: GmailError.http(status: 400, reason: nil))
+
+        await #expect(throws: GmailError.http(status: 400, reason: nil)) { try await engine.syncContacts() }
+        #expect(try await state(cache, .other)?.syncToken == "contact-only")
+        #expect(try await state(cache, .other)?.fields == PeopleClient.fields)
+        // A failed migration keeps the old state but must never send its token
+        // with the new sources, including while the full-sync quota is held.
+        try await engine.syncContacts()
+        #expect(await people.calls(.otherContacts) == ["full"])
+
+        clock.advance(day)
+        try await engine.syncContacts()
+        #expect(try await state(cache, .other)?.fields == PeopleClient.Source.otherContacts.syncSignature)
+        try await engine.syncContacts()
+        #expect(await people.calls(.otherContacts) == ["full", "full", "otherContacts-1"])
+        #expect(await people.calls(.connections) == ["saved", "connections-1", "connections-2", "connections-3"])
+    }
+
     @Test func aRejectedTokenCountsAsExpiredOnlyOnceItIsSevenDaysOld() async throws {
         let (engine, cache, _, people, clock, _) = try await makeContactsEngine()
         try await seedState(cache, .connection, token: "t", fullSyncAt: baseDate.addingTimeInterval(-day))
@@ -153,10 +175,11 @@ func makeContactsEngine() async throws -> (SyncEngine, MailCache, AccountStore, 
 
 /// Stores a source's state as a full sync at `fullSyncAt` would leave it.
 private func seedState(
-    _ cache: MailCache, _ source: ContactSource, token: String, fields: String = PeopleClient.fields, fullSyncAt: Date
+    _ cache: MailCache, _ source: ContactSource, token: String, fields: String? = nil, fullSyncAt: Date
 ) async throws {
     try await cache.write { tx in
-        try tx.applyContactSync([], source: source, syncToken: token, fields: fields, isFullSync: true, now: fullSyncAt, accountID: account)
+        try tx.applyContactSync([], source: source, syncToken: token, fields: fields ?? source.peopleSource.syncSignature,
+            isFullSync: true, now: fullSyncAt, accountID: account)
     }
 }
 

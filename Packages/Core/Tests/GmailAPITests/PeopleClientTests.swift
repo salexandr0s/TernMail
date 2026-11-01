@@ -33,29 +33,39 @@ import Testing
         #expect(firstQuery["personFields"] == ["names,emailAddresses,metadata,photos"])
         #expect(firstQuery["pageSize"] == ["1000"])
         #expect(firstQuery["requestSyncToken"] == ["true"])
+        #expect(firstQuery["sources"] == nil)
         #expect(firstQuery["syncToken"] == nil && firstQuery["pageToken"] == nil)
         #expect(secondQuery.removeValue(forKey: "pageToken") == ["p2"])
         firstQuery.removeValue(forKey: "pageToken")
         #expect(firstQuery == secondQuery)
     }
 
-    @Test func anIncrementalSyncSendsItsTokenOnEveryPageAndMarksDeletedPeople() async throws {
+    @Test(arguments: [false, true])
+    func otherContactSyncIncludesProfilesAndKeepsItsParametersAcrossPages(incremental: Bool) async throws {
         let first = #"{"otherContacts": [{"resourceName": "otherContacts/c1", "metadata": {"deleted": true}}], "nextPageToken": "p2"}"#
         let last = #"{"otherContacts": [{"resourceName": "otherContacts/c2", "names": [{"displayName": "Bo"}]}], "nextSyncToken": "s2"}"#
         let (people, transport, _) = client([.init(status: 200, body: first), .init(status: 200, body: last)])
 
-        let sync = try await people.sync(.otherContacts, syncToken: "s1")
+        let token = incremental ? "s1" : nil
+        let sync = try await people.sync(.otherContacts, syncToken: token)
         #expect(sync.people.map(\.isDeleted) == [true, false])
         #expect(sync.syncToken == "s2")
 
         let requests = await transport.requests
+        #expect(requests.count == 2)
         #expect(requests.allSatisfy { $0.url?.path == "/v1/otherContacts" })
         for request in requests {
             let items = query(request)
-            #expect(items["syncToken"] == ["s1"])
+            #expect(items["syncToken"] == token.map { [$0] })
             #expect(items["requestSyncToken"] == ["true"])
             #expect(items["readMask"] == ["names,emailAddresses,metadata,photos"])
+            #expect(items["sources"] == ["READ_SOURCE_TYPE_CONTACT", "READ_SOURCE_TYPE_PROFILE"])
         }
+        var firstQuery = query(requests[0])
+        var secondQuery = query(requests[1])
+        #expect(secondQuery.removeValue(forKey: "pageToken") == ["p2"])
+        firstQuery.removeValue(forKey: "pageToken")
+        #expect(firstQuery == secondQuery)
     }
 
     @Test(arguments: [400, 410])

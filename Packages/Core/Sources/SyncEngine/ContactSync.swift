@@ -68,12 +68,12 @@ extension SyncEngine {
     }
 
     /// Runs an incremental sync while the token is usable, and a full sync
-    /// when there is none, when it was issued for other fields, when it is 7
+    /// when there is none, when its request parameters changed, when it is 7
     /// days old, or when Google says it expired.
     private func syncContacts(from source: ContactSource, using people: any PeopleService) async throws {
         let accountID = accountID
         let state = try await cache.read { tx in try tx.contactSync(source: source, accountID: accountID) }
-        let token = state?.fields == PeopleClient.fields ? state?.syncToken : nil
+        let token = state?.fields == source.peopleSource.syncSignature ? state?.syncToken : nil
         let isTokenOld = state.map { now().timeIntervalSince($0.lastFullSyncAt) >= Self.contactTokenLifetime } ?? true
         if token == nil || isTokenOld {
             if try await fullContactSync(source, using: people) { return }
@@ -120,7 +120,7 @@ extension SyncEngine {
         let (accountID, now) = (accountID, now())
         try await write { tx in
             try tx.applyEnrichedContactSync(
-                sync.people, source: source, syncToken: sync.syncToken, fields: PeopleClient.fields,
+                sync.people, source: source, syncToken: sync.syncToken, fields: source.peopleSource.syncSignature,
                 isFullSync: isFullSync, now: now, accountID: accountID
             )
         }
