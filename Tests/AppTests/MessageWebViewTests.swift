@@ -46,11 +46,12 @@ import WebKit
         let suite = "MessageWebViewTests.\(UUID().uuidString)"
         let settings = try #require(UserDefaults(suiteName: suite))
         settings.set(true, forKey: ReadingPreferences.adaptDarkKey)
+        settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
         settings.set("", forKey: ReadingPreferences.lightBackgroundSendersKey)
         settings.set(false, forKey: DomainLogoImages.preferenceKey)
         defer { settings.removePersistentDomain(forName: suite) }
         let controller = NSHostingController(rootView: ThreadView(key: key, mailbox: mailbox,
-            selectedMessageID: "m1", isReaderActive: false).environment(app).defaultAppStorage(settings))
+            selectedMessageID: "m1", isReaderActive: true).environment(app).defaultAppStorage(settings))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
