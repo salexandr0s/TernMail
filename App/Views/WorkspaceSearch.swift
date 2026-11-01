@@ -18,17 +18,21 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     var isFolded = false
 
     var body: some CustomizableToolbarContent {
-        // Keeps the field out of the capsule of the actions before it.
+        // Search gets more separation than the gaps between action groups.
+        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(id: "workspace.search", placement: .primaryAction) {
             WorkspaceSearchItem(
                 placeholder: placeholder, text: text, focusRequest: focusRequest,
-                width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth, canFold: isFolded,
+                // Reserve the added gaps within the regular search width.
+                width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth - 2 * Tokens.Space.s2,
+                canFold: isFolded,
                 onChange: update, onSubmit: submit, onCancel: cancel
             )
             .help(help)
         }
         .customizationBehavior(.disabled)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
     }
 
     private var placeholder: String {

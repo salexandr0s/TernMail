@@ -479,12 +479,14 @@ import Testing
     ) async throws {
         window.setContentSize(NSSize(width: width, height: 760))
         let space = NSToolbarItem.Identifier.space.rawValue
+        // Search has a second space after the final action group.
+        let expectedBeforeSpaces = expected + [space]
         let search = "workspace.search"
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         var visible: [String] = []
         var beforeSpaces: [String] = []
         func settled() -> Bool {
-            beforeSpaces == expected && visible.contains(search) && hidden.isDisjoint(with: visible)
+            beforeSpaces == expectedBeforeSpaces && visible.contains(search) && hidden.isDisjoint(with: visible)
         }
         repeat {
             try await settle()
@@ -495,7 +497,7 @@ import Testing
                 .prefix(while: { $0 != search })
             beforeSpaces = zip(sectionItems, sectionItems.dropFirst()).compactMap { $1 == space ? $0 : nil }
         } while !settled() && ContinuousClock.now < deadline
-        #expect(beforeSpaces == expected, "Items before each space at width \(Int(width)): \(visible)")
+        #expect(beforeSpaces == expectedBeforeSpaces, "Items before each space at width \(Int(width)): \(visible)")
         #expect(visible.contains(search), "Search must stay out of the overflow menu at width \(Int(width)): \(visible)")
         #expect(hidden.isDisjoint(with: visible), "Hidden items shown at width \(Int(width)): \(visible)")
     }
