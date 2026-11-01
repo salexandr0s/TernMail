@@ -92,8 +92,10 @@ The rollback bundle is kept outside the repository.
 
 Initial process samples identified substantial main-thread SwiftUI/AppKit layout
 work and repeated calendar timestamp parsing. Xcode 26.3 Instruments reported
-the local macOS 27.2 target offline and failed to connect to DTServiceHub. Actual
-presented-frame measurements remain unverified until that connection works.
+the local macOS 27.2 target offline and failed to connect to DTServiceHub. A later
+device listing succeeded, but recording still rejected a verified live synthetic
+test PID despite its debugging entitlement. Actual presented-frame measurements
+remain unverified until recording works.
 
 The first foreground optimized run on November 1, 2026 completed 96 of 100
 programmatic mode switches before another app took focus. It used 106 calendar
