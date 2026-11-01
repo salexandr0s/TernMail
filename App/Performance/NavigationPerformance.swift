@@ -22,7 +22,13 @@ enum NavigationCacheTier: String, Codable, Sendable { case retained, prepared, l
 /// GPU presentation and missed frames are measured separately in Instruments.
 @MainActor
 final class NavigationPerformance {
-    static let shared = NavigationPerformance()
+    nonisolated static let rowFeedbackDiagnosticsEnabled: Bool = {
+        let arguments = ProcessInfo.processInfo.arguments
+        return arguments.contains("--performance-audit") || arguments.contains {
+            $0.hasPrefix("--navigation-report=") && !$0.dropFirst("--navigation-report=".count).isEmpty
+        }
+    }()
+    static let shared = NavigationPerformance(selectionFeedbackEnabled: rowFeedbackDiagnosticsEnabled)
 
     enum Outcome: String, Codable, Sendable { case visibleCommit, superseded, cancelled, timedOut }
     enum TimingOrigin: String, Codable, Sendable { case input, programmatic }
@@ -66,12 +72,30 @@ final class NavigationPerformance {
 
     struct Report: Codable, Sendable {
         let endpoint: String
+        let selectionFeedbackMeasurement: SelectionFeedbackMeasurement
         let records: [Record]
         let summaries: [String: Summary]
         let processingSummaries: [String: Summary]
         let stageSummaries: [String: Summary]
         let counters: [String: Int]
         let physicalFootprintBytes: UInt64?
+    }
+
+    enum SelectionFeedbackEndpoint: String, Codable, Sendable {
+        case disabled, selectedNativeRowDrawingProxyV1
+    }
+
+    struct SelectionFeedbackMeasurement: Codable, Sendable {
+        let endpoint: SelectionFeedbackEndpoint
+        let limitation: String
+        let registeredProbeCount: Int
+        let windowAttachedProbeCount: Int
+        let currentlyEligibleProbeCount: Int
+    }
+
+    private final class WeakFeedbackProbe {
+        weak var value: VisibleContentProbe.ProbeView?
+        init(_ value: VisibleContentProbe.ProbeView) { self.value = value }
     }
 
     enum Counter: String, Codable, Sendable {
@@ -100,6 +124,8 @@ final class NavigationPerformance {
     private(set) var records: [Record] = []
     private var counters: [Counter: Int] = [:]
     private let capacity: Int
+    let selectionFeedbackEnabled: Bool
+    private var feedbackProbes: [ObjectIdentifier: WeakFeedbackProbe] = [:]
     private var inputMonitor: Any?
     private var inputSerial: UInt64 = 0
     private var currentInput: (serial: UInt64, started: ContinuousClock.Instant, queueDelay: Double)?
@@ -108,7 +134,31 @@ final class NavigationPerformance {
     private var reportExportGeneration = UUID()
     private var reportRevision: UInt64 = 0
 
-    init(capacity: Int = 4_096) { self.capacity = max(1, capacity) }
+    init(capacity: Int = 4_096, selectionFeedbackEnabled: Bool = false) {
+        self.capacity = max(1, capacity)
+        self.selectionFeedbackEnabled = selectionFeedbackEnabled
+    }
+
+    func registerFeedbackProbe(_ probe: VisibleContentProbe.ProbeView) {
+        guard selectionFeedbackEnabled else { return }
+        feedbackProbes = feedbackProbes.filter { $0.value.value != nil }
+        feedbackProbes[ObjectIdentifier(probe)] = WeakFeedbackProbe(probe)
+    }
+
+    func unregisterFeedbackProbe(_ probe: VisibleContentProbe.ProbeView) {
+        feedbackProbes.removeValue(forKey: ObjectIdentifier(probe))
+    }
+
+    private func feedbackMeasurement() -> SelectionFeedbackMeasurement {
+        feedbackProbes = feedbackProbes.filter { $0.value.value != nil }
+        let probes = feedbackProbes.values.compactMap(\.value)
+        return SelectionFeedbackMeasurement(
+            endpoint: selectionFeedbackEnabled ? .selectedNativeRowDrawingProxyV1 : .disabled,
+            limitation: "Selected native row state plus its local probe drawing callback and a main-queue turn; not the row's drawSelection callback or GPU presentation. Legacy workspace-probe samples are not comparable.",
+            registeredProbeCount: probes.count,
+            windowAttachedProbeCount: probes.filter { $0.window != nil }.count,
+            currentlyEligibleProbeCount: probes.filter { $0.isVisibleContent }.count)
+    }
 
     /// Captures timing only; neither keys, characters, locations nor targets are read.
     func installInputMonitoring() {
@@ -153,6 +203,12 @@ final class NavigationPerformance {
 
     @discardableResult
     func begin(_ kind: NavigationInteractionKind, destination: String? = nil) -> UInt64 {
+        if kind == .selectionFeedback, !selectionFeedbackEnabled {
+            // Reserve an identity for callers, without creating a normal-launch
+            // pending interaction, signpost, or redraw notification.
+            nextGeneration &+= 1
+            return nextGeneration
+        }
         finish(kind, outcome: .superseded)
         nextGeneration &+= 1
         // Never allow an arbitrary label, subject, address, or query into reports.
@@ -228,6 +284,7 @@ final class NavigationPerformance {
 
     func waitForCompletion(_ kind: NavigationInteractionKind, generation: UInt64,
                            timeout: Duration = .seconds(5)) async -> Record? {
+        if kind == .selectionFeedback, !selectionFeedbackEnabled { return nil }
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while !Task.isCancelled, ContinuousClock.now < deadline {
             if let result = records.last(where: { $0.generation == generation }) { return result }
@@ -253,7 +310,8 @@ final class NavigationPerformance {
             guard let summary = Summary(SpanRecorder.shared.records(for: span).map { Self.milliseconds($0.duration) }) else { return nil }
             return (span.rawValue, summary)
         })
-        return Report(endpoint: "input timestamp or programmatic selection to ready-content native drawing commit; GPU presentation requires Instruments",
+        return Report(endpoint: "input timestamp or programmatic selection to ready-content native drawing commit; see selectionFeedbackMeasurement for its distinct proxy; GPU presentation requires Instruments",
+                      selectionFeedbackMeasurement: feedbackMeasurement(),
                       records: records, summaries: groups.compactMapValues(Summary.init),
                       processingSummaries: processing.compactMapValues(Summary.init),
                       stageSummaries: stageSummaries,

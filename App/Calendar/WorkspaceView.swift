@@ -95,7 +95,7 @@ private struct MailWorkspacePerformance: View {
     }
 
     var body: some View {
-        VisibleContentProbe(kinds: [.workspace, .mailbox, .selectionFeedback],
+        VisibleContentProbe(kinds: [.workspace, .mailbox],
             isActive: ready, revision: mailbox.listPresentationRevision)
         .onChange(of: ready, initial: true) { _, value in
             if value { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained) }

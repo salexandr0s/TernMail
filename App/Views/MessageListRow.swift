@@ -34,6 +34,11 @@ struct MessageListRow: View {
         #endif
         MessageListVisualRow(item: item, mailbox: mailbox, selected: isSelected,
             dateKey: ThreadDate.short(item.thread.lastDate), accountMark: accountMark, accountColor: accountColor)
+            .background {
+                if NavigationPerformance.rowFeedbackDiagnosticsEnabled {
+                    RowSelectionFeedbackDiagnostic(mailbox: mailbox, row: item.id)
+                }
+            }
     }
 
     /// VoiceOver reads the row as one line: state first, then who, what and when.
@@ -52,6 +57,35 @@ struct MessageListRow: View {
         if !labels.isEmpty { parts.append("labels " + labels.joined(separator: ", ")) }
         if let account { parts.append("in \(account)") }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// Stable per-realized-row native probes exist only for explicit diagnostics.
+/// Keep their observation dependencies outside the actual visual row content.
+private struct RowSelectionFeedbackDiagnostic: View {
+    @Environment(AppModel.self) private var app
+    let mailbox: MailboxModel
+    let row: MailListRowID
+
+    private static func isCurrent(app: AppModel, mailbox: MailboxModel, accountOwner: AccountMailbox,
+                                  row: MailListRowID) -> Bool {
+        guard app.destination == .mail, app.mailbox === mailbox,
+              mailbox.account(id: row.accountID) === accountOwner else { return false }
+        if mailbox.listPreferences.conversations {
+            return mailbox.selectedThreadIDs.count == 1 && mailbox.selectedThreadIDs.contains(row.threadKey)
+        }
+        return mailbox.selectedMessageRows.count == 1 && mailbox.selectedMessageRows.contains(row)
+    }
+
+    var body: some View {
+        if let accountOwner = mailbox.account(id: row.accountID) {
+            VisibleContentProbe(selectedRow: .init(identity: .init(owner: ObjectIdentifier(mailbox),
+                accountOwner: ObjectIdentifier(accountOwner), row: row),
+                isCurrent: { [weak app, weak mailbox, weak accountOwner, row] in
+                    guard let app, let mailbox, let accountOwner else { return false }
+                    return Self.isCurrent(app: app, mailbox: mailbox, accountOwner: accountOwner, row: row)
+                }), isActive: Self.isCurrent(app: app, mailbox: mailbox, accountOwner: accountOwner, row: row))
+        }
     }
 }
 
