@@ -496,12 +496,19 @@ import Testing
         #expect(response.value(forHTTPHeaderField: "X-Content-Type-Options") == "nosniff")
         let html = try #require(String(data: data, encoding: .utf8))
         for value in sensitiveValues { #expect(!html.contains(value)) }
+        let logoURL = try #require(Bundle.main.url(forResource: "TernSignInLogo", withExtension: "png"))
+        let bundledLogo = try Data(contentsOf: logoURL)
+        let imageStart = try #require(html.range(of: "src=\"data:image/png;base64,"))
+        let imageEnd = try #require(html.range(of: "\"", range: imageStart.upperBound..<html.endIndex))
+        let embeddedLogo = try #require(Data(base64Encoded: String(html[imageStart.upperBound..<imageEnd.lowerBound])))
+        #expect(Array(embeddedLogo.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10])
+        #expect(SHA256.hash(data: embeddedLogo) == SHA256.hash(data: bundledLogo))
         let styleStart = try #require(html.range(of: "<style>"))
         let styleEnd = try #require(html.range(of: "</style>", range: styleStart.upperBound..<html.endIndex))
         let emittedStyle = Data(html[styleStart.upperBound..<styleEnd.lowerBound].utf8)
         let styleHash = Data(SHA256.hash(data: emittedStyle)).base64EncodedString()
         let policy = try #require(response.value(forHTTPHeaderField: "Content-Security-Policy"))
-        #expect(policy == "default-src 'none'; style-src 'sha256-\(styleHash)'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+        #expect(policy == "default-src 'none'; style-src 'sha256-\(styleHash)'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         return html
     }
 
