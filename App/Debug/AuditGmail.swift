@@ -43,6 +43,7 @@ actor AuditGmail: GmailService {
     private let performanceTransport: PerformanceAuditTransport?
     private let performanceAccountID: String
     private let hasPerformanceCorpus: Bool
+    private let beforeFullThread: (@Sendable (String) async throws -> Void)?
 
     private var version = 200
     private let referenceDate = Date.now
@@ -65,9 +66,11 @@ actor AuditGmail: GmailService {
     }
 
     init(_ account: Account = .first, performanceTransport: PerformanceAuditTransport? = nil,
-         performanceFixtureCount: Int? = nil) {
+         performanceFixtureCount: Int? = nil,
+         beforeFullThread: (@Sendable (String) async throws -> Void)? = nil) {
         let performance = ProcessInfo.processInfo.arguments.contains("--performance-audit")
         self.performanceTransport = performanceTransport ?? (performance ? .shared : nil)
+        self.beforeFullThread = beforeFullThread
         performanceAccountID = account == .first ? "ui-audit" : "ui-audit-2"
         hasPerformanceCorpus = performance || performanceFixtureCount != nil
         if hasPerformanceCorpus {
@@ -236,6 +239,7 @@ actor AuditGmail: GmailService {
     }
 
     func thread(id: String, format: MessageFormat) async throws -> GmailThread {
+        if format == .full { try await beforeFullThread?(id) }
         _ = try await performanceTransport?.request(format == .full ? .body : .metadata)
         let result = try threadValue(id: id, format: format)
         if format == .full {

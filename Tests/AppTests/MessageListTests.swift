@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GmailAPI
 import MailStore
 import MessageContent
 import Observation
@@ -9,7 +10,7 @@ import Synchronization
 import Testing
 @testable import Tern
 
-@Suite @MainActor struct MessageListTests {
+@Suite(.serialized) @MainActor struct MessageListTests {
     @Test func openingAMessageWindowUsesTheClickedRowRatherThanTheSelection() async throws {
         let (mailbox, _) = try await fixture()
         defer { Task { await mailbox.stop() } }
@@ -555,6 +556,176 @@ import Testing
         #expect(table.selectedRowIndexes == indexes(for: [sibling]))
     }
 
+    /// Exercises production mail columns and reader lifecycle in a background window.
+    @Test func productionMailColumnsSelectBeforeBodyDeliveryAndPreserveSelectionAfterLateCompletion() async throws {
+        let gate = SelectionBodyGate()
+        let gmail = AuditGmail(performanceFixtureCount: 200, beforeFullThread: { id in
+            try await gate.wait(id, priority: GmailRequestBudget.priority)
+        })
+        let first = MailListRowID(accountID: "ui-audit", threadID: "performance-thread-1")
+        let second = MailListRowID(accountID: "ui-audit", threadID: "performance-thread-3")
+        let messageIDs = [first: "performance-1", second: "performance-3"]
+        _ = await gmail.modifyThreads(ids: [first.threadID, second.threadID], addLabelIDs: [SystemLabel.unread], removeLabelIDs: [])
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            for (index, row) in [first, second].enumerated() {
+                guard let messageID = messageIDs[row] else { continue }
+                let message = MessageRecord(accountID: row.accountID, id: messageID, threadID: row.threadID, historyID: 200,
+                    date: Date(timeIntervalSince1970: Double(2 - index)), snippet: "Synthetic delayed content",
+                    sender: "Sender <sender@example.invalid>", recipients: "me@example.invalid", cc: nil,
+                    subject: "Delayed message \(index)", sizeEstimate: 1)
+                try tx.upsertMessages([.init(record: message, labelIDs: [SystemLabel.inbox, SystemLabel.unread])])
+                try tx.rebuildThreads([row.threadID], accountID: row.accountID)
+            }
+        }
+        let suite = "tern.selection.loading." + UUID().uuidString
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
+        settings.set(false, forKey: MailWindowPreferences.hidesReaderKey)
+        let preferences = MessageListPreferences(defaults: settings)
+        let account = AccountRecord(id: first.accountID, email: "me@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: gmail,
+            outgoingDirectory: FileManager.default.temporaryDirectory, syncEnabled: false, listPreferences: preferences)
+        var sharedLoad: Task<Bool, Never>?
+        defer {
+            sharedLoad?.cancel()
+            Task { await gate.cancelAll(); await mailbox.stop() }
+            settings.removePersistentDomain(forName: suite)
+        }
+        await mailbox.start()
+        try await awaitListState("two delayed-reader rows", details: { "rows=\(mailbox.listItems.map(\.id))" }) {
+            mailbox.isListPresentationReady && Set(mailbox.listItems.map(\.id)) == [first, second]
+        }
+
+        var rendered: [MailListRowID: MessageListRow.RenderState] = [:]
+        let oldBodyHook = MessageListRow.onBodyEvaluation
+        MessageListRow.onBodyEvaluation = { owner, id, state in
+            oldBodyHook?(owner, id, state)
+            if owner === mailbox { rendered[id] = state }
+        }
+        defer { MessageListRow.onBodyEvaluation = oldBodyHook }
+        let app = AppModel()
+        let controller = NSHostingController(rootView: SelectionMailColumns(mailbox: mailbox)
+            .frame(width: 1_280, height: 760).environment(app).defaultAppStorage(settings))
+        let window = SelectionReaderWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderBack(nil)
+        defer { window.close() }
+        func listProbes(in view: NSView) -> [MailColumnProbe.ProbeView] {
+            if let probe = view as? MailColumnProbe.ProbeView {
+                return probe.pane == .list && probe.window === window ? [probe] : []
+            }
+            return view.subviews.flatMap { listProbes(in: $0) }
+        }
+        func nativeTable() -> NSTableView? {
+            let probes = listProbes(in: controller.view)
+            guard probes.count == 1, let probe = probes.first else { return nil }
+            var column: NSView = probe
+            while let parent = column.superview {
+                if let split = parent as? NSSplitView, split.isVertical {
+                    guard !split.isSubviewCollapsed(column) else { return nil }
+                    let tables = listTables(in: column)
+                    return tables.count == 1 ? tables.first : nil
+                }
+                column = parent
+            }
+            return nil
+        }
+        try await awaitListState("production mail-columns native table", details: {
+            "rows=\(nativeTable()?.numberOfRows ?? -1), viewport=\(String(describing: nativeTable()?.visibleRect))"
+                + ", listProbes=\(listProbes(in: controller.view).count), allTableRows=\(listTables(in: controller.view).map(\.numberOfRows))"
+        }) { nativeTable()?.numberOfRows == 2 && (nativeTable()?.visibleRect.width ?? 0) > 200 }
+        let table = try #require(nativeTable())
+        let scroll = try #require(table.enclosingScrollView)
+        func selected(_ row: MailListRowID) -> Bool {
+            guard let index = mailbox.listItems.firstIndex(where: { $0.id == row }),
+                  let nativeRow = table.rowView(atRow: index, makeIfNecessary: false) else { return false }
+            return nativeTable() === table && table.enclosingScrollView === scroll
+                && table.selectedRowIndexes == IndexSet(integer: index) && nativeRow.isSelected
+                && nativeRow.window === window && table.rect(ofRow: index).intersects(table.visibleRect)
+                && mailbox.selectedListRowIDs == [row] && rendered[row]?.selected == true
+                && rendered[row == first ? second : first]?.selected != true
+        }
+        func bodyExists(_ row: MailListRowID) async throws -> Bool {
+            let messageID = try #require(messageIDs[row])
+            return try await cache.read { try $0.body(messageID: messageID, accountID: row.accountID) != nil }
+        }
+
+        // A second reader may already own this foreground load. Keeping that
+        // known waiter alive makes A's late completion deterministic, without
+        // guessing whether an unobserved task joined before selection changed.
+        sharedLoad = Task { await mailbox.open(first.threadKey, markRead: false) }
+        try await awaitLoadingState("shared A fetch held") { await gate.started(first.threadID, priority: .interactive) }
+        #expect(try await !bodyExists(first))
+        let firstIndex = try #require(mailbox.listItems.firstIndex { $0.id == first })
+        table.selectRowIndexes(IndexSet(integer: firstIndex), byExtendingSelection: false)
+        try await awaitListState("native A selected while body is blocked", details: { "native=\(table.selectedRowIndexes), model=\(mailbox.selectedListRowIDs)" }) {
+            selected(first)
+        }
+        #expect(try await !bodyExists(first))
+
+        mailbox.selectListRows([second])
+        let generation = try #require(NavigationPerformance.shared.currentGeneration(for: .reader))
+        func selectedReaderHasReadableContent() -> Bool {
+            let performance = NavigationPerformance.shared
+            return performance.isReady(.reader, generation: generation)
+                || performance.records.contains { $0.kind == .reader && $0.generation == generation && $0.outcome == .visibleCommit }
+        }
+        defer {
+            NavigationPerformance.shared.cancel(.reader, generation: generation)
+            NavigationPerformance.shared.cancel(.readerHeader)
+            NavigationPerformance.shared.cancel(.selectionFeedback)
+        }
+        // syncEnabled:false also disables speculative prefetch. The interactive
+        // request is a positive witness that the mounted reader actually ran.
+        try await awaitLoadingState("selected B foreground fetch held") { await gate.started(second.threadID, priority: .interactive) }
+        try await awaitListState("native B selected before either body arrives", details: { "native=\(table.selectedRowIndexes), model=\(mailbox.selectedListRowIDs)" }) {
+            selected(second)
+        }
+        #expect(try await !bodyExists(first))
+        #expect(try await !bodyExists(second))
+        #expect(!selectedReaderHasReadableContent())
+
+        // An active-reader read change is the positive control for the hidden
+        // reader's absence of effects. Timer cancellation has separate coverage.
+        settings.set(ReadingPreferences.MarkRead.immediately.rawValue, forKey: ReadingPreferences.markReadKey)
+        try await awaitLoadingState("only active B is marked read") {
+            try await cache.read { tx in
+                try tx.currentLabels(threadID: second.threadID, accountID: second.accountID)["performance-3"]?.contains(SystemLabel.unread) == false
+            }
+        }
+        await gate.release(first.threadID)
+        #expect(await sharedLoad?.value == true)
+        try await awaitLoadingState("older A body really published") { try await bodyExists(first) }
+        #expect(try await !bodyExists(second))
+        try await awaitListState("late A completion preserves native B", details: { "native=\(table.selectedRowIndexes), model=\(mailbox.selectedListRowIDs)" }) {
+            selected(second)
+        }
+
+        await gate.release(second.threadID)
+        try await awaitLoadingState("B body delivered and current reader reports readable content") {
+            try await bodyExists(second) && selectedReaderHasReadableContent()
+        }
+        try await awaitListState("completed B remains selected", details: { "native=\(table.selectedRowIndexes), model=\(mailbox.selectedListRowIDs)" }) {
+            selected(second)
+        }
+        let actions = try await cache.read { try $0.allActions(accountID: first.accountID) }
+        #expect(!actions.contains { $0.threadIDs.contains(first.threadID) || $0.messageIDs.contains("performance-1") })
+        #expect(actions.contains { $0.threadIDs.contains(second.threadID) && $0.removeLabelIDs.contains(SystemLabel.unread) })
+        #expect(try await cache.read {
+            try $0.currentLabels(threadID: first.threadID, accountID: first.accountID)["performance-1"]?.contains(SystemLabel.unread)
+        } == true)
+    }
+
+    private func awaitLoadingState(_ phase: String, sourceLocation: SourceLocation = #_sourceLocation,
+                                   _ condition: () async throws -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while try await !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(try await condition(), "\(phase)", sourceLocation: sourceLocation)
+    }
+
     private func listTables(in view: NSView) -> [NSTableView] {
         if let table = view as? NSTableView { return [table] }
         return view.subviews.flatMap { listTables(in: $0) }
@@ -680,3 +851,73 @@ import Testing
         return (mailbox, cache)
     }
 }
+
+#if DEBUG || TERN_PERFORMANCE
+private struct SelectionMailColumns: View {
+    let mailbox: MailboxModel
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var sidebarWidth = Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter
+    @State private var paneSizing = AssistantMailPaneSizing()
+    @State private var toolbarInset = ClippedSplitToolbarInset()
+    @FocusState private var outboxFocused: Bool
+
+    var body: some View {
+        MailColumnsContent(mailbox: mailbox,
+            identity: .init(columnVisibility: columnVisibility, showsReader: true, showsAssistant: false,
+                topInset: toolbarInset.top, outboxFocused: outboxFocused),
+            columnVisibility: $columnVisibility, sidebarColumnWidth: $sidebarWidth,
+            outboxFocused: $outboxFocused, paneSizing: paneSizing, toolbarInset: toolbarInset)
+            .equatable()
+            .navigationSplitViewStyle(.balanced)
+    }
+}
+
+/// Simulates a visible reader without activating or raising the test window.
+/// This tests native selection and loading order, not onscreen pixels or latency.
+@MainActor private final class SelectionReaderWindow: NSWindow {
+    override var occlusionState: NSWindow.OcclusionState { .visible }
+}
+
+private actor SelectionBodyGate {
+    private var starts: [String: Set<GmailRequestBudget.Priority>] = [:]
+    private var released: Set<String> = []
+    private var waiters: [String: [UUID: CheckedContinuation<Void, any Error>]] = [:]
+
+    func started(_ id: String, priority: GmailRequestBudget.Priority) -> Bool {
+        starts[id]?.contains(priority) == true
+    }
+
+    func wait(_ id: String, priority: GmailRequestBudget.Priority) async throws {
+        try Task.checkCancellation()
+        starts[id, default: []].insert(priority)
+        guard !released.contains(id) else { return }
+        let token = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+                else { waiters[id, default: [:]][token] = continuation }
+            }
+            try Task.checkCancellation()
+        } onCancel: {
+            Task { await self.cancel(id, token: token) }
+        }
+    }
+
+    func release(_ id: String) {
+        released.insert(id)
+        for continuation in waiters.removeValue(forKey: id)?.values ?? [:].values { continuation.resume() }
+    }
+
+    func cancelAll() {
+        let pending = waiters
+        waiters = [:]
+        for group in pending.values {
+            for continuation in group.values { continuation.resume(throwing: CancellationError()) }
+        }
+    }
+
+    private func cancel(_ id: String, token: UUID) {
+        waiters[id]?.removeValue(forKey: token)?.resume(throwing: CancellationError())
+    }
+}
+#endif
