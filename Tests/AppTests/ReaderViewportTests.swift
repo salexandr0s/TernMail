@@ -81,7 +81,7 @@ import WebKit
         let settings = try #require(UserDefaults(suiteName: suite))
         settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
         settings.set(2.0, forKey: ReadingPreferences.readDelayKey)
-        let hiddenWindow = makeWindow(ReaderViewportHarness(state: ReaderViewportState(key: hidden), mailbox: mailbox)
+        let hiddenWindow = makeWindow(ConversationWindow(link: MailLink(accountID: hidden.accountID, threadID: hidden.threadID))
             .environment(app).defaultAppStorage(settings))
         try await waitUntil { !self.messageViews(in: hiddenWindow.contentView).isEmpty }
         settings.set(ReadingPreferences.MarkRead.delayed.rawValue, forKey: ReadingPreferences.markReadKey)
