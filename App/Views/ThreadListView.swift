@@ -216,7 +216,6 @@ struct ThreadListView: View {
                     accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
                 )
                     .tag(row.id)
-                    .listRowInsets(EdgeInsets())
                     .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
                     // Only the first targeted row anchors the snooze popover.
                     .popover(isPresented: snoozeAnchor == row.id ? $mailbox.snoozeDateTargets.isPresent() : .constant(false),
@@ -239,6 +238,9 @@ struct ThreadListView: View {
             }
             // Restart row appearance and pagination when entering or leaving search.
             .id(isSearching)
+            // Apply outside the row wrappers so the native list receives these insets.
+            // The column's resize gutter stays outside the list.
+            .listRowInsets(.horizontal, -Tokens.Space.s2)
             if !rows.isEmpty {
                 if isSearching {
                     let gmail = mailbox.search.gmailState
