@@ -719,6 +719,71 @@ import Testing
         } == true)
     }
 
+    @Test(arguments: [true, false])
+    func pagePublicationNotifiesSelectionOnlyWhenAccountQualifiedRowsAreRemoved(conversations: Bool) async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = conversations
+        try await cache.write { tx in
+            let message = MessageRecord(accountID: "b", id: "m1", threadID: "t", historyID: 1,
+                date: Date(timeIntervalSince1970: 3), snippet: "", sender: "Other <other@example.invalid>",
+                recipients: "second@example.invalid", cc: nil, subject: "Other account", sizeEstimate: 1)
+            try tx.upsertMessages([.init(record: message, labelIDs: [SystemLabel.inbox])])
+            try tx.rebuildThreads(["t"], accountID: "b")
+        }
+        let account = AccountRecord(id: "b", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(account, gmail: AuditGmail(), syncEnabled: false)
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await awaitListState("two account-qualified conversations", details: {
+            "threads=\(mailbox.threads.map(\.key)), entries=\(mailbox.listEntries.count)"
+        }) { mailbox.isListPresentationReady && mailbox.threads.count == 2 && mailbox.listEntries.count == 3 }
+        let first = MailListRowID(accountID: "a", threadID: "t", messageID: conversations ? nil : "m1")
+        let survivor = MailListRowID(accountID: "b", threadID: "t", messageID: conversations ? nil : "m1")
+        let selection: Set<MailListRowID> = [first, survivor]
+        mailbox.selectListRows(selection)
+        let selectedThreads = mailbox.selectedThreadIDs
+        let selectedMessages = mailbox.selectedMessageRows
+        let threadNotifications = Mutex(0), messageNotifications = Mutex(0)
+        withObservationTracking { _ = mailbox.selectedThreadIDs } onChange: { threadNotifications.withLock { $0 += 1 } }
+        withObservationTracking { _ = mailbox.selectedMessageRows } onChange: { messageNotifications.withLock { $0 += 1 } }
+        let revision = mailbox.listPresentationRevision
+        let attachment = AttachmentRecord(accountID: "a", messageID: "m1", partID: "file", attachmentID: "remote",
+            filename: "arrived.txt", mimeType: "text/plain", size: 20, isInline: false)
+        try await cache.write { tx in try tx.replaceAttachments([attachment], messageID: "m1", accountID: "a") }
+        try await awaitListState("real attachment publication with unchanged selection", details: {
+            "revision=\(mailbox.listPresentationRevision), attachments=\(mailbox.listEntries.flatMap(\.attachments))"
+        }) {
+            mailbox.listPresentationRevision != revision
+                && mailbox.listEntries.first { $0.message.accountID == "a" && $0.message.id == "m1" }?.attachments == [attachment]
+        }
+        #expect(mailbox.listItems.first { $0.id == first }?.attachments == [attachment])
+        #expect(mailbox.selectedListRowIDs == selection)
+        #expect(mailbox.selectedThreadIDs == selectedThreads && mailbox.selectedMessageRows == selectedMessages)
+        #expect(threadNotifications.withLock { $0 } == 0, "An attachment arrival must not republish unchanged conversation selection")
+        #expect(messageNotifications.withLock { $0 } == 0, "An attachment arrival must not republish unchanged message selection")
+
+        let prunedThreads = Mutex(0), prunedMessages = Mutex(0)
+        withObservationTracking { _ = mailbox.selectedThreadIDs } onChange: { prunedThreads.withLock { $0 += 1 } }
+        withObservationTracking { _ = mailbox.selectedMessageRows } onChange: { prunedMessages.withLock { $0 += 1 } }
+        let removalRevision = mailbox.listPresentationRevision
+        try await cache.write { tx in
+            let affected = try tx.deleteMessages(ids: ["m1", "m2"], accountID: "a")
+            try tx.rebuildThreads(affected, accountID: "a")
+        }
+        try await awaitListState("removed account A selection leaves same-ID account B selected", details: {
+            "threads=\(mailbox.threads.map(\.key)), selection=\(mailbox.selectedListRowIDs)"
+        }) {
+            mailbox.listPresentationRevision != removalRevision && mailbox.isListPresentationReady
+                && mailbox.threads.map(\.key) == [survivor.threadKey]
+                && mailbox.listEntries.count == 1 && mailbox.listEntries.first?.message.accountID == "b"
+        }
+        #expect(mailbox.selectedListRowIDs == [survivor])
+        #expect(mailbox.selectedThreadIDs == [survivor.threadKey])
+        #expect(mailbox.selectedMessageRows == (conversations ? [] : [survivor]))
+        #expect(prunedThreads.withLock { $0 } == 1, "A removed conversation must invalidate selection")
+        #expect(prunedMessages.withLock { $0 } == (conversations ? 0 : 1), "Only a previously selected message must be pruned")
+    }
+
     private func awaitLoadingState(_ phase: String, sourceLocation: SourceLocation = #_sourceLocation,
                                    _ condition: () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))

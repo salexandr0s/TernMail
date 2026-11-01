@@ -994,7 +994,8 @@ final class MailboxModel {
         }
         listChanged()
         let validRows = Set(listItems.map(\.id))
-        selectedMessageRows.formIntersection(validRows)
+        let retainedRows = selectedMessageRows.intersection(validRows)
+        if retainedRows != selectedMessageRows { selectedMessageRows = retainedRows }
         isListPresentationReady = true
     }
 
@@ -1144,7 +1145,8 @@ final class MailboxModel {
     /// list shows so expired search holds don't drop it.
     private func listChanged() {
         let threads = listedThreads
-        selectedThreadIDs.formIntersection(threads.map(\.key))
+        let retainedThreads = selectedThreadIDs.intersection(threads.map(\.key))
+        if retainedThreads != selectedThreadIDs { selectedThreadIDs = retainedThreads }
         let shown = Dictionary(grouping: threads, by: \.accountID)
         for account in accounts {
             account.engine.setVisibleThreads(Set(shown[account.account.id, default: []].map(\.id)))
