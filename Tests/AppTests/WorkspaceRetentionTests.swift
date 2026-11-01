@@ -1,0 +1,302 @@
+import AppKit
+import Darwin
+import MailStore
+import SwiftUI
+import Testing
+@testable import Tern
+
+/// Inspect native attachment in a background window. These are functional
+/// checks; background layout in an occluded window cannot measure visible latency.
+@Suite(.serialized) @MainActor struct WorkspaceRetentionTests {
+    @Test
+    func switchingModesPreservesNativeMailState() async throws {
+        let configuration = "normal"
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"),
+            "Workspace tests require isolated synthetic accounts")
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        app.destination = .mail
+        let loaded = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < loaded {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+
+        let suite = "WorkspaceRetentionTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        defer { settings.removePersistentDomain(forName: suite) }
+        let controller = NSHostingController(rootView:
+            WorkspaceView(mailbox: mailbox)
+                .environment(app).defaultAppStorage(settings))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.toolbar = NSToolbar(identifier: "\(MailWindowPreferences.toolbarID).\(UUID().uuidString)")
+        window.toolbarStyle = .unified
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: 1_280, height: 760))
+        window.autorecalculatesKeyViewLoop = true
+        window.orderBack(nil)
+        defer { window.close() }
+
+        var mailTables: [NSTableView] = []
+        let nativeDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            try await settle(controller.view, in: window)
+            mailTables = tablesInMailColumns(of: controller.view)
+        } while (mailTables.count < 2 || mailTables.contains { $0.numberOfRows == 0 })
+            && ContinuousClock.now < nativeDeadline
+        try #require(mailTables.count >= 2, "The background window must materialize the native Mail lists")
+        try #require(mailTables.allSatisfy { $0.window === window && $0.numberOfRows > 0 })
+        let scrolls = try mailTables.map { try #require($0.enclosingScrollView) }
+        for scroll in scrolls {
+            let clip = scroll.contentView
+            let documentHeight = scroll.documentView?.bounds.height ?? 0
+            let y = min(120, max(0, documentHeight - clip.bounds.height))
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(clip)
+        }
+        try await settle(controller.view, in: window)
+        let offsets = scrolls.map { $0.contentView.bounds.origin }
+        let tableCounters = mailTables.map { table in
+            let counter = NativeWindowMoveCounter(frame: .zero)
+            table.addSubview(counter)
+            return counter
+        }
+        let probes = descendants(of: controller.view).compactMap { $0 as? MailColumnProbe.ProbeView }
+        let toolbarInset = try #require(probes.first?.toolbarInset)
+        let visibleProbes = descendants(of: controller.view).compactMap { $0 as? VisibleContentProbe.ProbeView }
+        let mailboxProbes = visibleProbes.filter { $0.kinds.contains(.mailbox) }
+        try #require(!mailboxProbes.isEmpty && mailboxProbes.allSatisfy { $0.isActive },
+            "The native Mail probes must reflect the initial active destination")
+        try await waitFor(controller.view, in: window, expecting: "Initial visible Mail toolbar") {
+            toolbarShows(.mail, in: window)
+        }
+        let initialToolbar = toolbarViews(in: window)
+        try #require(toolbarShows(.mail, in: window),
+            "The background window must materialize visible Mail controls without Calendar controls")
+        let mailCounts = { probes.map { NativeMoves($0.windowAttachmentCount, $0.windowDetachmentCount, $0.superviewMoveCount) } }
+        let visibleCounts = { visibleProbes.map { NativeMoves($0.windowAttachmentCount, $0.windowDetachmentCount, $0.superviewMoveCount) } }
+        let tableCounts = { tableCounters.map { NativeMoves($0.attachments, $0.detachments, 0) } }
+        let initialMailCounts = mailCounts()
+        let initialVisibleCounts = visibleCounts()
+        let initialTableCounts = tableCounts()
+
+        app.destination = .calendar
+        try await waitFor(controller.view, in: window, expecting: "Initial switch to Calendar") {
+            mailboxProbes.allSatisfy { !$0.isActive } && toolbarShows(.calendar, in: window)
+        }
+        try #require(mailboxProbes.allSatisfy { !$0.isActive },
+            "The background native graph must apply the switch to Calendar")
+        try #require(toolbarShows(.calendar, in: window),
+            "The background toolbar must show Calendar controls and hide Mail controls")
+        let attachedWhileInactive = mailTables.filter { $0.window === window }.count
+        let inactiveOffsets = scrolls.map { $0.contentView.bounds.origin }
+        print("WORKSPACE_RETENTION: config=\(configuration), attached while inactive=\(attachedWhileInactive)/\(mailTables.count), offsets preserved=\(offsetsMatch(offsets, inactiveOffsets))")
+        #expect(attachedWhileInactive == mailTables.count)
+        #expect(offsetsMatch(offsets, inactiveOffsets))
+
+        app.destination = .mail
+        try await waitFor(controller.view, in: window, expecting: "Initial return to Mail") {
+            mailboxProbes.allSatisfy { $0.isActive } && toolbarShows(.mail, in: window)
+        }
+        try #require(mailboxProbes.allSatisfy { $0.isActive },
+            "The background native graph must apply the return to Mail")
+        try #require(toolbarShows(.mail, in: window),
+            "The background toolbar must restore Mail controls and hide Calendar controls")
+        let returnedTables = tablesInMailColumns(of: controller.view)
+        for (index, table) in mailTables.enumerated() {
+            #expect(returnedTables.contains { $0 === table }, "Returning to Mail must reuse its native table")
+            #expect(table.window === window)
+            #expect(table.enclosingScrollView === scrolls[index])
+        }
+        #expect(offsetsMatch(offsets, scrolls.map { $0.contentView.bounds.origin }),
+            "Returning to Mail must preserve list scroll offsets")
+        print("WORKSPACE_NATIVE_MOVES: config=\(configuration), Mail probes=\(changes(mailCounts(), since: initialMailCounts)), content probes=\(changes(visibleCounts(), since: initialVisibleCounts)), native tables=\(changes(tableCounts(), since: initialTableCounts))")
+        let returnedToolbar = toolbarViews(in: window)
+        let replacedToolbarViews = initialToolbar.keys.filter { key in
+            returnedToolbar[key] != nil && initialToolbar[key] !== returnedToolbar[key]
+        }.sorted()
+        print("WORKSPACE_TOOLBAR_REPLACED: config=\(configuration), items=\(replacedToolbarViews)")
+
+        // Thread CPU includes work performed between these awaits, but excludes
+        // the settling sleeps. This compares background layout work only.
+        var mailCPU: [Double] = []
+        var calendarCPU: [Double] = []
+        print("WORKSPACE_CORPUS: config=\(configuration), accounts=\(mailbox.accounts.count), mailRows=\(mailbox.listItems.count), nativeTableRows=\(mailTables.map(\.numberOfRows)), calendarEvents=\(app.calendar.events.count)")
+        print("WORKSPACE_LAYOUT_POLICY: natural invalidation; no explicit needsLayout")
+        print("WORKSPACE_WARM_SAMPLE_READY: pid=\(ProcessInfo.processInfo.processIdentifier), config=\(configuration)")
+        fflush(nil)
+        try await Task.sleep(for: .seconds(2))
+        print("WORKSPACE_WARM_SAMPLE_BEGIN: pid=\(ProcessInfo.processInfo.processIdentifier), config=\(configuration)")
+        fflush(nil)
+        for _ in 0..<12 {
+            for destination in [WorkspaceDestination.calendar, .mail] {
+                let previousPublications = toolbarInset.diagnosticPublicationCount
+                let started = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+                app.destination = destination
+                try await waitFor(controller.view, in: window, expecting: "Warm switch to \(destination.rawValue)") {
+                    let mailIsActive = destination == .mail
+                    return mailboxProbes.allSatisfy { $0.isActive == mailIsActive }
+                        && toolbarShows(destination, in: window)
+                }
+                let milliseconds = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - started) / 1_000_000
+                if destination == .mail { mailCPU.append(milliseconds) } else { calendarCPU.append(milliseconds) }
+                let publications = toolbarInset.diagnosticPublications.filter { $0.sequence > previousPublications }
+                    .map { "\($0.top)@\($0.source)" }
+                print("WORKSPACE_INSET: config=\(configuration), destination=\(destination.rawValue), publications=\(toolbarInset.diagnosticPublicationCount - previousPublications), values=\(publications)")
+            }
+        }
+        print("WORKSPACE_WARM_SAMPLE_END: pid=\(ProcessInfo.processInfo.processIdentifier), config=\(configuration)")
+        fflush(nil)
+        print("WORKSPACE_BACKGROUND_CPU_MS: config=\(configuration), automatic key loop=\(window.autorecalculatesKeyViewLoop), Mail=\(mailCPU.map { String(format: "%.1f", $0) }), Calendar=\(calendarCPU.map { String(format: "%.1f", $0) })")
+        try await verifyObservableUpdates(mailbox: mailbox, settings: settings,
+            root: controller.view, window: window)
+        await app.signOut()
+    }
+
+    private func settle(_ view: NSView, in window: NSWindow) async throws {
+        for _ in 0..<4 {
+            window.layoutIfNeeded()
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+        }
+    }
+
+    private func offsetsMatch(_ lhs: [NSPoint], _ rhs: [NSPoint]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { abs($0.x - $1.x) < 1 && abs($0.y - $1.y) < 1 }
+    }
+
+    private func tablesInMailColumns(of view: NSView) -> [NSTableView] {
+        descendants(of: view).compactMap { $0 as? MailColumnProbe.ProbeView }.flatMap { probe -> [NSTableView] in
+            var column: NSView = probe
+            while let parent = column.superview {
+                if let split = parent as? NSSplitView, split.isVertical {
+                    return split.isSubviewCollapsed(column) ? []
+                        : descendants(of: column).compactMap { $0 as? NSTableView }
+                }
+                column = parent
+            }
+            return []
+        }
+    }
+
+    private func descendants(of view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap { descendants(of: $0) }
+    }
+
+    private func toolbarViews(in window: NSWindow) -> [String: NSView] {
+        (window.toolbar?.items ?? []).reduce(into: [:]) { result, item in
+            if let view = item.view { result[item.itemIdentifier.rawValue] = view }
+        }
+    }
+
+    private func toolbarShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
+        let visibleIDs = (window.toolbar?.visibleItems ?? []).compactMap { item -> String? in
+            guard let view = item.view, view.window === window,
+                  !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return nil }
+            var current: NSView? = view
+            while let ancestor = current {
+                guard ancestor.alphaValue > 0.01 else { return nil }
+                current = ancestor.superview
+            }
+            let frame = view.convert(view.bounds, to: nil)
+            guard frame.intersects(NSRect(origin: .zero, size: window.frame.size)) else { return nil }
+            return item.itemIdentifier.rawValue
+        }
+        let expected = destination == .mail ? "mail.compose" : "calendar.today"
+        let inactive = destination == .mail ? "calendar.today" : "mail.compose"
+        return visibleIDs.contains { $0.hasSuffix(expected) } && !visibleIDs.contains { $0.hasSuffix(inactive) }
+    }
+
+    /// These changes leave MailColumnsContent's explicit identity unchanged.
+    /// Its descendants must still receive their own model observations.
+    private func verifyObservableUpdates(mailbox: MailboxModel, settings: UserDefaults,
+                                         root: NSView, window: NSWindow) async throws {
+        let inbox = mailbox.selectedMailbox
+        let originalList = try #require(table(in: root, pane: .list))
+        mailbox.selectedMailbox = .combined(MailboxModel.outboxID)
+        try await waitFor(root, in: window, expecting: "Outbox replaces the mail list") {
+            guard let current = table(in: root, pane: .list) else { return false }
+            return current !== originalList && current.numberOfRows == mailbox.selectedOutbox.count
+        }
+        let outboxList = try #require(table(in: root, pane: .list))
+        mailbox.selectedMailbox = inbox
+        try await waitFor(root, in: window, expecting: "Inbox replaces the Outbox list") {
+            guard let current = table(in: root, pane: .list) else { return false }
+            return current !== outboxList && current.numberOfRows > 0
+        }
+        mailbox.search.update("workspace-no-match-\(UUID().uuidString)")
+        try await waitFor(root, in: window, expecting: "Search publishes empty results") {
+            mailbox.search.isActive && mailbox.listItems.isEmpty && table(in: root, pane: .list)?.numberOfRows == 0
+        }
+        mailbox.search.clear()
+        try await waitFor(root, in: window, expecting: "Clearing search restores mail rows") {
+            !mailbox.search.isActive && !mailbox.listItems.isEmpty && (table(in: root, pane: .list)?.numberOfRows ?? 0) > 0
+        }
+        settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
+        let selected = try #require(mailbox.listItems.first?.id.threadKey)
+        mailbox.selectedThreadIDs = [selected]
+        try await waitFor(root, in: window, expecting: "Selection presents a reader") {
+            descendants(of: root).contains { ($0 as? VisibleContentProbe.ProbeView)?.kind == .readerHeader }
+        }
+        mailbox.selectedThreadIDs = []
+        try await waitFor(root, in: window, expecting: "Clearing selection removes the reader") {
+            !descendants(of: root).contains { ($0 as? VisibleContentProbe.ProbeView)?.kind == .readerHeader }
+        }
+        settings.set(true, forKey: MailWindowPreferences.hidesReaderKey)
+        try await waitFor(root, in: window, expecting: "Hiding the reader creates two columns") { mailSplit(in: root)?.arrangedSubviews.count == 2 }
+        settings.set(false, forKey: MailWindowPreferences.hidesReaderKey)
+        try await waitFor(root, in: window, expecting: "Restoring the reader creates three columns") { mailSplit(in: root)?.arrangedSubviews.count == 3 }
+    }
+
+    private func waitFor(_ root: NSView, in window: NSWindow, expecting change: String, condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(6))
+        while !condition(), ContinuousClock.now < deadline { try await settle(root, in: window) }
+        try #require(condition(), "Background native content: \(change)")
+    }
+
+    private func table(in root: NSView, pane: AssistantMailPaneSizing.Pane) -> NSTableView? {
+        guard let probe = descendants(of: root).compactMap({ $0 as? MailColumnProbe.ProbeView }).first(where: { $0.pane == pane }) else { return nil }
+        var column: NSView = probe
+        while let parent = column.superview {
+            if let split = parent as? NSSplitView, split.isVertical {
+                return descendants(of: column).compactMap { $0 as? NSTableView }.first
+            }
+            column = parent
+        }
+        return nil
+    }
+
+    private func mailSplit(in root: NSView) -> NSSplitView? {
+        descendants(of: root).compactMap { $0 as? MailColumnProbe.ProbeView }
+            .first { $0.pane == .navigation }.flatMap { EnclosingSplitDivider(of: $0)?.split }
+    }
+
+    private func changes(_ values: [NativeMoves], since previous: [NativeMoves]) -> String {
+        zip(values, previous).map { current, prior in
+            "attach \(current.attachments - prior.attachments)/detach \(current.detachments - prior.detachments)/superview \(current.superview - prior.superview)"
+        }.joined(separator: ", ")
+    }
+
+    private struct NativeMoves {
+        let attachments: Int
+        let detachments: Int
+        let superview: Int
+        init(_ attachments: Int, _ detachments: Int, _ superview: Int) {
+            self.attachments = attachments; self.detachments = detachments; self.superview = superview
+        }
+    }
+
+    private final class NativeWindowMoveCounter: NSView {
+        private(set) var attachments = 0
+        private(set) var detachments = 0
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { detachments += 1 } else { attachments += 1 }
+        }
+    }
+}

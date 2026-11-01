@@ -95,11 +95,8 @@ private struct MailWorkspacePerformance: View {
     }
 
     var body: some View {
-        ZStack {
-            VisibleContentProbe(kind: .workspace, isActive: ready, revision: mailbox.listPresentationRevision)
-            VisibleContentProbe(kind: .mailbox, isActive: ready, revision: mailbox.listPresentationRevision)
-            VisibleContentProbe(kind: .selectionFeedback, isActive: ready, revision: mailbox.listPresentationRevision)
-        }
+        VisibleContentProbe(kinds: [.workspace, .mailbox, .selectionFeedback],
+            isActive: ready, revision: mailbox.listPresentationRevision)
         .onChange(of: ready, initial: true) { _, value in
             if value { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained) }
         }
