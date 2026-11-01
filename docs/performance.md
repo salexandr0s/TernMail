@@ -505,3 +505,48 @@ Root released this run at 18:48:14.810 UTC, too late in the user's
 15.85 seconds after the promised stop. The next runner must enforce an absolute
 availability deadline and reserve cleanup time. Evidence is preserved under
 `~/.codex/backups/tern-performance-20261101/evidence/tern-reader-session-partial-20261101T184736Z/`.
+
+The complete run on the same `a086e262` artifact at 19:21 UTC supersedes that
+partial run for acceptance. It completed 100 retained and 100 local selections
+with zero scenario failures, zero unexpected native input and no report error.
+The fixed-deadline runner released at 19:21:33.185 and confirmed the test PID
+gone at 19:22:28.377, inside the 19:21:14–19:23:14 availability window.
+
+| Measurement | Prior complete run p95 | Current p50 / p95 / p99 | Target result |
+| --- | ---: | ---: | --- |
+| Retained readable content | 90.71 ms | 53.91 / 60.73 / 66.09 ms | Pass: p95 ≤100 ms, p99 ≤200 ms |
+| Selected native row drawing proxy | 74.85 ms | 43.16 / 54.14 / 59.33 ms | Fail: p95 ≤50 ms |
+| Local content requiring preparation | 514.96 ms | 337.57 / 490.84 / 498.07 ms | Fail: p95 ≤200 ms |
+| Local header | 141.16 ms | 103.07 / 110.10 / 134.79 ms | Fail: p95 ≤100 ms |
+
+These are programmatic selections. The selected-row endpoint remains a native
+state/drawing proxy, not GPU presentation or physical input latency. The outer
+window/display geometry matched the prior complete `d3c105a` run, but attached
+probes differed (12 versus 11), and internal geometry was not recorded. The
+table is a descriptive comparison; it does not isolate the reader-store change's
+causal effect. The focused observation regressions independently establish that
+the change removes redundant notifications while preserving real updates.
+
+The retained scenario recorded zero row factories, 200 visual body evaluations,
+1,100 selection observers, 240 prepared hits, 100 height reports and two attached
+WebViews throughout. Prepared data remained 31,757 bytes. App footprint moved
+from 270.06 to 267.62 MB. Local openings recorded 118,800 row factories despite
+only one visual body evaluation, 501 preparation misses/renders, 100 WebViews
+created and 99 destroyed, with attached views moving from two to three. Local
+app footprint moved from 287.69 to 299.70 MB while the prepared/stored corpus grew.
+The final app footprints exceed the prior run's 246.97/261.74 MB; these single-run
+snapshots do not establish a causal memory regression or a plateau. Five possible
+WebKit subprocesses had no responsibility attribution and cannot be summed as
+the test app's children.
+
+Whole-run heartbeat recorded 127 of 983 gaps at least 100 ms, with a 220.66 ms
+maximum. This mixes phases and does not measure scrolling frame loss. Local
+preparation itself was short (501 spans, p95 0.47 ms); the resource stage's
+p95 was 153.67 ms, which includes waiting and delivery. Further attribution is
+needed before changing that path. Local list reconstruction remains a measured
+source of repeated work, with its contribution to elapsed time still unisolated.
+
+Raw reports, gate/cleanup records, validation and analysis are archived under
+`~/.codex/backups/tern-performance-20261101/evidence/tern-reader-session-reader-20261101T192114Z/`.
+Hover appearance, mode switching, scrolling and normal-mailbox verification
+remain incomplete. No new production build has been installed.
