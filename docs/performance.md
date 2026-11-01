@@ -465,8 +465,22 @@ It excludes the pending prefetch experiment and Stage A layout tracing. The
 normal hardened arm64 executable SHA-256 is
 `b31f96ae1f294aa31d406b1adb701a65d2719dae72632d9706afbcf4a503f11b`.
 Raw results, gate metadata and process reports are in
-`/tmp/tern-selection-feedback-runtime/reports/20261101T174918Z-100-reader-only-normal/`.
+`~/.codex/backups/tern-performance-20261101/evidence/tern-selection-feedback-reader-20261101T174918Z/`.
 The previous baseline did not capture geometry and used different diagnostics;
 reader differences cannot be attributed to the visual-row or hover change alone.
 The active selection-feedback goal remains incomplete, and the production app
 has not been replaced.
+
+The next candidate, `5fb16af`, removes redundant reader-store publications.
+Before the change, retained activation and no-op source restoration notified
+observers despite unchanged displayed membership and source-retention flags.
+The hidden-reader MRU suffix did change after activation, so simply suppressing
+notifications would have been wrong. The candidate predicts that order in the
+first presentation, keeps MRU bookkeeping unobserved, and publishes real
+membership/source changes. All four observation tests pass after reproducing
+two expected failures on the original code; the full focused run passed 31
+checks, including native selection before body delivery. Evidence is archived
+in `evidence/tern-reader-observation-baseline/` and
+`evidence/tern-reader-observation-candidate/` under the same backup root.
+This demonstrates fewer redundant notifications. Its effect on visible latency
+still needs a controlled Release comparison.
