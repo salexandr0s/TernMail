@@ -67,6 +67,24 @@ Tern currently observes selection inside the full visual row. Body-evaluation
 counts and CPU measurements will decide whether that further separation is
 needed after the list boundary works.
 
+A later diagnostic run completed 100 retained and 100 local selections, but a
+CUA inspection overlapped it, so its timings are excluded. Its structural
+counters show zero retained row factories and 118,800 local factories. Source
+analysis explains the local work through first-time attachment discovery:
+35, 75 and 99 changed rows in the retained 200/400/current 600-row pages sum to
+the recorded 209 projections. The active page's 99 updates times 600 rows times
+two passes exactly match the factory count. The updates carry new attachment
+metadata; existing duplicate suppression is working.
+
+The next bounded experiment retains immutable per-item construction identity
+behind a row-controls boundary, keeping the existing modifier order and live
+settings. It must show new attachments immediately and avoid rebuilding
+unchanged controls. The outer factory counter stays intact; a separate controls
+counter will measure the work moved behind the boundary. This experiment is
+not yet accepted. A subsequent gated run lost focus before 100 valid selections
+and also recorded unexpected selection transitions, so native rapid-navigation
+coverage is being extended before further performance acceptance.
+
 Mailspring similarly [constructs rows only for a viewport range with margins](https://github.com/Foundry376/Mailspring/blob/c84212a97df7bab464fbdc8a3a3368785c94af70/app/src/components/list-tabular.tsx#L265-L354)
 and [memoizes its row subtree](https://github.com/Foundry376/Mailspring/blob/c84212a97df7bab464fbdc8a3a3368785c94af70/app/src/components/list-tabular.tsx#L58-L108).
 This supports bounding row work. It does not justify replacing Tern's native
