@@ -6,6 +6,67 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func adjacentLocalDaysPrepareWithoutPublishingOrRequestingAndActivateWarm() async throws {
+        try await withFixture { fixture in
+            let center = try await fixture.cacheDayNeighborhood()
+            fixture.model.isVisible = true
+            await fixture.model.reloadOccurrences(refresh: false)
+            let visible = try #require(fixture.model.presentation?.id)
+            let revision = fixture.model.presentationRevision
+            let preparation = try #require(fixture.model.adjacentRangeTask?.task)
+            await preparation.value
+
+            #expect(fixture.model.presentation?.id == visible)
+            #expect(fixture.model.presentationRevision == revision)
+            #expect(fixture.model.rangeSnapshots.count == 3)
+            #expect(fixture.model.rangeSnapshots[fixture.model.rangeIdentity]?.presentation.id == visible)
+            #expect(fixture.model.rangeSnapshots.values.reduce(0) { $0 + $1.byteCost } <= 12 * 1_024 * 1_024)
+            for offset in [-1, 1] {
+                fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: offset, to: center))
+                let prepared = try #require(fixture.model.rangeSnapshots[fixture.model.rangeIdentity]?.presentation)
+                await fixture.model.activateRange()
+                #expect(fixture.model.presentation?.id == prepared.id)
+                #expect(fixture.model.events.map(\.event.id) == ["adjacent-\(offset)"])
+            }
+            #expect(await fixture.service.rangeRequestCount == 0)
+        }
+    }
+
+    @Test func incompleteAdjacentLocalDaysDoNotTriggerSpeculativeNetworkRequests() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "only-current")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            try await fixture.cacheRange([event])
+            fixture.model.isVisible = true
+            await fixture.model.reloadOccurrences(refresh: false)
+            await fixture.model.adjacentRangeTask?.task.value
+
+            #expect(fixture.model.rangeSnapshots.count == 1)
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 0)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func purgedAdjacentPreparationCannotRestoreSnapshots(revoked: Bool) async throws {
+        try await withFixture { fixture in
+            _ = try await fixture.cacheDayNeighborhood()
+            fixture.model.isVisible = true
+            await fixture.model.reloadOccurrences(refresh: false)
+            let preparation = try #require(fixture.model.adjacentRangeTask?.task)
+            let visible = fixture.model.presentation?.id
+            if revoked { fixture.model.accessExpired(fixture.accountID) }
+            else { fixture.model.invalidateRangeSnapshots() }
+            await preparation.value
+
+            #expect(fixture.model.rangeSnapshots.isEmpty)
+            #expect(fixture.model.adjacentRangeTask == nil)
+            if revoked { #expect(fixture.model.events.isEmpty) }
+            else { #expect(fixture.model.presentation?.id == visible) }
+        }
+    }
+
     @Test func searchCannotRestoreEventsWhenAccessChangesDuringRequest() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "search-private")
@@ -552,6 +613,21 @@ import Testing
             let state = try await store.syncState(accountID: accountID, calendarID: "work")
             try await store.saveOccurrences(events, accountID: accountID, calendarID: "work",
                 start: interval.start, end: interval.end, expected: state)
+        }
+
+        func cacheDayNeighborhood() async throws -> Date {
+            let center = try #require(CalendarModelTests.event().startDate)
+            model.mode = .day
+            for offset in -1...1 {
+                let start = try #require(model.calendar.date(byAdding: .day, value: offset, to: center))
+                model.date = start
+                var event = CalendarModelTests.event(id: "adjacent-\(offset)")
+                event.start = CalendarDateTime(date: start)
+                event.end = CalendarDateTime(date: start.addingTimeInterval(3_600))
+                try await cacheRange([event])
+            }
+            model.date = center
+            return center
         }
 
         func waitForSuspendedRange() async -> Bool {

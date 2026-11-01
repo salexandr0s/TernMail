@@ -35,7 +35,12 @@ final class CalendarModel {
     /// The window's undo manager, so Edit ▸ Undo names and reverts calendar changes.
     @ObservationIgnored weak var undoManager: UndoManager?
     var isVisible = false {
-        didSet { if oldValue != isVisible { schedulePolling() } }
+        didSet {
+            if oldValue != isVisible {
+                schedulePolling()
+                if !isVisible { cancelAdjacentRangePreparation() }
+            }
+        }
     }
     var accessRevision = 0
     var operations: [CalendarOperation] = [] {
@@ -90,6 +95,7 @@ final class CalendarModel {
     @ObservationIgnored var rangeSnapshots: [CalendarRangeIdentity: CalendarRangeSnapshot] = [:]
     @ObservationIgnored var rangeSnapshotOrder: [CalendarRangeIdentity] = []
     @ObservationIgnored var activeRangeTask: (key: CalendarRangeIdentity, id: UUID, task: Task<Void, Never>)?
+    @ObservationIgnored var adjacentRangeTask: (key: CalendarRangeIdentity, revision: Int, task: Task<Void, Never>)?
     @ObservationIgnored var completedSearch: CalendarSearchIdentity?
     @ObservationIgnored var searchCompletedAt: Date?
     @ObservationIgnored private var rangeMemoryPressure: CalendarRangeMemoryPressure?
@@ -323,14 +329,7 @@ final class CalendarModel {
     }
 
     var displayInterval: DateInterval {
-        if mode == .month {
-            let days = CalendarLayout.monthDays(containing: date, calendar: calendar)
-            if let first = days.first, let last = days.last, let end = calendar.date(byAdding: .day, value: 1, to: last) {
-                return DateInterval(start: first, end: end)
-            }
-        }
-        let base = calendar.dateInterval(of: mode.component, for: date) ?? DateInterval(start: date, duration: 86400)
-        return base
+        CalendarRangeIdentity.displayInterval(containing: date, mode: mode, calendar: calendar)
     }
 
     func reloadOperations(reconcileEmailLinks: Bool = true) async {

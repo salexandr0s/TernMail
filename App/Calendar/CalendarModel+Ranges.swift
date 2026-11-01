@@ -12,6 +12,16 @@ struct CalendarRangeIdentity: Hashable, Sendable {
     let mode: String
     let lifecycle: Int
     let owners: [String]
+
+    static func displayInterval(containing date: Date, mode: CalendarDisplayMode, calendar: Calendar) -> DateInterval {
+        if mode == .month {
+            let days = CalendarLayout.monthDays(containing: date, calendar: calendar)
+            if let first = days.first, let last = days.last, let end = calendar.date(byAdding: .day, value: 1, to: last) {
+                return DateInterval(start: first, end: end)
+            }
+        }
+        return calendar.dateInterval(of: mode.component, for: date) ?? DateInterval(start: date, duration: 86400)
+    }
 }
 
 /// Owns the dispatch source independently of actor isolation so teardown can
@@ -52,9 +62,11 @@ extension CalendarModel {
     /// older than a minute. Explicit Refresh and edits use reloadOccurrences.
     func activateRange() async {
         let key = rangeIdentity
+        if adjacentRangeTask?.key != key { cancelAdjacentRangePreparation() }
         if let saved = rangeSnapshots[key] {
             publish(saved)
             touchRange(key)
+            scheduleAdjacentRangePreparation()
             if let checked = saved.checkedAt, Date.now.timeIntervalSince(checked) < 60 { return }
         }
         if let activeRangeTask, activeRangeTask.key == key, !activeRangeTask.task.isCancelled {
@@ -73,10 +85,16 @@ extension CalendarModel {
     }
 
     func invalidateRangeSnapshots() {
+        cancelAdjacentRangePreparation()
         rangeSnapshots.removeAll()
         rangeSnapshotOrder.removeAll()
         completedSearch = nil
         searchCompletedAt = nil
+    }
+
+    func cancelAdjacentRangePreparation() {
+        adjacentRangeTask?.task.cancel()
+        adjacentRangeTask = nil
     }
 
     /// Synthetic fixtures and externally restored event arrays use the same
@@ -101,6 +119,7 @@ extension CalendarModel {
     }
 
     func reloadOccurrences(refresh: Bool = true, refreshIfIncomplete: Bool = false) async {
+        cancelAdjacentRangePreparation()
         rangeRevision += 1
         let revision = rangeRevision
         let lifecycle = lifecycleRevision
@@ -130,32 +149,11 @@ extension CalendarModel {
                 await reloadOccurrences(refresh: false)
                 return
             }
-            let stale = loaded.contains { $0.result?.isStale != false || $0.result?.isComplete != true }
             if refreshIfIncomplete, loaded.contains(where: { $0.result?.isComplete != true }) { needsRefresh = true }
-            let checkedAt = stale ? nil : loaded.compactMap { $0.result?.fetchedAt }.min() ?? Date.now
             let preparationSpan = TernSignposts.begin(.calendarPreparation)
             let preparation = Task.detached(priority: .userInitiated) { () throws -> CalendarRangeSnapshot in
-                var found: [CalendarDisplayEvent] = []
-                for item in loaded {
-                    for event in item.result?.events ?? [] where !event.isCancelled {
-                        try Task.checkCancellation()
-                        found.append(CalendarDisplayEvent(event: event, accountID: item.owner.accountID,
-                            calendarID: item.owner.calendarID, colorHex: item.owner.colorHex,
-                            canEdit: CalendarEventPermissions.canEdit(event, in: item.owner),
-                            fallbackTimeZoneID: displayCalendar.timeZone.identifier))
-                    }
-                }
-                let projected = CalendarPendingEvents.project(found, operations: pending, calendars: allCalendars,
-                    interval: interval, calendar: displayCalendar)
-                try Task.checkCancellation()
-                let presentation = CalendarPresentationSnapshot(events: projected, interval: interval,
-                    calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis)
-                // Includes provider strings, day-bucket copies and placement records.
-                let encodedBytes = (try? JSONEncoder().encode(projected.map(\.event)).count) ?? 0
-                let references = presentation.days.reduce(0) { $0 + (presentation.day($1)?.events.count ?? 0) }
-                let cost = encodedBytes * 2 + projected.count * 512 + references * 512 + presentation.days.count * 256
-                return CalendarRangeSnapshot(presentation: presentation, checkedAt: checkedAt,
-                    stale: stale, byteCost: cost)
+                try Self.prepareRangeSnapshot(loaded, operations: pending, calendars: allCalendars,
+                    interval: interval, calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis)
             }
             let snapshot = await withTaskCancellationHandler {
                 try? await preparation.value
@@ -171,12 +169,89 @@ extension CalendarModel {
             TernSignposts.end(preparationSpan)
             publish(snapshot)
             remember(snapshot, for: key)
+            scheduleAdjacentRangePreparation()
         }
         guard revision == rangeRevision, lifecycle == lifecycleRevision, !Task.isCancelled else { return }
         Task { [weak self] in
             guard let self, lifecycle == lifecycleRevision else { return }
             await reconcileEmailSourceLinks()
         }
+    }
+
+    /// Only complete local ranges are speculative inputs. A missing range stays
+    /// a foreground request, and preparation never changes the visible snapshot.
+    private func scheduleAdjacentRangePreparation() {
+        guard isVisible, !calendars.isEmpty else { return }
+        let key = rangeIdentity
+        let revision = rangeRevision
+        if let adjacentRangeTask, adjacentRangeTask.key == key, adjacentRangeTask.revision == revision,
+           !adjacentRangeTask.task.isCancelled { return }
+        cancelAdjacentRangePreparation()
+        let displayCalendar = calendar
+        let displayMode = mode
+        let allCalendars = calendars
+        let sources = calendars.filter(\.isVisible).map { ($0, engines[$0.accountID]) }
+        guard !sources.isEmpty else { return }
+        let pending = operations
+        let buildsTimeAxis = mode == .day || mode == .week
+        let neighbors = [-1, 1].compactMap { offset -> CalendarRangeIdentity? in
+            guard let adjacentDate = displayCalendar.date(byAdding: displayMode.component, value: offset, to: date) else { return nil }
+            let interval = CalendarRangeIdentity.displayInterval(containing: adjacentDate, mode: displayMode, calendar: displayCalendar)
+            return CalendarRangeIdentity(interval: interval, timeZone: key.timeZone, firstWeekday: key.firstWeekday,
+                mode: key.mode, lifecycle: key.lifecycle, owners: key.owners)
+        }
+        let task = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            @MainActor func isCurrent() -> Bool {
+                !Task.isCancelled && isVisible && key == rangeIdentity && revision == rangeRevision
+                    && pending == operations && allCalendars == calendars
+            }
+            for neighbor in neighbors {
+                guard isCurrent() else { return }
+                if rangeSnapshots[neighbor] != nil { continue }
+                let loaded = await Self.readRange(sources, interval: neighbor.interval, refresh: false)
+                guard isCurrent() else { return }
+                guard loaded.count == sources.count,
+                      loaded.allSatisfy({ !$0.accessDenied && $0.result?.isComplete == true }) else { continue }
+                let span = TernSignposts.begin(.calendarPreparation)
+                let preparation = Task.detached(priority: .utility) {
+                    try Self.prepareRangeSnapshot(loaded, operations: pending, calendars: allCalendars,
+                        interval: neighbor.interval, calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis)
+                }
+                let snapshot = await withTaskCancellationHandler { try? await preparation.value }
+                    onCancel: { preparation.cancel() }
+                guard let snapshot, isCurrent() else { TernSignposts.cancel(span); return }
+                TernSignposts.end(span)
+                remember(snapshot, for: neighbor)
+            }
+        }
+        adjacentRangeTask = (key, revision, task)
+    }
+
+    private nonisolated static func prepareRangeSnapshot(_ loaded: [CalendarOwnerRange], operations: [CalendarOperation],
+        calendars: [CalendarDisplayCalendar], interval: DateInterval, calendar: Calendar,
+        buildsTimeAxis: Bool) throws -> CalendarRangeSnapshot {
+        var found: [CalendarDisplayEvent] = []
+        for item in loaded {
+            for event in item.result?.events ?? [] where !event.isCancelled {
+                try Task.checkCancellation()
+                found.append(CalendarDisplayEvent(event: event, accountID: item.owner.accountID,
+                    calendarID: item.owner.calendarID, colorHex: item.owner.colorHex,
+                    canEdit: CalendarEventPermissions.canEdit(event, in: item.owner),
+                    fallbackTimeZoneID: calendar.timeZone.identifier))
+            }
+        }
+        let projected = CalendarPendingEvents.project(found, operations: operations, calendars: calendars,
+            interval: interval, calendar: calendar)
+        try Task.checkCancellation()
+        let presentation = CalendarPresentationSnapshot(events: projected, interval: interval,
+            calendar: calendar, buildsTimeAxis: buildsTimeAxis)
+        let encodedBytes = (try? JSONEncoder().encode(projected.map(\.event)).count) ?? 0
+        let references = presentation.days.reduce(0) { $0 + (presentation.day($1)?.events.count ?? 0) }
+        let cost = encodedBytes * 2 + projected.count * 512 + references * 512 + presentation.days.count * 256
+        let stale = loaded.contains { $0.result?.isStale != false || $0.result?.isComplete != true }
+        let checkedAt = stale ? nil : loaded.compactMap { $0.result?.fetchedAt }.min() ?? Date.now
+        return CalendarRangeSnapshot(presentation: presentation, checkedAt: checkedAt, stale: stale, byteCost: cost)
     }
 
     private nonisolated static func readRange(_ sources: [(CalendarDisplayCalendar, CalendarSyncEngine?)],
@@ -233,12 +308,13 @@ extension CalendarModel {
     private func remember(_ snapshot: CalendarRangeSnapshot, for key: CalendarRangeIdentity) {
         let budget = 12 * 1_024 * 1_024
         guard snapshot.byteCost <= budget else { return }
-        rangeSnapshots[key] = CalendarRangeSnapshot(presentation: presentation ?? snapshot.presentation,
+        let prepared = key == rangeIdentity ? presentation ?? snapshot.presentation : snapshot.presentation
+        rangeSnapshots[key] = CalendarRangeSnapshot(presentation: prepared,
             checkedAt: snapshot.checkedAt, stale: snapshot.stale, byteCost: snapshot.byteCost)
         touchRange(key)
         while rangeSnapshotOrder.count > 3 || rangeSnapshots.values.reduce(0, { $0 + $1.byteCost }) > budget {
-            guard !rangeSnapshotOrder.isEmpty else { break }
-            rangeSnapshots.removeValue(forKey: rangeSnapshotOrder.removeFirst())
+            guard let victim = rangeSnapshotOrder.firstIndex(where: { $0 != rangeIdentity }) else { break }
+            rangeSnapshots.removeValue(forKey: rangeSnapshotOrder.remove(at: victim))
         }
     }
 
