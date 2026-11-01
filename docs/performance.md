@@ -167,6 +167,20 @@ phase distributions and provenance are in
 Two earlier launches failed foreground eligibility and collected no samples;
 they are excluded from performance comparisons.
 
+A background visibility-only control kept real mode, search, title and focus
+changes while freezing toolbar visibility declarations. Median main-thread CPU
+changed from 273.8 to 204.1 ms for Mail and 166.0 to 86.3 ms for Calendar.
+Separately measured settling work changed from 39.65 to 0.8 ms and 36.6 to
+2.0 ms respectively. All native visibility, identity, geometry and search checks
+passed in the corrected run. The temporary control is removed: it identifies
+work to eliminate but does not implement correct mode-specific toolbars.
+
+The search field now observes its own model updates and scopes Find requests to
+their originating mode and model. Three optimized regressions passed, including
+retained native field identity, explicit Find, mode switching and folded-field
+restoration. These checks establish behavior and observation boundaries; their
+effect on foreground navigation latency has not yet been measured.
+
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
 `/tmp/tern-performance-audit-build/reports/20261101T004216Z-workspace-diagnostic/`.
