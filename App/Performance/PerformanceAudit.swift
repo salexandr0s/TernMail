@@ -14,6 +14,7 @@ enum PerformanceAudit {
     }
 
     private static var hasRun = false
+    private static var unexpectedNativeInputEvents = 0
     private static weak var auditWindow: NSWindow?
     private static var auditCache: MailCache?
     private static var keyViewLoopBeforeAudit: Bool?
@@ -40,7 +41,8 @@ enum PerformanceAudit {
     }
 
     struct Report: Encodable {
-        let version = 3
+        let version = 4
+        let unexpectedNativeInputEvents: Int
         let buildRevision: String
         let requestedScenario: String
         let automaticKeyViewLoopBeforeAudit: Bool?
@@ -117,10 +119,22 @@ enum PerformanceAudit {
                 return
             }
         }
-        guard await wait(timeout: .seconds(15), until: { isForeground }) else {
+        guard await wait(timeout: .seconds(15), until: { auditMayContinue }) else {
             writeFailure("Audit never obtained foreground activation and a key window; no timings were accepted.")
             return
         }
+        unexpectedNativeInputEvents = 0
+        let inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [
+            .leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel
+        ]) { event in
+            MainActor.assumeIsolated { unexpectedNativeInputEvents += 1 }
+            return event
+        }
+        guard let inputMonitor else {
+            writeFailure("Native input validity monitoring could not start; no measurements were started.")
+            return
+        }
+        defer { NSEvent.removeMonitor(inputMonitor) }
         let previousRowConstructionHook = ThreadListView.onRowContentBuild
         let previousRowBodyHook = MessageListRow.onBodyEvaluation
         ThreadListView.onRowContentBuild = { [weak mailbox] source, _ in
@@ -171,7 +185,7 @@ enum PerformanceAudit {
         let localStart = 20
         let localStride = 5
         let requiredRows = localStart + (count - 1) * localStride + 1
-        while isForeground, mailbox.listItems.filter({ $0.id.threadID.hasPrefix("performance-thread-") }).count < requiredRows {
+        while auditMayContinue, mailbox.listItems.filter({ $0.id.threadID.hasPrefix("performance-thread-") }).count < requiredRows {
             let before = mailbox.listItems.count
             mailbox.loadMoreThreads()
             if !(await wait(timeout: .seconds(2), until: { mailbox.listItems.count > before })) { break }
@@ -186,7 +200,7 @@ enum PerformanceAudit {
                 return rows.indices.contains(position) ? rows[position] : nil
             }
             for row in localRows {
-                guard isForeground, !Task.isCancelled, let owner = mailbox.account(id: row.accountID) else { break }
+                guard auditMayContinue, !Task.isCancelled, let owner = mailbox.account(id: row.accountID) else { break }
                 try? await owner.engine.openThread(row.threadID, markRead: false)
             }
             let localBodiesPresent = (try? await mailbox.cache.read { transaction in
@@ -269,7 +283,7 @@ enum PerformanceAudit {
         await PerformanceAuditTransport.shared.configure(.idle)
         let imageKeys = (0..<100).map { ThreadKey(accountID: "ui-audit", threadID: "performance-image-heavy-\($0)") }
         if let owner = mailbox.account(id: "ui-audit") {
-            for key in imageKeys where isForeground {
+            for key in imageKeys where auditMayContinue {
                 try? await owner.engine.openThread(key.threadID, markRead: false)
             }
         }
@@ -288,7 +302,7 @@ enum PerformanceAudit {
         // Oversized bodies are stress cases, outside representative-corpus percentiles.
         for size in [2, 8] {
             let key = ThreadKey(accountID: "ui-audit", threadID: "performance-stress-\(size)")
-            if isForeground, let owner = mailbox.account(id: key.accountID) {
+            if auditMayContinue, let owner = mailbox.account(id: key.accountID) {
                 try? await owner.engine.openThread(key.threadID, markRead: false)
             }
             let stressListReady = await prepareFixtureList("Synthetic \(size) MiB stress body", keys: [key], mailbox: mailbox)
@@ -301,8 +315,8 @@ enum PerformanceAudit {
         _ = await wait { !mailbox.search.isActive && mailbox.listItems.count >= 20 }
         scrolling.append(await measureScroll("mailbox", in: window, surface: .mailbox))
         for size in [20, 100] {
-            guard isForeground else {
-                scrolling.append(.failure(name: "reader-\(size)", reason: foregroundFailure))
+            guard auditMayContinue else {
+                scrolling.append(.failure(name: "reader-\(size)", reason: auditInterruptionReason))
                 continue
             }
             // Explicit fixture identity avoids accidentally omitting a long thread
@@ -344,7 +358,9 @@ enum PerformanceAudit {
         #else
         let optimized = true
         #endif
-        let report = Report(buildRevision: Bundle.main.object(forInfoDictionaryKey: "TernBuildRevision") as? String ?? "unknown",
+        let responsiveness = await heartbeat.stop()
+        let report = Report(unexpectedNativeInputEvents: unexpectedNativeInputEvents,
+                            buildRevision: Bundle.main.object(forInfoDictionaryKey: "TernBuildRevision") as? String ?? "unknown",
                             requestedScenario: scope.rawValue,
                             automaticKeyViewLoopBeforeAudit: keyViewLoopBeforeAudit,
                             automaticKeyViewLoopDuringAudit: keyViewLoopDuringAudit,
@@ -353,21 +369,21 @@ enum PerformanceAudit {
                             fixtureConfiguredMessagesPerAccount: min(60_000, max(200, argumentInteger("--performance-mails=") ?? 1_000)) + 822,
                             fixtureEventCount: app.calendar.events.count, imageCorpora: AuditGmail.performanceImageCorpora,
                             scenarios: scenarios, scrolling: scrolling,
-                            mainActorResponsiveness: await heartbeat.stop(),
+                            mainActorResponsiveness: responsiveness,
                             initialPhysicalFootprintBytes: initialMemory,
                             finalPhysicalFootprintBytes: NavigationPerformance.physicalFootprint(),
-                            limitation: "Navigation ends at a native drawing commit. Scroll results measure main-run-loop display-link delivery, not presented GPU frames. Processing origins distinguish synthetic full-response delivery from production reader observation delivery. WebKit memory attribution and actual rendered frame hitches require external process/profiler evidence.")
+                            limitation: "Navigation ends at a native drawing commit. Scroll results measure main-run-loop display-link delivery, not presented GPU frames. Processing origins distinguish synthetic full-response delivery from production reader observation delivery. Native input monitoring counts mouse-down, key-down and scroll-wheel events without payloads; zero does not exclude accessibility automation. WebKit memory attribution and actual rendered frame hitches require external process/profiler evidence.")
         write(report)
     }
 
     private static func prepareFixtureList(_ query: String, keys: [ThreadKey], mailbox: MailboxModel) async -> Bool {
-        guard isForeground else { return false }
+        guard auditMayContinue else { return false }
         mailbox.search.update(query)
         mailbox.search.restrict(toAccount: "ui-audit")
         mailbox.search.submit()
         let wanted = Set(keys)
         let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-        while isForeground, !Task.isCancelled, ContinuousClock.now < deadline {
+        while auditMayContinue, !Task.isCancelled, ContinuousClock.now < deadline {
             let listed = Set(mailbox.listItems.map(\.id.threadKey))
             if wanted.isSubset(of: listed), mailbox.search.status != .searching { return true }
             if mailbox.search.hasLocalAnswer, mailbox.search.hasMoreResults { mailbox.search.loadMoreResults() }
@@ -396,7 +412,7 @@ enum PerformanceAudit {
         conditionDriverStarted = false
         return Task {
             var index = 0
-            while !Task.isCancelled, isForeground {
+            while !Task.isCancelled, auditMayContinue {
                 if mode == .delayed, let owner = mailbox.account(id: "ui-audit-2") {
                     let threadID = "performance-network-\(index % 100)"
                     // The other synthetic account is never selected in this driver.
@@ -423,7 +439,7 @@ enum PerformanceAudit {
         let performance = NavigationPerformance.shared
         let transportStart = await PerformanceAuditTransport.shared.statistics()
         for index in 0..<warmup {
-            guard isForeground else { return failedScenario(name, count: count, reason: foregroundFailure) }
+            guard auditMayContinue else { return failedScenario(name, count: count, reason: auditInterruptionReason) }
             do { try await action(index) } catch {
                 return failedScenario(name, count: count, reason: "Warmup fixture action failed.")
             }
@@ -441,7 +457,7 @@ enum PerformanceAudit {
         var failureReason: String?
         var memory = [await memorySample(completed: 0)]
         for index in 0..<count {
-            guard isForeground else { failures += count - index; failureReason = foregroundFailure; break }
+            guard auditMayContinue else { failures += count - index; failureReason = auditInterruptionReason; break }
             guard !Task.isCancelled else { failures += count - index; failureReason = "Audit cancelled."; break }
             let previous = performance.latestGeneration(for: kind)
             do { try await action(index + warmup) } catch {
@@ -453,6 +469,11 @@ enum PerformanceAudit {
                 failures += 1; failureReason = "The action did not start a new measured interaction."; continue
             }
             let result = await performance.waitForCompletion(kind, generation: generation, timeout: timeout)
+            if unexpectedNativeInputEvents > 0 {
+                failures += count - index
+                failureReason = auditInterruptionReason
+                break
+            }
             if result?.outcome == .visibleCommit { completed += 1 } else { failures += 1 }
             if (index + 1).isMultiple(of: 10) || index + 1 == count {
                 memory.append(await memorySample(completed: completed))
@@ -486,18 +507,22 @@ enum PerformanceAudit {
                         failures: count, failureReason: reason, memorySamples: [], transportAtStart: nil, transportAtEnd: nil, timings: NavigationPerformance.shared.report())
     }
 
-    private static var isForeground: Bool {
-        NSApp.isActive && auditWindow?.isKeyWindow == true && auditWindow?.occlusionState.contains(.visible) == true
+    private static var auditMayContinue: Bool {
+        unexpectedNativeInputEvents == 0 && NSApp.isActive
+            && auditWindow?.isKeyWindow == true && auditWindow?.occlusionState.contains(.visible) == true
     }
 
-    private static var foregroundFailure: String {
-        "Foreground unavailable: appActive=\(NSApp.isActive), keyWindow=\(auditWindow?.isKeyWindow == true), visible=\(auditWindow?.isVisible == true), unoccluded=\(auditWindow?.occlusionState.contains(.visible) == true)."
+    private static var auditInterruptionReason: String {
+        if unexpectedNativeInputEvents > 0 {
+            return "Unexpected native input during the programmatic audit (\(unexpectedNativeInputEvents) events); the report is invalid."
+        }
+        return "Foreground unavailable: appActive=\(NSApp.isActive), keyWindow=\(auditWindow?.isKeyWindow == true), visible=\(auditWindow?.isVisible == true), unoccluded=\(auditWindow?.occlusionState.contains(.visible) == true)."
     }
 
     private enum Surface: String { case mailbox, reader, calendar, attachments }
 
     private static func measureScroll(_ name: String, in window: NSWindow, surface: Surface) async -> PerformanceScrollAudit.Result {
-        guard isForeground else { return .failure(name: name, reason: foregroundFailure) }
+        guard auditMayContinue else { return .failure(name: name, reason: auditInterruptionReason) }
         guard let scroll = scrollView(in: window, surface: surface) else {
             return .failure(name: name, reason: "The explicitly identified scrolling surface was missing or had no scrollable content.")
         }
