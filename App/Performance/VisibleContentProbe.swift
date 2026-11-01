@@ -24,6 +24,11 @@ struct VisibleContentProbe: NSViewRepresentable {
         private var observer: UUID?
         private var scheduledGeneration: UInt64?
         private let performance: NavigationPerformance
+        #if DEBUG || TERN_PERFORMANCE
+        private(set) var windowAttachmentCount = 0
+        private(set) var windowDetachmentCount = 0
+        private(set) var superviewMoveCount = 0
+        #endif
 
         init(performance: NavigationPerformance = .shared) {
             self.performance = performance
@@ -50,7 +55,20 @@ struct VisibleContentProbe: NSViewRepresentable {
             if changed { needsDisplay = true }
         }
 
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); needsDisplay = true }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            #if DEBUG || TERN_PERFORMANCE
+            if window == nil { windowDetachmentCount += 1 } else { windowAttachmentCount += 1 }
+            #endif
+            needsDisplay = true
+        }
+
+        #if DEBUG || TERN_PERFORMANCE
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            superviewMoveCount += 1
+        }
+        #endif
 
         override func draw(_ dirtyRect: NSRect) {
             super.draw(dirtyRect)

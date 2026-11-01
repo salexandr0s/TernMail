@@ -27,6 +27,8 @@ final class NavigationPerformance {
     enum Outcome: String, Codable, Sendable { case visibleCommit, superseded, cancelled, timedOut }
     enum TimingOrigin: String, Codable, Sendable { case input, programmatic }
 
+    enum ProcessingOrigin: String, Codable, Sendable { case readerObservationDelivery, syntheticTransportResponse }
+
     struct Record: Codable, Sendable {
         let generation: UInt64
         let kind: NavigationInteractionKind
@@ -37,6 +39,7 @@ final class NavigationPerformance {
         let inputQueueDelayMilliseconds: Double?
         let contentReadyMilliseconds: Double?
         let readyToVisibleMilliseconds: Double?
+        let processingOrigin: ProcessingOrigin?
         let elapsedMilliseconds: Double
     }
 
@@ -86,6 +89,7 @@ final class NavigationPerformance {
         let inputQueueDelayMilliseconds: Double?
         var ready: ContinuousClock.Instant?
         var requiredContentReady: ContinuousClock.Instant?
+        var processingOrigin: ProcessingOrigin?
         var cacheTier: NavigationCacheTier?
     }
 
@@ -162,6 +166,12 @@ final class NavigationPerformance {
 
     func currentGeneration(for kind: NavigationInteractionKind) -> UInt64? { pending[kind]?.generation }
 
+    /// Audit actions can suspend after selection; a fast native commit may have
+    /// finished before the action resumes. Its generation still belongs to it.
+    func latestGeneration(for kind: NavigationInteractionKind) -> UInt64? {
+        pending[kind]?.generation ?? records.last(where: { $0.kind == kind })?.generation
+    }
+
     func contentReady(_ kind: NavigationInteractionKind, cacheTier: NavigationCacheTier,
                       generation: UInt64? = nil) {
         guard var current = pending[kind], generation == nil || generation == current.generation else { return }
@@ -181,10 +191,15 @@ final class NavigationPerformance {
     /// A retained renderer has no new processing interval. Callers may supply a
     /// captured timestamp when the first actually readable body is established.
     func requiredContentReady(_ kind: NavigationInteractionKind, generation: UInt64? = nil,
-                              at instant: ContinuousClock.Instant = .now) {
+                              at instant: ContinuousClock.Instant = .now,
+                              origin: ProcessingOrigin = .readerObservationDelivery) {
         guard var current = pending[kind], generation == nil || generation == current.generation,
-              current.requiredContentReady == nil, instant <= .now else { return }
+              instant <= .now else { return }
+        if let previous = current.requiredContentReady {
+            guard origin == .syntheticTransportResponse, instant <= previous else { return }
+        }
         current.requiredContentReady = max(current.started, instant)
+        current.processingOrigin = origin
         pending[kind] = current
     }
 
@@ -265,6 +280,7 @@ final class NavigationPerformance {
                               inputQueueDelayMilliseconds: current.inputQueueDelayMilliseconds,
                               contentReadyMilliseconds: current.ready.map { Self.milliseconds(current.started.duration(to: $0)) },
                               readyToVisibleMilliseconds: current.requiredContentReady.map { Self.milliseconds($0.duration(to: ended)) },
+                              processingOrigin: current.processingOrigin,
                               elapsedMilliseconds: Self.milliseconds(current.started.duration(to: ended))))
         if records.count > capacity { records.removeFirst(records.count - capacity) }
         scheduleReportExport()

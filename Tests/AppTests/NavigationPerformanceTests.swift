@@ -54,6 +54,15 @@ import Testing
         performance.contentReady(.reader, cacheTier: .retained)
         performance.didCommitVisibleContent(.reader, generation: retained)
         #expect(performance.records.last?.readyToVisibleMilliseconds == nil)
+        #expect(performance.latestGeneration(for: .reader) == retained)
+        #expect(result.processingOrigin == .readerObservationDelivery)
+        let network = performance.begin(.reader)
+        let response = ContinuousClock.now
+        performance.requiredContentReady(.reader, generation: network, at: response)
+        performance.requiredContentReady(.reader, generation: network, at: response, origin: .syntheticTransportResponse)
+        performance.contentReady(.reader, cacheTier: .network)
+        performance.didCommitVisibleContent(.reader, generation: network)
+        #expect(performance.records.last?.processingOrigin == .syntheticTransportResponse)
     }
 
     @Test func reportDoesNotAcceptPrivateDestinationNames() {
