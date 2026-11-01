@@ -138,6 +138,12 @@ Mail median CPU was 284.4 ms in both variants. Native item identities, toolbar
 order, column geometry and row insets matched. The experiment was removed while
 its useful regression coverage was retained.
 
+The toolbar's selection-dependent content now has separate View bodies. A
+windowless observation baseline and regression check show that selection changes
+no longer invalidate the toolbar declaration, while the affected actions still
+observe selection and read-state updates. Native control behavior and visible
+latency remain pending; this is a dependency result, not a speed guarantee.
+
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
 `/tmp/tern-performance-audit-build/reports/20261101T004216Z-workspace-diagnostic/`.
@@ -161,6 +167,10 @@ in a background window; internal WebKit descendant focus still needs foreground
 validation. Actual reader latency, scrolling targets, active-sync/offline timing,
 memory plateau, and the final installed universal Release remain unverified. The user
 requested background work while foreground timing runs are deferred.
+
+The latest broad background hosted run passed 394 tests across 62 suites, followed
+by five safe WebKit checks. Six suites with foreground or panel paths were
+excluded, so this does not replace the required complete foreground run.
 
 A normal universal Release build at `bdbd2c5` passed arm64/x86_64, embedded revision,
 hardened runtime and strict signature checks without audit/test overrides.
