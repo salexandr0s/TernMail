@@ -6,6 +6,34 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func oversizedRefreshCannotLeaveAnOlderRetainedSnapshotForItsRange() async throws {
+        try await withFixture { fixture in
+            let original = Self.event(id: "growing")
+            let day = try #require(original.startDate)
+            fixture.model.mode = .day
+            fixture.model.date = day
+            await fixture.service.put(original)
+            await fixture.model.activateRange()
+            let key = fixture.model.rangeIdentity
+            #expect(fixture.model.rangeSnapshots[key] != nil)
+
+            var refreshed = original
+            refreshed.summary = "Updated oversized event"
+            refreshed.description = String(repeating: "x", count: 7 * 1_024 * 1_024)
+            await fixture.service.put(refreshed)
+            await fixture.model.reloadOccurrences()
+
+            #expect(fixture.model.events.first?.title == refreshed.summary)
+            #expect(fixture.model.rangeSnapshots[key] == nil)
+            #expect(!fixture.model.rangeSnapshotOrder.contains(key))
+            fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: 1, to: day))
+            await fixture.model.activateRange()
+            fixture.model.date = day
+            await fixture.model.activateRange()
+            #expect(fixture.model.events.first?.title == refreshed.summary)
+        }
+    }
+
     @Test func adjacentLocalDaysPrepareWithoutPublishingOrRequestingAndActivateWarm() async throws {
         try await withFixture { fixture in
             let center = try await fixture.cacheDayNeighborhood()
