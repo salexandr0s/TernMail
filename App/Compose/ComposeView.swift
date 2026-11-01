@@ -167,6 +167,7 @@ struct ComposeView: View {
         .navigationTitle(model.title)
         .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
+        .toolbar(removing: availableWidth < Tokens.Compose.labeledToolbarWidth ? .title : nil)
         .alert(model.alert?.title ?? "", isPresented: $model.alert.isPresent()) {
             Button("OK") {}
         } message: {
@@ -232,6 +233,15 @@ struct ComposeView: View {
                 .padding(.vertical, Tokens.Space.s2)
                 .background(Tokens.Surface.muted)
                 .accessibilityElement(children: .combine)
+            } else if availableWidth < Tokens.Compose.labeledToolbarWidth,
+                      let status = model.status, !status.isError {
+                Text(status.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Tokens.Compose.gutter)
+                    .padding(.vertical, Tokens.Space.s1_5)
+                    .background(Tokens.Surface.muted)
             }
             header
                 .fixedSize(horizontal: false, vertical: true)
@@ -658,43 +668,34 @@ struct ComposeView: View {
             .help("Discard Draft")
             .disabled(!model.isEditable)
         }
+        ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
-            Toggle(isOn: Binding(get: { showsAssistant }, set: { isShown in
-                if isShown { showsAssistant = true }
-                else { closeAssistant() }
-            })) {
+            Button {
+                if showsAssistant { closeAssistant() }
+                else { showsAssistant = true }
+            } label: {
                 toolbarLabel("Ask AI", systemImage: "sparkles")
+                    .foregroundStyle(showsAssistant ? Color.accentColor : .primary)
             }
-            .toggleStyle(.button)
             .keyboardShortcut("j", modifiers: [.command, .shift])
             .help(showsAssistant ? "Close compose assistant (⇧⌘J)" : "Ask the assistant to help write (⇧⌘J)")
             .accessibilityLabel("Compose Assistant")
             .accessibilityValue(showsAssistant ? "Open" : "Closed")
             .disabled(!model.isEditable)
         }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
-            Toggle(isOn: $model.showsFormatting) {
+            Button {
+                model.showsFormatting.toggle()
+            } label: {
                 Label("Formatting", systemImage: "textformat")
+                    .foregroundStyle(model.showsFormatting ? Color.accentColor : .primary)
             }
-            .toggleStyle(.button)
             .labelStyle(.iconOnly)
             .help(model.showsFormatting ? "Hide Formatting" : "Show Formatting")
             .accessibilityLabel("Formatting")
             .accessibilityValue(model.showsFormatting ? "Expanded" : "Collapsed")
             .disabled(!model.isEditable)
-        }
-        if !model.templates.isEmpty {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    ForEach(model.templates) { template in
-                        Button(template.name) { model.insertTemplate(template) }
-                    }
-                } label: { Label("Insert Template", systemImage: "doc.text") }
-                .help("Insert Template")
-                // Without it, VoiceOver reads the menu's arrow image name.
-                .accessibilityLabel("Insert Template")
-                .disabled(!model.isEditable)
-            }
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -705,34 +706,45 @@ struct ComposeView: View {
             .help("Attach Files")
             .disabled(!model.isEditable)
         }
+        if model.canSendAndArchive || !model.templates.isEmpty {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    if !model.templates.isEmpty {
+                        Menu("Insert Template", systemImage: "doc.text") {
+                            ForEach(model.templates) { template in
+                                Button(template.name) { model.insertTemplate(template) }
+                            }
+                        }
+                    }
+                    if model.canSendAndArchive {
+                        if !model.templates.isEmpty { Divider() }
+                        Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                }
+                .labelStyle(.iconOnly)
+                .menuIndicator(.hidden)
+                .help("More compose actions")
+                .accessibilityLabel("More Compose Actions")
+                .disabled(!model.isEditable)
+            }
+        }
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
             Button {
                 Task { await model.send() }
             } label: {
-                toolbarLabel("Send", systemImage: "paperplane.fill")
+                Label("Send", systemImage: "paperplane")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize()
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .controlSize(.regular)
             .help("Send (⇧⌘D)")
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
-        }
-        // The arrow half of Send. A toolbar Menu with a primary action can't
-        // take the prominent style, so Send stays a Button.
-        if model.canSendAndArchive {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
-                } label: {
-                    Label("More Send Options", systemImage: "chevron.down")
-                }
-                .labelStyle(.iconOnly)
-                .menuIndicator(.hidden)
-                .help("Send and Archive")
-                .accessibilityLabel("More Send Options")
-                .disabled(!model.isEditable)
-            }
         }
     }
 
@@ -750,10 +762,11 @@ struct ComposeView: View {
         model.editor?.resumeEditing()
     }
 
-    private func toolbarLabel(_ title: String, systemImage: String) -> some View {
-        HStack(spacing: Tokens.Space.s1_5) {
-            Image(systemName: systemImage)
-            if availableWidth >= Tokens.Compose.labeledToolbarWidth { Text(title) }
+    @ViewBuilder private func toolbarLabel(_ title: String, systemImage: String) -> some View {
+        if availableWidth >= Tokens.Compose.labeledToolbarWidth {
+            Label(title, systemImage: systemImage).labelStyle(.titleAndIcon)
+        } else {
+            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
         }
     }
 
