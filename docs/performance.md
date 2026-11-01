@@ -172,8 +172,8 @@ The latest broad background hosted run passed 394 tests across 62 suites, follow
 by five safe WebKit checks. Six suites with foreground or panel paths were
 excluded, so this does not replace the required complete foreground run.
 
-A normal universal Release build at `bdbd2c5` passed arm64/x86_64, embedded revision,
+A normal universal Release build at `fcb181f` passed arm64/x86_64, embedded revision,
 hardened runtime and strict signature checks without audit/test overrides.
 The source and lockfiles stayed unchanged. It has not been launched or installed;
 this is build verification, not performance acceptance. Logs and metadata are in
-`~/.codex/backups/tern-performance-20261101/evidence/normal-universal-bdbd2c5/`.
+`~/.codex/backups/tern-performance-20261101/evidence/normal-universal-fcb181f/`.
