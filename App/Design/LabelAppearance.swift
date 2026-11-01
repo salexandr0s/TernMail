@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MailStore
 import Observation
 
@@ -73,6 +74,26 @@ final class LabelAppearance {
     func icon(for label: LabelRecord) -> String {
         let icon = preferences[label.accountID]?[label.id]?.icon ?? "tag"
         return Self.icons.contains { $0.systemImage == icon } ? icon : "tag"
+    }
+
+    /// Uncolored labels use a stable local palette; these fallbacks aren't saved to Gmail.
+    func badgeColor(for label: LabelRecord) -> LabelColor {
+        if let background = label.backgroundColor,
+           let color = LabelColor(backgroundColor: background) { return color }
+
+        let index: Int
+        switch label.id {
+        case "CATEGORY_PERSONAL": index = 12
+        case "CATEGORY_PROMOTIONS": index = 14
+        case "CATEGORY_UPDATES": index = 13
+        case "CATEGORY_SOCIAL": index = 15
+        case "CATEGORY_FORUMS": index = 9
+        case "CATEGORY_PURCHASES": index = 11
+        default:
+            let hash = label.id.utf8.reduce(UInt64(5381)) { ($0 &* 33) &+ UInt64($1) }
+            index = 8 + Int(hash % 8)
+        }
+        return LabelColor.grid[index]
     }
 
     func setIcon(_ icon: String, labelID: String, accountID: String) {

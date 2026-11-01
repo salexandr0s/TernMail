@@ -27,3 +27,11 @@ All four changes are implemented. The existing avatar alignment and compose layo
 - Independent code review and `git diff --check` passed. No mail-model, persistence, or sending code changed.
 
 Spoken VoiceOver, enlarged text, and multi-file Save All were not separately exercised. The installed Release app was not replaced, and nothing was pushed.
+
+## Email item follow-up
+
+The user supplied a screenshot and requested a pass on the email rows, with colorful, distinguishable tags. The plan was to color the whole badge, align avatars with senders, and make previews quieter while retaining the existing metadata counts.
+
+`MessageListRow.swift` now aligns the avatar and unread dot with the sender line, uses medium weight for read senders, reduces preview text to the caption style, and adds space above metadata. Mail badges use compact rounded rectangles with opaque fills and contrasting text. Saved Gmail backgrounds are retained. `LabelAppearance.swift` assigns fixed colors to categories and stable palette colors to other uncolored labels; these fallbacks are local and do not change Gmail. Custom icons remain visible, while the generic tag icon is omitted to save room.
+
+The Debug build passed (`/tmp/tern-email-items-build.log`), and all 16 existing tests in `MessageListTests` and `LabelAppearanceTests` passed (`/tmp/tern-email-items-tests.log`). Independent code review and `git diff --check` passed. Native inspection used a 300-point list in a roughly 1000-point window: dark standard rows at 100% text and light compact rows at 150%. Read, unread, selected, long-label, omitted-label, and attachment-count rows remained legible without overlap. Full label names remain in accessibility summaries and hover help. Spoken VoiceOver and Increase Contrast were not separately exercised. No mail-state code changed, no styling-only tests were added, and the installed Release app was not replaced.

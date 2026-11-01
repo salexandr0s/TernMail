@@ -24,6 +24,10 @@ struct MessageListRow: View {
     /// Text starts past the unread dot and the avatar; the separator starts with it.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s1_5 * 3 + Tokens.Space.s0_5 + avatarSize }
     private var showsStar: Bool { thread.isStarred || isHovered || isSelected }
+    private var senderLineHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize * scale)
+        return max(avatarSize, ceil(font.ascender - font.descender + font.leading))
+    }
     /// Set in Snoozed, where the row shows when the conversation returns.
     private var wakeTime: Date? {
         guard mailbox.showsSnoozed else { return nil }
@@ -38,13 +42,16 @@ struct MessageListRow: View {
     var body: some View {
         // alignmentGuide closures are Sendable, so they take a copy rather than reading the view.
         let separatorLeading = textLeading
-        HStack(alignment: .center, spacing: Tokens.Space.s1_5) {
+        HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
             Circle().fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
+                .frame(height: senderLineHeight)
                 .opacity(thread.isUnread ? 1 : 0)
             avatar
+                .frame(height: senderLineHeight)
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 senderLine
+                    .frame(minHeight: senderLineHeight)
                 subjectLine
                 if !compact { previewLine }
                 if !displayedLabels.isEmpty || !item.attachments.isEmpty { detailLine }
@@ -52,7 +59,7 @@ struct MessageListRow: View {
             .padding(.leading, Tokens.Space.s0_5)
         }
         .padding(.horizontal, Tokens.Space.s1)
-        .padding(.vertical, Tokens.Space.s1)
+        .padding(.vertical, compact ? Tokens.Space.s1 : Tokens.Space.s1_5)
         .onHover { isHovered = $0 }
         .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
@@ -72,7 +79,7 @@ struct MessageListRow: View {
 
     private var senderLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-            Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .regular)).lineLimit(1)
+            Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .medium)).lineLimit(1)
             if thread.messageCount > 1 {
                 Text("\(thread.messageCount)").font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
             }
@@ -121,7 +128,7 @@ struct MessageListRow: View {
         if let wake = wakeTime {
             Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock").font(scaledFont(.caption1)).foregroundStyle(.secondary)
         } else if !thread.snippet.isEmpty {
-            Text(mailbox.search.highlights.preview(thread.snippet)).font(scaledFont(.callout)).foregroundStyle(.secondary).lineLimit(1)
+            Text(mailbox.search.highlights.preview(thread.snippet)).font(scaledFont(.caption1)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 
@@ -129,9 +136,7 @@ struct MessageListRow: View {
         let labels = displayedLabels
         return HStack(spacing: Tokens.Space.s1) {
             ForEach(Array(labels.prefix(2)), id: \.id) { label in
-                let icon = LabelAppearance.shared.icon(for: label)
-                TernBadge(text: label.title, systemImage: icon == "tag" ? "tag.fill" : icon,
-                          tint: Color(gmailHex: label.backgroundColor) ?? .secondary)
+                MailLabelBadge(label: label, font: scaledFont(.caption1, weight: .medium))
             }
             if labels.count > 2 {
                 Text("+\(labels.count - 2)")
@@ -158,7 +163,7 @@ struct MessageListRow: View {
             }
         }
         .foregroundStyle(.secondary)
-        .padding(.top, Tokens.Space.s0_5)
+        .padding(.top, Tokens.Space.s1)
     }
 
     private var senderText: String {
@@ -201,6 +206,39 @@ struct MessageListRow: View {
         if type.hasPrefix("video/") { return "film" }
         if type.hasPrefix("audio/") { return "waveform" }
         return "paperclip"
+    }
+}
+
+/// Opaque fills keep a label's color and text contrast when its row is selected.
+private struct MailLabelBadge: View {
+    let label: LabelRecord
+    let font: Font
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let colors = LabelAppearance.shared.badgeColor(for: label)
+        let icon = LabelAppearance.shared.icon(for: label)
+        HStack(spacing: Tokens.Space.s1) {
+            if icon != "tag" {
+                Image(systemName: icon).accessibilityHidden(true)
+            }
+            Text(label.title).lineLimit(1)
+        }
+        .font(font)
+        .foregroundStyle(Color(gmailHex: colors.textColor) ?? .primary)
+        .padding(.horizontal, Tokens.Space.s1_5)
+        .padding(.vertical, Tokens.Space.s0_5)
+        .background(Color(gmailHex: colors.backgroundColor) ?? Tokens.Surface.muted,
+                    in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                .strokeBorder(Color.primary.opacity(contrast == .increased ? 1 : Tokens.Opacity.tint),
+                              lineWidth: Tokens.Border.hairline)
+                .allowsHitTesting(false)
+        }
+        .help(label.title)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label.title)
     }
 }
 
