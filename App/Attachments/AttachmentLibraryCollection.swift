@@ -128,6 +128,7 @@ struct AttachmentLibraryCollection: View {
             }
             .padding(.horizontal, Tokens.Space.s5)
             .padding(.top, Tokens.Space.s1).padding(.bottom, Tokens.Space.s5)
+            .background(PerformanceScrollSurfaceMarker(name: "attachments", isActive: true))
         }
         .attachmentDragContainer(model, in: dragNamespace)
     }

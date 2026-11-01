@@ -223,6 +223,7 @@ struct ThreadListView: View {
             }
         }
         .listStyle(.inset)
+        .background(PerformanceScrollSurfaceMarker(name: "mailbox", isActive: true))
         .contentMargins(.horizontal, 0, for: .scrollContent)
         .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
         // Dragging a selected row carries the whole selection.
