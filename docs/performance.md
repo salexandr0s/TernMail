@@ -274,3 +274,62 @@ hardened runtime and strict signature checks without audit/test overrides.
 The source and lockfiles stayed unchanged. It has not been launched or installed;
 this is build verification, not performance acceptance. Logs and metadata are in
 `~/.codex/backups/tern-performance-20261101/evidence/normal-universal-fcb181f/`.
+
+## Retained-reader result after selection isolation
+
+The controlled normal Release run on November 1 completed 100/100 retained-reader
+selections after six warmups, with zero failures or superseded reader generations.
+It meets the warm-reader latency target for this synthetic scenario:
+
+| Measurement | Before p50 / p95 / p99 | After p50 / p95 / p99 | Target |
+| --- | --- | --- | --- |
+| Retained readable content | 326.27 / 353.63 / 404.70 ms | 81.77 / 95.55 / 98.97 ms | p95 ≤100 ms; p99 ≤200 ms: met |
+| Selection feedback | p95 308.83 ms | 58.27 / 65.90 / 71.17 ms | p95 ≤50 ms: not met |
+
+Retained p95 is 73% lower. The comparison includes the native visibility guard,
+stable reader order, selection isolation and functional fixes; it does not isolate
+each change's contribution. Selection-only factory work is independently verified:
+the native regression now records zero warmed factories, and the 100-selection
+audit records zero factories and 1,200 row-body evaluations. All 19 optimized
+MessageListTests pass, including rapid selection stability, native/model agreement,
+account isolation, metadata changes, and stable table/scroll identity.
+
+The after artifact is clean source `3ddffa27508e54924b85aeb10498cab67f5d6699`,
+equivalent to `cbcbe34` plus only the explicit audit start gate. Executable SHA-256:
+`4894d2df6227e5a3269901f6b09407e4a8c77446edf4b39ee749a8c7fbc8eab5`.
+It is hardened arm64 Release with normal package linkage. It excludes the newer
+height/visibility tracing and unaccepted row-controls experiment. The before
+artifact is the `cee3a90-dirty` run documented above.
+
+The retained scenario kept two attached WebViews with no creates or destroys.
+Prepared documents remained 31,757 bytes, stored bodies 5,340 bytes and inline
+resources 19,184 bytes. There were 243 prepared-cache hits and 101 height reports.
+App physical footprint moved from 285.9 to 283.9 MB; samples after the first ten
+switches stayed between 283.5 and 283.9 MB. This is a short warm interval, not a
+hundreds-of-messages memory plateau. WebKit child-process attribution remains
+unavailable, so those processes are not included in the app footprint.
+
+The local-preparation scenario completed only 76/100 before foreground eligibility
+was lost. Its timings are descriptive only and are not accepted against the local
+target. It recorded 91,200 row factories, 386 preparations, 77 renderer creations
+and 76 destructions, with three WebViews attached. Newly discovered attachment
+metadata explains substantial page-update work; the next row-controls experiment
+must preserve those updates while reducing unchanged-row work.
+
+Across the whole partial run, the main-actor heartbeat recorded 105 waits of at
+least 100 ms, maximum 230.51 ms. These counts are not separated by scenario and
+are not GPU missed-frame measurements. Scrolling targets remain unverified.
+
+The exact frontmost PID was checked before the gate was released. No CUA,
+debugger or profiler overlapped measurement. The audit endpoint requires ready
+content in the visible viewport followed by a native drawing commit; it does not
+measure GPU presentation or input-queue delay before programmatic selection.
+This historical schema has no native-input monitor. The whole report fails the
+contract because feedback misses its target and local measurements are incomplete.
+The test app was terminated after reporting; this run does not verify graceful
+quit. No production installation has occurred.
+
+Evidence, source manifest, raw results and assessment are retained at
+`~/.codex/backups/tern-performance-20261101/evidence/20261101T143859Z-100-reader-only-normal/`.
+For another uninterrupted run, prepare the gated window before asking the user
+for availability, then release it immediately when ready.

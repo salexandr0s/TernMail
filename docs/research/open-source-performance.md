@@ -21,8 +21,8 @@ owner. The canonical checkout and its existing user changes are preserved.
 
 | Priority | Technique | Evidence in Tern | Next decision |
 | --- | --- | --- | --- |
-| 1 | Separate selection updates from row construction | CPU samples reach list diffing and factories; native tests rebuild an entire page on every selection | Adapt the small selection-owning List and stable content boundary; preserve native selection tests, then measure Release latency |
-| 2 | Verify effective responsive scrolling and rendered coverage | Tern overrides wheel routing and realizes bodies at viewport intersection; effective scroll-view compatibility is not yet measured | Inspect the actual scroll/clip/document hierarchy and readable coverage during scrolling before changing compatibility or realization margins |
+| 1 | Separate selection updates from row construction | The adapted boundary eliminates warmed selection-only factories; 100 retained selections improve from p95 353.63 to 95.55 ms | Keep the verified boundary; investigate remaining row-body work and attachment-triggered page updates |
+| 2 | Verify effective responsive scrolling and rendered coverage | The outer SwiftUI scroll view reports incompatibility; its clip and document views report compatibility | Measure actual scrolling and readable coverage before changing compatibility or realization margins |
 | 3 | Detect height oscillation | Tern suppresses duplicate measurements, but no actual A/B cycle has been established | Record raw/applied height sequences under stable width and document generations; change behavior only if cycles cause layout work |
 | 4 | Prepaint prepared neighbors | Documents are prepared already; unseen neighbors do not have painted renderers | Consider only if prepared-hit-to-visible WebKit work remains dominant after selection isolation |
 | 5 | Change body hydration or calendar retention | Existing preparation is cheap and calendar ranges are retained | Keep current infrastructure unless large-thread or range measurements identify a gap |
@@ -58,9 +58,26 @@ passed in the optimized 19-test MessageListTests suite. Conversation factory
 rebuilds fell from 42 per selection to zero across 12 warmed changes; message
 factory rebuilds fell from 43 per selection to zero across 24 warmed changes.
 The fixture has 42 conversation rows or 43 message rows and tests both native
-and model-driven selection. This is structural evidence; the next Release
-benchmark must establish visible latency on the large corpus. Evidence:
+and model-driven selection. Evidence:
 `/tmp/tern-list-selection-shell-verification/test.log`.
+
+A subsequent controlled normal Release run completed all 100 retained-reader
+selections with zero failures. Visible readable-content commit latency improved
+from p95 353.63 ms and p99 404.70 ms to p95 95.55 ms and p99 98.97 ms, meeting
+the warm-reader target in this synthetic scenario. This is a combined comparison
+of the native visibility guard, stable reader order, selection isolation and
+functional fixes, not attribution to this boundary alone. Selection feedback
+p95 improved from 308.83 to 65.90 ms and still misses its 50 ms target.
+
+The measured scenario recorded zero row factories, 1,200 row-body evaluations,
+two attached WebViews throughout, and no renderer creation or destruction.
+Prepared documents stayed at 31,757 bytes; app footprint went from 285.9 to
+283.9 MB during the warm scenario. This short stable interval does not establish
+long-run memory bounds. No CUA inspection or profiler overlapped measurement.
+The endpoint verifies ready content in the visible viewport at a native drawing
+commit; it does not measure GPU presentation or input-queue delay before a
+programmatic selection. Source and raw evidence are recorded in
+`docs/performance.md`.
 
 MishMail also has a cheap selection observer around an immutable visual row.
 Tern currently observes selection inside the full visual row. Body-evaluation
@@ -81,9 +98,16 @@ behind a row-controls boundary, keeping the existing modifier order and live
 settings. It must show new attachments immediately and avoid rebuilding
 unchanged controls. The outer factory counter stays intact; a separate controls
 counter will measure the work moved behind the boundary. This experiment is
-not yet accepted. A subsequent gated run lost focus before 100 valid selections
-and also recorded unexpected selection transitions, so native rapid-navigation
-coverage is being extended before further performance acceptance.
+not yet accepted. Its strict native regression passes for the changed row and
+unchanged visible row, but detects an offscreen unchanged controls body evaluated
+again during attachment publication. The assertion remains intact while tag
+discovery is investigated. Rapid native selection coverage now passes for both
+conversation and message modes, including final selection stability without
+reapplying the target. An earlier incomplete run had unexplained selection
+transitions; none occurred in the accepted 100-retained scenario. The historical
+audit has no native-input monitor, so it cannot exclude every form of external
+interference. The local-loading scenario completed only 76/100 and supplies no
+accepted local-latency result.
 
 Mailspring similarly [constructs rows only for a viewport range with margins](https://github.com/Foundry376/Mailspring/blob/c84212a97df7bab464fbdc8a3a3368785c94af70/app/src/components/list-tabular.tsx#L265-L354)
 and [memoizes its row subtree](https://github.com/Foundry376/Mailspring/blob/c84212a97df7bab464fbdc8a3a3368785c94af70/app/src/components/list-tabular.tsx#L58-L108).
