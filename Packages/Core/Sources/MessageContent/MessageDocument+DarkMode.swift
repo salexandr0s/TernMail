@@ -9,7 +9,8 @@ extension MessageDocument {
     /// dark in OKLab, keeping their hue, and white lands on the system canvas.
     /// Saturated mid tones such as buttons keep their color. Text keeps its
     /// color while it has 4.5:1 contrast with its new background and otherwise
-    /// moves toward that contrast. Translucency can limit the result. Image
+    /// moves toward that contrast. Explicit text-fill colors follow the same
+    /// rule, including inherited fills. Translucency can limit the result. Image
     /// pixels are left alone; non-RGB colors and image backgrounds are not mapped.
     ///
     /// The page itself stays white, so mail shows as designed if this can't
@@ -122,8 +123,11 @@ extension MessageDocument {
             // Read every style before writing any, so a write can't skew a later read.
             const reads = elements.map(element => {
               const style = getComputedStyle(element);
+              const fill = style.getPropertyValue('-webkit-text-fill-color');
               return {
                 color: parse(style.color),
+                fill: parse(fill),
+                fillValue: fill,
                 background: parse(style.backgroundColor),
                 image: style.backgroundImage,
                 borders: sides.map(side => style.getPropertyValue(`border-${side}-style`) === 'none'
@@ -134,7 +138,7 @@ extension MessageDocument {
             const resolved = new Map();
             elements.forEach((element, index) => {
               const read = reads[index];
-              const parent = resolved.get(element.parentElement) ?? { background: canvas.rgb, colorChanged: false };
+              const parent = resolved.get(element.parentElement) ?? { background: canvas.rgb, colorChanged: false, fillWritten: false };
               let background = parent.background;
               if (read.background && read.background.alpha > 0) {
                 const { rgb, alpha } = read.background;
@@ -162,12 +166,28 @@ extension MessageDocument {
                 // A kept color still needs writing when the parent's changed, or it would inherit the new one.
                 if (colorChanged || parent.colorChanged) writes.push([element, 'color', format(adapted, alpha)]);
               }
+              let fillWritten = false;
+              if (read.fill) {
+                const { rgb, alpha } = read.fill;
+                const adapted = alpha > 0 ? colors.text(rgb, alpha, background) : rgb;
+                // Text fill can override color or follow currentColor. Keep both readable,
+                // and preserve each descendant's fill after an inherited currentColor
+                // becomes a concrete color, even if the parent's visible fill stayed the same.
+                fillWritten = !same(adapted, rgb) || parent.fillWritten || colorChanged || parent.colorChanged;
+                if (fillWritten) {
+                  writes.push([element, '-webkit-text-fill-color', format(adapted, alpha)]);
+                }
+              } else if (read.fillValue && (parent.fillWritten || colorChanged || parent.colorChanged)) {
+                // Preserve unsupported color spaces when an inherited fill was replaced.
+                fillWritten = true;
+                writes.push([element, '-webkit-text-fill-color', read.fillValue]);
+              }
               read.borders.forEach((border, side) => {
                 if (!border || border.alpha === 0) return;
                 const adapted = colors.line(border.rgb);
                 if (!same(adapted, border.rgb)) writes.push([element, `border-${sides[side]}-color`, format(adapted, border.alpha)]);
               });
-              resolved.set(element, { background, colorChanged });
+              resolved.set(element, { background, colorChanged, fillWritten });
             });
             for (const [element, property, value] of writes) {
               if (!saved.has(element)) saved.set(element, element.getAttribute('style'));

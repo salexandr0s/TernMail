@@ -843,7 +843,7 @@ private struct MessageView: View {
                     }
                 }
                 MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
-                    adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
+                    adaptsDarkMode: adaptsDark && !showsLightBackground,
                     forcesLightAppearance: showsLightBackground,
                     onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
                     onOpenMailLink: { app.mailURLs.receive($0) },
