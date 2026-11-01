@@ -11,7 +11,10 @@ struct WorkspaceAssistantToolbar: CustomizableToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(id: "workspace.assistant", placement: .primaryAction) {
             AssistantLauncher(isPresented: isAssistantPresented, onToggle: onToggleAssistant)
+                .disabled(!isAssistantAvailable)
+                .help(isAssistantAvailable
+                    ? (isAssistantPresented ? "Close assistant sidebar" : "Ask about your mail")
+                    : "Assistant is available in Mail and Calendar")
         }
-        .mailToolbarVisible(isAssistantAvailable)
     }
 }

@@ -4,7 +4,6 @@ import QuickLook
 import SwiftUI
 
 struct AttachmentLibraryView: View {
-    @Environment(AppModel.self) private var app
     @Bindable var model: AttachmentLibraryModel
     let viewMode: AttachmentLibraryViewMode
     /// Moves focus to the window's search field, which searches the library.
@@ -36,7 +35,6 @@ struct AttachmentLibraryView: View {
             footer
         }
         .background(Tokens.Surface.canvas)
-        .navigationTitle(app.destination == .mail ? "Attachments" : "Calendar")
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .protectAttachmentPreview(model.previewURL)
         .task(id: model.coverageKey) { await model.start() }

@@ -23,19 +23,20 @@ import Testing
         settings.set("", forKey: SidebarExpansion.storageKey)
         defer { settings.removePersistentDomain(forName: suite) }
 
-        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let toolbarIdentifier = workspaceToolbarIdentifier()
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app)
+            .environment(\.workspaceToolbarID, toolbarIdentifier).defaultAppStorage(settings))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        window.toolbar = workspaceToolbar()
         window.toolbarStyle = .unified
         window.contentViewController = controller
         window.orderFront(nil)
-        defer { window.close() }
+        defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
 
-        // At 960 points the room after the sidebar is below the search fold width.
+        // At 960 points every section uses the folded Search button.
         let configurations: [(CGFloat, NSWindow.ToolbarStyle, Bool)] = [
             (1_280, .unified, false), (960, .unified, true), (960, .unifiedCompact, true), (1_280, .unified, false)
         ]
@@ -247,8 +248,8 @@ import Testing
 
     /// AppKit mirrors item changes across toolbars that share an identifier,
     /// and the test host's own mail window already uses the workspace one.
-    private func workspaceToolbar() -> NSToolbar {
-        NSToolbar(identifier: "\(MailWindowPreferences.toolbarID).\(UUID().uuidString)")
+    private func workspaceToolbarIdentifier() -> String {
+        "\(MailWindowPreferences.toolbarID).\(UUID().uuidString)"
     }
 
     @Test func mailboxExpansionKeepsSidebarViewportAndInboxInPlace() async throws {
@@ -265,20 +266,21 @@ import Testing
         settings.set("", forKey: SidebarExpansion.storageKey)
         defer { settings.removePersistentDomain(forName: suite) }
 
-        let controller = NSHostingController(rootView: MainView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let toolbarIdentifier = workspaceToolbarIdentifier()
+        let controller = NSHostingController(rootView: MainView(mailbox: mailbox).environment(app)
+            .environment(\.workspaceToolbarID, toolbarIdentifier).defaultAppStorage(settings))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 760),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        window.toolbar = workspaceToolbar()
         window.toolbarStyle = .unified
         window.contentViewController = controller
         // The hosting controller shrinks the window to its minimum, where the
         // sidebar steps aside for the list and reader.
         window.setContentSize(NSSize(width: 1_200, height: 760))
         window.orderFront(nil)
-        defer { window.close() }
+        defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
         try await settle()
         // AppKit's subview order does not match the split columns' visual order.
         let table = try #require(tables(in: controller.view).min {
@@ -428,43 +430,80 @@ import Testing
         settings.set("", forKey: SidebarExpansion.storageKey)
         defer { settings.removePersistentDomain(forName: suite) }
 
-        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let toolbarIdentifier = workspaceToolbarIdentifier()
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app)
+            .environment(\.workspaceToolbarID, toolbarIdentifier).defaultAppStorage(settings))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        window.toolbar = workspaceToolbar()
         window.toolbarStyle = .unified
         window.contentViewController = controller
         window.orderFront(nil)
-        defer { window.close() }
+        defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
         app.destination = .mail
         mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+
+        var sharedFrames: [Int: [String: NSRect]] = [:]
+        func expectSharedPositions() async throws {
+            try await settle()
+            #expect(window.toolbar?.identifier == toolbarIdentifier, "Hosted toolbar state must stay separate from other windows")
+            let width = Int(window.frame.width)
+            let identifiers = ["workspace.sidebar", "workspace.destination", "mail.compose", "workspace.search", "workspace.assistant"]
+            var frames: [String: NSRect] = [:]
+            for identifier in identifiers {
+                let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier },
+                    "Shared control \(identifier) must remain visible at \(width) points")
+                let view = try #require(item.view)
+                let frame = view.convert(view.bounds, to: nil)
+                frames[identifier] = frame
+                if let expected = sharedFrames[width]?[identifier] {
+                    #expect(abs(frame.minX - expected.minX) <= 1 && abs(frame.maxX - expected.maxX) <= 1,
+                        "\(identifier) moved from \(expected) to \(frame) when switching views at \(width) points")
+                }
+            }
+            if sharedFrames[width] == nil { sharedFrames[width] = frames }
+        }
 
         try await expectToolbar(
             in: window, width: 1_280, section: "library.", spacesAfter: ["library.sort"],
             hiding: ["library.compactOptions"]
         )
+        try await expectSharedPositions()
+        try await expectToolbar(in: window, width: 960, section: "library.",
+            spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"])
+        try await expectSharedPositions()
         // Narrow toolbars fold the layout and sort controls into one menu, as the mail actions fold.
         try await expectToolbar(
             in: window, width: Tokens.Layout.windowMinWidth, section: "library.",
             spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"]
         )
+        try await expectSharedPositions()
         app.destination = .calendar
-        try await expectToolbar(in: window, width: 1_280, section: "calendar.", spacesAfter: ["calendar.newEvent"])
+        try await expectToolbar(in: window, width: 1_280, section: "calendar.", spacesAfter: ["calendar.mode"])
+        try await expectSharedPositions()
+        try await expectToolbar(in: window, width: 960, section: "calendar.", spacesAfter: ["calendar.mode"])
+        try await expectSharedPositions()
         try await expectToolbar(in: window, width: Tokens.Layout.windowMinWidth,
-            section: "calendar.", spacesAfter: ["calendar.newEvent"])
+            section: "calendar.", spacesAfter: ["calendar.mode"])
+        try await expectSharedPositions()
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         try await expectToolbar(
             in: window, width: 1_280, section: "mail.", spacesAfter: ["mail.trash", "mail.more", "mail.forward"],
             hiding: ["mail.compactActions", "mail.compactReplies"]
         )
+        try await expectSharedPositions()
         try await expectToolbar(
             in: window, width: 960, section: "mail.", spacesAfter: ["mail.trash", "mail.compactActions", "mail.compactReplies"],
             hiding: ["mail.more"]
         )
+        try await expectSharedPositions()
+        try await expectToolbar(in: window, width: Tokens.Layout.windowMinWidth, section: "mail.",
+            spacesAfter: ["mail.trash", "mail.compactActions", NSToolbarItem.Identifier.space.rawValue],
+            hiding: ["mail.more", "mail.compactReplies"])
+        try await expectSharedPositions()
         await app.signOut()
     }
 

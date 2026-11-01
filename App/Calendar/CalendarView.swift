@@ -19,24 +19,37 @@ struct CalendarView: View {
     @State private var showDatePicker = false
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(CalendarDisplayMode.storageKey, store: CalendarDefaults.store) private var storedMode = CalendarDisplayMode.week
-    @State private var showCalendarList = false
-    @State private var isCompact = false
+    @State private var sidebarState: CalendarSidebarState
+    private let hasToolbarSidebar: Bool
     @FocusState private var hasKeyboardFocus: Bool
+
+    init(model: CalendarModel, isActive: Bool = true, sidebarState: CalendarSidebarState? = nil) {
+        self.model = model
+        self.isActive = isActive
+        self._sidebarState = State(initialValue: sidebarState ?? CalendarSidebarState())
+        self.hasToolbarSidebar = sidebarState != nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // One split view at every width: crossing the compact width only adds or
             // removes the sidebar, so the grid keeps its scroll position and drag state.
             HSplitView {
-                if !isCompact {
+                if sidebarState.showsSidebar {
                     sidebar.frame(minWidth: Tokens.Layout.sidebarWidth,
                                   idealWidth: Tokens.Calendar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
                 }
-                calendarPane(compact: isCompact).frame(minWidth: isCompact ? nil : Tokens.Calendar.contentMinWidth)
+                calendarPane(compact: sidebarState.isCompact)
+                    .frame(minWidth: sidebarState.isCompact ? nil : Tokens.Calendar.contentMinWidth)
             }
             footer
         }
-        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: { isCompact = $0 }
+        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: {
+            sidebarState.updateCompact($0)
+        }
+        .onChange(of: isActive) { _, active in
+            if !active { sidebarState.isPopoverPresented = false }
+        }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
         .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
@@ -138,14 +151,11 @@ struct CalendarView: View {
     /// view switcher sit in the window toolbar.
     private func header(compact: Bool) -> some View {
         HStack(spacing: Tokens.Space.s2) {
-            if compact {
-                Button { showCalendarList.toggle() } label: {
+            if compact && !hasToolbarSidebar {
+                Button(action: sidebarState.toggle) {
                     Image(systemName: "sidebar.left").frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 }
                 .buttonStyle(.borderless).help("Show calendars").accessibilityLabel("Show calendars")
-                .popover(isPresented: $showCalendarList) {
-                    sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: CalendarSidebar.popoverHeight(for: model))
-                }
             }
             Button { showDatePicker.toggle() } label: {
                 HStack(spacing: Tokens.Space.s2) {
@@ -163,6 +173,9 @@ struct CalendarView: View {
         .padding(.horizontal, Tokens.Space.s4)
         .padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
+        .popover(isPresented: $sidebarState.isPopoverPresented, attachmentAnchor: .point(.topLeading), arrowEdge: .top) {
+            sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: CalendarSidebar.popoverHeight(for: model))
+        }
     }
 
     private var periodTitle: String {
@@ -301,7 +314,7 @@ struct CalendarView: View {
     private var canHandleKeys: Bool {
         isActive && model.editor == nil && model.undoConfirmation == nil
             && recurringDeleteTarget == nil && guestDeleteTarget == nil
-            && !showActivity && !showImport && !showImportReview && !showDatePicker && !showCalendarList
+            && !showActivity && !showImport && !showImportReview && !showDatePicker && !sidebarState.isPopoverPresented
     }
 
     // MARK: Deleting

@@ -144,22 +144,19 @@ enum Tokens {
         // Two windows fit side by side on a 13-inch display.
         static let windowMinWidth: CGFloat = 720
         static let windowMinHeight: CGFloat = 480
-        /// Below this mail-area width, replies share the More mail actions menu.
+        /// Below this window width, replies share the More mail actions menu.
         static let replyMenuFoldWidth: CGFloat = 800
-        // Toolbar room after the sidebar, or after the window controls while
-        // it's hidden. The toolbar gives up width in steps as it narrows.
+        // Full window widths keep shared toolbar controls steady across sections.
         /// The profile picker shows its name beside its icon.
-        static let wideToolbarWidth: CGFloat = 1080
+        static let wideToolbarWidth: CGFloat = 1440
         /// Below this, mail actions fold into menus.
-        static let compactToolbarWidth: CGFloat = 1020
+        static let compactToolbarWidth: CGFloat = 1280
         /// Below this, an idle search field folds into a button.
-        static let searchFoldWidth: CGFloat = 760
-        /// The close, minimize and zoom buttons while the sidebar is hidden.
-        static let windowControlsWidth: CGFloat = 84
+        static let searchFoldWidth: CGFloat = 1080
+        /// Hide the title at the same width in every section.
+        static let toolbarTitleFoldWidth: CGFloat = 760
         /// An icon-only menu in the toolbar, with the gap after it.
         static let toolbarMenuWidth: CGFloat = 58
-        /// Kept for the active profile's name beside its icon.
-        static let profileNameWidth: CGFloat = 100
         static let sidebarMinWidth: CGFloat = 180
         static let sidebarWidth: CGFloat = 220
         static let sidebarMaxWidth: CGFloat = 320

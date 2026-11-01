@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// The toolbar items the main window shows while Calendar is active: period
-/// navigation, Today, the view switcher and New Event. They sit between the
-/// section pop-up and the search field, so they stay narrow.
+/// Calendar's period navigation, Today and view switcher. New Event uses
+/// the workspace's shared create button.
 struct CalendarToolbar: CustomizableToolbarContent {
     @Bindable var model: CalendarModel
 
     var body: some CustomizableToolbarContent {
-        ToolbarItem(id: "calendar.navigation", placement: .automatic) {
+        ToolbarItem(id: "calendar.navigation", placement: .primaryAction) {
             ControlGroup {
                 Button { model.shift(periods: -1) } label: {
                     Label("Previous \(model.mode.title)", systemImage: "chevron.left")
@@ -19,11 +18,11 @@ struct CalendarToolbar: CustomizableToolbarContent {
                 .help("Next \(model.mode.title.lowercased())")
             }
         }
-        ToolbarItem(id: "calendar.today", placement: .automatic) {
+        ToolbarItem(id: "calendar.today", placement: .primaryAction) {
             Button("Today") { model.date = .now }
                 .help("Today (\(ShortcutCatalog.today.label))")
         }
-        ToolbarItem(id: "calendar.mode", placement: .automatic) {
+        ToolbarItem(id: "calendar.mode", placement: .primaryAction) {
             // A bare menu picker shows no title in the toolbar, so the menu
             // carries the current mode as its label.
             Menu {
@@ -42,13 +41,6 @@ struct CalendarToolbar: CustomizableToolbarContent {
             .help("Day, Week, Month, Year or Schedule")
             .accessibilityLabel("Calendar view")
             .accessibilityValue(model.mode.title)
-        }
-        ToolbarItem(id: "calendar.newEvent", placement: .automatic) {
-            Button { model.beginNew(on: model.date) } label: {
-                Label("New Event", systemImage: "plus")
-            }
-            .help("New Event (\(ShortcutCatalog.newEvent.label))")
-            .disabled(!model.calendars.contains(where: \.canWrite))
         }
     }
 }

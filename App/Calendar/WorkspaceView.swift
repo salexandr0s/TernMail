@@ -12,7 +12,7 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @State private var showsCalendarAssistant = false
-    @State private var isCompact = false
+    @State private var calendarSidebar = CalendarSidebarState()
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     let mailbox: MailboxModel
@@ -21,12 +21,12 @@ struct WorkspaceView: View {
         ZStack {
             MainView(mailbox: mailbox, isActive: app.destination == .mail,
                 isCalendarAssistantPresented: showsCalendarAssistant,
-                onCalendarAssistantToggle: { showsCalendarAssistant.toggle() })
+                onCalendarAssistantToggle: { showsCalendarAssistant.toggle() }, calendarSidebarState: calendarSidebar)
                 .opacity(app.destination == .mail ? 1 : 0)
                 .allowsHitTesting(app.destination == .mail)
                 .accessibilityHidden(app.destination != .mail)
             HStack(spacing: 0) {
-                CalendarView(model: app.calendar, isActive: app.destination == .calendar)
+                CalendarView(model: app.calendar, isActive: app.destination == .calendar, sidebarState: calendarSidebar)
                 if showsCalendarAssistant {
                     Rectangle()
                         .fill(Tokens.Surface.border)
@@ -53,12 +53,6 @@ struct WorkspaceView: View {
             .accessibilityHidden(app.destination != .calendar)
         }
         .toolbar(removing: .sidebarToggle)
-        .toolbar(removing: app.destination == .calendar && isCompact ? .title : nil)
-        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: { isCompact = $0 }
-        .navigationTitle(app.destination == .calendar ? "Calendar"
-            : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
-        .navigationSubtitle(app.destination == .calendar || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
-            ? "" : mailbox.selectedMailboxSubtitle)
         .task { await app.calendar.start() }
         .onChange(of: app.destination, initial: true) { _, destination in
             app.calendar.isVisible = destination == .calendar

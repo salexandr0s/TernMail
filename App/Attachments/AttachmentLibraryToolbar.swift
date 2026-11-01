@@ -41,14 +41,14 @@ struct AttachmentLibraryToolbar: CustomizableToolbarContent {
     var isVisible = true
 
     var body: some CustomizableToolbarContent {
-        ToolbarItem(id: "library.viewMode", placement: .automatic) {
+        ToolbarItem(id: "library.viewMode", placement: .primaryAction) {
             Picker("View", selection: $state.viewMode) { viewModes }
                 .pickerStyle(.segmented)
                 .labelStyle(.iconOnly)
                 .help("Show attachments as a list or a grid")
         }
         .mailToolbarVisible(isVisible && !isCompact)
-        ToolbarItem(id: "library.sort", placement: .automatic) {
+        ToolbarItem(id: "library.sort", placement: .primaryAction) {
             // A bare menu picker shows no title in the toolbar, so a menu holds it.
             Menu { sortPicker } label: {
                 Label("Sort By", systemImage: "arrow.up.arrow.down")
@@ -57,7 +57,7 @@ struct AttachmentLibraryToolbar: CustomizableToolbarContent {
             .accessibilityValue(state.sort.menuTitle)
         }
         .mailToolbarVisible(isVisible && !isCompact)
-        ToolbarItem(id: "library.compactOptions", placement: .automatic) {
+        ToolbarItem(id: "library.compactOptions", placement: .primaryAction) {
             Menu {
                 Picker("View As", selection: $state.viewMode) { viewModes }
                     .pickerStyle(.inline)

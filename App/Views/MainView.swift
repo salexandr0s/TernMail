@@ -7,10 +7,12 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.workspaceToolbarID) private var toolbarIdentifier
     @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var mailWidth: CGFloat = 0
+    @State private var workspaceWidth = Tokens.Layout.windowWidth
     /// The sidebar hid because the window got narrower than the three
     /// columns' minimum widths, and comes back once the window is wide again.
     @State private var sidebarHiddenForWidth = false
@@ -34,32 +36,13 @@ struct MainView: View {
     var isActive = true
     var isCalendarAssistantPresented = false
     var onCalendarAssistantToggle: (() -> Void)?
+    var calendarSidebarState: CalendarSidebarState?
 
     private var showsOutbox: Bool {
         mailbox.selectedLabelID == MailboxModel.outboxID && !mailbox.search.isActive
     }
 
     private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
-
-    /// Room for the toolbar's actions, search and assistant. Items start after
-    /// the sidebar column, or after the window controls while the sidebar is
-    /// hidden.
-    private var toolbarWidth: CGFloat {
-        mailWidth - (showsSidebar ? sidebarColumnWidth : Tokens.Layout.windowControlsWidth)
-            - (showsProfilePicker ? Tokens.Layout.toolbarMenuWidth : 0)
-    }
-
-    /// The profile picker shows its name when there is enough toolbar space.
-    private var isWideToolbar: Bool {
-        toolbarWidth - (showsProfilePicker ? Tokens.Layout.profileNameWidth : 0) >= Tokens.Layout.wideToolbarWidth
-    }
-
-    private var isCompactWindow: Bool { toolbarWidth < Tokens.Layout.compactToolbarWidth }
-
-    // With no profiles the picker would offer All Accounts alone.
-    private var showsProfilePicker: Bool {
-        isActive && !showsLibrary && app.accountPreferences?.profiles.isEmpty == false
-    }
 
     private var showsLibrary: Bool { mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID }
     /// Mail menu items act on this window while it shows mail, not the attachment library.
@@ -68,7 +51,7 @@ struct MainView: View {
 
     /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
     private var sidebarToggle: SidebarToggle? {
-        guard isActive else { return nil }
+        guard isActive else { return calendarSidebarState?.sidebarToggle }
         if showsLibrary { return SidebarToggle(isVisible: libraryToolbar.showsSidebar, toggle: libraryToolbar.toggleSidebar) }
         return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
     }
@@ -199,6 +182,19 @@ struct MainView: View {
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
         .modifier(MainMailFeatures(mailbox: mailbox, libraryToolbar: libraryToolbar))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { workspaceWidth = $0 }
+        .toolbar(id: toolbarIdentifier) {
+            WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
+                accounts: app.accountPreferences, section: section, width: workspaceWidth, sidebar: sidebarToggle,
+                onSelect: show, onNewMessage: newMessage, onReply: reply,
+                isAssistantPresented: section == .attachments ? false : isActive ? showsAssistant : isCalendarAssistantPresented,
+                isAssistantAvailable: section != .attachments && (isActive || onCalendarAssistantToggle != nil),
+                onToggleAssistant: { if isActive { toggleAssistant() } else { onCalendarAssistantToggle?() } })
+        }
+        .toolbar(removing: .sidebarToggle)
+        .toolbar(removing: workspaceWidth < Tokens.Layout.toolbarTitleFoldWidth ? .title : nil)
+        .navigationTitle(section == .calendar ? "Calendar" : showsLibrary ? "Attachments" : mailbox.selectedLabelTitle)
+        .navigationSubtitle(section == .mail ? mailbox.selectedMailboxSubtitle : "")
     }
 
     private func mailContent(topInset: CGFloat) -> some View {
@@ -206,7 +202,7 @@ struct MainView: View {
             SidebarView(mailbox: mailbox)
                 // AppKit asserts when the system toggle, or any item over the sidebar
                 // column, meets a saved customizable toolbar or a second window, so
-                // the content toolbar carries its own sidebar button.
+                // the workspace toolbar carries its own sidebar button.
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
                 .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation, isPresented: showsAssistant) }
@@ -250,56 +246,8 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
                 .background(Tokens.Surface.canvas)
         }
-        .toolbar(id: MailWindowPreferences.toolbarID) {
-            ToolbarItem(id: "workspace.sidebar", placement: .navigation) {
-                Button(sidebarToggle?.isVisible == false ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left") {
-                    sidebarToggle?.toggle()
-                }
-                .help(sidebarToggle?.isVisible == false ? "Show Sidebar" : "Hide Sidebar")
-            }
-            .customizationBehavior(.disabled)
-            .mailToolbarVisible(sidebarToggle != nil)
-            WorkspaceSectionToolbar(section: section, onSelect: show)
-                .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
-            ToolbarItem(id: "mail.compose", placement: .navigation) {
-                Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
-                    .help("New Message (\(ShortcutCatalog.newMessage.label))")
-            }
-            .mailToolbarVisible(isActive)
-            ToolbarItem(id: "mail.profile", placement: .navigation) {
-                if let preferences = app.accountPreferences { ProfilePicker(model: preferences, isCompact: !isWideToolbar) }
-            }
-            .mailToolbarVisible(showsProfilePicker)
-            MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow,
-                foldsReplies: mailWidth < Tokens.Layout.replyMenuFoldWidth, isVisible: isActive && !showsLibrary)
-            // Toolbar spaces ignore hidden(_:), so the mail spaces stay while
-            // Calendar or the library shows. Declaring those items after the
-            // mail items puts the spaces ahead of them, in the toolbar's open
-            // stretch, instead of between their controls and Search.
-            CalendarToolbar(model: app.calendar)
-                .mailToolbarVisible(!isActive && onCalendarAssistantToggle != nil)
-            AttachmentLibraryToolbar(state: libraryToolbar, isCompact: isCompactWindow, isVisible: isActive && showsLibrary)
-            WorkspaceSearchToolbar(
-                mailbox: mailbox, calendar: app.calendar, libraryToolbar: libraryToolbar,
-                section: section, isCompact: isCompactWindow,
-                isFolded: toolbarWidth < Tokens.Layout.searchFoldWidth
-            )
-            WorkspaceAssistantToolbar(
-                isAssistantPresented: isActive ? showsAssistant : isCalendarAssistantPresented,
-                onToggleAssistant: { if isActive { toggleAssistant() } else { onCalendarAssistantToggle?() } },
-                // Both conditions go in this one value: an inner hidden(false)
-                // would win over a hidden(true) applied around this content.
-                isAssistantAvailable: isActive
-                    ? mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
-                    : onCalendarAssistantToggle != nil
-            )
-        }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
-        .navigationTitle(!isActive ? "Calendar"
-            : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
-        .navigationSubtitle(isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
-            ? mailbox.selectedMailboxSubtitle : "")
         .modifier(MailNoticeOverlay(mailbox: mailbox))
     }
 

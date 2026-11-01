@@ -12,7 +12,6 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     let calendar: CalendarModel
     let libraryToolbar: AttachmentLibraryToolbarState
     let section: WorkspaceSection
-    var isCompact = false
     /// The toolbar is short of room, so an idle field folds into a button
     /// rather than pushing the assistant into the overflow menu.
     var isFolded = false
@@ -25,7 +24,7 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
             WorkspaceSearchItem(
                 placeholder: placeholder, text: text, focusRequest: focusRequest,
                 // Reserve the added gaps within the regular search width.
-                width: isCompact ? Tokens.Layout.searchMinWidth : Tokens.Layout.searchWidth - 2 * Tokens.Space.s2,
+                width: Tokens.Layout.searchWidth - 2 * Tokens.Space.s2,
                 canFold: isFolded,
                 onChange: update, onSubmit: submit, onCancel: cancel
             )

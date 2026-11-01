@@ -11,12 +11,12 @@ struct AttachmentLibraryDestination: View {
     private var mailbox: MailboxModel { model.mailbox }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $toolbar.columnVisibility) {
-            SidebarView(mailbox: mailbox)
-                .toolbar(removing: .sidebarToggle)
-                .navigationSplitViewColumnWidth(min: Tokens.Layout.sidebarMinWidth,
-                    ideal: Tokens.Layout.sidebarWidth, max: Tokens.Layout.sidebarMaxWidth)
-        } detail: {
+        HSplitView {
+            if toolbar.showsSidebar {
+                SidebarView(mailbox: mailbox)
+                    .frame(minWidth: Tokens.Layout.sidebarMinWidth,
+                        idealWidth: Tokens.Layout.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
+            }
             AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
         }
