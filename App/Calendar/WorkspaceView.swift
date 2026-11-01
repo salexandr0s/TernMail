@@ -12,6 +12,7 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @State private var showsCalendarAssistant = false
+    @State private var isCompact = false
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     let mailbox: MailboxModel
@@ -52,7 +53,8 @@ struct WorkspaceView: View {
             .accessibilityHidden(app.destination != .calendar)
         }
         .toolbar(removing: .sidebarToggle)
-        .toolbar(removing: app.destination == .calendar ? .title : nil)
+        .toolbar(removing: app.destination == .calendar && isCompact ? .title : nil)
+        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: { isCompact = $0 }
         .navigationTitle(app.destination == .calendar ? "Calendar"
             : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
         .navigationSubtitle(app.destination == .calendar || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID

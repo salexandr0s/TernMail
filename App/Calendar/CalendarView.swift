@@ -134,8 +134,8 @@ struct CalendarView: View {
         }
     }
 
-    /// The section title and period stay inside the calendar pane as its sidebar
-    /// resizes. Navigation and the view switcher sit in the window toolbar.
+    /// The period title above the grid. The section title, navigation and
+    /// view switcher sit in the window toolbar.
     private func header(compact: Bool) -> some View {
         HStack(spacing: Tokens.Space.s2) {
             if compact {
@@ -147,21 +147,16 @@ struct CalendarView: View {
                     sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: CalendarSidebar.popoverHeight(for: model))
                 }
             }
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text("Calendar").font(.title2.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Button { showDatePicker.toggle() } label: {
-                    HStack(spacing: Tokens.Space.s2) {
-                        Text(periodTitle).font(.subheadline.weight(.medium)).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.caption.weight(.semibold))
-                    }
-                    .foregroundStyle(.secondary)
+            Button { showDatePicker.toggle() } label: {
+                HStack(spacing: Tokens.Space.s2) {
+                    Text(periodTitle).font(.title2.weight(.semibold)).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain).help("Go to Date (\(ShortcutCatalog.goToDate.label))").accessibilityLabel("Go to date, \(periodTitle)")
-                .popover(isPresented: $showDatePicker) {
-                    DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
-                        .datePickerStyle(.graphical).padding(Tokens.Space.s4)
-                }
+            }
+            .buttonStyle(.plain).help("Go to Date (\(ShortcutCatalog.goToDate.label))").accessibilityLabel("Go to date, \(periodTitle)")
+            .popover(isPresented: $showDatePicker) {
+                DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
+                    .datePickerStyle(.graphical).padding(Tokens.Space.s4)
             }
             Spacer(minLength: Tokens.Space.s2)
         }

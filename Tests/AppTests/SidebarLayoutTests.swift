@@ -453,6 +453,8 @@ import Testing
         )
         app.destination = .calendar
         try await expectToolbar(in: window, width: 1_280, section: "calendar.", spacesAfter: ["calendar.newEvent"])
+        try await expectToolbar(in: window, width: Tokens.Layout.windowMinWidth,
+            section: "calendar.", spacesAfter: ["calendar.newEvent"])
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         try await expectToolbar(
