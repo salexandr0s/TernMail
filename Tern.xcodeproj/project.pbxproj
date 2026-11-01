@@ -363,6 +363,7 @@
 		EA8F2F2568881DA2B9F26C41 /* ComposeTemplatesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91AE86CEAF17C226E2E350ED /* ComposeTemplatesPane.swift */; };
 		EB6E663753DF3E579A8A6133 /* MailboxModel+SearchSuggestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A376F9B3B207469391EA0B5 /* MailboxModel+SearchSuggestions.swift */; };
 		EBB047F51940A3F3E1E3C17B /* AssistantConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 506646ADB4EFE00F9A7BCBCF /* AssistantConversation.swift */; };
+		ED2713C73C19EEA54F47D711 /* AuthCallbackPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1991F998E423C4ECC855431B /* AuthCallbackPage.swift */; };
 		EE147FCD58CB103F66634BC4 /* PopupComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E0E14AC4458D6D92856F3EE /* PopupComponents.swift */; };
 		EE7BC2E400B1438E43A0DF6E /* MailboxModel+Restoration.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFDC6FD9EFE137E8077B57C8 /* MailboxModel+Restoration.swift */; };
 		EEF0918A1B412121E1512582 /* CalendarAssistantTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DD605A43392A436C46B0141 /* CalendarAssistantTools.swift */; };
@@ -430,6 +431,7 @@
 		1814E4A3A35775FF16F549E9 /* ReceivedAttachmentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedAttachmentsView.swift; sourceTree = "<group>"; };
 		18DCA04146B9F48B87CF1D44 /* SettingsEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsEditorTests.swift; sourceTree = "<group>"; };
 		19731017C4CC01518CFF485A /* ReaderPreparedCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderPreparedCache.swift; sourceTree = "<group>"; };
+		1991F998E423C4ECC855431B /* AuthCallbackPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthCallbackPage.swift; sourceTree = "<group>"; };
 		19AC369D42762257544A95DE /* AttachmentPreviewRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewRegistry.swift; sourceTree = "<group>"; };
 		1C780CEE7B29F26D3720FDA0 /* ComposePreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposePreferences.swift; sourceTree = "<group>"; };
 		1D482B0A3E0A71317889AE43 /* AttachmentActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentActions.swift; sourceTree = "<group>"; };
@@ -839,6 +841,7 @@
 				C9F8AAE6944AEB1E1714F399 /* AssistantWritingStyleSettingsSection.swift */,
 				E3F97600EEF9D23D7785AE4A /* AssistantWritingStyleStore.swift */,
 				A1D328E3A249FD96B3DB39F5 /* AttachmentTextReader.swift */,
+				1991F998E423C4ECC855431B /* AuthCallbackPage.swift */,
 				0F51BCFB9BFC6E3B8712319C /* ChatGPTBrand.swift */,
 				3159E9F9C7778DBB772A909A /* ChatGPTConnection.swift */,
 				F28050897997D972C58CE8AA /* LoopbackAuthListener.swift */,
@@ -1596,6 +1599,7 @@
 				A54DD47B7520FA792A8C6994 /* AttachmentTextReader.swift in Sources */,
 				673D6EE31A9A17B56435EC34 /* AttributedDocument.swift in Sources */,
 				CF40451A24687EF96105CB9B /* AuditGmail.swift in Sources */,
+				ED2713C73C19EEA54F47D711 /* AuthCallbackPage.swift in Sources */,
 				824462A51595BEA1402EE160 /* AvatarAuditFixtures.swift in Sources */,
 				AEF20C9B12678FFB07E88DFD /* AvatarInitials.swift in Sources */,
 				26ACE0BA023D654F4E9C43EE /* Binding+Tern.swift in Sources */,

@@ -119,17 +119,17 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
                 var data = buffer
                 if let bytes { data.append(bytes) }
                 guard data.count <= 16_384, error == nil else {
-                    self.reply(connection, id: id, accepted: false); return
+                    self.reply(connection, id: id, state: .unmatchedRequest); return
                 }
                 if data.range(of: Data("\r\n\r\n".utf8)) != nil {
                     guard let callbackURL = self.callbackURL, let state = self.expectedState,
                           let candidate = Self.validatedRequest(data, callbackURL: callbackURL, expectedState: state) else {
-                        self.reply(connection, id: id, accepted: false); return
+                        self.reply(connection, id: id, state: .unmatchedRequest); return
                     }
-                    self.reply(connection, id: id, accepted: true)
+                    self.reply(connection, id: id, state: .init(callbackURL: candidate))
                     self.finish(.success(candidate), preserving: id)
                 } else if complete {
-                    self.reply(connection, id: id, accepted: false)
+                    self.reply(connection, id: id, state: .unmatchedRequest)
                 } else {
                     self.receive(connection, id: id, buffer: data)
                 }
@@ -174,13 +174,11 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
         return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    private func reply(_ connection: NWConnection, id: UUID, accepted: Bool) {
-        let body = accepted
-            ? "ChatGPT returned to Tern. You can close this tab while Tern verifies the connection."
-            : "This request did not match the pending sign-in. Return to the browser tab that started it."
-        let response = "HTTP/1.1 \(accepted ? "200 OK" : "400 Bad Request")\r\n"
-            + "Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n"
-            + "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n"
+    private func reply(_ connection: NWConnection, id: UUID, state: AuthCallbackPage.State) {
+        let body = AuthCallbackPage(state: state).html
+        let response = "HTTP/1.1 \(state == .unmatchedRequest ? "400 Bad Request" : "200 OK")\r\n"
+            + "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n"
+            + "Content-Security-Policy: \(AuthCallbackPage.contentSecurityPolicy)\r\nX-Content-Type-Options: nosniff\r\n"
             + "Connection: close\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
         connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
             connection.cancel()

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import TernAI
@@ -435,20 +436,73 @@ import Testing
         let listener = LoopbackAuthListener(timeout: .seconds(10))
         let callback = try await listener.start()
         defer { listener.cancel() }
-        listener.expect(state: "expected")
+        let expectedState = "synthetic-private-state"
+        let privateCode = "synthetic-private-code<>&"
+        listener.expect(state: expectedState)
         let waiting = Task { try await listener.callback() }
         var wrong = URLComponents(url: callback, resolvingAgainstBaseURL: false)
-        wrong?.queryItems = [URLQueryItem(name: "state", value: "wrong")]
+        wrong?.queryItems = [URLQueryItem(name: "state", value: "unmatched-private-state")]
         let session = URLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
-        let (_, rejected) = try await session.data(from: #require(wrong?.url))
+        let (rejectedBody, rejected) = try await session.data(from: #require(wrong?.url))
         #expect((rejected as? HTTPURLResponse)?.statusCode == 400)
+        let rejectedHTML = try checkCallbackPage(rejectedBody, response: rejected,
+            sensitiveValues: ["unmatched-private-state"])
+        #expect(rejectedHTML == AuthCallbackPage(state: .unmatchedRequest).html)
         var right = URLComponents(url: callback, resolvingAgainstBaseURL: false)
-        right?.queryItems = [URLQueryItem(name: "state", value: "expected"), URLQueryItem(name: "code", value: "code")]
+        right?.queryItems = [URLQueryItem(name: "state", value: expectedState), URLQueryItem(name: "code", value: privateCode)]
         let rightURL = try #require(right?.url)
-        let (_, accepted) = try await session.data(from: rightURL)
+        let (acceptedBody, accepted) = try await session.data(from: rightURL)
         #expect((accepted as? HTTPURLResponse)?.statusCode == 200)
+        let acceptedHTML = try checkCallbackPage(acceptedBody, response: accepted,
+            sensitiveValues: [expectedState, privateCode])
+        #expect(acceptedHTML == AuthCallbackPage(state: .received).html)
         #expect(try await waiting.value == rightURL)
+    }
+
+    @Test func loopbackPassesUncompletedCallbacksToAuthValidation() async throws {
+        let privateDescription = "private-error-description<script>"
+        let callbacks: [[URLQueryItem]] = [
+            [.init(name: "error", value: "access_denied"), .init(name: "error_description", value: privateDescription)],
+            [],
+            [.init(name: "code", value: "private-first-code"), .init(name: "code", value: "private-second-code")],
+        ]
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        for items in callbacks {
+            let listener = LoopbackAuthListener(timeout: .seconds(10))
+            let callback = try await listener.start()
+            defer { listener.cancel() }
+            listener.expect(state: "private-state")
+            let waiting = Task { try await listener.callback() }
+            var components = try #require(URLComponents(url: callback, resolvingAgainstBaseURL: false))
+            components.queryItems = [.init(name: "state", value: "private-state")] + items
+            let returned = try #require(components.url)
+            let (data, response) = try await session.data(from: returned)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            let html = try checkCallbackPage(data, response: response,
+                sensitiveValues: ["private-state", privateDescription, "private-first-code", "private-second-code"])
+            #expect(html == AuthCallbackPage(state: .notCompleted).html)
+            #expect(try await waiting.value == returned)
+        }
+    }
+
+    private func checkCallbackPage(_ data: Data, response: URLResponse, sensitiveValues: [String]) throws -> String {
+        let response = try #require(response as? HTTPURLResponse)
+        #expect(response.value(forHTTPHeaderField: "Content-Type") == "text/html; charset=utf-8")
+        #expect(response.value(forHTTPHeaderField: "Content-Length") == String(data.count))
+        #expect(response.value(forHTTPHeaderField: "Cache-Control") == "no-store")
+        #expect(response.value(forHTTPHeaderField: "Referrer-Policy") == "no-referrer")
+        #expect(response.value(forHTTPHeaderField: "X-Content-Type-Options") == "nosniff")
+        let html = try #require(String(data: data, encoding: .utf8))
+        for value in sensitiveValues { #expect(!html.contains(value)) }
+        let styleStart = try #require(html.range(of: "<style>"))
+        let styleEnd = try #require(html.range(of: "</style>", range: styleStart.upperBound..<html.endIndex))
+        let emittedStyle = Data(html[styleStart.upperBound..<styleEnd.lowerBound].utf8)
+        let styleHash = Data(SHA256.hash(data: emittedStyle)).base64EncodedString()
+        let policy = try #require(response.value(forHTTPHeaderField: "Content-Security-Policy"))
+        #expect(policy == "default-src 'none'; style-src 'sha256-\(styleHash)'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+        return html
     }
 
     private func credentials(token: String, expires: Date, scopes: [String] = ["openid", "resource.invoke", "chatgpt.tokens.use.direct"]) throws -> ChatGPTCredentials {
