@@ -4,9 +4,13 @@ import MessageContent
 /// Reads text from the pasteboard and routes files and images to compose.
 final class ComposeTextView: NSTextView {
     var onAttach: (([Attachable]) -> Void)?
+    /// File drops are email attachments; image paste can still insert inline.
+    var onDropFiles: (([ComposeDroppedFile]) -> Void)?
+    var onFileDropTargetChange: ((Bool) -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     var onInsertDocument: ((ComposeDocument) -> Void)?
     var composeFont: ComposeFont = .sansSerif
+    private var isFileDropTargeted = false
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
@@ -31,7 +35,7 @@ final class ComposeTextView: NSTextView {
     }
 
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
-        super.acceptableDragTypes + [.fileURL, .png, .tiff]
+        super.acceptableDragTypes + [.fileURL, .png, .tiff] + ComposeDroppedFile.pasteboardTypes
     }
 
     override func paste(_ sender: Any?) {
@@ -109,19 +113,62 @@ final class ComposeTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        Self.attachables(on: sender.draggingPasteboard) == nil ? super.draggingEntered(sender) : .copy
+        updateFileDropTarget(sender.draggingPasteboard)
+        return attachmentDragOperation(on: sender.draggingPasteboard) ?? super.draggingEntered(sender)
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        Self.attachables(on: sender.draggingPasteboard) == nil ? super.draggingUpdated(sender) : .copy
+        updateFileDropTarget(sender.draggingPasteboard)
+        return attachmentDragOperation(on: sender.draggingPasteboard) ?? super.draggingUpdated(sender)
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard isEditable, let items = Self.attachables(on: sender.draggingPasteboard) else {
-            return super.performDragOperation(sender)
+        defer { setFileDropTargeted(false) }
+        return routeAttachmentDrop(from: sender.draggingPasteboard) ?? super.performDragOperation(sender)
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        setFileDropTargeted(false)
+        super.draggingExited(sender)
+    }
+
+    override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {
+        setFileDropTargeted(false)
+        super.concludeDragOperation(sender)
+    }
+
+    /// Nil leaves ordinary text and web URLs to NSTextView. Hover checks do
+    /// not materialize promised files; receipt begins only when a drop commits.
+    func attachmentDragOperation(on pasteboard: NSPasteboard) -> NSDragOperation? {
+        guard isEditable else { return [] }
+        if onDropFiles != nil { return ComposeDroppedFile.accepts(pasteboard) ? .copy : nil }
+        return Self.attachables(on: pasteboard) == nil ? nil : .copy
+    }
+
+    /// File drops take one route only, even if the pasteboard also offers text.
+    /// Editors without a file-drop callback retain the existing attach behavior.
+    func routeAttachmentDrop(from pasteboard: NSPasteboard) -> Bool? {
+        guard isEditable else { return false }
+        if let onDropFiles {
+            guard ComposeDroppedFile.accepts(pasteboard) else { return nil }
+            let files = ComposeDroppedFile.from(pasteboard: pasteboard)
+            guard !files.isEmpty else { return false }
+            onDropFiles(files)
+            return true
         }
+        guard let items = Self.attachables(on: pasteboard) else { return nil }
         onAttach?(items)
         return true
+    }
+
+    private func updateFileDropTarget(_ pasteboard: NSPasteboard) {
+        setFileDropTargeted(isEditable && onDropFiles != nil && ComposeDroppedFile.accepts(pasteboard))
+    }
+
+    private func setFileDropTargeted(_ targeted: Bool) {
+        guard targeted != isFileDropTargeted else { return }
+        isFileDropTargeted = targeted
+        onFileDropTargetChange?(targeted)
     }
 
     /// Files on the pasteboard, or an image with no text beside it, as from a screenshot.

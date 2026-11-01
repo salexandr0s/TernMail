@@ -28,6 +28,8 @@ protocol RichTextEditing: AnyObject {
     func setLink(_ url: URL?)
     /// Puts the cursor in the message, at its start.
     func focus()
+    /// Returns to the message without moving its selection.
+    func resumeEditing()
     func insertDocument(_ document: ComposeDocument)
     func insertImage(_ reference: InlineImageReference, data: Data)
     /// The selection, in the editor view's coordinates, for a popover to point
@@ -44,6 +46,9 @@ struct RichTextEditor: NSViewRepresentable {
     var isEditable: Bool
     var font: ComposeFont = .sansSerif
     var inlineImages: [String: Data] = [:]
+    /// File drops can have a different destination from pasted images.
+    var onDropFiles: (([ComposeDroppedFile]) -> Void)? = nil
+    var onFileDropTargetChange: ((Bool) -> Void)? = nil
     /// Hands over the editor once it exists, so menus can send it commands.
     var onReady: (any RichTextEditing) -> Void
     /// Files, or an image without text, dropped or pasted into the message.
@@ -79,6 +84,9 @@ struct RichTextEditor: NSViewRepresentable {
         textView.writingToolsBehavior = .complete
         textView.setAccessibilityLabel("Message")
         textView.onAttach = onAttach
+        textView.onDropFiles = onDropFiles
+        textView.onFileDropTargetChange = onFileDropTargetChange
+        textView.isEditable = isEditable
         textView.composeFont = font
         textView.onFocusChange = onFocusChange
         textView.onInsertDocument = { [weak coordinator = context.coordinator] in coordinator?.insertDocument($0) }
@@ -101,6 +109,8 @@ struct RichTextEditor: NSViewRepresentable {
         context.coordinator.textView?.isEditable = isEditable
         if let textView = context.coordinator.textView as? ComposeTextView {
             textView.onAttach = onAttach
+            textView.onDropFiles = onDropFiles
+            textView.onFileDropTargetChange = onFileDropTargetChange
             textView.composeFont = font
             textView.onFocusChange = onFocusChange
         }
@@ -177,6 +187,17 @@ struct RichTextEditor: NSViewRepresentable {
             textView.window?.makeFirstResponder(textView)
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        }
+
+        func resumeEditing() {
+            guard let textView, let window = textView.window else { return }
+            let selection = textView.selectedRange()
+            let length = textView.textStorage?.length ?? 0
+            let location = min(selection.location, length)
+            let restored = NSRange(location: location, length: min(selection.length, length - location))
+            guard window.makeFirstResponder(textView) else { return }
+            textView.setSelectedRange(restored)
+            textView.scrollRangeToVisible(restored)
         }
 
         var selectionRect: CGRect? {

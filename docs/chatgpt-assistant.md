@@ -17,13 +17,17 @@ Broad requests review a bounded selection of conversations. Tern reserves the en
 
 ## Write in the compose window
 
-Choose the sparkle button in a compose or reply window, or press **Shift-Command-J**, to open a small chat bar above the quoted text. Ask for a reply, a revision, or an invitation such as “Invite her to dinner next Friday.” The assistant uses the current unsaved draft, recipients and reply thread. It can search other mail in the sending account and check calendars you have allowed in Assistant Settings. Changing the conversation selected in the main window does not change this context.
+Choose **Ask AI** in a compose or reply window, or press **Shift-Command-J**, to open a small chat bar below the message editor. In narrow windows the toolbar shows its sparkle icon. Ask for a reply, a revision, or an invitation such as “Invite her to dinner next Friday.” The assistant uses the current unsaved draft, recipients and reply thread. It can search other mail in the sending account and check calendars you have allowed in Assistant Settings. Changing the conversation selected in the main window does not change this context.
 
 **Review Draft** shows the suggested subject and body alongside the conversation. Ask follow-up questions in the same panel, then choose **Apply to Draft** to replace the message text. **Undo** restores the previous rich text while no later edits have been made. Recipients, signatures, quoted messages and attached files stay in the draft; inline images move below the rewritten text. If you edit the draft after requesting a suggestion, ask for an updated suggestion before applying it.
 
 For invitations, the assistant can check an explicit evening or weekend interval as well as working-hours availability. It should state the date, timezone and any assumed time or duration. Missing calendar access or failed checks remain unknown. Suggestions reserve no time, create no events and send no mail. Review the draft and use the usual Send button when ready.
 
-Each compose window keeps its own conversation in memory. Closing the assistant stops the current response and keeps the conversation available until the compose window closes. **New Chat** clears it. Removing access clears retained context and suggestions. **Stop response** cancels a request; **Try Again** repeats it using the current draft.
+Each compose window keeps its own conversation in memory. Closing the assistant stops the current response, returns to your place in the message, and keeps the conversation available until the compose window closes. **New Chat** clears it. Starter prompts fill the input so you can edit them before asking. Removing access clears retained context and suggestions. **Stop response** cancels a request; **Try Again** repeats it using the current draft.
+
+Drop files onto the AI bar or its conversation to use them as **AI context**. These files appear separately from email attachments and are supplied to the assistant when you ask. Dropping files elsewhere in the compose window, including the message editor, adds them to the outgoing email instead. The drop target identifies which destination will receive the files.
+
+AI context accepts up to four files, each up to 5 MB: plain text, CSV, TSV, Markdown, JSON, XML, PDFs with selectable text, and supported images. Text excerpts are limited to 12 KB per file; PDF reading inspects up to 40 pages. Images use a reduced first-frame preview, so small text and fine details may be lost. Combined context is limited to 60 KB. Files that cannot be read show a reason and Retry/Remove controls. Removing a context file starts a new chat to clear its contents from the conversation. Adding files keeps the existing chat.
 
 ## Conversation summaries
 

@@ -125,6 +125,45 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func promisedAttachmentHoldsSendUntilItsFileArrives() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.content.to = [EmailAddress(address: "pat@example.com")]
+        let folder = FileManager.default.temporaryDirectory.appending(path: "TernPromisedAttachTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let temporary = folder.appending(path: "provider-content")
+        let bytes = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+        try bytes.write(to: temporary)
+        var gate: CheckedContinuation<URL, any Error>?
+        defer { gate?.resume(throwing: CancellationError()) }
+        let source = ComposeDroppedFile(filename: "Dinner.png", load: {
+            try await withCheckedThrowingContinuation { gate = $0 }
+        })
+
+        model.attach([.dropped(source)])
+        #expect(model.progressText != nil)
+        #expect(await model.send() == false)
+        try await waitUntil { gate != nil }
+        #expect(try await cache.read { try $0.composeRows(localDraftID: id).filter { $0.kind == .sendDraft }.count } == 0)
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.state == .editing)
+        gate?.resume(returning: temporary)
+        gate = nil
+        try await waitUntil { model.attachments.count == 1 && model.progressText == nil }
+        let attachment = try #require(model.attachments.first)
+        #expect(attachment.filename == "Dinner.png")
+        #expect(attachment.contentID == nil)
+        let copy = try #require(await model.attachmentFileURL(attachment))
+        #expect(try Data(contentsOf: copy) == bytes)
+        #expect(await model.send())
+        #expect(try await cache.read { try $0.composeRows(localDraftID: id).filter { $0.kind == .sendDraft }.count } == 1)
+        #expect(await mailbox.undoSend(id))
+        await mailbox.stop()
+    }
+
     @Test func aFileThatFailsToAttachStaysListedAndHoldsSendAndCloseUntilRetried() async throws {
         let (mailbox, cache) = try await makeMailbox()
         let id = try #require(await mailbox.startCompose(.newMessage))
