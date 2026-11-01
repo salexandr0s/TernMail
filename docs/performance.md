@@ -484,3 +484,24 @@ in `evidence/tern-reader-observation-baseline/` and
 `evidence/tern-reader-observation-candidate/` under the same backup root.
 This demonstrates fewer redundant notifications. Its effect on visible latency
 still needs a controlled Release comparison.
+
+A later partial run on `a086e262` recorded 100 retained selections with zero
+scenario failures. Readable-content p50/p95/p99 was 53.13/63.43/79.14 ms; the
+selected-row drawing proxy was 41.70/54.89/64.15 ms. These values are provisional:
+the runner stopped after 18 seconds without the final report or native-input
+validity total. The local snapshot contains only ten selections. Do not treat
+the partial run as passing the performance contract or infer zero native input.
+
+The outer window/display geometry matched the prior run, but 11 attached probes
+and 1,100 selection observers differed from the baseline's 12 and 1,200. Internal
+column geometry was not recorded. Zero row factories, 200 visual evaluations,
+204 prepared hits and two attached WebViews were recorded; prepared data remained
+31,757 bytes and app footprint moved from 271.52 to 269.58 MB. WebKit child memory
+and the whole-run heartbeat were not captured. These limits prevent a clean
+causal before/after claim.
+
+Root released this run at 18:48:14.810 UTC, too late in the user's
+18:46:17–18:48:17 slot. The relative watcher budget then ended at 18:48:32.849,
+15.85 seconds after the promised stop. The next runner must enforce an absolute
+availability deadline and reserve cleanup time. Evidence is preserved under
+`~/.codex/backups/tern-performance-20261101/evidence/tern-reader-session-partial-20261101T184736Z/`.
