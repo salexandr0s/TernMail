@@ -83,14 +83,15 @@ enum MailToolbarActions {
     }
 
     struct Reply: View {
+        @FocusedValue(\.selectedMailQuote) private var selectedQuote
         let mailbox: MailboxModel
         let kind: ReplyKind
         let title: String
         let symbol: String
-        let reply: (ReplyKind) -> Void
+        let reply: (ReplyKind, SelectedMailQuote?) -> Void
 
         var body: some View {
-            Button { reply(kind) } label: { Label(title, systemImage: symbol) }
+            Button { reply(kind, selectedQuote) } label: { Label(title, systemImage: symbol) }
                 .help(title).disabled(!mailbox.canReply)
         }
     }
@@ -119,8 +120,9 @@ enum MailToolbarActions {
     }
 
     struct CompactReplies: View {
+        @FocusedValue(\.selectedMailQuote) private var selectedQuote
         let mailbox: MailboxModel
-        let reply: (ReplyKind) -> Void
+        let reply: (ReplyKind, SelectedMailQuote?) -> Void
 
         var body: some View {
             Menu { replyActions.labelStyle(.titleAndIcon) } label: {
@@ -131,9 +133,14 @@ enum MailToolbarActions {
         }
 
         @ViewBuilder private var replyActions: some View {
-            Reply(mailbox: mailbox, kind: .reply, title: "Reply", symbol: "arrowshape.turn.up.left", reply: reply)
-            Reply(mailbox: mailbox, kind: .replyAll, title: "Reply All", symbol: "arrowshape.turn.up.left.2", reply: reply)
-            Reply(mailbox: mailbox, kind: .forward, title: "Forward", symbol: "arrowshape.turn.up.right", reply: reply)
+            replyAction(.reply, title: "Reply", symbol: "arrowshape.turn.up.left")
+            replyAction(.replyAll, title: "Reply All", symbol: "arrowshape.turn.up.left.2")
+            replyAction(.forward, title: "Forward", symbol: "arrowshape.turn.up.right")
+        }
+
+        private func replyAction(_ kind: ReplyKind, title: String, symbol: String) -> some View {
+            Button { reply(kind, selectedQuote) } label: { Label(title, systemImage: symbol) }
+                .help(title).disabled(!mailbox.canReply)
         }
     }
 

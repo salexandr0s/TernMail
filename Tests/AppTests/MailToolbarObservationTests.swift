@@ -16,7 +16,7 @@ import Testing
         let mailbox = fixture.mailbox
         // Construct outside tracking: only evaluation of the actual body is
         // measured, including its nonescaping ToolbarItem content builders.
-        let toolbar = MailToolbar(mailbox: mailbox, reply: { _ in }, isCompact: isCompact)
+        let toolbar = MailToolbar(mailbox: mailbox, reply: { _, _ in }, isCompact: isCompact)
         let selections: [Set<ThreadKey>] = [[fixture.unread], [fixture.read], []]
         for selection in selections {
             // Observation callbacks are one-shot and fire before the write.
@@ -43,8 +43,8 @@ import Testing
         let trash = MailToolbarActions.Trash(mailbox: mailbox)
         let archive = MailToolbarActions.Archive(mailbox: mailbox)
         let reply = MailToolbarActions.Reply(mailbox: mailbox, kind: .reply,
-            title: "Reply", symbol: "arrowshape.turn.up.left", reply: { _ in })
-        let compactReplies = MailToolbarActions.CompactReplies(mailbox: mailbox, reply: { _ in })
+            title: "Reply", symbol: "arrowshape.turn.up.left", reply: { _, _ in })
+        let compactReplies = MailToolbarActions.CompactReplies(mailbox: mailbox, reply: { _, _ in })
         let controls: [(name: String, body: () -> Void)] = [
             ("Read", { _ = read.body }),
             ("Trash", { _ = trash.body }),
@@ -75,7 +75,7 @@ import Testing
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suite) }
         let mailbox = fixture.mailbox
         mailbox.selectedThreadIDs = [fixture.unread]
-        let toolbar = MailToolbar(mailbox: mailbox, reply: { _ in })
+        let toolbar = MailToolbar(mailbox: mailbox, reply: { _, _ in })
         let read = MailToolbarActions.Read(mailbox: mailbox)
         let parentCallbacks = Mutex(0)
         let readCallbacks = Mutex(0)

@@ -7,7 +7,6 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
-    @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var mailWidth: CGFloat = 0
@@ -168,7 +167,8 @@ struct MainView: View {
             }
         }
         .background {
-            ShortcutMonitor(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
+            MailShortcutContext(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID,
+                perform: perform)
         }
         .background { WindowReader { hostWindow = $0 } }
         .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
@@ -315,7 +315,7 @@ struct MainView: View {
     /// A single-key shortcut does what its menu command does, when that is
     /// enabled. Returns false when it does nothing, so the key goes on to the
     /// focused view: Return with a selection reaches the list, for one.
-    private func perform(_ action: SingleKeyShortcuts.Action) -> Bool {
+    private func perform(_ action: SingleKeyShortcuts.Action, selectedQuote: SelectedMailQuote?) -> Bool {
         guard canPerform(action) else { return false }
         switch action {
         case .nextConversation: mailbox.selectAdjacentThread(1)
@@ -331,9 +331,9 @@ struct MainView: View {
         case .snooze: mailbox.showSnoozeDate()
         case .search: mailbox.search.focusField()
         case .newMessage: newMessage()
-        case .reply: reply(.reply)
-        case .replyAll: reply(.replyAll)
-        case .forward: reply(.forward)
+        case .reply: reply(.reply, quote: selectedQuote)
+        case .replyAll: reply(.replyAll, quote: selectedQuote)
+        case .forward: reply(.forward, quote: selectedQuote)
         case .undo: undoManager?.undo()
         case .showShortcuts: openWindow(id: KeyboardShortcutsView.sceneID)
         case .go(let destination): mailbox.go(to: Self.labelID(of: destination))
@@ -357,7 +357,7 @@ struct MainView: View {
         }
     }
 
-    private func reply(_ kind: ReplyKind) {
+    private func reply(_ kind: ReplyKind, quote selectedQuote: SelectedMailQuote?) {
         Task {
             if let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1,
                let quote = selectedQuote, quote.belongsTo(accountID: key.accountID, threadID: key.threadID,
@@ -384,6 +384,19 @@ struct MainView: View {
     }
 
     /// Undoing a send or a discard reopens the message's window.
+}
+
+/// Keeps selected-text focus observation with the shortcut handler.
+struct MailShortcutContext: View {
+    @FocusedValue(\.selectedMailQuote) private var selectedQuote
+    let isEnabled: Bool
+    let perform: (SingleKeyShortcuts.Action, SelectedMailQuote?) -> Bool
+
+    var body: some View {
+        ShortcutMonitor(isEnabled: isEnabled) { action in
+            perform(action, selectedQuote)
+        }
+    }
 }
 
 /// Keeps the assistant's account access current as the mailbox changes.

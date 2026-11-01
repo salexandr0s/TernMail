@@ -7,7 +7,7 @@ import SwiftUI
 /// into groups, since adjacent items otherwise share one glass capsule.
 struct MailToolbar: CustomizableToolbarContent {
     let mailbox: MailboxModel
-    let reply: (ReplyKind) -> Void
+    let reply: (ReplyKind, SelectedMailQuote?) -> Void
     var isCompact = false
     /// Hidden while the window shows Calendar or the attachment library. Each
     /// group reads it here because an inner `hidden(false)` would win over one
