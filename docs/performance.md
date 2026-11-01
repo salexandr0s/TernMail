@@ -333,3 +333,18 @@ Evidence, source manifest, raw results and assessment are retained at
 `~/.codex/backups/tern-performance-20261101/evidence/20261101T143859Z-100-reader-only-normal/`.
 For another uninterrupted run, prepare the gated window before asking the user
 for availability, then release it immediately when ready.
+
+Future programmatic audits use schema 4 (`891478e`). A count-only local event
+monitor starts after setup and foreground eligibility; mouse-down, key-down or
+wheel input invalidates the report even if every requested switch completes.
+Events continue unchanged and no payload is recorded. App compilation, all nine
+NavigationPerformanceTests and validator valid/invalid cases passed. The historical
+schema-3 results above retain their original limitations and are not rewritten.
+
+Two later controls produced no accepted optimization. A per-row controls boundary,
+with and without an outer selection tag, still rebuilt an unchanged offscreen
+body during attachment discovery and was removed. A toolbar-placement
+comparison had strong monotonic CPU drift across normal/outer/normal fixtures
+and four cross-window generated-UUID assertion failures. That control was also
+removed; its CPU values do not establish either a benefit or a regression.
+Details and evidence locations are in `docs/research/open-source-performance.md`.

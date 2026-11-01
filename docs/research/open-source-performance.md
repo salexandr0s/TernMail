@@ -93,21 +93,30 @@ the recorded 209 projections. The active page's 99 updates times 600 rows times
 two passes exactly match the factory count. The updates carry new attachment
 metadata; existing duplicate suppression is working.
 
-The next bounded experiment retains immutable per-item construction identity
-behind a row-controls boundary, keeping the existing modifier order and live
-settings. It must show new attachments immediately and avoid rebuilding
-unchanged controls. The outer factory counter stays intact; a separate controls
-counter will measure the work moved behind the boundary. This experiment is
-not yet accepted. Its strict native regression passes for the changed row and
-unchanged visible row, but detects an offscreen unchanged controls body evaluated
-again during attachment publication. The assertion remains intact while tag
-discovery is investigated. Rapid native selection coverage now passes for both
-conversation and message modes, including final selection stability without
-reapplying the target. An earlier incomplete run had unexplained selection
-transitions; none occurred in the accepted 100-retained scenario. The historical
-audit has no native-input monitor, so it cannot exclude every form of external
-interference. The local-loading scenario completed only 76/100 and supplies no
-accepted local-latency result.
+A bounded row-controls experiment retained immutable per-item construction
+identity while keeping the modifier order and live settings. Its strict native
+regression passed changed-row freshness and unchanged visible-row reuse, but an
+offscreen unchanged controls body still evaluated again during attachment
+publication. Exposing the same account-qualified selection tag at the outer
+boundary did not help: the unchanged offscreen count remained 1→2. The experiment
+was rejected and removed; no assertion was weakened. The result establishes
+offscreen reevaluation, not which internal SwiftUI trait lookup caused it.
+Evidence: `/tmp/tern-row-controls-outer-tag-verification-2/test.log`.
+
+The next independent candidate separates a cheap selection observer from the
+visual row, following MishMail's existing design. The accepted retained scenario
+still evaluated 1,200 visual row bodies across 100 switches. Any new boundary
+must keep selection, metadata, date text, hover, appearance and preferences live.
+
+Rapid native selection coverage passes for both conversation and message modes,
+including final selection stability without reapplying the target. An earlier
+incomplete run had unexplained selection transitions; none occurred in the accepted
+100-retained scenario. That historical audit has no native-input monitor. Commit
+`891478e` adds a count-only monitor and schema-4 validation for future programmatic
+runs: unexpected mouse-down, key-down or wheel input invalidates the report even
+if every interaction completes. Events are neither consumed nor logged. Zero
+does not exclude accessibility automation. The local-loading scenario completed
+only 76/100 and supplies no accepted local-latency result.
 
 Mailspring similarly [constructs rows only for a viewport range with margins](https://github.com/Foundry376/Mailspring/blob/c84212a97df7bab464fbdc8a3a3368785c94af70/app/src/components/list-tabular.tsx#L265-L354)
 and [memoizes its row subtree](https://github.com/Foundry376/Mailspring/blob/c84212a97df7bab464fbdc8a3a3368785c94af70/app/src/components/list-tabular.tsx#L58-L108).
@@ -184,6 +193,16 @@ retains current and locally prepared adjacent ranges, coalesces refreshes and
 avoids unchanged presentation publications. Existing tests cover repeated warm
 activation without further requests. Remaining mode-switch cost requires layout
 measurement; there is no demonstrated range-retention gap.
+
+A separate toolbar-placement control kept declarations and geometry unchanged
+while comparing the clipped content owner with an outer owner. Its background
+CPU medians rose across normal-before, outer, normal-after: Mail 193.15, 289.05,
+382.45 ms; Calendar 199.05, 296.10, 400.00 ms. This sequence drift prevents a
+causal comparison. Four strict cross-window assertions also failed because
+generated calendar subitem UUIDs differed; other geometry, corpus and visibility
+checks passed. No toolbar change is adopted. The exact experiment and failures
+are archived under `evidence/tern-outer-toolbar-owner-verification/`; these are
+diagnostic CPU measurements, not accepted visible-switch timings.
 
 ## Measurement and adoption
 
