@@ -116,6 +116,7 @@ private struct MessageListVisualRow: View, Equatable {
         .padding(.horizontal, Tokens.Space.s1)
         .padding(.vertical, Tokens.Space.s1)
         .onHover { isHovered = $0 }
+        .ternHover(isEnabled: !selected)
         .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
