@@ -6,6 +6,79 @@ import WebKit
 @testable import Tern
 
 @Suite @MainActor struct MessageWebViewTests {
+    @Test(.timeLimit(.minutes(1))) func hiddenRendererRestoresBackgroundEligibilityWithoutStealingOtherControls() async throws {
+        let height = HeightValue()
+        let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 180), configuration: configuration)
+        let field = NSTextField(frame: NSRect(x: 0, y: 190, width: 400, height: 24))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 230))
+        root.addSubview(view); root.addSubview(field)
+        let window = NSWindow(contentRect: root.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = root
+        // Background-only: never activate the app or make this window key.
+        window.orderBack(nil)
+        defer { view.stopLoading(); window.close() }
+        view.navigationDelegate = coordinator
+        let html = MessageDocument.render(plainText: "A searchable reader needle stays in this document.").html
+        coordinator.load(html, in: view)
+        try await waitFor { view.url != nil && !view.isLoading }
+        let nativeResponder = nativeDescendants(of: view).first { $0.acceptsFirstResponder }
+        let acceptsFocusWhenActive = view.acceptsFirstResponder
+        let isKeyViewWhenActive = view.canBecomeKeyView
+        let childWasKeyView = nativeResponder?.canBecomeKeyView
+        // Some WebKit versions use the wrapper itself, and a background
+        // window need not expose an eligible private content responder.
+        let accepted = window.makeFirstResponder(nativeResponder ?? view)
+        if accepted {
+            let ownedResponder = try #require(window.firstResponder as? NSView)
+            #expect(ownedResponder === view || ownedResponder.isDescendant(of: view))
+        } else {
+            print("Deferred: this background WebKit view did not accept native focus; owned-responder resignation needs a visible focus fixture.")
+        }
+        if nativeResponder == nil {
+            print("Deferred: background WebKit exposed no eligible internal descendant; descendant-responder ownership is not runtime-verified.")
+        }
+
+        coordinator.setActive(false, in: view)
+        #expect(view.isHidden)
+        #expect(!view.acceptsFirstResponder)
+        #expect(!view.canBecomeKeyView)
+        #expect(!view.becomeFirstResponder())
+        #expect(nativeDescendants(of: view).allSatisfy { !$0.canBecomeKeyView })
+        #expect((window.firstResponder as? NSView)?.isDescendant(of: view) != true)
+        #expect(window.firstResponder !== view)
+
+        coordinator.setActive(true, in: view)
+        #expect(!view.isHidden)
+        #expect(view.acceptsFirstResponder == acceptsFocusWhenActive)
+        #expect(view.canBecomeKeyView == isKeyViewWhenActive)
+        #expect(nativeResponder?.canBecomeKeyView == childWasKeyView)
+        #expect(!coordinator.needsLoad(html), "Reactivation must retain the loaded document")
+        let find = WKFindConfiguration()
+        find.wraps = true
+        #expect(try await view.find("reader needle", configuration: find).matchFound)
+        let selection = try await view.evaluateJavaScript("getSelection()?.toString()", in: nil, contentWorld: .defaultClient) as? String
+        #expect(selection == "reader needle")
+
+        try #require(window.makeFirstResponder(field))
+        let unrelatedResponder = try #require(window.firstResponder)
+        coordinator.setActive(false, in: view)
+        #expect(window.firstResponder === unrelatedResponder)
+        // Repeated updates while retained must not steal another control's
+        // field editor, and reactivation must not automatically grab focus.
+        coordinator.setActive(false, in: view)
+        coordinator.setActive(true, in: view)
+        #expect(window.firstResponder === unrelatedResponder)
+        #expect(!window.isKeyWindow)
+    }
+
+    private func nativeDescendants(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + nativeDescendants(of: $0) }
+    }
+
     @Test func anInactiveRetainedRendererDoesNotLoadOrMeasureChangedContent() async throws {
         let height = HeightValue()
         let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
@@ -167,5 +240,5 @@ import WebKit
 @MainActor private func waitFor(_ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
     while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(condition(), "WebKit did not report the expected content height")
+    #expect(condition(), "WebKit did not reach the expected state")
 }

@@ -244,16 +244,16 @@ struct ThreadView: View {
                     }
                     .scrollPosition($scrollPosition)
                     .onScrollGeometryChange(for: ReaderPage.self, of: ReaderPage.init) { _, page in paging.page = page }
-                    .focusable()
+                    .focusable(isReaderActive)
                     .focusEffectDisabled()
                     .focused($readerFocused)
                     .onKeyPress(keys: [.upArrow, .downArrow]) { press in
-                        guard press.modifiers.contains(.command) else { return .ignored }
+                        guard isReaderActive, press.modifiers.contains(.command) else { return .ignored }
                         moveFocus(by: press.key == .downArrow ? 1 : -1, in: messages, scroll: scroll)
                         return .handled
                     }
                     .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
-                        guard let id = focusedMessageID, messages.contains(where: { $0.id == id }) else { return .ignored }
+                        guard isReaderActive, let id = focusedMessageID, messages.contains(where: { $0.id == id }) else { return .ignored }
                         if press.key == .rightArrow { expanded.insert(id) } else { expanded.remove(id) }
                         return .handled
                     }
@@ -312,6 +312,7 @@ struct ThreadView: View {
 
     var body: some View {
         conversationContent
+        .disabled(!isReaderActive)
         .background(Tokens.Surface.canvas)
         .background(VisibleContentProbe(kind: .reader, isActive: isReaderActive && primaryBodyReady && interaction?.body != nil,
             revision: Int(truncatingIfNeeded: interaction?.body ?? 0)))
@@ -497,6 +498,7 @@ struct ThreadView: View {
     /// Space shows the next screen of the conversation, keeping a strip of
     /// the previous one in view. At the end the key passes on.
     private func pageDown() -> KeyPress.Result {
+        guard isReaderActive else { return .ignored }
         let page = paging.page
         let bottom = page.contentHeight - page.visibleHeight
         guard page.visibleHeight > 0, page.offset < bottom - Tokens.Border.hairline else { return .ignored }

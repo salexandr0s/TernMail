@@ -182,6 +182,7 @@ struct MessageWebView: NSViewRepresentable {
         private var interruptedLoad = false
 
         func setActive(_ active: Bool, in view: WKWebView) {
+            (view as? ContentSizedWebView)?.setReaderActive(active)
             guard active != isActive else { return }
             isActive = active
             if !active {
@@ -328,6 +329,32 @@ final class ContentSizedWebView: WKWebView {
     /// Opens a link in front of Tern, or behind it when `behind` is true.
     var onOpenLink: ((_ url: URL, _ behind: Bool) -> Void)?
     private var scrollDirection = ScrollDirection()
+    private var isReaderActive = true
+
+    override var acceptsFirstResponder: Bool { isReaderActive && super.acceptsFirstResponder }
+    override var canBecomeKeyView: Bool { isReaderActive && super.canBecomeKeyView }
+
+    override func becomeFirstResponder() -> Bool {
+        guard isReaderActive else { return false }
+        return super.becomeFirstResponder()
+    }
+
+    func setReaderActive(_ active: Bool) {
+        isReaderActive = active
+        // WebKit can put focus in an internal descendant instead of this
+        // wrapper. Native hiding removes the whole subtree from the key-view
+        // loop while retaining its document and measured geometry.
+        isHidden = !active
+        guard !active, let window, ownsResponder(window.firstResponder) else { return }
+        // Hiding may already have moved focus to another control. Never
+        // clear another reader's responder or the window's search field.
+        window.makeFirstResponder(nil)
+    }
+
+    private func ownsResponder(_ responder: NSResponder?) -> Bool {
+        guard let view = responder as? NSView else { return false }
+        return view === self || view.isDescendant(of: self)
+    }
 
     /// WebKit's own link items either navigate this view, which the policy
     /// refuses, or need a UI delegate that makes windows. Tern's take their
