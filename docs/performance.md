@@ -133,6 +133,11 @@ used 275–303 ms of Mail CPU and 135–148 ms of Calendar CPU after its first s
 so the probe hosts were not the dominant cost.
 Remaining toolbar/layout cost is still under investigation.
 
+A single-child container around the mail columns also showed no improvement:
+Mail median CPU was 284.4 ms in both variants. Native item identities, toolbar
+order, column geometry and row insets matched. The experiment was removed while
+its useful regression coverage was retained.
+
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
 `/tmp/tern-performance-audit-build/reports/20261101T004216Z-workspace-diagnostic/`.
@@ -156,3 +161,9 @@ in a background window; internal WebKit descendant focus still needs foreground
 validation. Actual reader latency, scrolling targets, active-sync/offline timing,
 memory plateau, and the final installed universal Release remain unverified. The user
 requested background work while foreground timing runs are deferred.
+
+A normal universal Release build at `bdbd2c5` passed arm64/x86_64, embedded revision,
+hardened runtime and strict signature checks without audit/test overrides.
+The source and lockfiles stayed unchanged. It has not been launched or installed;
+this is build verification, not performance acceptance. Logs and metadata are in
+`~/.codex/backups/tern-performance-20261101/evidence/normal-universal-bdbd2c5/`.
