@@ -66,7 +66,7 @@ import Testing
     }
 
     @Test func sharedProbeKeepsReadinessAndQueuedCommitGenerationsIndependent() async throws {
-        let performance = NavigationPerformance()
+        let performance = NavigationPerformance(selectionFeedbackEnabled: true)
         let probe = VisibleContentProbe.ProbeView(performance: performance)
         probe.configure(kinds: [.workspace, .mailbox, .selectionFeedback], isActive: true, revision: 1)
         let workspace = performance.begin(.workspace)
@@ -139,7 +139,7 @@ import Testing
     }
 
     @Test func nativeInputTimingExpiresBeforeAnUnrelatedTask() async throws {
-        let performance = NavigationPerformance()
+        let performance = NavigationPerformance(selectionFeedbackEnabled: true)
         performance.captureInput(timestamp: ProcessInfo.processInfo.systemUptime - 0.025)
         let input = performance.begin(.selectionFeedback)
         performance.contentReady(.selectionFeedback, cacheTier: .local)
@@ -157,6 +157,129 @@ import Testing
         #expect(performance.records.last?.inputQueueDelayMilliseconds == nil)
     }
 
+    @Test func feedbackIsExplicitlyDisabledWithoutPendingWorkOrNotifications() async {
+        let performance = NavigationPerformance()
+        var notifications = 0
+        let token = performance.observe { _ in notifications += 1 }
+        defer { performance.removeObserver(token) }
+        let generation = performance.begin(.selectionFeedback)
+        performance.contentReady(.selectionFeedback, cacheTier: .local)
+        #expect(performance.currentGeneration(for: .selectionFeedback) == nil)
+        let started = ContinuousClock.now
+        let result = await performance.waitForCompletion(.selectionFeedback, generation: generation, timeout: .seconds(1))
+        #expect(started.duration(to: .now) < .milliseconds(250))
+        #expect(result == nil && performance.records.isEmpty && notifications == 0)
+        let measurement = performance.report().selectionFeedbackMeasurement
+        #expect(measurement.endpoint == .disabled)
+        #expect(measurement.registeredProbeCount == 0)
+    }
+
+    @Test func rowFeedbackRequiresCurrentNativeSelectionAndViewport() async throws {
+        let fixture = FeedbackTableFixture()
+        defer { fixture.window.close() }
+        let performance = NavigationPerformance(selectionFeedbackEnabled: true)
+        let probe = VisibleContentProbe.ProbeView(performance: performance)
+        probe.frame = NSRect(x: 0, y: 0, width: 280, height: 40)
+        var currentTarget = true
+        let accountOwner = NSObject()
+        let identity = VisibleContentProbe.SelectedRowIdentity(owner: ObjectIdentifier(fixture),
+            accountOwner: ObjectIdentifier(accountOwner),
+            row: .init(accountID: "audit-a", threadID: "one", messageID: nil))
+        let requirement = VisibleContentProbe.SelectedRowRequirement(identity: identity, isCurrent: { currentTarget })
+        probe.configure(kinds: [.selectionFeedback], isActive: true, revision: 0, selectedRow: requirement)
+        defer { probe.stop() }
+        let generation = performance.begin(.selectionFeedback)
+        performance.contentReady(.selectionFeedback, cacheTier: .local, generation: generation)
+        #expect(!probe.satisfiesSelectedRowRequirement) // no actual native row
+        let row = try #require(fixture.table.rowView(atRow: 0, makeIfNecessary: true))
+        row.addSubview(probe)
+        fixture.table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        #expect(probe.readyDrawingCommits().isEmpty)
+        fixture.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        #expect(row.isSelected && fixture.table.selectedRowIndexes == [0])
+        #expect(probe.satisfiesSelectedRowRequirement)
+        let commit = try #require(probe.readyDrawingCommits().first)
+        #expect(probe.isCurrentDrawingCommit(commit))
+
+        let beforeNotification = probe.displayRequestCount
+        NotificationCenter.default.post(name: NSTableView.selectionDidChangeNotification, object: fixture.table)
+        #expect(probe.displayRequestCount == beforeNotification + 1) // wake an early draw
+        currentTarget = false
+        let beforeUnrelatedSelection = probe.displayRequestCount
+        NotificationCenter.default.post(name: NSTableView.selectionDidChangeNotification, object: fixture.table)
+        #expect(probe.displayRequestCount == beforeUnrelatedSelection)
+        #expect(!probe.isCurrentDrawingCommit(commit))
+        _ = performance.begin(.selectionFeedback)
+        #expect(probe.displayRequestCount == beforeUnrelatedSelection) // unrelated rows do not redraw
+        currentTarget = true
+        performance.contentReady(.selectionFeedback, cacheTier: .local)
+        #expect(!probe.isCurrentDrawingCommit(commit)) // stale generation
+        let current = try #require(probe.readyDrawingCommits().first)
+        let newAccountOwner = NSObject()
+        let replacement = VisibleContentProbe.SelectedRowRequirement(identity: .init(owner: ObjectIdentifier(fixture),
+            accountOwner: ObjectIdentifier(newAccountOwner), row: identity.row), isCurrent: { true })
+        probe.configure(kinds: [.selectionFeedback], isActive: true, revision: 0, selectedRow: replacement)
+        #expect(!probe.isCurrentDrawingCommit(current)) // same account/row ID, new account owner
+        let afterReplacement = try #require(probe.readyDrawingCommits().first)
+        let otherAccount = VisibleContentProbe.SelectedRowRequirement(identity: .init(owner: ObjectIdentifier(fixture),
+            accountOwner: ObjectIdentifier(newAccountOwner),
+            row: .init(accountID: "audit-b", threadID: "one", messageID: nil)), isCurrent: { true })
+        probe.configure(kinds: [.selectionFeedback], isActive: true, revision: 0, selectedRow: otherAccount)
+        #expect(!probe.isCurrentDrawingCommit(afterReplacement)) // same thread text ID, other account
+        withExtendedLifetime((accountOwner, newAccountOwner)) {}
+
+        fixture.scroll.contentView.scroll(to: NSPoint(x: 0, y: 300))
+        fixture.scroll.reflectScrolledClipView(fixture.scroll.contentView)
+        #expect(!fixture.table.rect(ofRow: 0).intersects(fixture.table.visibleRect))
+        #expect(!probe.satisfiesSelectedRowRequirement)
+        probe.draw(probe.bounds)
+        await Task.yield()
+        #expect(performance.records.allSatisfy { $0.outcome != .visibleCommit })
+    }
+
+    @Test func feedbackProbeReattachesWithoutConfigureAndRegistryDoesNotRetainViews() throws {
+        let fixture = FeedbackTableFixture()
+        defer { fixture.window.close() }
+        let performance = NavigationPerformance(selectionFeedbackEnabled: true)
+        let probe = VisibleContentProbe.ProbeView(performance: performance)
+        probe.frame = NSRect(x: 0, y: 0, width: 280, height: 40)
+        let requirement = VisibleContentProbe.SelectedRowRequirement(identity: .init(owner: ObjectIdentifier(fixture),
+            accountOwner: ObjectIdentifier(fixture),
+            row: .init(accountID: "audit", threadID: "one", messageID: nil)), isCurrent: { true })
+        probe.configure(kinds: [.selectionFeedback], isActive: true, revision: 0, selectedRow: requirement)
+        let row = try #require(fixture.table.rowView(atRow: 0, makeIfNecessary: true))
+        row.addSubview(probe)
+        fixture.table.selectRowIndexes([0], byExtendingSelection: false)
+        #expect(performance.report().selectionFeedbackMeasurement.endpoint == .selectedNativeRowDrawingProxyV1)
+        #expect(performance.report().selectionFeedbackMeasurement.windowAttachedProbeCount == 1)
+        let decoded = try JSONDecoder().decode(NavigationPerformance.Report.self,
+            from: JSONEncoder().encode(performance.report()))
+        #expect(decoded.selectionFeedbackMeasurement.endpoint == .selectedNativeRowDrawingProxyV1)
+        #expect(decoded.selectionFeedbackMeasurement.windowAttachedProbeCount == 1)
+        probe.removeFromSuperview()
+        #expect(performance.report().selectionFeedbackMeasurement.registeredProbeCount == 0)
+        row.addSubview(probe) // no configure call: native lifecycle must reinstall
+        let beforeReattachedNotification = probe.displayRequestCount
+        NotificationCenter.default.post(name: NSTableView.selectionDidChangeNotification, object: fixture.table)
+        #expect(probe.displayRequestCount == beforeReattachedNotification + 1)
+        #expect(performance.report().selectionFeedbackMeasurement.windowAttachedProbeCount == 1)
+        probe.stop()
+        let beforeStoppedNotification = probe.displayRequestCount
+        NotificationCenter.default.post(name: NSTableView.selectionDidChangeNotification, object: fixture.table)
+        #expect(probe.displayRequestCount == beforeStoppedNotification)
+        #expect(performance.report().selectionFeedbackMeasurement.registeredProbeCount == 0)
+
+        weak var weakProbe: VisibleContentProbe.ProbeView?
+        autoreleasepool {
+            let orphan = VisibleContentProbe.ProbeView(performance: performance)
+            weakProbe = orphan
+            orphan.configure(kinds: [.selectionFeedback], isActive: true, revision: 0, selectedRow: requirement)
+            #expect(performance.report().selectionFeedbackMeasurement.registeredProbeCount == 1)
+        }
+        #expect(weakProbe == nil)
+        #expect(performance.report().selectionFeedbackMeasurement.registeredProbeCount == 0)
+    }
+
     @Test func explicitExportWritesOnlyTheBoundedDiagnosticSnapshot() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "NavigationPerformanceTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -172,8 +295,41 @@ import Testing
         await performance.waitForReportExport()
         let data = try Data(contentsOf: destination)
         let report = try JSONDecoder().decode(NavigationPerformance.Report.self, from: data)
+        #expect(report.selectionFeedbackMeasurement.endpoint == .disabled)
         #expect(report.records.count == 2)
         #expect(report.records.allSatisfy { $0.outcome == .visibleCommit && $0.destination == nil })
         #expect(!String(decoding: data, as: UTF8.self).contains("must never be exported"))
+    }
+}
+
+/// A real native table in an ordered-back window. It never activates or requests
+/// key status; these tests validate selection/viewport gates, not presented pixels.
+@MainActor private final class FeedbackTableFixture: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 180))
+    let table = NSTableView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+
+    override init() {
+        super.init()
+        window.isReleasedWhenClosed = false
+        table.addTableColumn(NSTableColumn(identifier: .init("fixture")))
+        table.tableColumns[0].width = 320
+        table.headerView = nil
+        table.rowHeight = 60
+        table.intercellSpacing = .zero
+        table.dataSource = self
+        table.delegate = self
+        scroll.documentView = table
+        window.contentView = scroll
+        table.reloadData()
+        window.orderBack(nil)
+        scroll.layoutSubtreeIfNeeded()
+        table.layoutSubtreeIfNeeded()
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { 8 }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 60))
     }
 }
