@@ -5,7 +5,6 @@ struct FavoritesView: View {
     let mailbox: MailboxModel
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
-    @State private var hoveredBox: MailboxID?
 
     var body: some View {
         Section {
@@ -39,18 +38,9 @@ struct FavoritesView: View {
     @ViewBuilder private func favoriteRows(_ favorite: MailFavorite, box: MailboxID) -> some View {
         let isExpanded = expanded.ids.contains(box.id)
         let canExpand = accounts(for: box).count > 1
-        HStack(spacing: Tokens.Space.s1) {
-            // With several accounts, every favorite keeps the chevron's width so titles line up.
-            if mailbox.presentedAccounts.count > 1 {
-                SidebarDisclosureChevron(isExpanded: canExpand && isExpanded, isHovered: canExpand && hoveredBox == box)
-            }
-            Label(title(favorite), systemImage: symbol(favorite)).lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onHover { isHovering in
-            if isHovering { hoveredBox = box } else if hoveredBox == box { hoveredBox = nil }
-        }
+        FavoriteRowLabel(title: title(favorite), symbol: symbol(favorite),
+            showsChevron: mailbox.presentedAccounts.count > 1, canExpand: canExpand, isExpanded: isExpanded)
+        .ternHover(isEnabled: mailbox.sidebarSelection != box)
         .badge(canExpand && isExpanded ? 0 : mailbox.sidebarBadgeCount(box))
         .conversationDropTarget(box, mailbox: mailbox)
         .tag(box)
@@ -82,6 +72,9 @@ struct FavoritesView: View {
                     Image(systemName: symbol(favorite)).foregroundStyle(accountColor(owner.account.id))
                 }
                     .lineLimit(1).padding(.leading, Tokens.Space.s8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .ternHover(isEnabled: mailbox.sidebarSelection != accountBox)
                     .help(owner.account.email)
                     .badge(mailbox.sidebarBadgeCount(accountBox))
                     .conversationDropTarget(accountBox, mailbox: mailbox)
@@ -140,6 +133,28 @@ struct FavoritesView: View {
     }
 }
 
+private struct FavoriteRowLabel: View {
+    let title: String
+    let symbol: String
+    let showsChevron: Bool
+    let canExpand: Bool
+    let isExpanded: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            // With several accounts, every favorite keeps the chevron's width so titles line up.
+            if showsChevron {
+                SidebarDisclosureChevron(isExpanded: canExpand && isExpanded, isHovered: canExpand && isHovered)
+            }
+            Label(title, systemImage: symbol).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+}
+
 /// Mark All as Read and, for Trash and Spam, emptying the mailbox. Rows in
 /// the Mailboxes section add Favorites membership.
 struct MailboxContextMenu: View {
@@ -184,6 +199,9 @@ struct InboxCategoryRows: View {
             let box = SystemMailbox(labelID: category.labelID)
             Label(box.title, systemImage: box.systemImage)
                 .padding(.leading, Tokens.Space.s12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .ternHover(isEnabled: mailbox.sidebarSelection != .account(accountID, category.labelID))
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
                 .tag(MailboxID.account(accountID, category.labelID))
         }

@@ -92,6 +92,9 @@ struct CalendarSidebar: View {
                     .accessibilityLabel("Read only")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .ternHover(isEnabled: selection != .calendar(calendar.id))
         .help(calendar.title)
     }
 
@@ -126,7 +129,9 @@ struct CalendarSidebar: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, Tokens.Space.s1)
-                .ternHover()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .ternHover(isEnabled: selection != .event(event.id))
                 .tag(CalendarSidebarItem.event(event.id))
                 .draggable(CalendarEventTransfer(event))
                 .help("Open \(event.title)")
