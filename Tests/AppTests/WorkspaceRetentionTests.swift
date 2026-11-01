@@ -68,14 +68,19 @@ import Testing
         let toolbarInset = try #require(probes.first?.toolbarInset)
         let visibleProbes = descendants(of: controller.view).compactMap { $0 as? VisibleContentProbe.ProbeView }
         let mailboxProbes = visibleProbes.filter { $0.kinds.contains(.mailbox) }
+        func chromeReady(_ destination: WorkspaceDestination) -> Bool {
+            toolbarShows(destination, in: window)
+                && searchShows(destination, in: window)
+        }
         try #require(!mailboxProbes.isEmpty && mailboxProbes.allSatisfy { $0.isActive },
             "The native Mail probes must reflect the initial active destination")
         try await waitFor(controller.view, in: window, expecting: "Initial visible Mail toolbar") {
-            toolbarShows(.mail, in: window)
+            chromeReady(.mail)
         }
         try #require(mailSplit(in: controller.view) != nil)
         let initialToolbar = toolbarViews(in: window)
         let initialLayout = nativeLayout(in: window, root: controller.view, tables: mailTables, destination: .mail)
+        let mailVisibility = toolbarVisibility(in: window)
         print("WORKSPACE_TOOLBAR_STATE: config=\(configuration), destination=mail, items=\(toolbarMetadata(in: window))")
         try #require(toolbarShows(.mail, in: window),
             "The background window must materialize visible Mail controls without Calendar controls")
@@ -88,13 +93,13 @@ import Testing
 
         app.destination = .calendar
         try await waitFor(controller.view, in: window, expecting: "Initial switch to Calendar") {
-            mailboxProbes.allSatisfy { !$0.isActive } && toolbarShows(.calendar, in: window)
+            mailboxProbes.allSatisfy { !$0.isActive } && chromeReady(.calendar)
         }
         try #require(mailboxProbes.allSatisfy { !$0.isActive },
             "The background native graph must apply the switch to Calendar")
-        try #require(toolbarShows(.calendar, in: window),
-            "The background toolbar must show Calendar controls and hide Mail controls")
+        try #require(chromeReady(.calendar), "The toolbar and search must match the active destination")
         let calendarLayout = nativeLayout(in: window, root: controller.view, tables: mailTables, destination: .calendar)
+        let calendarVisibility = toolbarVisibility(in: window)
         print("WORKSPACE_TOOLBAR_STATE: config=\(configuration), destination=calendar, items=\(toolbarMetadata(in: window))")
         let attachedWhileInactive = mailTables.filter { $0.window === window }.count
         let inactiveOffsets = scrolls.map { $0.contentView.bounds.origin }
@@ -104,7 +109,7 @@ import Testing
 
         app.destination = .mail
         try await waitFor(controller.view, in: window, expecting: "Initial return to Mail") {
-            mailboxProbes.allSatisfy { $0.isActive } && toolbarShows(.mail, in: window)
+            mailboxProbes.allSatisfy { $0.isActive } && chromeReady(.mail)
         }
         try #require(mailboxProbes.allSatisfy { $0.isActive },
             "The background native graph must apply the return to Mail")
@@ -131,6 +136,8 @@ import Testing
         // the settling sleeps. This compares background layout work only.
         var mailCPU: [Double] = []
         var calendarCPU: [Double] = []
+        var mailTailCPU: [Double] = []
+        var calendarTailCPU: [Double] = []
         print("WORKSPACE_CORPUS: config=\(configuration), accounts=\(mailbox.accounts.count), mailRows=\(mailbox.listItems.count), nativeTableRows=\(mailTables.map(\.numberOfRows)), calendarEvents=\(app.calendar.events.count)")
         print("WORKSPACE_LAYOUT_POLICY: natural invalidation; no explicit needsLayout")
         print("WORKSPACE_WARM_SAMPLE_READY: pid=\(ProcessInfo.processInfo.processIdentifier), config=\(configuration)")
@@ -146,13 +153,22 @@ import Testing
                 try await waitFor(controller.view, in: window, expecting: "Warm switch to \(destination.rawValue)") {
                     let mailIsActive = destination == .mail
                     return mailboxProbes.allSatisfy { $0.isActive == mailIsActive }
-                        && toolbarShows(destination, in: window)
+                        && chromeReady(destination)
                 }
                 let milliseconds = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - started) / 1_000_000
                 if destination == .mail { mailCPU.append(milliseconds) } else { calendarCPU.append(milliseconds) }
                 // Read-only geometry checks run outside the measured interval.
                 expectSameLayout(nativeLayout(in: window, root: controller.view, tables: mailTables, destination: destination),
                     as: destination == .mail ? initialLayout : calendarLayout)
+                let expectedVisibility = destination == .mail ? mailVisibility : calendarVisibility
+                #expect(toolbarVisibility(in: window) == expectedVisibility)
+                let tailStarted = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+                try await settle(controller.view, in: window)
+                let tail = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - tailStarted) / 1_000_000
+                if destination == .mail { mailTailCPU.append(tail) } else { calendarTailCPU.append(tail) }
+                #expect(chromeReady(destination))
+                #expect(toolbarVisibility(in: window) == expectedVisibility,
+                    "Visibility must remain settled through the following layout turns")
                 let publications = toolbarInset.diagnosticPublications.filter { $0.sequence > previousPublications }
                     .map { "\($0.top)@\($0.source)" }
                 print("WORKSPACE_INSET: config=\(configuration), destination=\(destination.rawValue), publications=\(toolbarInset.diagnosticPublicationCount - previousPublications), values=\(publications)")
@@ -161,6 +177,7 @@ import Testing
         print("WORKSPACE_WARM_SAMPLE_END: pid=\(ProcessInfo.processInfo.processIdentifier), config=\(configuration)")
         fflush(nil)
         print("WORKSPACE_BACKGROUND_CPU_MS: config=\(configuration), automatic key loop=\(window.autorecalculatesKeyViewLoop), Mail=\(mailCPU.map { String(format: "%.1f", $0) }), Calendar=\(calendarCPU.map { String(format: "%.1f", $0) })")
+        print("WORKSPACE_BACKGROUND_TAIL_CPU_MS: config=\(configuration), Mail=\(mailTailCPU.map { String(format: "%.1f", $0) }), Calendar=\(calendarTailCPU.map { String(format: "%.1f", $0) })")
         try await verifyObservableUpdates(mailbox: mailbox, settings: settings,
             root: controller.view, window: window)
         await app.signOut()
@@ -204,7 +221,42 @@ import Testing
     }
 
     private func toolbarMetadata(in window: NSWindow) -> [String] {
-        (window.toolbar?.items ?? []).map { "\($0.itemIdentifier.rawValue):hidden=\($0.isHidden)" }
+        toolbarVisibility(in: window).map { "\($0.path):hidden=\($0.hidden),visible=\($0.visible),view=\($0.viewVisible)" }
+    }
+
+    private struct ToolbarVisibility: Equatable {
+        let path: String
+        let identity: ObjectIdentifier
+        let hidden: Bool
+        let visible: Bool
+        let viewVisible: Bool
+    }
+
+    private func toolbarVisibility(in window: NSWindow) -> [ToolbarVisibility] {
+        func capture(_ item: NSToolbarItem, path: String) -> [ToolbarVisibility] {
+            let viewVisible = item.isVisible && (item.view.map { $0.window === window && !$0.isHiddenOrHasHiddenAncestor
+                && !$0.visibleRect.isEmpty && $0.alphaValue > 0.01 } ?? false)
+            var result = [ToolbarVisibility(path: path, identity: ObjectIdentifier(item),
+                hidden: item.isHidden, visible: item.isVisible, viewVisible: viewVisible)]
+            if let group = item as? NSToolbarItemGroup {
+                #expect(!group.subitems.contains { $0 is NSToolbarItemGroup }, "AppKit does not support nested toolbar groups")
+                for (index, child) in group.subitems.enumerated() {
+                    result += capture(child, path: "\(path)/\(index):\(child.itemIdentifier.rawValue)")
+                }
+            }
+            return result
+        }
+        return (window.toolbar?.items ?? []).enumerated().flatMap { index, item in
+            capture(item, path: "\(index):\(item.itemIdentifier.rawValue)")
+        }
+    }
+
+    private func searchShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
+        let fields = visibleToolbarItems(in: window).filter { $0.itemIdentifier.rawValue == "workspace.search" }
+            .compactMap(\.view).flatMap { descendants(of: $0) }.compactMap { $0 as? NSSearchField }
+            .filter { $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
+        let placeholder = destination == .mail ? "Search mail" : "Search events"
+        return fields.count == 1 && fields.first?.placeholderString == placeholder
     }
 
     private func visibleToolbarItems(in window: NSWindow) -> [NSToolbarItem] {
