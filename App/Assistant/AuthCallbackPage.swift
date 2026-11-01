@@ -47,16 +47,30 @@ struct AuthCallbackPage {
     }
 
     let state: State
+    private let logoPNG: Data?
+
+    init(state: State, logoPNG: Data? = nil) {
+        self.state = state
+        self.logoPNG = logoPNG ?? Self.bundledLogoPNG
+    }
+
+    private static let bundledLogoPNG: Data? = {
+        guard let url = Bundle.main.url(forResource: "TernSignInLogo", withExtension: "png") else { return nil }
+        return try? Data(contentsOf: url)
+    }()
 
     static let contentSecurityPolicy = "default-src 'none'; style-src 'sha256-"
         + Data(SHA256.hash(data: Data(styles.utf8))).base64EncodedString()
-        + "'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        + "'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
     var html: String {
         let statusClass = state == .received ? "received" : "incomplete"
         let statusSymbol = state == .received
             ? "<path d=\"m7 12 3 3 7-7\"/>"
             : "<path d=\"M12 7v6m0 4h.01\"/>"
+        let logo = logoPNG.map {
+            "<img class=\"envelope\" src=\"data:image/png;base64,\($0.base64EncodedString())\" alt=\"\">"
+        } ?? ""
         return """
         <!doctype html>
         <html lang="en">
@@ -72,13 +86,7 @@ struct AuthCallbackPage {
             <div class="brand">Tern <span class="brand-divider" aria-hidden="true"></span><span>ChatGPT sign-in</span></div>
             <div class="content">
               <div class="illustration" aria-hidden="true">
-                <svg class="envelope" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect class="envelope-back" x="8" y="8" width="80" height="80" rx="20"/>
-                  <rect class="paper" x="20" y="20" width="56" height="48" rx="6"/>
-                  <path class="paper-lines" d="M32 32h32M32 40h22" stroke-width="3" stroke-linecap="round"/>
-                  <path class="envelope-front" d="M8 36 44 62a7 7 0 0 0 8 0l36-26v32a20 20 0 0 1-20 20H28A20 20 0 0 1 8 68Z"/>
-                  <path class="envelope-fold" d="m12 79 25-22m47 22L59 57" stroke-width="2"/>
-                </svg>
+                \(logo)
                 <span class="stamp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\(statusSymbol)</svg></span>
               </div>
               <p class="caption">\(state.caption)</p>
@@ -101,8 +109,6 @@ struct AuthCallbackPage {
       color-scheme: light dark;
       --canvas: #FAFAFA; --surface: #FFFFFF; --fg: #18181B; --muted: #52525B;
       --border: #E4E4E7; --border-strong: #D4D4D8;
-      --blue: #0A84FF; --blue-deep: #0077E6; --blue-line: #0062BF;
-      --paper: #FFFFFF; --paper-line: #93C5FD;
       --status-bg: #DCFCE7; --status-fg: #166534;
       --warning-bg: #FEF3C7; --warning-fg: #92400E;
       --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px;
@@ -135,12 +141,7 @@ struct AuthCallbackPage {
     .brand-divider { height: var(--s4); width: var(--hairline); background: var(--border-strong); }
     .content { padding: var(--s12) var(--s12) var(--s10); text-align: center; }
     .illustration { position: relative; width: calc(var(--s12) * 2); height: calc(var(--s12) * 2); margin: 0 auto var(--s8); }
-    .envelope { display: block; width: 100%; height: 100%; }
-    .envelope-back { fill: var(--blue); }
-    .paper { fill: var(--paper); }
-    .paper-lines { stroke: var(--paper-line); }
-    .envelope-front { fill: var(--blue-deep); }
-    .envelope-fold { stroke: var(--blue-line); }
+    .envelope { display: block; width: 100%; height: 100%; object-fit: contain; }
     .stamp {
       position: absolute; right: 0; bottom: 0; display: grid; place-items: center;
       width: var(--s8); height: var(--s8); border-radius: var(--round);

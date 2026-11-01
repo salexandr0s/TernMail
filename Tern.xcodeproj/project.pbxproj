@@ -161,6 +161,7 @@
 		5F6945D71602B17C47AA8B69 /* CalendarModel+Bindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5328417D2265163B1424341B /* CalendarModel+Bindings.swift */; };
 		60B1BFB2A25D462ABFD62F8F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F78C5270B0AE64BD13220AD /* MainView.swift */; };
 		626897510D059CD8763489AA /* AssistantSidebarLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6205EBA779F2BE40B6F7A5 /* AssistantSidebarLayout.swift */; };
+		6370B147CA67701B8A24BAA3 /* TernSignInLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = A658B0207EF2F398F3A71E13 /* TernSignInLogo.png */; };
 		63732DB8B8EEFA73CBA33040 /* AssistantMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B032E884173AE9CE586BBC1F /* AssistantMessageView.swift */; };
 		65870AF865571C139CC312E4 /* AttachmentLibraryDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DAED2A1EF5CBA124467D230 /* AttachmentLibraryDestination.swift */; };
 		6650CE77D5F37CB6E2A3A12F /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54348BCB32FD7D7ED05D7033 /* FlowLayout.swift */; };
@@ -642,6 +643,7 @@
 		A4C9F77BA72DE3B9BCC2F1FD /* AssistantScrollTrackingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantScrollTrackingTests.swift; sourceTree = "<group>"; };
 		A52AE528B44E2366BDD8FC05 /* ConversationDropTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationDropTarget.swift; sourceTree = "<group>"; };
 		A52E709D2460A2D2E845D420 /* AssistantWritingStyleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleTests.swift; sourceTree = "<group>"; };
+		A658B0207EF2F398F3A71E13 /* TernSignInLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = TernSignInLogo.png; sourceTree = "<group>"; };
 		A6D8838A1076B284CD96E711 /* SidebarSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarSettingsView.swift; sourceTree = "<group>"; };
 		A78ABDE8A5BDCD507FBDFB14 /* SearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModel.swift; sourceTree = "<group>"; };
 		A8399A5497A38FB22E26C15E /* CalendarNotificationRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarNotificationRouter.swift; sourceTree = "<group>"; };
@@ -1257,6 +1259,14 @@
 			path = Integration;
 			sourceTree = "<group>";
 		};
+		C678B39461DDDB3E3555BB82 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A658B0207EF2F398F3A71E13 /* TernSignInLogo.png */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		C77BFD0C749A54573F34B7A8 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -1278,6 +1288,7 @@
 				BDDE8C81CF014DBCA4C90796 /* Integration */,
 				79C2C151F2570607C95BBB25 /* Mailbox */,
 				F9CFE056F04B3F1ED4EEA197 /* Performance */,
+				C678B39461DDDB3E3555BB82 /* Resources */,
 				17BE39A0C3AF10089C75A59C /* Settings */,
 				0E31E9C599FC3A1DA1F44C6B /* Views */,
 			);
@@ -1453,6 +1464,7 @@
 				55F26EF2BB97BA6D64C33485 /* Assets.xcassets in Resources */,
 				98F7DA320D3FD4B8B0F49AD1 /* PublicSuffixList.dat in Resources */,
 				582792874D6E818C39497EB4 /* Tern.sdef in Resources */,
+				6370B147CA67701B8A24BAA3 /* TernSignInLogo.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
