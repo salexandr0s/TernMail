@@ -141,8 +141,31 @@ its useful regression coverage was retained.
 The toolbar's selection-dependent content now has separate View bodies. A
 windowless observation baseline and regression check show that selection changes
 no longer invalidate the toolbar declaration, while the affected actions still
-observe selection and read-state updates. Native control behavior and visible
-latency remain pending; this is a dependency result, not a speed guarantee.
+observe selection and read-state updates. Native popover and keyboard behavior
+still need verification; this dependency result alone is not a speed guarantee.
+
+A later foreground run at `c1961b2` completed all 200 mode switches with zero
+failures, using the 100-event fixture. Each direction has 100 samples:
+
+| Retained destination | p50 | p95 | p99 |
+| --- | --- | --- | --- |
+| Calendar | 188.24 ms | 215.42 ms | 232.95 ms |
+| Mail | 356.91 ms | 412.44 ms | 434.75 ms |
+
+The build is faster than the earlier measured revision, but both directions
+still fail the contract. Content-ready p95 is 23.85 ms for Calendar and 25.25 ms
+for Mail. Most time remains between readiness and the native drawing commit:
+p95 193.36 ms and 388.02 ms respectively. The heartbeat recorded 212 stalls of
+at least 100 ms, max 452.96 ms. These timings use programmatic navigation and
+native drawing commits; physical input and GPU presentation remain unmeasured.
+
+App footprint grew from 228.5 to 309.8 MiB; the last 100 switches account for
+4.9 MiB of that growth. Stored corpus bytes stayed fixed and no reader WebViews
+were attached. This does not establish a memory plateau or a leak. Raw results,
+phase distributions and provenance are in
+`~/.codex/backups/tern-performance-20261101/evidence/20261101T100342Z-100-workspace-only-normal/`.
+Two earlier launches failed foreground eligibility and collected no samples;
+they are excluded from performance comparisons.
 
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
@@ -158,15 +181,18 @@ kept in `~/.codex/backups/tern-performance-20261101/evidence/`.
 
 The full Core suite passed 590 tests in 101 suites
 (`/tmp/tern-perf-core-final-tests.log`). Calendar, preparation, WebKit, and five
-reader lifecycle/viewport tests passed focused hosted runs. The full hosted suite
-still needs a clean final run: the sidebar's native focus/resize test has been
-interrupted by foreground changes and has also exposed a geometry settle delay.
+reader lifecycle/viewport tests passed focused hosted runs. All four sidebar
+methods now pass across separate foreground runs, including assistant sizing.
+CalendarLayoutTests, MessageWebViewTests and NativeMailActionTests also passed
+before an interrupted foreground suite. ReaderViewportTests and
+RecipientAvatarTests remain incomplete in that run; the full hosted suite still
+needs a clean final result.
 The expanded synthetic transport/corpus suite passed seven optimized tests, and
 navigation diagnostics passed nine. The retained-reader focus regression passed
 in a background window; internal WebKit descendant focus still needs foreground
 validation. Actual reader latency, scrolling targets, active-sync/offline timing,
-memory plateau, and the final installed universal Release remain unverified. The user
-requested background work while foreground timing runs are deferred.
+memory plateau, and the final installed universal Release remain unverified.
+Foreground testing was authorized and the completed mode run is recorded above.
 
 The latest broad background hosted run passed 394 tests across 62 suites, followed
 by five safe WebKit checks. Six suites with foreground or panel paths were
