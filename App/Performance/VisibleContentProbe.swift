@@ -4,25 +4,42 @@ import SwiftUI
 /// Observes a drawing commit without forcing layout or blocking the main thread.
 /// Place inside the destination content, never on a loading overlay or toolbar.
 struct VisibleContentProbe: NSViewRepresentable {
-    let kind: NavigationInteractionKind
+    let kinds: Set<NavigationInteractionKind>
     let isActive: Bool
     let revision: Int
+
+    init(kind: NavigationInteractionKind, isActive: Bool, revision: Int) {
+        self.init(kinds: [kind], isActive: isActive, revision: revision)
+    }
+
+    init(kinds: [NavigationInteractionKind], isActive: Bool, revision: Int) {
+        self.kinds = Set(kinds)
+        self.isActive = isActive
+        self.revision = revision
+    }
 
     func makeNSView(context: Context) -> ProbeView { ProbeView() }
 
     func updateNSView(_ view: ProbeView, context: Context) {
-        view.configure(kind: kind, isActive: isActive, revision: revision)
+        view.configure(kinds: kinds, isActive: isActive, revision: revision)
     }
 
     static func dismantleNSView(_ view: ProbeView, coordinator: Void) { view.stop() }
 
     @MainActor
     final class ProbeView: NSView {
-        var kind: NavigationInteractionKind = .reader
+        private(set) var kinds: Set<NavigationInteractionKind> = [.reader]
+        var kind: NavigationInteractionKind? { kinds.count == 1 ? kinds.first : nil }
+        struct DrawingCommit: Equatable {
+            let kind: NavigationInteractionKind
+            let generation: UInt64
+            fileprivate let configuration: UInt64
+        }
         var isActive = false
         private var revision = 0
         private var observer: UUID?
-        private var scheduledGeneration: UInt64?
+        private var scheduled: [NavigationInteractionKind: DrawingCommit] = [:]
+        private var configuration: UInt64 = 0
         private let performance: NavigationPerformance
         #if DEBUG || TERN_PERFORMANCE
         private(set) var windowAttachmentCount = 0
@@ -42,17 +59,43 @@ struct VisibleContentProbe: NSViewRepresentable {
         override var isOpaque: Bool { false }
 
         func configure(kind: NavigationInteractionKind, isActive: Bool, revision: Int) {
-            let changed = observer == nil || self.kind != kind || self.isActive != isActive || self.revision != revision
-            self.kind = kind
+            configure(kinds: [kind], isActive: isActive, revision: revision)
+        }
+
+        func configure(kinds: Set<NavigationInteractionKind>, isActive: Bool, revision: Int) {
+            let changed = observer == nil || self.kinds != kinds || self.isActive != isActive || self.revision != revision
+            self.kinds = kinds
             self.isActive = isActive
             self.revision = revision
+            if changed {
+                configuration &+= 1
+                scheduled.removeAll(keepingCapacity: true)
+                needsDisplay = true
+            }
             if observer == nil {
                 observer = performance.observe { [weak self] changed in
-                    guard let self, changed == self.kind else { return }
+                    guard let self, self.kinds.contains(changed) else { return }
                     self.needsDisplay = true
                 }
             }
-            if changed { needsDisplay = true }
+        }
+
+        /// Snapshot readiness independently for every interaction sharing this
+        /// exact content viewport. Reading it does not complete an interaction.
+        func readyDrawingCommits() -> [DrawingCommit] {
+            guard isActive else { return [] }
+            return NavigationInteractionKind.allCases.compactMap { kind in
+                guard kinds.contains(kind), let generation = performance.currentGeneration(for: kind),
+                      performance.isReady(kind, generation: generation) else { return nil }
+                let commit = DrawingCommit(kind: kind, generation: generation, configuration: configuration)
+                return scheduled[kind] == commit ? nil : commit
+            }
+        }
+
+        func isCurrentDrawingCommit(_ commit: DrawingCommit) -> Bool {
+            isActive && kinds.contains(commit.kind) && configuration == commit.configuration
+                && performance.currentGeneration(for: commit.kind) == commit.generation
+                && performance.isReady(commit.kind, generation: commit.generation)
         }
 
         override func viewDidMoveToWindow() {
@@ -72,16 +115,17 @@ struct VisibleContentProbe: NSViewRepresentable {
 
         override func draw(_ dirtyRect: NSRect) {
             super.draw(dirtyRect)
-            guard isVisibleContent,
-                  let generation = performance.currentGeneration(for: kind),
-                  performance.isReady(kind, generation: generation), scheduledGeneration != generation else { return }
-            scheduledGeneration = generation
-            let kind = kind
-            // AppKit has issued the native drawing work. Defer the endpoint until
-            // this transaction returns, rechecking that selection is still current.
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.kind == kind, self.isVisibleContent else { return }
-                self.performance.didCommitVisibleContent(kind, generation: generation)
+            guard isVisibleContent else { return }
+            for commit in readyDrawingCommits() {
+                scheduled[commit.kind] = commit
+                // Every kind shares this native drawing transaction, but keeps
+                // its own generation, readiness, and cancellation semantics.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if self.scheduled[commit.kind] == commit { self.scheduled[commit.kind] = nil }
+                    guard self.isCurrentDrawingCommit(commit), self.isVisibleContent else { return }
+                    self.performance.didCommitVisibleContent(commit.kind, generation: commit.generation)
+                }
             }
         }
 
@@ -102,6 +146,8 @@ struct VisibleContentProbe: NSViewRepresentable {
             if let observer { performance.removeObserver(observer) }
             observer = nil
             isActive = false
+            configuration &+= 1
+            scheduled.removeAll(keepingCapacity: true)
         }
     }
 }

@@ -65,6 +65,45 @@ import Testing
         #expect(performance.records.last?.processingOrigin == .syntheticTransportResponse)
     }
 
+    @Test func sharedProbeKeepsReadinessAndQueuedCommitGenerationsIndependent() async throws {
+        let performance = NavigationPerformance()
+        let probe = VisibleContentProbe.ProbeView(performance: performance)
+        probe.configure(kinds: [.workspace, .mailbox, .selectionFeedback], isActive: true, revision: 1)
+        let workspace = performance.begin(.workspace)
+        let mailbox = performance.begin(.mailbox)
+        let feedback = performance.begin(.selectionFeedback)
+        performance.contentReady(.workspace, cacheTier: .retained, generation: workspace)
+        performance.contentReady(.selectionFeedback, cacheTier: .local, generation: feedback)
+        let ready = probe.readyDrawingCommits()
+        #expect(Set(ready.map(\.kind)) == [.workspace, .selectionFeedback])
+        let oldWorkspace = try #require(ready.first { $0.kind == .workspace })
+        let oldFeedback = try #require(ready.first { $0.kind == .selectionFeedback })
+        #expect(probe.isCurrentDrawingCommit(oldWorkspace))
+        #expect(probe.isCurrentDrawingCommit(oldFeedback))
+        _ = performance.begin(.workspace)
+        #expect(!probe.isCurrentDrawingCommit(oldWorkspace))
+        #expect(probe.isCurrentDrawingCommit(oldFeedback))
+        performance.contentReady(.mailbox, cacheTier: .local, generation: mailbox)
+        #expect(Set(probe.readyDrawingCommits().map(\.kind)) == [.mailbox, .selectionFeedback])
+        // Removing and restoring a kind cannot validate a previously queued draw.
+        probe.configure(kinds: [.workspace, .mailbox], isActive: true, revision: 1)
+        #expect(!probe.isCurrentDrawingCommit(oldFeedback))
+        probe.configure(kinds: [.workspace, .mailbox, .selectionFeedback], isActive: true, revision: 1)
+        #expect(!probe.isCurrentDrawingCommit(oldFeedback))
+        let beforeHide = try #require(probe.readyDrawingCommits().first { $0.kind == .mailbox })
+        probe.configure(kinds: [.workspace, .mailbox, .selectionFeedback], isActive: false, revision: 1)
+        #expect(probe.readyDrawingCommits().isEmpty)
+        #expect(!probe.isCurrentDrawingCommit(beforeHide))
+        probe.configure(kinds: [.workspace, .mailbox, .selectionFeedback], isActive: true, revision: 2)
+        #expect(!probe.isCurrentDrawingCommit(beforeHide))
+        // No foreground native viewport: sharing readiness must not manufacture
+        // any visible endpoint for any kind.
+        probe.draw(.zero)
+        await Task.yield()
+        #expect(performance.records.allSatisfy { $0.outcome != .visibleCommit })
+        probe.stop()
+    }
+
     @Test func reportDoesNotAcceptPrivateDestinationNames() {
         let performance = NavigationPerformance()
         let generation = performance.begin(.workspace, destination: "private folder title")
