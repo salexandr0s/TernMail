@@ -328,7 +328,7 @@ import Testing
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentViewController = controller
-        window.orderFront(nil)
+        window.orderBack(nil)
         defer { window.close() }
         try await awaitListState("native conversation table", details: {
             "tableRows=\(self.listTables(in: controller.view).map(\.numberOfRows))"
@@ -380,6 +380,55 @@ import Testing
             }
         }
 
+        func expectRapidSelection(_ ids: [MailListRowID], sourceLocation: SourceLocation = #_sourceLocation) async throws {
+            try #require(ids.count > 1, sourceLocation: sourceLocation)
+            let inputs = (0..<24).map { ids[($0 + 1) % ids.count] }
+            let finalTarget = Set([try #require(inputs.last, sourceLocation: sourceLocation)])
+            try #require(mailbox.selectedListRowIDs != finalTarget && table.selectedRowIndexes != indexes(for: finalTarget),
+                "The burst must finish on a different row from the settled native selection", sourceLocation: sourceLocation)
+            let buildsBeforeBurst = contentBuilds
+            let anchorBeforeBurst = scroll.contentView.bounds.origin
+            var journal: [String] = []
+            var requested = Set<MailListRowID>()
+            func record(_ phase: String) {
+                journal.append("\(phase): requested=\(requested.sorted()), model=\(mailbox.selectedListRowIDs.sorted()), native=\(Array(table.selectedRowIndexes))")
+            }
+            // Inputs arrive faster than AppKit can publish selection back.
+            for (index, id) in inputs.enumerated() {
+                requested = [id]
+                mailbox.selectListRows(requested)
+                record("input \(index)")
+                try #require(mailbox.selectedListRowIDs == requested, "\(journal.joined(separator: "\n"))", sourceLocation: sourceLocation)
+            }
+            let expected = indexes(for: requested)
+            try await awaitListState("rapid selection final native and row publication", details: {
+                record("awaiting final publication")
+                return journal.joined(separator: "\n")
+            }, sourceLocation: sourceLocation) {
+                mailbox.selectedListRowIDs == requested && table.selectedRowIndexes == expected
+                    && ids.allSatisfy { id in
+                        guard let row = mailbox.listItems.firstIndex(where: { $0.id == id }) else { return false }
+                        return rendered[id]?.selected == requested.contains(id)
+                            && table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil
+                            && table.rect(ofRow: row).intersects(table.visibleRect)
+                    }
+            }
+            // Do not reapply the requested selection: a delayed native writeback
+            // must leave the final target intact as queued work is processed.
+            for turn in 0..<8 {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.main.async { continuation.resume() }
+                }
+                record("main queue turn \(turn)")
+                try #require(mailbox.selectedListRowIDs == requested && table.selectedRowIndexes == expected,
+                    "\(journal.joined(separator: "\n"))", sourceLocation: sourceLocation)
+            }
+            #expect(contentBuilds == buildsBeforeBurst, "Rapid selection must not rebuild ForEach", sourceLocation: sourceLocation)
+            #expect(listTables(in: controller.view).first === table, sourceLocation: sourceLocation)
+            #expect(table.enclosingScrollView === scroll, sourceLocation: sourceLocation)
+            #expect(abs(scroll.contentView.bounds.origin.y - anchorBeforeBurst.y) < 1, sourceLocation: sourceLocation)
+        }
+
         let conversationA = MailListRowID(accountID: "a", threadID: "t")
         let conversationB = MailListRowID(accountID: "b", threadID: "t")
         let conversations = [conversationA, conversationB]
@@ -395,6 +444,7 @@ import Testing
         }
         #expect(contentBuilds == buildsBeforeConversationSwitching,
             "Conversation selection must not rebuild ForEach; root delta=\(listBodyBuilds - conversationBodies.0), drag delta=\(dragBodyBuilds - conversationBodies.1), observation=\(conversationObservation)")
+        try await expectRapidSelection(conversations)
 
         mailbox.listPreferences.conversations = false
         try await awaitListState("message mode table and cleared selection", details: {
@@ -414,6 +464,7 @@ import Testing
         }
         #expect(contentBuilds == buildsBeforeSwitching,
             "Message selection must not rebuild ForEach; root delta=\(listBodyBuilds - messageBodies.0), drag delta=\(dragBodyBuilds - messageBodies.1), observation=\(messageObservation)")
+        try await expectRapidSelection(messages)
         #expect(listTables(in: controller.view).first === table)
         #expect(table.enclosingScrollView === scroll)
         try await expectSelection(Set(messages), native: true, visibleRows: messages)
