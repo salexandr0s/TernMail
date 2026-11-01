@@ -160,7 +160,7 @@ import Testing
     }
 
     private func detail(in cache: MailCache) async throws -> ThreadDetail? {
-        for try await value in await cache.thread(accountID: "ui-audit", threadID: "t1") { return value }
+        for try await value in cache.thread(accountID: "ui-audit", threadID: "t1") { return value }
         return nil
     }
 
