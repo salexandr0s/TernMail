@@ -181,6 +181,21 @@ retained native field identity, explicit Find, mode switching and folded-field
 restoration. These checks establish behavior and observation boundaries; their
 effect on foreground navigation latency has not yet been measured.
 
+Selected-text focus observation now lives in Reply and shortcut views, keeping
+it out of MainView. Seventeen optimized background tests passed across six
+suites. In the same small background fixture, median switch CPU including the
+settling tail changed from 313.45 to 201.3 ms for Mail and 202.1 to 202.85 ms for
+Calendar. This supports a Mail CPU improvement; it is not a visible navigation
+measurement. Native quote-delivery verification remains pending: the standalone
+functional audit activated successfully but could not locate the standard Reply
+control before invoking it. Earlier XCTest-host runs failed activation and did
+not exercise the actions.
+
+The audit also supports a reader-only scope with 100 recent selections and
+100 locally stored messages requiring preparation. Local selections are spaced
+beyond neighbor prefetch, and validation requires actual preparation misses.
+Reader timing remains unmeasured until that foreground run completes.
+
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
 `/tmp/tern-performance-audit-build/reports/20261101T004216Z-workspace-diagnostic/`.
