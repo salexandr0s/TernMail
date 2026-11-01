@@ -81,9 +81,26 @@ import WebKit
         let settings = try #require(UserDefaults(suiteName: suite))
         settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
         settings.set(2.0, forKey: ReadingPreferences.readDelayKey)
+        let performance = NavigationPerformance.shared
+        let bodyGeneration = performance.begin(.reader)
+        let headerGeneration = performance.begin(.readerHeader)
+        defer {
+            performance.cancel(.reader, generation: bodyGeneration)
+            performance.cancel(.readerHeader, generation: headerGeneration)
+        }
         let hiddenWindow = makeWindow(ConversationWindow(link: MailLink(accountID: hidden.accountID, threadID: hidden.threadID))
             .environment(app).defaultAppStorage(settings))
-        try await waitUntil { !self.messageViews(in: hiddenWindow.contentView).isEmpty }
+        try await waitUntil { self.messageViews(in: hiddenWindow.contentView).contains { !$0.isLoading && $0.frame.height > 40 } }
+        // Opening a standalone conversation cannot claim a main-window
+        // selection, including through its otherwise passive native probes.
+        #expect(!performance.isReady(.reader, generation: bodyGeneration))
+        #expect(!performance.isReady(.readerHeader, generation: headerGeneration))
+        #expect(!performance.records.contains { [bodyGeneration, headerGeneration].contains($0.generation) && $0.outcome == .visibleCommit })
+        let probes = descendants(in: hiddenWindow.contentView).compactMap { $0 as? VisibleContentProbe.ProbeView }
+        try #require(!probes.isEmpty)
+        #expect(probes.allSatisfy { !$0.isActive })
+        performance.cancel(.reader, generation: bodyGeneration)
+        performance.cancel(.readerHeader, generation: headerGeneration)
         settings.set(ReadingPreferences.MarkRead.delayed.rawValue, forKey: ReadingPreferences.markReadKey)
         try #require(hiddenWindow.occlusionState.contains(.visible))
         try await Task.sleep(for: .milliseconds(400))

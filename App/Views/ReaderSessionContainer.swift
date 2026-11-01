@@ -106,6 +106,7 @@ struct ReaderSessionContainer: View {
     let messageID: String?
     let mailbox: MailboxModel
     let isActive: Bool
+    var reportsNavigation = true
     var onDetailChange: ((ThreadDetail) -> Void)? = nil
     @State private var store = ReaderSessionStore()
     @State private var isWindowVisible = false
@@ -128,7 +129,7 @@ struct ReaderSessionContainer: View {
                            retainsHiddenBody: !active && allowsHiddenBodyRetention && store.retainsSource(for: session)
                                && (visible || sessions.suffix(2).contains(session)),
                            retainsSourceSnapshot: store.retainsSource(for: session),
-                           interaction: active ? ReaderInteraction(body: NavigationPerformance.shared.currentGeneration(for: .reader),
+                           interaction: active && reportsNavigation ? ReaderInteraction(body: NavigationPerformance.shared.currentGeneration(for: .reader),
                                header: NavigationPerformance.shared.currentGeneration(for: .readerHeader)) : nil,
                            onDetailChange: { detail in
                                store.record(detail, for: session, selected: selected)

@@ -23,7 +23,8 @@ struct ConversationWindow: View {
         Group {
             if let link, let mailbox = app.mailbox, let owner = mailbox.account(id: link.accountID) {
                 let key = ThreadKey(accountID: link.accountID, threadID: link.threadID)
-                ReaderSessionContainer(key: key, messageID: link.messageID, mailbox: mailbox, isActive: true) { detail in
+                ReaderSessionContainer(key: key, messageID: link.messageID, mailbox: mailbox, isActive: true,
+                                       reportsNavigation: false) { detail in
                     subject = detail.thread.subject
                     participants = detail.thread.participants
                 }

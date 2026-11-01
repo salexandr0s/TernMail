@@ -313,9 +313,9 @@ struct ThreadView: View {
     var body: some View {
         conversationContent
         .background(Tokens.Surface.canvas)
-        .background(VisibleContentProbe(kind: .reader, isActive: isReaderActive && primaryBodyReady,
+        .background(VisibleContentProbe(kind: .reader, isActive: isReaderActive && primaryBodyReady && interaction?.body != nil,
             revision: Int(truncatingIfNeeded: interaction?.body ?? 0)))
-        .background(VisibleContentProbe(kind: .readerHeader, isActive: isReaderActive && readingDetail != nil,
+        .background(VisibleContentProbe(kind: .readerHeader, isActive: isReaderActive && readingDetail != nil && interaction?.header != nil,
             revision: Int(truncatingIfNeeded: interaction?.header ?? 0)))
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
