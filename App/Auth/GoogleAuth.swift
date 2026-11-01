@@ -112,7 +112,7 @@ final class GoogleAuth {
     /// feature is turned on. The caller decides whether to keep the session.
     func signIn(
         loginHint: String? = nil, accountID: String? = nil,
-        features: Set<AccountFeature> = [], isWorkspace: Bool = false
+        features: Set<AccountFeature> = GoogleScopes.initialFeatures, isWorkspace: Bool = false
     ) async throws -> SignedInUser {
         let request = try authorizationRequest(loginHint: loginHint, features: features, isWorkspace: isWorkspace)
         let state = try await present(request)
@@ -120,7 +120,7 @@ final class GoogleAuth {
     }
 
     func authorizationRequest(
-        loginHint: String? = nil, features: Set<AccountFeature> = [], isWorkspace: Bool = false
+        loginHint: String? = nil, features: Set<AccountFeature> = GoogleScopes.initialFeatures, isWorkspace: Bool = false
     ) throws -> OIDAuthorizationRequest {
         guard let configuration else { throw AuthError.notConfigured }
         // Every explicit authorization creates a replacement state. Re-consent

@@ -2,6 +2,20 @@ import Testing
 @testable import GmailAPI
 
 @Suite struct GoogleScopesTests {
+    @Test func initialSignInRequestsContactsButReturningAccountsKeepTheirChoice() throws {
+        let initial = GoogleScopes.featuresForSignIn(storedFeatures: nil)
+        #expect(initial == [.contacts])
+        #expect(GoogleScopes.featuresForSignIn(storedFeatures: []) == [])
+        #expect(GoogleScopes.featuresForSignIn(storedFeatures: ["calendar"]) == [.calendar])
+        #expect(GoogleScopes.featuresForSignIn(storedFeatures: ["contacts"]) == [.contacts])
+
+        let granted = GoogleScopes.request(features: initial, isWorkspace: false)
+        #expect(try FeatureGrant(subject: "new", granted: granted, accountID: nil, features: initial).features == [.contacts])
+        let declined = try FeatureGrant(subject: "new", granted: GoogleScopes.base, accountID: nil, features: initial)
+        #expect(declined.features.isEmpty)
+        #expect(Set(declined.missingScopes) == Set([GoogleScopes.contacts, GoogleScopes.otherContacts]))
+    }
+
     @Test func theRequestAsksForTheBaseScopesThenEachFeatureOnce() {
         #expect(GoogleScopes.request(features: [], isWorkspace: true) == GoogleScopes.base)
         #expect(GoogleScopes.request(features: [.inboxUpdates, .contacts], isWorkspace: false) == GoogleScopes.base + [

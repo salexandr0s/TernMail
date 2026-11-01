@@ -63,7 +63,7 @@ struct ConnectionsView: View {
     private func detail(_ feature: AccountFeature) -> String {
         switch feature {
         case .gmailSettings: "Edit filters, your primary signature and the vacation responder."
-        case .contacts: "Suggest saved and other contacts, plus your Workspace directory when available."
+        case .contacts: "Show contact photos and suggest saved and other contacts, plus your Workspace directory when available."
         case .inboxUpdates: "Check for Inbox changes immediately. This requires Google's full mail permission."
         case .calendar: "View and edit Google Calendar events, and check availability."
         default: "Connect your Google calendars."

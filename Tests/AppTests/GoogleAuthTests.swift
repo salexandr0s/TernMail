@@ -15,6 +15,8 @@ import Testing
         let auth = GoogleAuth(configuration: configuration)
         let request = try auth.authorizationRequest(loginHint: "synthetic-subject", features: [.calendar, .contacts])
         let next = try auth.authorizationRequest()
+        let initialScopes = Set((next.scope ?? "").split(separator: " ").map(String.init))
+        #expect(initialScopes == Set(GoogleScopes.base + [GoogleScopes.contacts, GoogleScopes.otherContacts]))
         #expect(request.additionalParameters?["access_type"] == "offline")
         #expect(request.additionalParameters?["prompt"] == "consent")
         #expect(request.additionalParameters?["login_hint"] == "synthetic-subject")
