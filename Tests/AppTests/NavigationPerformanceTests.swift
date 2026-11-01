@@ -33,6 +33,29 @@ import Testing
         #expect(performance.report().summaries.isEmpty)
     }
 
+    @Test func processingIntervalStartsAtRequiredBytesAndRejectsStaleGenerations() async throws {
+        let performance = NavigationPerformance()
+        let stale = performance.begin(.reader)
+        let generation = performance.begin(.reader)
+        performance.requiredContentReady(.reader, generation: stale)
+        try await Task.sleep(for: .milliseconds(15))
+        let bytesReady = ContinuousClock.now
+        try await Task.sleep(for: .milliseconds(5))
+        performance.requiredContentReady(.reader, generation: generation, at: bytesReady)
+        performance.requiredContentReady(.reader, generation: generation, at: .now)
+        performance.contentReady(.reader, cacheTier: .network, generation: generation)
+        performance.didCommitVisibleContent(.reader, generation: generation)
+        let result = try #require(performance.records.last)
+        let processing = try #require(result.readyToVisibleMilliseconds)
+        #expect(processing >= 5)
+        #expect(result.elapsedMilliseconds - processing >= 15)
+        #expect(performance.report().processingSummaries["reader.network.programmatic"]?.count == 1)
+        let retained = performance.begin(.reader)
+        performance.contentReady(.reader, cacheTier: .retained)
+        performance.didCommitVisibleContent(.reader, generation: retained)
+        #expect(performance.records.last?.readyToVisibleMilliseconds == nil)
+    }
+
     @Test func reportDoesNotAcceptPrivateDestinationNames() {
         let performance = NavigationPerformance()
         let generation = performance.begin(.workspace, destination: "private folder title")
@@ -75,7 +98,9 @@ import Testing
         performance.didCommitVisibleContent(.selectionFeedback, generation: input)
         let record = try #require(performance.records.last)
         #expect(record.timingOrigin == .input)
-        #expect(try #require(record.inputQueueDelayMilliseconds) >= 25)
+        // Uptime is a large floating-point value; subtracting 25 ms can round
+        // a few nanoseconds below the mathematical duration.
+        #expect(try #require(record.inputQueueDelayMilliseconds) >= 24.9)
         try await Task.sleep(for: .milliseconds(10))
         let programmatic = performance.begin(.selectionFeedback)
         performance.contentReady(.selectionFeedback, cacheTier: .local)

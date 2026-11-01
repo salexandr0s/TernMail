@@ -36,6 +36,7 @@ final class NavigationPerformance {
         let timingOrigin: TimingOrigin
         let inputQueueDelayMilliseconds: Double?
         let contentReadyMilliseconds: Double?
+        let readyToVisibleMilliseconds: Double?
         let elapsedMilliseconds: Double
     }
 
@@ -64,6 +65,7 @@ final class NavigationPerformance {
         let endpoint: String
         let records: [Record]
         let summaries: [String: Summary]
+        let processingSummaries: [String: Summary]
         let stageSummaries: [String: Summary]
         let counters: [String: Int]
         let physicalFootprintBytes: UInt64?
@@ -83,6 +85,7 @@ final class NavigationPerformance {
         let timingOrigin: TimingOrigin
         let inputQueueDelayMilliseconds: Double?
         var ready: ContinuousClock.Instant?
+        var requiredContentReady: ContinuousClock.Instant?
         var cacheTier: NavigationCacheTier?
     }
 
@@ -174,6 +177,17 @@ final class NavigationPerformance {
         return current.ready != nil
     }
 
+    /// Marks availability of the selected visible body's bytes and required resources.
+    /// A retained renderer has no new processing interval. Callers may supply a
+    /// captured timestamp when the first actually readable body is established.
+    func requiredContentReady(_ kind: NavigationInteractionKind, generation: UInt64? = nil,
+                              at instant: ContinuousClock.Instant = .now) {
+        guard var current = pending[kind], generation == nil || generation == current.generation,
+              current.requiredContentReady == nil, instant <= .now else { return }
+        current.requiredContentReady = max(current.started, instant)
+        pending[kind] = current
+    }
+
     /// Called only after the active content probe has drawn in the visible viewport.
     func didCommitVisibleContent(_ kind: NavigationInteractionKind, generation: UInt64) {
         guard isReady(kind, generation: generation) else { return }
@@ -211,10 +225,12 @@ final class NavigationPerformance {
 
     func report() -> Report {
         var groups: [String: [Double]] = [:]
+        var processing: [String: [Double]] = [:]
         for record in records where record.outcome == .visibleCommit {
             let key = [record.kind.rawValue, record.destination, record.cacheTier?.rawValue, record.timingOrigin.rawValue]
                 .compactMap { $0 }.joined(separator: ".")
             groups[key, default: []].append(record.elapsedMilliseconds)
+            if let duration = record.readyToVisibleMilliseconds { processing[key, default: []].append(duration) }
         }
         let stages: [TernSpan] = [.readerPreparation, .readerResources, .calendarPreparation, .mailListProjection]
         let stageSummaries = Dictionary(uniqueKeysWithValues: stages.compactMap { span -> (String, Summary)? in
@@ -223,6 +239,7 @@ final class NavigationPerformance {
         })
         return Report(endpoint: "input timestamp or programmatic selection to ready-content native drawing commit; GPU presentation requires Instruments",
                       records: records, summaries: groups.compactMapValues(Summary.init),
+                      processingSummaries: processing.compactMapValues(Summary.init),
                       stageSummaries: stageSummaries,
                       counters: Dictionary(uniqueKeysWithValues: counters.map { ($0.key.rawValue, $0.value) }),
                       physicalFootprintBytes: Self.physicalFootprint())
@@ -247,6 +264,7 @@ final class NavigationPerformance {
                               timingOrigin: current.timingOrigin,
                               inputQueueDelayMilliseconds: current.inputQueueDelayMilliseconds,
                               contentReadyMilliseconds: current.ready.map { Self.milliseconds(current.started.duration(to: $0)) },
+                              readyToVisibleMilliseconds: current.requiredContentReady.map { Self.milliseconds($0.duration(to: ended)) },
                               elapsedMilliseconds: Self.milliseconds(current.started.duration(to: ended))))
         if records.count > capacity { records.removeFirst(records.count - capacity) }
         scheduleReportExport()
