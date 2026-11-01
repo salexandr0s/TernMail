@@ -6,8 +6,8 @@ task_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 event_count="${1:-100}"
 scenario="${2:-all}"
 variant="${3:-normal}"
-case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only]' >&2; exit 2 ;; esac
-case "$scenario" in all|workspace-only) ;; *) echo 'Scenario must be all or workspace-only.' >&2; exit 2 ;; esac
+case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only|reader-only]' >&2; exit 2 ;; esac
+case "$scenario" in all|workspace-only|reader-only) ;; *) echo 'Scenario must be all, workspace-only, or reader-only.' >&2; exit 2 ;; esac
 case "$variant" in normal|fixed-key-loop) ;; *) echo 'Variant must be normal or fixed-key-loop.' >&2; exit 2 ;; esac
 build_root="${TERN_PERFORMANCE_BUILD_DIR:-/tmp/tern-performance-audit-build}"
 report_dir="$HOME/Library/Containers/dev.tern.performance/Data/tmp"

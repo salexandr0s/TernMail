@@ -13,9 +13,11 @@ def validate(report):
         errors.append('Optimized build was not verified.')
     if report.get('version') != 3:
         errors.append('Expected report schema version 3.')
-    workspace_only = report.get('requestedScenario') == 'workspace-only'
-    expected = {'workspace-warm'}
-    if not workspace_only:
+    scope = report.get('requestedScenario')
+    if scope not in {'all', 'workspace-only', 'reader-only'}:
+        errors.append('Unknown requested scenario scope.')
+    expected = {'reader-recent', 'reader-local'} if scope == 'reader-only' else {'workspace-warm'}
+    if scope == 'all':
         expected |= {'attachments-return', 'reader-recent', 'reader-local', 'reader-network',
                      'reader-image-heavy-local', 'reader-memory-plateau', 'reader-stress-2MiB', 'reader-stress-8MiB'}
         expected |= {prefix + mode for prefix in ['workspace-', 'attachments-', 'reader-']
@@ -56,6 +58,11 @@ def validate(report):
                     errors.append(name + ': a required local body came from the network')
                 recent = name in {'reader-recent', 'reader-offline', 'reader-activeSync', 'reader-delayed'}
                 check_budget(name, [r['elapsedMilliseconds'] for r in readers], 100 if recent else 200, 200 if recent else None)
+                if name == 'reader-local':
+                    # Prepared-document hits are useful, but cannot establish
+                    # the separate local-body preparation budget.
+                    preparation_misses = [r['elapsedMilliseconds'] for r in readers if r.get('cacheTier') == 'local']
+                    check_budget(name + '.preparation-miss', preparation_misses, 200)
             check_budget(name + '.header', [r['elapsedMilliseconds'] for r in records if r['kind'] == 'readerHeader'], 100)
             if name in {'reader-recent', 'reader-offline', 'reader-activeSync', 'reader-delayed'}:
                 check_budget(name + '.selection-feedback', [r['elapsedMilliseconds'] for r in records if r['kind'] == 'selectionFeedback'], 50)
@@ -79,7 +86,7 @@ def validate(report):
             if any(s['preparedDocumentBytes'] > 56 * 1024 * 1024 for s in samples):
                 errors.append(name + ': prepared-document budget exceeded')
     scrolls = report.get('scrolling', [])
-    expected_scrolls = set() if workspace_only else {'mailbox', 'reader-20', 'reader-100', 'calendar', 'attachments'}
+    expected_scrolls = {'mailbox', 'reader-20', 'reader-100', 'calendar', 'attachments'} if scope == 'all' else set()
     if expected_scrolls - {s['name'] for s in scrolls}:
         errors.append('Required scrolling scenarios are missing.')
     for scroll in scrolls:
@@ -92,8 +99,18 @@ def validate(report):
 
 if __name__ == '__main__':
     with open(sys.argv[1]) as stream:
-        errors = validate(json.load(stream))
+        report = json.load(stream)
+        errors = validate(report)
     for error in errors:
         print(error, file=sys.stderr)
+    print('Measured scope: ' + str(report.get('requestedScenario')))
+    for scenario in report.get('scenarios', []):
+        if scenario.get('name', '').startswith('reader-'):
+            tiers = {}
+            for record in scenario.get('timings', {}).get('records', []):
+                if record.get('kind') == 'reader' and record.get('outcome') == 'visibleCommit':
+                    tier = record.get('cacheTier', 'unknown')
+                    tiers[tier] = tiers.get(tier, 0) + 1
+            print(scenario['name'] + ' visible cache tiers: ' + json.dumps(tiers, sort_keys=True))
     print('GPU frame presentation, normal-mailbox performance and memory-plateau slope still require separate evidence.')
     sys.exit(bool(errors))

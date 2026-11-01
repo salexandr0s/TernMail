@@ -7,6 +7,12 @@ import WebKit
 /// Opt-in navigation exercise. The caller must have opened the synthetic stores.
 @MainActor
 enum PerformanceAudit {
+    private enum Scope: String {
+        case all
+        case workspaceOnly = "workspace-only"
+        case readerOnly = "reader-only"
+    }
+
     private static var hasRun = false
     private static weak var auditWindow: NSWindow?
     private static var auditCache: MailCache?
@@ -57,6 +63,12 @@ enum PerformanceAudit {
         let arguments = ProcessInfo.processInfo.arguments
         guard !hasRun, arguments.contains("--performance-audit"), arguments.contains("--ui-audit") else { return }
         hasRun = true
+        let scopeName = arguments.first { $0.hasPrefix("--performance-scenario=") }
+            .map { String($0.dropFirst("--performance-scenario=".count)) } ?? "all"
+        guard let scope = Scope(rawValue: scopeName) else {
+            writeFailure("Unsupported performance scenario; no benchmark actions were performed.")
+            return
+        }
         let ready = await wait(timeout: .seconds(45)) {
             guard let mailbox = app.mailbox else { return false }
             return mailbox.hasSyncedOnce && mailbox.accounts.count == 2 && !mailbox.listItems.isEmpty
@@ -99,21 +111,28 @@ enum PerformanceAudit {
         _ = await wait { !mailbox.listItems.isEmpty }
         try? await Task.sleep(for: .milliseconds(500))
 
-        record(await exercise("workspace-warm", kind: .workspace, count: count * 2) { index in
-            app.destination = index.isMultiple(of: 2) ? .calendar : .mail
-        })
-        if arguments.contains("--performance-scenario=workspace-only") {
-            await finish(app: app, mailbox: mailbox, visibleRows: mailbox.listItems.count, scenarios: scenarios,
-                         scrolling: [], heartbeat: heartbeat, initialMemory: initialMemory)
-            return
+        if scope != .readerOnly {
+            record(await exercise("workspace-warm", kind: .workspace, count: count * 2) { index in
+                app.destination = index.isMultiple(of: 2) ? .calendar : .mail
+            })
+            if scope == .workspaceOnly {
+                await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: mailbox.listItems.count, scenarios: scenarios,
+                             scrolling: [], heartbeat: heartbeat, initialMemory: initialMemory)
+                return
+            }
+            app.destination = .mail
+            record(await exercise("attachments-return", kind: .mailbox, count: count * 2) { index in
+                mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
+            })
         }
-        app.destination = .mail
-        record(await exercise("attachments-return", kind: .mailbox, count: count * 2) { index in
-            mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
-        })
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         _ = await wait { mailbox.listItems.count >= 2 }
-        while isForeground, mailbox.listItems.filter({ $0.id.threadID.hasPrefix("performance-thread-") }).count < count + 2 {
+        // Production prefetch reaches +3/-2 rows (and the initial prefix8).
+        // Keep every measured preparation miss beyond both warmup and lookahead.
+        let localStart = 20
+        let localStride = 5
+        let requiredRows = localStart + (count - 1) * localStride + 1
+        while isForeground, mailbox.listItems.filter({ $0.id.threadID.hasPrefix("performance-thread-") }).count < requiredRows {
             let before = mailbox.listItems.count
             mailbox.loadMoreThreads()
             if !(await wait(timeout: .seconds(2), until: { mailbox.listItems.count > before })) { break }
@@ -123,22 +142,42 @@ enum PerformanceAudit {
             record(await exercise("reader-recent", kind: .reader, count: count) { index in
                 mailbox.selectListRows([rows[index % 2]])
             })
-            let localRows = Array(rows.dropFirst(2).prefix(count))
+            let localRows = (0..<count).compactMap { index -> MailListRowID? in
+                let position = localStart + index * localStride
+                return rows.indices.contains(position) ? rows[position] : nil
+            }
             for row in localRows {
                 guard isForeground, !Task.isCancelled, let owner = mailbox.account(id: row.accountID) else { break }
                 try? await owner.engine.openThread(row.threadID, markRead: false)
             }
-            if localRows.count == count {
+            let localBodiesPresent = (try? await mailbox.cache.read { transaction in
+                try localRows.allSatisfy { row in
+                    let messages = try transaction.messages(threadID: row.threadID, accountID: row.accountID)
+                    return try !messages.isEmpty && messages.allSatisfy { message in
+                        try transaction.body(messageID: message.id, accountID: row.accountID) != nil
+                    }
+                }
+            }) == true
+            if localRows.count == count, localBodiesPresent {
                 record(await exercise("reader-local", kind: .reader, count: count, warmup: 0) { index in
                     mailbox.selectListRows([localRows[index]])
                     NavigationPerformance.shared.cancel(.selectionFeedback)
                 })
             } else {
-                record(failedScenario("reader-local", count: count, reason: "The requested local-body corpus was not available."))
+                let reason = localRows.count < count
+                    ? "Local preparation needs \(requiredRows) snapshot rows for \(count) spaced selections; only \(rows.count) were available."
+                    : "The selected local-body corpus was not fully stored before timing."
+                record(failedScenario("reader-local", count: count, reason: reason))
             }
         } else {
             record(failedScenario("reader-recent", count: count, reason: "Two recent reader fixtures were not available."))
             record(failedScenario("reader-local", count: count, reason: "The local-body corpus was not available."))
+        }
+
+        if scope == .readerOnly {
+            await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: rows.count, scenarios: scenarios,
+                         scrolling: [], heartbeat: heartbeat, initialMemory: initialMemory)
+            return
         }
 
         if rows.count >= 2 {
@@ -254,11 +293,11 @@ enum PerformanceAudit {
         scrolling.append(await measureScroll("attachments", in: window, surface: .attachments))
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
-        await finish(app: app, mailbox: mailbox, visibleRows: rows.count, scenarios: scenarios,
+        await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: rows.count, scenarios: scenarios,
                      scrolling: scrolling, heartbeat: heartbeat, initialMemory: initialMemory)
     }
 
-    private static func finish(app: AppModel, mailbox: MailboxModel, visibleRows: Int,
+    private static func finish(app: AppModel, mailbox: MailboxModel, scope: Scope, visibleRows: Int,
                                scenarios: [Scenario], scrolling: [PerformanceScrollAudit.Result],
                                heartbeat: PerformanceMainThreadAudit, initialMemory: UInt64?) async {
         #if DEBUG
@@ -266,9 +305,8 @@ enum PerformanceAudit {
         #else
         let optimized = true
         #endif
-        let requestedScenario = ProcessInfo.processInfo.arguments.contains("--performance-scenario=workspace-only") ? "workspace-only" : "all"
         let report = Report(buildRevision: Bundle.main.object(forInfoDictionaryKey: "TernBuildRevision") as? String ?? "unknown",
-                            requestedScenario: requestedScenario,
+                            requestedScenario: scope.rawValue,
                             automaticKeyViewLoopBeforeAudit: keyViewLoopBeforeAudit,
                             automaticKeyViewLoopDuringAudit: keyViewLoopDuringAudit,
                             isOptimizedBuild: optimized, syntheticAccountCount: mailbox.accounts.count,
