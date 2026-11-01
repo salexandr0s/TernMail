@@ -1,5 +1,5 @@
 // Shared build settings for all configurations.
-// Local values (OAuth client, signing team) go in Secrets.xcconfig, which is git-ignored.
+// Local OAuth and signing values go in the git-ignored Secrets.xcconfig.
 
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
@@ -9,5 +9,10 @@ CURRENT_PROJECT_VERSION = 1
 GOOGLE_CLIENT_ID_PREFIX =
 GOOGLE_CLIENT_ID = $(GOOGLE_CLIENT_ID_PREFIX).apps.googleusercontent.com
 GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.$(GOOGLE_CLIENT_ID_PREFIX)
+
+// Local builds fall back to ad-hoc signing when no certificate is configured.
+// Both the app and hosted tests use these values in Debug and Release.
+TERN_CODE_SIGN_IDENTITY = -
+TERN_DEVELOPMENT_TEAM =
 
 #include? "Secrets.xcconfig"
