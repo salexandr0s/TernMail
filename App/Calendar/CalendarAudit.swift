@@ -50,8 +50,10 @@ actor CalendarAuditService: CalendarService {
     private var rows: [String: [String: GoogleCalendarEvent]]
     private var rules: [String: [CalendarACLRule]] = [:]
     private var revision = 1
+    private let performanceTransport: PerformanceAuditTransport?
 
-    init(now: Date) {
+    init(now: Date, performanceTransport: PerformanceAuditTransport? = nil) {
+        self.performanceTransport = performanceTransport ?? (ProcessInfo.processInfo.arguments.contains("--performance-audit") ? .shared : nil)
         var personal = GoogleCalendarEntry(id: "personal", summary: "Personal", timeZone: "Europe/Vienna", accessRole: "owner", backgroundColor: "#0b8043")
         personal.primary = true
         personal.rawValue["conferenceProperties"] = .object(["allowedConferenceSolutionTypes": .array([.string("hangoutsMeet")])])
@@ -103,9 +105,11 @@ actor CalendarAuditService: CalendarService {
     }
 
     func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage {
-        CalendarListPage(items: Array(entries.values).sorted { $0.id < $1.id }, nextSyncToken: "audit-\(revision)")
+        _ = try await performanceTransport?.request(.calendar)
+        return CalendarListPage(items: Array(entries.values).sorted { $0.id < $1.id }, nextSyncToken: "audit-\(revision)")
     }
     func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
+        _ = try await performanceTransport?.request(.calendar)
         guard entries[calendarID] != nil else { throw GmailError.notFound }
         var values = Array(rows[calendarID, default: [:]].values)
         if query.singleEvents {
@@ -121,6 +125,7 @@ actor CalendarAuditService: CalendarService {
         return CalendarEventPage(items: values, nextSyncToken: "audit-\(revision)")
     }
     func event(calendarID: String, eventID: String) async throws -> GoogleCalendarEvent {
+        _ = try await performanceTransport?.request(.calendar)
         if let event = rows[calendarID]?[eventID] { return event }
         if let separator = eventID.lastIndex(of: "_"), let timestamp = TimeInterval(eventID[eventID.index(after: separator)...]),
            let master = rows[calendarID]?[String(eventID[..<separator])] {

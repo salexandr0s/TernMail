@@ -9,12 +9,16 @@ import WebKit
 enum PerformanceAudit {
     private static var hasRun = false
     private static weak var auditWindow: NSWindow?
+    private static var auditCache: MailCache?
     private static var keyViewLoopBeforeAudit: Bool?
     private static var keyViewLoopDuringAudit: Bool?
 
     struct MemorySample: Codable {
         let completedInteractions: Int
         let physicalFootprintBytes: UInt64?
+        let preparedDocumentBytes: Int
+        let attachedReaderWebViews: Int
+        let storedContent: CacheUsage?
     }
 
     struct Scenario: Codable {
@@ -24,13 +28,15 @@ enum PerformanceAudit {
         let failures: Int
         let failureReason: String?
         let memorySamples: [MemorySample]
+        var transportAtStart: PerformanceAuditTransport.Statistics?
+        var transportAtEnd: PerformanceAuditTransport.Statistics?
         let timings: NavigationPerformance.Report
     }
 
     struct Report: Encodable {
-        let version = 2
+        let version = 3
+        let buildRevision: String
         let requestedScenario: String
-        let preservesPlatformViewsForAudit: Bool
         let automaticKeyViewLoopBeforeAudit: Bool?
         let automaticKeyViewLoopDuringAudit: Bool?
         let isOptimizedBuild: Bool
@@ -38,6 +44,7 @@ enum PerformanceAudit {
         let fixtureVisibleThreadCount: Int
         let fixtureConfiguredMessagesPerAccount: Int
         let fixtureEventCount: Int
+        let imageCorpora: [AuditGmail.ImageCorpus]
         let scenarios: [Scenario]
         let scrolling: [PerformanceScrollAudit.Result]
         let mainActorResponsiveness: PerformanceMainThreadAudit.Result
@@ -67,6 +74,7 @@ enum PerformanceAudit {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         auditWindow = window
+        auditCache = mailbox.cache
         let originalKeyViewLoop = window.autorecalculatesKeyViewLoop
         keyViewLoopBeforeAudit = originalKeyViewLoop
         if arguments.contains("--performance-fixed-key-loop") { window.autorecalculatesKeyViewLoop = false }
@@ -79,6 +87,7 @@ enum PerformanceAudit {
         let heartbeat = PerformanceMainThreadAudit()
         let initialMemory = NavigationPerformance.physicalFootprint()
         let count = max(100, min(1_000, argumentInteger("--performance-iterations=") ?? 100))
+        await PerformanceAuditTransport.shared.configure(.idle)
         var scenarios: [Scenario] = []
         var scrolling: [PerformanceScrollAudit.Result] = []
         func record(_ scenario: Scenario) {
@@ -90,7 +99,7 @@ enum PerformanceAudit {
         _ = await wait { !mailbox.listItems.isEmpty }
         try? await Task.sleep(for: .milliseconds(500))
 
-        record(await exercise("workspace-warm", kind: .workspace, count: count) { index in
+        record(await exercise("workspace-warm", kind: .workspace, count: count * 2) { index in
             app.destination = index.isMultiple(of: 2) ? .calendar : .mail
         })
         if arguments.contains("--performance-scenario=workspace-only") {
@@ -99,7 +108,7 @@ enum PerformanceAudit {
             return
         }
         app.destination = .mail
-        record(await exercise("attachments-return", kind: .mailbox, count: count) { index in
+        record(await exercise("attachments-return", kind: .mailbox, count: count * 2) { index in
             mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
         })
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
@@ -122,6 +131,7 @@ enum PerformanceAudit {
             if localRows.count == count {
                 record(await exercise("reader-local", kind: .reader, count: count, warmup: 0) { index in
                     mailbox.selectListRows([localRows[index]])
+                    NavigationPerformance.shared.cancel(.selectionFeedback)
                 })
             } else {
                 record(failedScenario("reader-local", count: count, reason: "The requested local-body corpus was not available."))
@@ -131,6 +141,86 @@ enum PerformanceAudit {
             record(failedScenario("reader-local", count: count, reason: "The local-body corpus was not available."))
         }
 
+        if rows.count >= 2 {
+            for mode in [PerformanceAuditTransport.Mode.activeSync, .offline, .delayed] {
+                await PerformanceAuditTransport.shared.configure(mode)
+                let driver = conditionDriver(mode, mailbox: mailbox, calendar: app.calendar)
+                // Verify the chosen condition is exercised through real engines.
+                _ = await wait(timeout: .seconds(5)) { conditionDriverStarted }
+                record(await exercise("workspace-" + mode.rawValue, kind: .workspace, count: count * 2) { index in
+                    app.destination = index.isMultiple(of: 2) ? .calendar : .mail
+                })
+                app.destination = .mail
+                record(await exercise("attachments-" + mode.rawValue, kind: .mailbox, count: count * 2) { index in
+                    mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
+                })
+                mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+                record(await exercise("reader-" + mode.rawValue, kind: .reader, count: count) { index in
+                    mailbox.selectListRows([rows[index % 2]])
+                })
+                driver.cancel()
+                await driver.value
+            }
+        } else {
+            for mode in ["activeSync", "offline", "delayed"] {
+                for prefix in ["workspace-", "attachments-", "reader-"] {
+                    record(failedScenario(prefix + mode, count: prefix == "reader-" ? count : count * 2,
+                                          reason: "Condition corpus was unavailable."))
+                }
+            }
+        }
+        await PerformanceAuditTransport.shared.configure(.delayed)
+        app.destination = .mail
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        let networkKeys = (0..<100).map { ThreadKey(accountID: "ui-audit", threadID: "performance-network-\(20 + $0 * 5)") }
+        let networkListReady = await prepareFixtureList("Synthetic network body", keys: networkKeys, mailbox: mailbox)
+        record(await exercise("reader-network", kind: .reader, count: 100, warmup: 0) { index in
+            guard networkListReady else { throw AuditFailure.fixture("Network fixture search did not load.") }
+            let key = networkKeys[index]
+            let missing = try await mailbox.cache.read { transaction in
+                let messages = try transaction.messages(threadID: key.threadID, accountID: key.accountID)
+                return try !messages.isEmpty && messages.allSatisfy { message in
+                    try transaction.body(messageID: message.id, accountID: key.accountID) == nil
+                }
+            }
+            guard missing else { throw AuditFailure.fixture("A network body was already cached or missing its metadata.") }
+            let ticket = await PerformanceAuditTransport.shared.willSelect(accountID: key.accountID, threadID: key.threadID)
+            try selectFixture(key, in: mailbox)
+            await PerformanceAuditTransport.shared.didSelect(ticket, generation: NavigationPerformance.shared.currentGeneration(for: .reader))
+        })
+        await PerformanceAuditTransport.shared.configure(.idle)
+        let imageKeys = (0..<100).map { ThreadKey(accountID: "ui-audit", threadID: "performance-image-heavy-\($0)") }
+        if let owner = mailbox.account(id: "ui-audit") {
+            for key in imageKeys where isForeground {
+                try? await owner.engine.openThread(key.threadID, markRead: false)
+            }
+        }
+        let imagesListReady = await prepareFixtureList("Synthetic image-heavy body", keys: imageKeys, mailbox: mailbox)
+        record(await exercise("reader-image-heavy-local", kind: .reader, count: imageKeys.count, warmup: 0) { index in
+            guard imagesListReady else { throw AuditFailure.fixture("Image fixture search did not load.") }
+            try selectFixture(imageKeys[index], in: mailbox)
+        })
+        // All100 source bodies/resources are already stored before sampling.
+        // Cycling10 identities exceeds the3-session retention cap without growing
+        // the in-memory database. Stored-content bytes let reports verify that.
+        record(await exercise("reader-memory-plateau", kind: .reader, count: 500, warmup: 20) { index in
+            guard imagesListReady else { throw AuditFailure.fixture("Image fixture search did not load.") }
+            try selectFixture(imageKeys[index % 10], in: mailbox)
+        })
+        // Oversized bodies are stress cases, outside representative-corpus percentiles.
+        for size in [2, 8] {
+            let key = ThreadKey(accountID: "ui-audit", threadID: "performance-stress-\(size)")
+            if isForeground, let owner = mailbox.account(id: key.accountID) {
+                try? await owner.engine.openThread(key.threadID, markRead: false)
+            }
+            let stressListReady = await prepareFixtureList("Synthetic \(size) MiB stress body", keys: [key], mailbox: mailbox)
+            record(await exercise("reader-stress-\(size)MiB", kind: .reader, count: 1, warmup: 0, timeout: .seconds(60)) { _ in
+                guard stressListReady else { throw AuditFailure.fixture("Stress fixture search did not load.") }
+                try selectFixture(key, in: mailbox)
+            })
+        }
+        mailbox.search.clear()
+        _ = await wait { !mailbox.search.isActive && mailbox.listItems.count >= 20 }
         scrolling.append(await measureScroll("mailbox", in: window, surface: .mailbox))
         for size in [20, 100] {
             guard isForeground else {
@@ -139,7 +229,15 @@ enum PerformanceAudit {
             }
             // Explicit fixture identity avoids accidentally omitting a long thread
             // because its row is outside the currently loaded list page.
-            mailbox.selectedThreadIDs = [ThreadKey(accountID: "ui-audit", threadID: "performance-long-\(size)")]
+            let key = ThreadKey(accountID: "ui-audit", threadID: "performance-long-\(size)")
+            guard await prepareFixtureList("Synthetic \(size)-message conversation", keys: [key], mailbox: mailbox) else {
+                scrolling.append(.failure(name: "reader-\(size)", reason: "Long-conversation list snapshot did not load."))
+                continue
+            }
+            do { try selectFixture(key, in: mailbox) } catch {
+                scrolling.append(.failure(name: "reader-\(size)", reason: "Long-conversation row was missing."))
+                continue
+            }
             guard let generation = NavigationPerformance.shared.currentGeneration(for: .reader),
                   await NavigationPerformance.shared.waitForCompletion(.reader, generation: generation, timeout: .seconds(15))?.outcome == .visibleCommit else {
                 scrolling.append(.failure(name: "reader-\(size)", reason: "Long conversation did not become readable."))
@@ -169,61 +267,142 @@ enum PerformanceAudit {
         let optimized = true
         #endif
         let requestedScenario = ProcessInfo.processInfo.arguments.contains("--performance-scenario=workspace-only") ? "workspace-only" : "all"
-        let report = Report(requestedScenario: requestedScenario,
-                            preservesPlatformViewsForAudit: ProcessInfo.processInfo.arguments.contains("--performance-preserve-platform-views"),
+        let report = Report(buildRevision: Bundle.main.object(forInfoDictionaryKey: "TernBuildRevision") as? String ?? "unknown",
+                            requestedScenario: requestedScenario,
                             automaticKeyViewLoopBeforeAudit: keyViewLoopBeforeAudit,
                             automaticKeyViewLoopDuringAudit: keyViewLoopDuringAudit,
                             isOptimizedBuild: optimized, syntheticAccountCount: mailbox.accounts.count,
                             fixtureVisibleThreadCount: visibleRows,
-                            fixtureConfiguredMessagesPerAccount: min(60_000, max(200, argumentInteger("--performance-mails=") ?? 1_000)) + 120,
-                            fixtureEventCount: app.calendar.events.count,
+                            fixtureConfiguredMessagesPerAccount: min(60_000, max(200, argumentInteger("--performance-mails=") ?? 1_000)) + 822,
+                            fixtureEventCount: app.calendar.events.count, imageCorpora: AuditGmail.performanceImageCorpora,
                             scenarios: scenarios, scrolling: scrolling,
                             mainActorResponsiveness: await heartbeat.stop(),
                             initialPhysicalFootprintBytes: initialMemory,
                             finalPhysicalFootprintBytes: NavigationPerformance.physicalFootprint(),
-                            limitation: "Navigation ends at a native drawing commit. Scroll results measure main-run-loop display-link delivery, not presented GPU frames. WebKit child-process memory and actual frame hitches require an external profiler.")
+                            limitation: "Navigation ends at a native drawing commit. Scroll results measure main-run-loop display-link delivery, not presented GPU frames. Processing origins distinguish synthetic full-response delivery from production reader observation delivery. WebKit memory attribution and actual rendered frame hitches require external process/profiler evidence.")
         write(report)
     }
 
+    private static func prepareFixtureList(_ query: String, keys: [ThreadKey], mailbox: MailboxModel) async -> Bool {
+        guard isForeground else { return false }
+        mailbox.search.update(query)
+        mailbox.search.restrict(toAccount: "ui-audit")
+        mailbox.search.submit()
+        let wanted = Set(keys)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+        while isForeground, !Task.isCancelled, ContinuousClock.now < deadline {
+            let listed = Set(mailbox.listItems.map(\.id.threadKey))
+            if wanted.isSubset(of: listed), mailbox.search.status != .searching { return true }
+            if mailbox.search.hasLocalAnswer, mailbox.search.hasMoreResults { mailbox.search.loadMoreResults() }
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return false }
+        }
+        return false
+    }
+
+    private static func selectFixture(_ key: ThreadKey, in mailbox: MailboxModel) throws {
+        guard let row = mailbox.listItems.first(where: { $0.id.threadKey == key })?.id else {
+            throw AuditFailure.fixture("Selected fixture is outside the loaded list snapshot.")
+        }
+        mailbox.selectListRows([row])
+        // A row in the snapshot need not be inside the viewport. Its reader and
+        // header remain measurable; a generic list repaint is not row feedback.
+        NavigationPerformance.shared.cancel(.selectionFeedback)
+    }
+
+    private enum AuditFailure: Error { case fixture(String) }
+    private static var conditionDriverStarted = false
+
+    /// Uses production SyncEngine entry points against in-memory synthetic clients.
+    /// Only one request pass is outstanding; cancellation joins it before changing modes.
+    private static func conditionDriver(_ mode: PerformanceAuditTransport.Mode, mailbox: MailboxModel,
+                                        calendar: CalendarModel) -> Task<Void, Never> {
+        conditionDriverStarted = false
+        return Task {
+            var index = 0
+            while !Task.isCancelled, isForeground {
+                if mode == .delayed, let owner = mailbox.account(id: "ui-audit-2") {
+                    let threadID = "performance-network-\(index % 100)"
+                    // The other synthetic account is never selected in this driver.
+                    // Eviction uses the production hold checks and keeps metadata.
+                    _ = try? await mailbox.cache.evictContent(for: [CacheThreadReference(accountID: "ui-audit-2", threadID: threadID)], keeping: [], now: .now)
+                    try? await owner.engine.openThread(threadID, markRead: false)
+                } else {
+                    for owner in mailbox.accounts {
+                        guard !Task.isCancelled else { return }
+                        try? await owner.engine.sync()
+                    }
+                    if mode == .offline { await calendar.refreshCalendarAudit() }
+                }
+                conditionDriverStarted = true
+                index += 1
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+    }
+
     private static func exercise(_ name: String, kind: NavigationInteractionKind, count: Int,
-                                 warmup: Int = 6, action: (Int) -> Void) async -> Scenario {
+                                 warmup: Int = 6, timeout: Duration = .seconds(5),
+                                 action: (Int) async throws -> Void) async -> Scenario {
         let performance = NavigationPerformance.shared
+        let transportStart = await PerformanceAuditTransport.shared.statistics()
         for index in 0..<warmup {
             guard isForeground else { return failedScenario(name, count: count, reason: foregroundFailure) }
-            action(index)
-            if let generation = performance.currentGeneration(for: kind) {
-                _ = await performance.waitForCompletion(kind, generation: generation)
+            do { try await action(index) } catch {
+                return failedScenario(name, count: count, reason: "Warmup fixture action failed.")
+            }
+            if let generation = performance.latestGeneration(for: kind) {
+                _ = await performance.waitForCompletion(kind, generation: generation, timeout: timeout)
             }
         }
         performance.reset()
         var failures = 0
         var completed = 0
         var failureReason: String?
-        var memory = [MemorySample(completedInteractions: 0, physicalFootprintBytes: NavigationPerformance.physicalFootprint())]
+        var memory = [await memorySample(completed: 0)]
         for index in 0..<count {
             guard isForeground else { failures += count - index; failureReason = foregroundFailure; break }
-            guard !Task.isCancelled else { failures += count - index; break }
-            action(index + warmup)
-            guard let generation = performance.currentGeneration(for: kind) else { failures += 1; continue }
-            let result = await performance.waitForCompletion(kind, generation: generation)
+            guard !Task.isCancelled else { failures += count - index; failureReason = "Audit cancelled."; break }
+            let previous = performance.latestGeneration(for: kind)
+            do { try await action(index + warmup) } catch {
+                failures += count - index
+                failureReason = "Fixture action failed or an expected cache miss was unavailable."
+                break
+            }
+            guard let generation = performance.latestGeneration(for: kind), generation != previous else {
+                failures += 1; failureReason = "The action did not start a new measured interaction."; continue
+            }
+            let result = await performance.waitForCompletion(kind, generation: generation, timeout: timeout)
             if result?.outcome == .visibleCommit { completed += 1 } else { failures += 1 }
-            if (index + 1).isMultiple(of: 10) {
-                memory.append(MemorySample(completedInteractions: completed, physicalFootprintBytes: NavigationPerformance.physicalFootprint()))
+            if (index + 1).isMultiple(of: 10) || index + 1 == count {
+                memory.append(await memorySample(completed: completed))
                 writeCurrentProgress(Scenario(name: name, requestedInteractions: count, completedInteractions: completed,
                                               failures: failures, failureReason: failureReason, memorySamples: memory,
+                                              transportAtStart: transportStart, transportAtEnd: await PerformanceAuditTransport.shared.statistics(),
                                               timings: performance.report()))
             }
-            // Stop an uninstrumented scenario rather than spending minutes on timeouts.
             if failures >= 3, completed == 0 { failures += count - index - 1; break }
         }
         return Scenario(name: name, requestedInteractions: count, completedInteractions: completed,
-                        failures: failures, failureReason: failureReason, memorySamples: memory, timings: performance.report())
+                        failures: failures, failureReason: failureReason, memorySamples: memory,
+                        transportAtStart: transportStart, transportAtEnd: await PerformanceAuditTransport.shared.statistics(),
+                        timings: performance.report())
+    }
+
+    private static func memorySample(completed: Int) async -> MemorySample {
+        let stored = try? await auditCache?.disposableContentUsage()
+        func countReaders(in view: NSView) -> Int {
+            (view is ContentSizedWebView ? 1 : 0) + view.subviews.reduce(0) { $0 + countReaders(in: $1) }
+        }
+        let readers = auditWindow?.contentView.map { countReaders(in: $0) } ?? 0
+        return MemorySample(completedInteractions: completed, physicalFootprintBytes: NavigationPerformance.physicalFootprint(),
+                            preparedDocumentBytes: ReaderPreparedCache.shared.byteCount,
+                            attachedReaderWebViews: readers, storedContent: stored)
     }
 
     private static func failedScenario(_ name: String, count: Int, reason: String) -> Scenario {
         NavigationPerformance.shared.reset()
         return Scenario(name: name, requestedInteractions: count, completedInteractions: 0,
-                        failures: count, failureReason: reason, memorySamples: [], timings: NavigationPerformance.shared.report())
+                        failures: count, failureReason: reason, memorySamples: [], transportAtStart: nil, transportAtEnd: nil, timings: NavigationPerformance.shared.report())
     }
 
     private static var isForeground: Bool {
