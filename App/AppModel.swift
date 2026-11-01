@@ -535,7 +535,7 @@ final class AppModel {
         do {
             user = try await auth.signIn(
                 loginHint: returning?.email,
-                features: AccountFeature.named(stored?.enabledFeatures ?? []),
+                features: GoogleScopes.featuresForSignIn(storedFeatures: stored?.enabledFeatures ?? returning?.enabledFeatures),
                 isWorkspace: stored?.hostedDomain != nil
             )
         } catch is CancellationError {
@@ -589,7 +589,7 @@ final class AppModel {
             } else {
                 account = AccountRecord(
                     id: user.id, email: email, displayName: displayName, grantedScopes: granted,
-                    addedAt: .now, hostedDomain: hostedDomain
+                    addedAt: .now, hostedDomain: hostedDomain, enabledFeatures: AccountFeature.names(of: user.grant.features)
                 )
                 try await accounts.save(account)
             }

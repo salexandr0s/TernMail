@@ -100,6 +100,6 @@ struct SignInView: View {
         if case .signInRequired(let account) = model.phase {
             return "Sign in to reconnect \(account.email). Your downloaded mail is still here."
         }
-        return "Sign in to read and organize your Gmail."
+        return "Sign in to read and organize your Gmail. Allow Contacts for address suggestions and profile photos."
     }
 }

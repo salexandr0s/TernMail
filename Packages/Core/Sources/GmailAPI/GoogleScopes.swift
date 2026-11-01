@@ -48,6 +48,15 @@ public enum GoogleScopes {
     /// Asked for at every authorization: the account's identity and its mail.
     public static let base = ["openid", "email", "profile", gmailModify]
 
+    /// New accounts request contact suggestions and photos during sign-in.
+    /// Contacts stays optional if the user declines either scope.
+    public static let initialFeatures: Set<AccountFeature> = [.contacts]
+
+    /// A returning account keeps its choices, including turning Contacts off.
+    public static func featuresForSignIn(storedFeatures: [String]?) -> Set<AccountFeature> {
+        storedFeatures.map(AccountFeature.named) ?? initialFeatures
+    }
+
     /// The scopes `feature` can't work without.
     public static func required(for feature: AccountFeature) -> [String] {
         switch feature {
