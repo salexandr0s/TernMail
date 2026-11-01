@@ -398,3 +398,75 @@ Evidence and complete cache/memory/stage reports are in
 The later visual-row candidate passed 28 focused tests and built successfully,
 but no after timings were collected within the three-minute user slot. No new
 production installation has occurred.
+
+## Selection feedback and hover verification
+
+The hover changes use the existing 6% tint and 120 ms motion token on mail and
+sidebar rows. Selected rows suppress the tint; Reduce Motion disables its
+animation. Only the decorative background animates. The delayed-body regression
+confirms that native list selection updates before bodies arrive, a late prior
+body cannot change the current selection, and hidden readers do not mark mail read.
+Twenty MessageList and twelve Navigation checks pass in optimized hosted tests.
+The native blue selection was seen in the standalone app; mail/sidebar hover
+appearance still needs a completed visual check.
+
+The new opt-in feedback endpoint, `selectedNativeRowDrawingProxyV1`, requires the
+current account/mailbox identity, singleton native selection and an intersecting
+row viewport at both local probe drawing and its queued completion. Ordinary
+launches create no such row probes. This measures native selected state plus a
+drawing callback and main-queue turn. It does not observe `NSTableRowView.drawSelection`
+or GPU presentation and cannot be compared with historical workspace-probe values.
+
+The November 1 run at 17:49 UTC completed 100 retained and 100 local selections
+with zero failures and zero unexpected native input. Selections were programmatic;
+these timings exclude native input-queue delay before the model receives selection:
+
+| Measurement | p50 | p95 | p99 | Target result |
+| --- | --- | --- | --- | --- |
+| Selected native-row drawing proxy, retained scenario | 62.35 ms | 74.85 ms | 92.40 ms | 50 ms p95 not met |
+| Retained readable-content commit | 76.12 ms | 90.71 ms | 115.08 ms | 100/200 ms met |
+| Local preparation miss | 354.76 ms | 514.96 ms | 552.54 ms | 200 ms not met |
+
+Retained header p95 was 74.84 ms; local header p95 was 141.16 ms. All retained
+reader samples used retained sessions; all local samples required preparation
+from stored bodies. At the report snapshot, twelve feedback probes were attached,
+with one eligible in the retained scenario. Local selections outside the realized
+rows intentionally cancel feedback spans; they are not counted as highlight
+measurements.
+
+Warm selections built zero row models and evaluated 200 visual rows, plus 1,200
+lightweight selection observers. There were 211 prepared-cache hits and 100
+height reports. Two WebViews remained attached without renderer churn. App
+physical footprint moved from 255.85 to 246.97 MB. Local selections built 118,800
+row models, evaluated six visual rows and 2,388 selection observers, and recorded
+501 preparations, 100 WebView creations and 99 destructions. Attached WebViews
+increased from two to three; footprint moved from 251.68 to 261.74 MB. The local
+body/resource corpus and prepared cache grew, so this is not a memory-plateau
+measurement.
+
+Selection readiness p95 was 0.006 ms and readiness-to-row-proxy p95 was 74.84 ms.
+The remaining measured delay is after model readiness, though the proxy can
+trail native highlight drawing. Local preparation p95 was 0.514 ms and list
+projection p95 was 2.526 ms; these small stages do not explain the full delay.
+The whole-run heartbeat counted 128 of 1,020 waits at least 100 ms, maximum
+231.49 ms. These are neither per-scenario attribution nor missed-frame counts.
+
+The measured window was 1280×800 points at (212,63), with display metadata
+recorded before release. No CUA, debugger or profiler overlapped measurement.
+The gate released at 17:49:41.553 UTC, the report was captured at 17:50:34.871,
+and exact-owned cleanup stopped the process at 17:50:41.610 within the user's
+two-minute slot. This does not establish graceful quit. The validator correctly
+failed the feedback, local-content and local-header budgets. No scrolling or
+normal-mailbox acceptance claim follows from this run.
+
+The clean source was `d3c105ae8757c8ba9e1daa989760335fffff7a4a`, derived from the
+visual-row candidate plus hover, delayed-body regression and row diagnostics.
+It excludes the pending prefetch experiment and Stage A layout tracing. The
+normal hardened arm64 executable SHA-256 is
+`b31f96ae1f294aa31d406b1adb701a65d2719dae72632d9706afbcf4a503f11b`.
+Raw results, gate metadata and process reports are in
+`/tmp/tern-selection-feedback-runtime/reports/20261101T174918Z-100-reader-only-normal/`.
+The previous baseline did not capture geometry and used different diagnostics;
+reader differences cannot be attributed to the visual-row or hover change alone.
+The active selection-feedback goal remains incomplete, and the production app
+has not been replaced.
