@@ -136,10 +136,15 @@ enum PerformanceAudit {
         }
         defer { NSEvent.removeMonitor(inputMonitor) }
         let previousRowConstructionHook = ThreadListView.onRowContentBuild
+        let previousSelectionObserverHook = MessageListRow.onSelectionObserverEvaluation
         let previousRowBodyHook = MessageListRow.onBodyEvaluation
         ThreadListView.onRowContentBuild = { [weak mailbox] source, _ in
             guard source === mailbox else { return }
             NavigationPerformance.shared.increment(.mailRowConstructed)
+        }
+        MessageListRow.onSelectionObserverEvaluation = { [weak mailbox] source, _ in
+            guard source === mailbox else { return }
+            NavigationPerformance.shared.increment(.mailSelectionObserverEvaluated)
         }
         MessageListRow.onBodyEvaluation = { [weak mailbox] source, _, _ in
             guard source === mailbox else { return }
@@ -147,6 +152,7 @@ enum PerformanceAudit {
         }
         defer {
             ThreadListView.onRowContentBuild = previousRowConstructionHook
+            MessageListRow.onSelectionObserverEvaluation = previousSelectionObserverHook
             MessageListRow.onBodyEvaluation = previousRowBodyHook
         }
         let heartbeat = PerformanceMainThreadAudit()
@@ -451,6 +457,7 @@ enum PerformanceAudit {
         // Reset after warmup; an explicit zero distinguishes no work from an
         // unavailable measurement. These counters do not measure native List diff CPU.
         performance.increment(.mailRowConstructed, by: 0)
+        performance.increment(.mailSelectionObserverEvaluated, by: 0)
         performance.increment(.mailRowBodyEvaluated, by: 0)
         var failures = 0
         var completed = 0
