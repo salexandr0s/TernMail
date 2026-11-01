@@ -1,6 +1,8 @@
 import Foundation
 import MailStore
 import MessageContent
+import Observation
+import Synchronization
 import Testing
 @testable import Tern
 
@@ -117,6 +119,137 @@ import Testing
         #expect(Array(display.suffix(2)) == [ids[2], ids[3]])
         store.releaseHidden(keeping: ids[3])
         #expect(store.sessions == [ids[3]])
+    }
+
+    @Test func retainedActivationDoesNotRepublishPresentation() {
+        let owner = NSObject(), store = ReaderSessionStore()
+        let ids = (0..<3).map {
+            ReaderSessionID(key: ThreadKey(accountID: "a", threadID: "t\($0)"), messageID: nil, owner: ObjectIdentifier(owner))
+        }
+        for id in ids { store.activate(id) }
+        store.setVisible(true, selected: ids[2])
+        let changes = Mutex(0)
+        let before = withObservationTracking {
+            presentation(of: store, selecting: ids[0])
+        } onChange: { changes.withLock { $0 += 1 } }
+        #expect(store.sessions == ids, "Projecting the next selection must not mutate recency")
+
+        store.activate(ids[0])
+        let after = presentation(of: store, selecting: ids[0])
+        #expect(before.display == after.display, "Retained selection keeps the displayed session identities")
+        #expect(before.sources == after.sources, "Retained selection keeps the source snapshots")
+        #expect(after.hidden == [ids[2], ids[0]], "Hidden renderers follow MRU order, not display order")
+        #expect(before == after, "The first presentation must already predict the selected session's hidden-window retention")
+        #expect(changes.withLock { $0 } == 0, "Warm activation must not request a corrective presentation pass")
+        #expect(store.sessions == [ids[1], ids[2], ids[0]])
+    }
+
+    @Test func noOpSourceRetentionDoesNotNotifyObservers() {
+        let owner = NSObject(), store = ReaderSessionStore()
+        let id = ReaderSessionID(key: ThreadKey(accountID: "a", threadID: "retained"), messageID: nil, owner: ObjectIdentifier(owner))
+        store.activate(id)
+        store.setVisible(true, selected: id)
+        let operations: [(String, @MainActor () -> Void)] = [
+            ("activate retained source", { store.activate(id) }),
+            ("show retained source", { store.setVisible(true, selected: id) }),
+            ("release absent hidden sources", { store.releaseHidden(keeping: id) })
+        ]
+        for (name, operation) in operations {
+            let changes = Mutex(0)
+            let before = withObservationTracking { store.retainsSource(for: id) } onChange: {
+                changes.withLock { $0 += 1 }
+            }
+            operation()
+            #expect(before && store.retainsSource(for: id))
+            #expect(changes.withLock { $0 } == 0, "\(name) must not publish an unchanged source-retention set")
+        }
+    }
+
+    @Test func presentationMembershipChangesNotifyObservers() {
+        let owner = NSObject(), store = ReaderSessionStore()
+        let ids = (0..<4).map {
+            ReaderSessionID(key: ThreadKey(accountID: "a", threadID: "t\($0)"), messageID: nil, owner: ObjectIdentifier(owner))
+        }
+        for id in ids.prefix(3) { store.activate(id) }
+        let additions = Mutex(0)
+        let before = withObservationTracking { presentation(of: store, selecting: ids[2]) } onChange: {
+            additions.withLock { $0 += 1 }
+        }
+        store.activate(ids[3])
+        let after = presentation(of: store, selecting: ids[3])
+        #expect(additions.withLock { $0 } == 1, "Actual membership changes must invalidate presentation")
+        #expect(before.display != after.display)
+        #expect(store.sessions == [ids[1], ids[2], ids[3]])
+        #expect(after.display == Array(ids.suffix(3)))
+
+        let removals = Mutex(0)
+        _ = withObservationTracking { presentation(of: store, selecting: ids[3]) } onChange: {
+            removals.withLock { $0 += 1 }
+        }
+        store.releaseHidden(keeping: ids[3])
+        #expect(removals.withLock { $0 } == 1, "Releasing hidden sessions must invalidate presentation")
+        #expect(presentation(of: store, selecting: ids[3]).display == [ids[3]])
+    }
+
+    @Test func sourceEvictionAndRestorationNotifyAcrossSessionStores() async throws {
+        let detail = try await sourceSnapshot()
+        let owner = NSObject(), otherOwner = NSObject()
+        let id = ReaderSessionID(key: detail.thread.key, messageID: nil, owner: ObjectIdentifier(owner))
+        let otherID = ReaderSessionID(key: detail.thread.key, messageID: nil, owner: ObjectIdentifier(otherOwner))
+        let store = ReaderSessionStore(), other = ReaderSessionStore()
+        store.setVisible(true, selected: id); store.activate(id); store.record(detail, for: id, selected: id)
+        other.setVisible(true, selected: otherID); other.activate(otherID); other.record(detail, for: otherID, selected: otherID)
+        store.setVisible(false, selected: id)
+        #expect(store.retainsSource(for: id), "One six-MiB hidden snapshot fits the shared budget")
+        let evictions = Mutex(0)
+        _ = withObservationTracking { store.retainsSource(for: id) } onChange: {
+            evictions.withLock { $0 += 1 }
+        }
+        other.setVisible(false, selected: otherID)
+        #expect(!store.retainsSource(for: id), "Another store's hidden source must evict the older snapshot")
+        #expect(other.retainsSource(for: otherID))
+        #expect(evictions.withLock { $0 } == 1)
+        #expect(store.sessions == [id], "Source eviction keeps its lightweight session identity")
+
+        let restorations = Mutex(0)
+        _ = withObservationTracking { store.retainsSource(for: id) } onChange: {
+            restorations.withLock { $0 += 1 }
+        }
+        store.setVisible(true, selected: id)
+        #expect(store.retainsSource(for: id), "The selected visible source is protected")
+        #expect(restorations.withLock { $0 } == 1)
+        #expect(other.retainsSource(for: otherID))
+        store.setVisible(false, selected: id)
+        #expect(!store.retainsSource(for: id), "Restoration must preserve the source's cost for later pressure")
+    }
+
+    private struct SessionPresentation: Equatable {
+        let display: [ReaderSessionID]
+        let hidden: [ReaderSessionID]
+        let sources: [Bool]
+    }
+
+    private func presentation(of store: ReaderSessionStore, selecting selected: ReaderSessionID) -> SessionPresentation {
+        let recent = store.presenting(selected)
+        let display = recent.sorted { $0.precedesInPresentation($1) }
+        return SessionPresentation(display: display, hidden: Array(recent.suffix(2)),
+            sources: display.map { store.retainsSource(for: $0) })
+    }
+
+    private func sourceSnapshot() async throws -> ThreadDetail {
+        let cache = try MailCache.inMemory()
+        let text = String(repeating: "x", count: 2 * 1_024 * 1_024)
+        try await cache.write { tx in
+            let message = MessageRecord(accountID: "a", id: "source", threadID: "source", historyID: 1,
+                date: .distantPast, snippet: "", sender: "reader@example.invalid", recipients: "audit@example.invalid",
+                cc: nil, subject: "Synthetic source", sizeEstimate: text.utf8.count)
+            try tx.upsertMessages([.init(record: message, labelIDs: [SystemLabel.inbox])])
+            try tx.saveBodies([.init(accountID: "a", messageID: "source", html: nil, plainText: text, fetchedAt: .distantPast)])
+            try tx.rebuildThreads(["source"], accountID: "a")
+        }
+        var iterator = cache.thread(accountID: "a", threadID: "source").makeAsyncIterator()
+        let snapshot = try await iterator.next()
+        return try #require(snapshot ?? nil)
     }
 
     @Test func presentationOrderPreservesDistinctMessagesAndAccountOwners() {
