@@ -15,7 +15,19 @@ final class PerformanceScrollAudit: NSObject {
         let delayedCallbackFraction: Double
         let mainRunLoopStallsOver100ms: Int
         let timedOut: Bool
+        let failureReason: String?
+        let surfaceIdentifier: String?
+        let documentType: String?
+        let maximumScrollRangePoints: Double
+        let distanceScrolledPoints: Double
         let physicalFootprintBytes: UInt64?
+
+        static func failure(name: String, reason: String) -> Self {
+            Self(name: name, callbacks: 0, expectedFrameMilliseconds: 0, callbackIntervals: nil,
+                 delayedCallbacks: 0, delayedCallbackFraction: 0, mainRunLoopStallsOver100ms: 0,
+                 timedOut: false, failureReason: reason, surfaceIdentifier: nil, documentType: nil,
+                 maximumScrollRangePoints: 0, distanceScrolledPoints: 0, physicalFootprintBytes: nil)
+        }
     }
 
     private weak var scroll: NSScrollView?
@@ -30,6 +42,8 @@ final class PerformanceScrollAudit: NSObject {
     private var direction: CGFloat = 1
     private var ticks = 0
     private var delayed = 0
+    private var maximumRange = 0.0
+    private var distance = 0.0
 
     private init(name: String, scroll: NSScrollView, frames: Int) {
         self.name = name
@@ -58,6 +72,9 @@ final class PerformanceScrollAudit: NSObject {
 
     @objc private func tick(_ link: CADisplayLink) {
         guard let scroll, let document = scroll.documentView else { finish(timedOut: true); return }
+        guard NSApp.isActive, scroll.window?.isKeyWindow == true else {
+            finish(timedOut: false, failureReason: "Foreground activation was lost."); return
+        }
         let time = CACurrentMediaTime()
         let period = link.targetTimestamp - link.timestamp
         if period > 0 { expected = period }
@@ -70,16 +87,19 @@ final class PerformanceScrollAudit: NSObject {
         ticks += 1
         let clip = scroll.contentView
         let maximum = max(0, document.bounds.height - clip.bounds.height)
+        maximumRange = max(maximumRange, maximum)
         var origin = clip.bounds.origin
+        let previousY = origin.y
         origin.y = min(maximum, max(0, origin.y + 18 * direction))
         if origin.y >= maximum { direction = -1 }
         else if origin.y <= 0 { direction = 1 }
         clip.scroll(to: origin)
         scroll.reflectScrolledClipView(clip)
+        distance += abs(clip.bounds.origin.y - previousY)
         if ticks >= requestedFrames { finish(timedOut: false) }
     }
 
-    private func finish(timedOut: Bool) {
+    private func finish(timedOut: Bool, failureReason: String? = nil) {
         guard let continuation else { return }
         self.continuation = nil
         link?.invalidate(); link = nil
@@ -91,6 +111,11 @@ final class PerformanceScrollAudit: NSObject {
                                               delayedCallbackFraction: Double(delayed) / Double(max(1, intervals.count)),
                                               mainRunLoopStallsOver100ms: intervals.filter { $0 >= 100 }.count,
                                               timedOut: timedOut,
+                                              failureReason: failureReason ?? (distance > 0 ? nil : "No native scroll offset movement was observed."),
+                                              surfaceIdentifier: scroll?.identifier?.rawValue ?? ((scroll?.documentView is NSTableView) ? "native-mail-table" : nil),
+                                              documentType: scroll?.documentView.map { String(reflecting: type(of: $0)) },
+                                              maximumScrollRangePoints: maximumRange,
+                                              distanceScrolledPoints: distance,
                                               physicalFootprintBytes: NavigationPerformance.physicalFootprint()))
     }
 }
