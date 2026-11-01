@@ -39,6 +39,8 @@ struct MessageListRow: View {
         .system(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale, weight: weight)
     }
 
+    private var labelFont: Font { .system(size: NSFont.systemFontSize(for: .mini) * scale) }
+
     var body: some View {
         // alignmentGuide closures are Sendable, so they take a copy rather than reading the view.
         let separatorLeading = textLeading
@@ -136,11 +138,11 @@ struct MessageListRow: View {
         let labels = displayedLabels
         return HStack(spacing: Tokens.Space.s1) {
             ForEach(Array(labels.prefix(2)), id: \.id) { label in
-                MailLabelBadge(label: label, font: scaledFont(.caption1, weight: .medium))
+                MailLabelBadge(label: label, font: labelFont)
             }
             if labels.count > 2 {
                 Text("+\(labels.count - 2)")
-                    .font(scaledFont(.caption1).monospacedDigit())
+                    .font(labelFont.monospacedDigit())
                     .fixedSize()
                     .help(labels.dropFirst(2).map(\.title).joined(separator: ", "))
             }
@@ -155,7 +157,7 @@ struct MessageListRow: View {
                     }
                 } else {
                     Label("\(item.attachments.count)", systemImage: "paperclip")
-                        .font(scaledFont(.caption1).monospacedDigit())
+                        .font(labelFont.monospacedDigit())
                         .fixedSize()
                         .help(item.attachments.map(\.filename).joined(separator: "\n"))
                         .accessibilityLabel(item.attachments.map(\.filename).joined(separator: ", "))
@@ -163,7 +165,7 @@ struct MessageListRow: View {
             }
         }
         .foregroundStyle(.secondary)
-        .padding(.top, Tokens.Space.s1)
+        .padding(.top, Tokens.Space.s0_5)
     }
 
     private var senderText: String {
@@ -218,7 +220,7 @@ private struct MailLabelBadge: View {
     var body: some View {
         let colors = LabelAppearance.shared.badgeColor(for: label)
         let icon = LabelAppearance.shared.icon(for: label)
-        HStack(spacing: Tokens.Space.s1) {
+        HStack(spacing: Tokens.Space.s0_5) {
             if icon != "tag" {
                 Image(systemName: icon).accessibilityHidden(true)
             }
@@ -226,8 +228,7 @@ private struct MailLabelBadge: View {
         }
         .font(font)
         .foregroundStyle(Color(gmailHex: colors.textColor) ?? .primary)
-        .padding(.horizontal, Tokens.Space.s1_5)
-        .padding(.vertical, Tokens.Space.s0_5)
+        .padding(.horizontal, Tokens.Space.s1)
         .background(Color(gmailHex: colors.backgroundColor) ?? Tokens.Surface.muted,
                     in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .overlay {
