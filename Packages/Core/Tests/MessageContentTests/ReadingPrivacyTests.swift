@@ -95,7 +95,6 @@ import Testing
     @Test func authoredDarkStylesAndTextScaleSurviveSafeRendering() {
         let rendered = MessageDocument.render(html: "<style>@media(prefers-color-scheme: dark){body{color:white;background:black}}</style><p>Hello</p>",
             policy: .init(textScale: 1.5))
-        #expect(rendered.hasAuthoredDarkStyles)
         #expect(rendered.html.contains("prefers-color-scheme"))
         #expect(rendered.html.contains("font-size:19.5px"))
         #expect(MessageRenderPolicy(textScale: .infinity).textScale == 1)

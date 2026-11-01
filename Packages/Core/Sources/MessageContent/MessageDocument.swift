@@ -10,7 +10,6 @@ public struct RenderedMessage: Sendable, Equatable {
     /// Blocked images that `allowsRemoteImages` would show.
     public var blockedRemoteImages: Int = 0
     public var blockedTrackers: Int = 0
-    public var hasAuthoredDarkStyles: Bool = false
     /// Full visible text, including quoted replies, for conversation-wide Find.
     public var searchableText: String = ""
 }
@@ -39,7 +38,6 @@ public enum MessageDocument {
     public static func render(html: String, policy: MessageRenderPolicy = .init()) -> RenderedMessage {
         do {
             let document = try SwiftSoup.parse(html)
-            let authoredDark = try document.select("style").contains { $0.data().lowercased().contains("prefers-color-scheme") }
             var trackers = 0
             var hiddenImages = 0
             for image in try document.select("img[src]") {
@@ -62,7 +60,7 @@ public enum MessageDocument {
             try head.prepend(headMarkup(style: htmlStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))
             document.outputSettings().prettyPrint(pretty: false)
             return RenderedMessage(html: try document.outerHtml(), blockedRemoteContent: blocked,
-                blockedRemoteImages: hiddenImages, blockedTrackers: trackers, hasAuthoredDarkStyles: authoredDark,
+                blockedRemoteImages: hiddenImages, blockedTrackers: trackers,
                 searchableText: try document.body()?.text() ?? "")
         } catch {
             // Showing the escaped source is safe; showing nothing would hide the mail.

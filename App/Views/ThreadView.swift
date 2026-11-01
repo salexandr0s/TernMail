@@ -967,7 +967,7 @@ private struct MessageView: View {
                     }
                 }
                 MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
-                    adaptsDarkMode: adaptsDark && !showsLightBackground && !rendered.hasAuthoredDarkStyles,
+                    adaptsDarkMode: adaptsDark && !showsLightBackground,
                     forcesLightAppearance: showsLightBackground,
                     isActive: isReaderActive,
                     onReadable: { retained in
