@@ -9,6 +9,8 @@ import WebKit
 enum PerformanceAudit {
     private static var hasRun = false
     private static weak var auditWindow: NSWindow?
+    private static var keyViewLoopBeforeAudit: Bool?
+    private static var keyViewLoopDuringAudit: Bool?
 
     struct MemorySample: Codable {
         let completedInteractions: Int
@@ -27,6 +29,10 @@ enum PerformanceAudit {
 
     struct Report: Encodable {
         let version = 2
+        let requestedScenario: String
+        let preservesPlatformViewsForAudit: Bool
+        let automaticKeyViewLoopBeforeAudit: Bool?
+        let automaticKeyViewLoopDuringAudit: Bool?
         let isOptimizedBuild: Bool
         let syntheticAccountCount: Int
         let fixtureVisibleThreadCount: Int
@@ -61,6 +67,11 @@ enum PerformanceAudit {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         auditWindow = window
+        let originalKeyViewLoop = window.autorecalculatesKeyViewLoop
+        keyViewLoopBeforeAudit = originalKeyViewLoop
+        if arguments.contains("--performance-fixed-key-loop") { window.autorecalculatesKeyViewLoop = false }
+        keyViewLoopDuringAudit = window.autorecalculatesKeyViewLoop
+        defer { window.autorecalculatesKeyViewLoop = originalKeyViewLoop }
         guard await wait(timeout: .seconds(15), until: { isForeground }) else {
             writeFailure("Audit never obtained foreground activation and a key window; no timings were accepted.")
             return
@@ -82,6 +93,11 @@ enum PerformanceAudit {
         record(await exercise("workspace-warm", kind: .workspace, count: count) { index in
             app.destination = index.isMultiple(of: 2) ? .calendar : .mail
         })
+        if arguments.contains("--performance-scenario=workspace-only") {
+            await finish(app: app, mailbox: mailbox, visibleRows: mailbox.listItems.count, scenarios: scenarios,
+                         scrolling: [], heartbeat: heartbeat, initialMemory: initialMemory)
+            return
+        }
         app.destination = .mail
         record(await exercise("attachments-return", kind: .mailbox, count: count) { index in
             mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
@@ -118,7 +134,7 @@ enum PerformanceAudit {
         scrolling.append(await measureScroll("mailbox", in: window, surface: .mailbox))
         for size in [20, 100] {
             guard isForeground else {
-                scrolling.append(.failure(name: "reader-\(size)", reason: "Foreground activation was lost."))
+                scrolling.append(.failure(name: "reader-\(size)", reason: foregroundFailure))
                 continue
             }
             // Explicit fixture identity avoids accidentally omitting a long thread
@@ -140,13 +156,25 @@ enum PerformanceAudit {
         scrolling.append(await measureScroll("attachments", in: window, surface: .attachments))
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        await finish(app: app, mailbox: mailbox, visibleRows: rows.count, scenarios: scenarios,
+                     scrolling: scrolling, heartbeat: heartbeat, initialMemory: initialMemory)
+    }
+
+    private static func finish(app: AppModel, mailbox: MailboxModel, visibleRows: Int,
+                               scenarios: [Scenario], scrolling: [PerformanceScrollAudit.Result],
+                               heartbeat: PerformanceMainThreadAudit, initialMemory: UInt64?) async {
         #if DEBUG
         let optimized = false
         #else
         let optimized = true
         #endif
-        let report = Report(isOptimizedBuild: optimized, syntheticAccountCount: mailbox.accounts.count,
-                            fixtureVisibleThreadCount: rows.count,
+        let requestedScenario = ProcessInfo.processInfo.arguments.contains("--performance-scenario=workspace-only") ? "workspace-only" : "all"
+        let report = Report(requestedScenario: requestedScenario,
+                            preservesPlatformViewsForAudit: ProcessInfo.processInfo.arguments.contains("--performance-preserve-platform-views"),
+                            automaticKeyViewLoopBeforeAudit: keyViewLoopBeforeAudit,
+                            automaticKeyViewLoopDuringAudit: keyViewLoopDuringAudit,
+                            isOptimizedBuild: optimized, syntheticAccountCount: mailbox.accounts.count,
+                            fixtureVisibleThreadCount: visibleRows,
                             fixtureConfiguredMessagesPerAccount: min(60_000, max(200, argumentInteger("--performance-mails=") ?? 1_000)) + 120,
                             fixtureEventCount: app.calendar.events.count,
                             scenarios: scenarios, scrolling: scrolling,
@@ -161,7 +189,7 @@ enum PerformanceAudit {
                                  warmup: Int = 6, action: (Int) -> Void) async -> Scenario {
         let performance = NavigationPerformance.shared
         for index in 0..<warmup {
-            guard isForeground else { return failedScenario(name, count: count, reason: "Foreground activation was lost.") }
+            guard isForeground else { return failedScenario(name, count: count, reason: foregroundFailure) }
             action(index)
             if let generation = performance.currentGeneration(for: kind) {
                 _ = await performance.waitForCompletion(kind, generation: generation)
@@ -173,7 +201,7 @@ enum PerformanceAudit {
         var failureReason: String?
         var memory = [MemorySample(completedInteractions: 0, physicalFootprintBytes: NavigationPerformance.physicalFootprint())]
         for index in 0..<count {
-            guard isForeground else { failures += count - index; failureReason = "Foreground activation was lost."; break }
+            guard isForeground else { failures += count - index; failureReason = foregroundFailure; break }
             guard !Task.isCancelled else { failures += count - index; break }
             action(index + warmup)
             guard let generation = performance.currentGeneration(for: kind) else { failures += 1; continue }
@@ -181,6 +209,9 @@ enum PerformanceAudit {
             if result?.outcome == .visibleCommit { completed += 1 } else { failures += 1 }
             if (index + 1).isMultiple(of: 10) {
                 memory.append(MemorySample(completedInteractions: completed, physicalFootprintBytes: NavigationPerformance.physicalFootprint()))
+                writeCurrentProgress(Scenario(name: name, requestedInteractions: count, completedInteractions: completed,
+                                              failures: failures, failureReason: failureReason, memorySamples: memory,
+                                              timings: performance.report()))
             }
             // Stop an uninstrumented scenario rather than spending minutes on timeouts.
             if failures >= 3, completed == 0 { failures += count - index - 1; break }
@@ -199,10 +230,14 @@ enum PerformanceAudit {
         NSApp.isActive && auditWindow?.isKeyWindow == true && auditWindow?.occlusionState.contains(.visible) == true
     }
 
+    private static var foregroundFailure: String {
+        "Foreground unavailable: appActive=\(NSApp.isActive), keyWindow=\(auditWindow?.isKeyWindow == true), visible=\(auditWindow?.isVisible == true), unoccluded=\(auditWindow?.occlusionState.contains(.visible) == true)."
+    }
+
     private enum Surface: String { case mailbox, reader, calendar, attachments }
 
     private static func measureScroll(_ name: String, in window: NSWindow, surface: Surface) async -> PerformanceScrollAudit.Result {
-        guard isForeground else { return .failure(name: name, reason: "Foreground activation was lost.") }
+        guard isForeground else { return .failure(name: name, reason: foregroundFailure) }
         guard let scroll = scrollView(in: window, surface: surface) else {
             return .failure(name: name, reason: "The explicitly identified scrolling surface was missing or had no scrollable content.")
         }
@@ -256,13 +291,23 @@ enum PerformanceAudit {
         }
     }
 
+    private static func writeCurrentProgress(_ scenario: Scenario) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(scenario) {
+            try? data.write(to: outputURL.appendingPathExtension("current.json"), options: .atomic)
+        }
+    }
+
     private static func write(_ value: some Encodable) {
         defer {
             if ProcessInfo.processInfo.arguments.contains("--performance-exit") {
                 let pause = min(30, max(0, argumentInteger("--performance-memory-pause=") ?? 0))
                 Task {
                     if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
-                    NSApp.terminate(nil)
+                    // Leave the Swift task before AppKit enters its termination
+                    // run loop, so the delegate's async quit review can execute.
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
                 }
             }
         }
