@@ -32,7 +32,8 @@ final class ReaderSessionStore {
     private final class WeakStore { weak var value: ReaderSessionStore?; init(_ value: ReaderSessionStore) { self.value = value } }
     private static var stores: [WeakStore] = []
     private static var clock: UInt64 = 0
-    private(set) var sessions: [ReaderSessionID] = []
+    @ObservationIgnored private(set) var sessions: [ReaderSessionID] = []
+    private var membershipRevision: UInt64 = 0
     private var costs: [ReaderSessionID: Int] = [:]
     private var lastUse: [ReaderSessionID: UInt64] = [:]
     private var selected: ReaderSessionID?
@@ -44,18 +45,22 @@ final class ReaderSessionStore {
     init() { Self.stores.append(WeakStore(self)) }
 
     func presenting(_ selected: ReaderSessionID) -> [ReaderSessionID] {
-        if sessions.contains(selected) { return sessions }
-        return Array((sessions + [selected]).suffix(countLimit))
+        _ = membershipRevision
+        // Predict activation before its onChange runs. Hidden-window retention
+        // uses this MRU suffix even when the selected session is already cached.
+        return Array((sessions.filter { $0 != selected } + [selected]).suffix(countLimit))
     }
 
     func activate(_ id: ReaderSessionID) {
+        let previousMembership = Set(sessions)
         selected = id
-        if isVisible { discardedSources.remove(id) }
+        if isVisible, discardedSources.contains(id) { discardedSources.remove(id) }
         Self.clock &+= 1
         lastUse[id] = Self.clock
         sessions.removeAll { $0 == id }
         sessions.append(id)
         trim(keeping: id)
+        publishMembershipChange(from: previousMembership)
     }
 
     func record(_ detail: ThreadDetail, for id: ReaderSessionID, selected: ReaderSessionID) {
@@ -79,17 +84,17 @@ final class ReaderSessionStore {
 
     func setVisible(_ visible: Bool, selected: ReaderSessionID) {
         isVisible = visible
-        if visible { discardedSources.remove(selected) }
+        if visible, discardedSources.contains(selected) { discardedSources.remove(selected) }
         trim(keeping: selected)
     }
 
-    func trim(keeping selected: ReaderSessionID) {
+    private func trim(keeping selected: ReaderSessionID) {
         self.selected = selected
         while sessions.count > countLimit {
             guard let index = sessions.firstIndex(where: { $0 != selected }) else { break }
             let removed = sessions.remove(at: index)
             costs[removed] = nil; lastUse[removed] = nil
-            discardedSources.remove(removed)
+            if discardedSources.contains(removed) { discardedSources.remove(removed) }
         }
         Self.stores.removeAll { $0.value == nil }
         // Only the currently displayed source is working memory. All hidden
@@ -107,10 +112,17 @@ final class ReaderSessionStore {
     }
 
     func releaseHidden(keeping selected: ReaderSessionID) {
+        let previousMembership = Set(sessions)
         sessions = sessions.filter { $0 == selected }
         costs = costs.filter { $0.key == selected }
         lastUse = lastUse.filter { $0.key == selected }
-        discardedSources = discardedSources.intersection([selected])
+        let retainedSources = discardedSources.intersection([selected])
+        if retainedSources != discardedSources { discardedSources = retainedSources }
+        publishMembershipChange(from: previousMembership)
+    }
+
+    private func publishMembershipChange(from previous: Set<ReaderSessionID>) {
+        if Set(sessions) != previous { membershipRevision &+= 1 }
     }
 }
 
