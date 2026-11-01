@@ -550,3 +550,36 @@ Raw reports, gate/cleanup records, validation and analysis are archived under
 `~/.codex/backups/tern-performance-20261101/evidence/tern-reader-session-reader-20261101T192114Z/`.
 Hover appearance, mode switching, scrolling and normal-mailbox verification
 remain incomplete. No new production build has been installed.
+
+The final change before the user's requested manual-testing pause is `fa1c75e`.
+Mailbox page publication previously mutated selected-thread and selected-message
+sets even when their intersections were unchanged. Two conditional assignments
+now preserve those sets without publishing a selection change. Real removals
+still prune selection, and account-qualified IDs remain intact.
+
+A regression drives actual attachment publication and thread deletion in both
+list modes, with matching bare message/thread IDs across two accounts. The
+unchanged-code baseline reproduced five no-op notification failures while its
+pruning/survivor checks passed. The candidate passed the full 21-test MessageList
+suite with the same test bytes, including the existing selection-before-body
+and stale-completion integration checks. This proves reduced notifications;
+its contribution to row construction or visible latency remains unmeasured.
+Evidence is archived in `evidence/tern-mailbox-selection-{baseline,candidate}/`
+under the same backup root. No further benchmark is planned before the manual
+testing handover requested by the user.
+
+For that handover, the full committed `fa1c75e` source was built as a normal
+universal Release and installed at `/Users/developer/Applications/Tern.app`
+at 20:07:02 UTC. It includes the sidebar, Favorites, saved-search, Calendar-sidebar
+and mail-row hover changes. Both architectures, strict signature, embedded
+revision, normal build flags and unchanged OAuth configuration were verified.
+The installed executable SHA-256 is
+`dcfb64f4023a1dbffa12ced540598426833d708248d3b5565df24f8407ba775c`.
+The prior app is preserved for rollback. Installation/provenance is recorded in
+`evidence/tern-manual-release-verification/installation.json` and canonical
+`build/Tern-build-info.json`.
+
+The user reported that the app felt much faster after reopening it. This is
+manual feedback, not another timing sample. Work is paused at their request;
+the remaining performance targets and hover appearance need subsequent feedback
+or measurement before claiming completion.
