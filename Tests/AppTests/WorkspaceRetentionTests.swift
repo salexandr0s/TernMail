@@ -73,7 +73,10 @@ import Testing
         try await waitFor(controller.view, in: window, expecting: "Initial visible Mail toolbar") {
             toolbarShows(.mail, in: window)
         }
+        try #require(mailSplit(in: controller.view) != nil)
         let initialToolbar = toolbarViews(in: window)
+        let initialLayout = nativeLayout(in: window, root: controller.view, tables: mailTables, destination: .mail)
+        print("WORKSPACE_TOOLBAR_STATE: config=\(configuration), destination=mail, items=\(toolbarMetadata(in: window))")
         try #require(toolbarShows(.mail, in: window),
             "The background window must materialize visible Mail controls without Calendar controls")
         let mailCounts = { probes.map { NativeMoves($0.windowAttachmentCount, $0.windowDetachmentCount, $0.superviewMoveCount) } }
@@ -91,6 +94,8 @@ import Testing
             "The background native graph must apply the switch to Calendar")
         try #require(toolbarShows(.calendar, in: window),
             "The background toolbar must show Calendar controls and hide Mail controls")
+        let calendarLayout = nativeLayout(in: window, root: controller.view, tables: mailTables, destination: .calendar)
+        print("WORKSPACE_TOOLBAR_STATE: config=\(configuration), destination=calendar, items=\(toolbarMetadata(in: window))")
         let attachedWhileInactive = mailTables.filter { $0.window === window }.count
         let inactiveOffsets = scrolls.map { $0.contentView.bounds.origin }
         print("WORKSPACE_RETENTION: config=\(configuration), attached while inactive=\(attachedWhileInactive)/\(mailTables.count), offsets preserved=\(offsetsMatch(offsets, inactiveOffsets))")
@@ -119,6 +124,8 @@ import Testing
             returnedToolbar[key] != nil && initialToolbar[key] !== returnedToolbar[key]
         }.sorted()
         print("WORKSPACE_TOOLBAR_REPLACED: config=\(configuration), items=\(replacedToolbarViews)")
+        expectSameLayout(nativeLayout(in: window, root: controller.view, tables: mailTables, destination: .mail),
+            as: initialLayout)
 
         // Thread CPU includes work performed between these awaits, but excludes
         // the settling sleeps. This compares background layout work only.
@@ -143,6 +150,9 @@ import Testing
                 }
                 let milliseconds = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - started) / 1_000_000
                 if destination == .mail { mailCPU.append(milliseconds) } else { calendarCPU.append(milliseconds) }
+                // Read-only geometry checks run outside the measured interval.
+                expectSameLayout(nativeLayout(in: window, root: controller.view, tables: mailTables, destination: destination),
+                    as: destination == .mail ? initialLayout : calendarLayout)
                 let publications = toolbarInset.diagnosticPublications.filter { $0.sequence > previousPublications }
                     .map { "\($0.top)@\($0.source)" }
                 print("WORKSPACE_INSET: config=\(configuration), destination=\(destination.rawValue), publications=\(toolbarInset.diagnosticPublicationCount - previousPublications), values=\(publications)")
@@ -180,7 +190,7 @@ import Testing
                 column = parent
             }
             return []
-        }
+        }.sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
     }
 
     private func descendants(of view: NSView) -> [NSView] {
@@ -193,22 +203,97 @@ import Testing
         }
     }
 
-    private func toolbarShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
-        let visibleIDs = (window.toolbar?.visibleItems ?? []).compactMap { item -> String? in
+    private func toolbarMetadata(in window: NSWindow) -> [String] {
+        (window.toolbar?.items ?? []).map { "\($0.itemIdentifier.rawValue):hidden=\($0.isHidden)" }
+    }
+
+    private func visibleToolbarItems(in window: NSWindow) -> [NSToolbarItem] {
+        (window.toolbar?.visibleItems ?? []).filter { item in
             guard let view = item.view, view.window === window,
-                  !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return nil }
+                  !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return false }
             var current: NSView? = view
             while let ancestor = current {
-                guard ancestor.alphaValue > 0.01 else { return nil }
+                guard ancestor.alphaValue > 0.01 else { return false }
                 current = ancestor.superview
             }
             let frame = view.convert(view.bounds, to: nil)
-            guard frame.intersects(NSRect(origin: .zero, size: window.frame.size)) else { return nil }
-            return item.itemIdentifier.rawValue
+            return frame.intersects(NSRect(origin: .zero, size: window.frame.size))
         }
+    }
+
+    private func toolbarShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
+        let visibleIDs = visibleToolbarItems(in: window).map { $0.itemIdentifier.rawValue }
         let expected = destination == .mail ? "mail.compose" : "calendar.today"
         let inactive = destination == .mail ? "calendar.today" : "mail.compose"
         return visibleIDs.contains { $0.hasSuffix(expected) } && !visibleIDs.contains { $0.hasSuffix(inactive) }
+    }
+
+    private struct NativeLayout {
+        let destination: WorkspaceDestination
+        let itemIDs: [String]
+        let itemIdentities: [ObjectIdentifier]
+        let itemViewIdentities: [ObjectIdentifier?]
+        let visibleItemIDs: [String]
+        let visibleControlIDs: [String]
+        let geometry: [String: [CGFloat]]
+    }
+
+    private func nativeLayout(in window: NSWindow, root: NSView, tables: [NSTableView],
+                              destination: WorkspaceDestination) -> NativeLayout {
+        func rect(_ value: NSRect) -> [CGFloat] { [value.minX, value.minY, value.width, value.height] }
+        func insets(_ value: NSEdgeInsets) -> [CGFloat] { [value.top, value.left, value.bottom, value.right] }
+        func frame(_ view: NSView) -> [CGFloat] { rect(view.convert(view.bounds, to: nil)) }
+        let items = window.toolbar?.items ?? []
+        let controls = visibleToolbarItems(in: window)
+        var geometry = ["contentLayout": rect(window.contentLayoutRect), "root": frame(root),
+                        "root.safeArea": insets(root.safeAreaInsets)]
+        for (index, item) in controls.enumerated() {
+            if let view = item.view { geometry["toolbar.\(index).\(item.itemIdentifier.rawValue)"] = frame(view) }
+        }
+        if let split = mailSplit(in: root) {
+            geometry["split"] = frame(split)
+            for (index, column) in split.arrangedSubviews.enumerated() {
+                geometry["column.\(index)"] = frame(column)
+                geometry["column.\(index).safeArea"] = insets(column.safeAreaInsets)
+            }
+        }
+        for (index, table) in tables.enumerated() {
+            guard let scroll = table.enclosingScrollView else { continue }
+            let prefix = "table.\(index)"
+            geometry[prefix] = frame(table)
+            geometry["\(prefix).scroll"] = frame(scroll)
+            geometry["\(prefix).scroll.safeArea"] = insets(scroll.safeAreaInsets)
+            geometry["\(prefix).scroll.insets"] = insets(scroll.contentInsets)
+            geometry["\(prefix).clip"] = frame(scroll.contentView)
+            geometry["\(prefix).clip.safeArea"] = insets(scroll.contentView.safeAreaInsets)
+            geometry["\(prefix).clip.insets"] = insets(scroll.contentView.contentInsets)
+            if table.numberOfRows > 0 {
+                let row = table.convert(table.rect(ofRow: 0), to: nil)
+                let viewport = scroll.convert(scroll.bounds, to: nil)
+                geometry["\(prefix).firstRow"] = rect(row)
+                geometry["\(prefix).rowInset"] = [row.minX - viewport.minX, viewport.maxY - row.maxY]
+            }
+        }
+        return NativeLayout(destination: destination, itemIDs: items.map { $0.itemIdentifier.rawValue },
+            itemIdentities: items.map(ObjectIdentifier.init),
+            itemViewIdentities: items.map { $0.view.map(ObjectIdentifier.init) },
+            visibleItemIDs: (window.toolbar?.visibleItems ?? []).map { $0.itemIdentifier.rawValue },
+            visibleControlIDs: controls.map { $0.itemIdentifier.rawValue }, geometry: geometry)
+    }
+
+    private func expectSameLayout(_ current: NativeLayout, as baseline: NativeLayout) {
+        #expect(current.destination == baseline.destination)
+        #expect(current.itemIDs == baseline.itemIDs, "Native toolbar item order")
+        #expect(current.visibleItemIDs == baseline.visibleItemIDs, "Visible native toolbar item order")
+        #expect(current.visibleControlIDs == baseline.visibleControlIDs, "Attached visible toolbar controls")
+        #expect(current.itemIdentities == baseline.itemIdentities, "Native toolbar items must survive mode switches")
+        #expect(current.itemViewIdentities == baseline.itemViewIdentities, "Native toolbar views must survive mode switches")
+        #expect(current.geometry.keys.sorted() == baseline.geometry.keys.sorted())
+        for (key, values) in current.geometry {
+            guard let previous = baseline.geometry[key] else { continue }
+            let matches = values.count == previous.count && zip(values, previous).allSatisfy { abs($0 - $1) < 1 }
+            #expect(matches, "\(current.destination.rawValue) layout changed at \(key): \(previous) → \(values)")
+        }
     }
 
     /// These changes leave MailColumnsContent's explicit identity unchanged.
