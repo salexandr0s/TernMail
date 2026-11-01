@@ -72,6 +72,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .contentMargins(.horizontal, 0, for: .scrollContent)
         .sheet(isPresented: Bindable(mailbox.navigation).isShowingSwitcher) {
             MailboxSwitcher(mailbox: mailbox)
         }
@@ -282,9 +283,6 @@ private struct MailboxRow: View {
 
     var body: some View {
         HStack(spacing: Tokens.Space.s1) {
-            if let isExpanded {
-                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: isHovered)
-            }
             Label {
                 Text(title)
                     .lineLimit(1)
@@ -296,6 +294,11 @@ private struct MailboxRow: View {
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(color)
                     .frame(width: Tokens.Space.s5 * scale)
+            }
+            Spacer(minLength: Tokens.Space.s1)
+            if let isExpanded {
+                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: isHovered)
+                    .padding(.trailing, Tokens.Space.s2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -339,7 +342,7 @@ private struct CombinedMailboxRows: View {
                         box: box, title: name, color: colors[owner.account.id] ?? .secondary,
                         count: mailbox.sidebarBadgeCount(boxID), isAccount: true
                     )
-                    .padding(.leading, Tokens.Space.s8)
+                    .padding(.leading, Tokens.Space.s4)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
                     .conversationDropTarget(boxID, mailbox: mailbox)

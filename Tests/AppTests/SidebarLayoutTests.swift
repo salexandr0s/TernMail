@@ -46,6 +46,7 @@ import Testing
             try await settleMail(in: controller.view, window: window)
             try await expectMailVisible(in: controller.view, window: window, searchFolds: searchFolds)
         }
+        try await expectSidebarGutterDrags(in: controller.view, window: window)
         // Below the three column minimums the sidebar steps aside, and it comes back with the room.
         window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
         try await expectColumnsFit(in: controller.view, window: window, sidebarCollapsed: true)
@@ -76,6 +77,48 @@ import Testing
         try await settleMail(in: controller.view, window: window)
         try await expectMailVisible(in: controller.view, window: window, searchFolds: false)
         await app.signOut()
+    }
+
+    private func expectSidebarGutterDrags(in rootView: NSView, window: NSWindow) async throws {
+        let probe = try #require(descendants(in: rootView).compactMap { $0 as? MailColumnProbe.ProbeView }
+            .first { $0.pane == .navigation })
+        let divider = try #require(EnclosingSplitDivider(of: probe))
+        let originalPosition = divider.pane.frame.maxX
+        defer { divider.split.setPosition(originalPosition, ofDividerAt: divider.index) }
+        // Start between the limits so the same check covers widening and narrowing.
+        divider.split.setPosition(Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter, ofDividerAt: divider.index)
+        try await settle()
+        let handle = try #require(descendants(in: divider.pane).compactMap { $0 as? DividerGrabView }.first)
+        let frameView = try #require(window.contentView?.superview)
+        for fraction in [CGFloat(0.25), 0.5, 0.75] {
+            let point = handle.convert(NSPoint(x: handle.bounds.width * fraction, y: handle.bounds.height * fraction), to: nil)
+            let hit = frameView.hitTest(point)
+            // AppKit's native divider hit area overlaps the gutter's outer edge.
+            #expect(hit === handle || hit === divider.split, "Sidebar content intercepts the resize gutter at \(point)")
+        }
+        for distance in [CGFloat(32), -64] {
+            let start = handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+            let target = try #require(frameView.hitTest(start) as? DividerGrabView,
+                "The sidebar gutter must receive the initial mouse press")
+            let initialPosition = divider.pane.frame.maxX
+            let end = NSPoint(x: start.x + distance, y: start.y)
+            func event(_ type: NSEvent.EventType, at point: NSPoint) throws -> NSEvent {
+                try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+            }
+            // Deliver to the view found by the window's hit test, as a mouse drag does.
+            target.mouseDown(with: try event(.leftMouseDown, at: start))
+            target.mouseDragged(with: try event(.leftMouseDragged, at: end))
+            target.mouseUp(with: try event(.leftMouseUp, at: end))
+            try await settle()
+            #expect(abs(divider.pane.frame.maxX - initialPosition - distance) <= 1,
+                "Dragging the sidebar gutter must move its divider by \(distance) points")
+            #expect(divider.pane.frame.width >= Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter - 1)
+            #expect(divider.pane.frame.width <= Tokens.Layout.sidebarMaxWidth + Tokens.Layout.columnGutter + 1)
+        }
+        divider.split.setPosition(originalPosition, ofDividerAt: divider.index)
+        try await settle()
     }
 
     private func expectMailVisible(in rootView: NSView, window: NSWindow, searchFolds: Bool) async throws {
