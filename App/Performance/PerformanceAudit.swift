@@ -92,6 +92,31 @@ enum PerformanceAudit {
         if arguments.contains("--performance-fixed-key-loop") { window.autorecalculatesKeyViewLoop = false }
         keyViewLoopDuringAudit = window.autorecalculatesKeyViewLoop
         defer { window.autorecalculatesKeyViewLoop = originalKeyViewLoop }
+        if let startArgument = arguments.first(where: { $0.hasPrefix("--performance-start-file=") }) {
+            let startPath = String(startArgument.dropFirst("--performance-start-file=".count))
+            let readinessURL = outputURL.appendingPathExtension("setup.json")
+            guard (startPath as NSString).isAbsolutePath,
+                  URL(fileURLWithPath: startPath).standardizedFileURL.resolvingSymlinksInPath()
+                    != readinessURL.standardizedFileURL.resolvingSymlinksInPath(),
+                  !FileManager.default.fileExists(atPath: startPath) else {
+                writeFailure("The explicit setup sentinel must be an absent absolute path; no measurements were started.")
+                return
+            }
+            do {
+                let state = try JSONSerialization.data(withJSONObject: [
+                    "pid": ProcessInfo.processInfo.processIdentifier,
+                    "waitingForStart": true, "timeoutSeconds": 90
+                ], options: [.prettyPrinted, .sortedKeys])
+                try state.write(to: readinessURL, options: .atomic)
+            } catch {
+                writeFailure("Setup readiness could not be published; no measurements were started.")
+                return
+            }
+            guard await wait(timeout: .seconds(90), until: { FileManager.default.fileExists(atPath: startPath) }) else {
+                writeFailure("Explicit setup release timed out or was cancelled; no measurements were started.")
+                return
+            }
+        }
         guard await wait(timeout: .seconds(15), until: { isForeground }) else {
             writeFailure("Audit never obtained foreground activation and a key window; no timings were accepted.")
             return
