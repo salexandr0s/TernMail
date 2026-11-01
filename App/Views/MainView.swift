@@ -49,7 +49,7 @@ struct MainView: View {
             - (showsProfilePicker ? Tokens.Layout.toolbarMenuWidth : 0)
     }
 
-    /// The section switcher shows its segments, and the profile picker its name.
+    /// The profile picker shows its name when there is enough toolbar space.
     private var isWideToolbar: Bool {
         toolbarWidth - (showsProfilePicker ? Tokens.Layout.profileNameWidth : 0) >= Tokens.Layout.wideToolbarWidth
     }
@@ -259,7 +259,7 @@ struct MainView: View {
             }
             .customizationBehavior(.disabled)
             .mailToolbarVisible(sidebarToggle != nil)
-            WorkspaceSectionToolbar(section: section, isCompact: !isWideToolbar, onSelect: show)
+            WorkspaceSectionToolbar(section: section, onSelect: show)
                 .mailToolbarVisible(isActive || onCalendarAssistantToggle != nil)
             ToolbarItem(id: "mail.compose", placement: .navigation) {
                 Button(action: newMessage) { Label("New Message", systemImage: "square.and.pencil") }
@@ -270,7 +270,8 @@ struct MainView: View {
                 if let preferences = app.accountPreferences { ProfilePicker(model: preferences, isCompact: !isWideToolbar) }
             }
             .mailToolbarVisible(showsProfilePicker)
-            MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow, isVisible: isActive && !showsLibrary)
+            MailToolbar(mailbox: mailbox, reply: reply, isCompact: isCompactWindow,
+                foldsReplies: mailWidth < Tokens.Layout.replyMenuFoldWidth, isVisible: isActive && !showsLibrary)
             // Toolbar spaces ignore hidden(_:), so the mail spaces stay while
             // Calendar or the library shows. Declaring those items after the
             // mail items puts the spaces ahead of them, in the toolbar's open

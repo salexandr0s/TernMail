@@ -9,6 +9,7 @@ struct MailToolbar: CustomizableToolbarContent {
     @Bindable var mailbox: MailboxModel
     let reply: (ReplyKind) -> Void
     var isCompact = false
+    var foldsReplies = false
     /// Hidden while the window shows Calendar or the attachment library. Each
     /// group reads it here because an inner `hidden(false)` would win over one
     /// applied to the whole toolbar.
@@ -37,6 +38,10 @@ struct MailToolbar: CustomizableToolbarContent {
                 editLabelsAction
                 snoozeMenu
                 TriageControls(mailbox: mailbox)
+                if foldsReplies {
+                    Divider()
+                    replyActions.labelStyle(.titleAndIcon)
+                }
             } label: { Label("More mail actions", systemImage: "ellipsis") }
                 .menuIndicator(.hidden)
                 .help("More mail actions")
@@ -82,7 +87,7 @@ struct MailToolbar: CustomizableToolbarContent {
                 .menuIndicator(.visible).help("Reply or Forward")
                 .accessibilityLabel("Reply or Forward").disabled(!mailbox.canReply)
             }
-            .mailToolbarVisible(showsCompact)
+            .mailToolbarVisible(showsCompact && !foldsReplies)
         }
     }
 

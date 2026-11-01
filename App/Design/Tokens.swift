@@ -144,9 +144,11 @@ enum Tokens {
         // Two windows fit side by side on a 13-inch display.
         static let windowMinWidth: CGFloat = 720
         static let windowMinHeight: CGFloat = 480
+        /// Below this mail-area width, replies share the More mail actions menu.
+        static let replyMenuFoldWidth: CGFloat = 800
         // Toolbar room after the sidebar, or after the window controls while
         // it's hidden. The toolbar gives up width in steps as it narrows.
-        /// The section switcher shows its segments, and the profile picker its name.
+        /// The profile picker shows its name beside its icon.
         static let wideToolbarWidth: CGFloat = 1080
         /// Below this, mail actions fold into menus.
         static let compactToolbarWidth: CGFloat = 1020

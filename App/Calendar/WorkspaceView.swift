@@ -52,6 +52,7 @@ struct WorkspaceView: View {
             .accessibilityHidden(app.destination != .calendar)
         }
         .toolbar(removing: .sidebarToggle)
+        .toolbar(removing: app.destination == .calendar ? .title : nil)
         .navigationTitle(app.destination == .calendar ? "Calendar"
             : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? "Attachments" : mailbox.selectedLabelTitle)
         .navigationSubtitle(app.destination == .calendar || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
