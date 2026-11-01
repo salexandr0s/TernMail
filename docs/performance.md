@@ -186,10 +186,10 @@ it out of MainView. Seventeen optimized background tests passed across six
 suites. In the same small background fixture, median switch CPU including the
 settling tail changed from 313.45 to 201.3 ms for Mail and 202.1 to 202.85 ms for
 Calendar. This supports a Mail CPU improvement; it is not a visible navigation
-measurement. Native quote-delivery verification remains pending: the standalone
-functional audit activated successfully but could not locate the standard Reply
-control before invoking it. Earlier XCTest-host runs failed activation and did
-not exercise the actions.
+measurement. The experimental native-action fixture could not exercise the
+controls and was removed after archiving. Later direct UI checks verified standard
+toolbar Reply and its exact selected-text quote; compact and shortcut routes
+remain pending.
 
 The audit also supports a reader-only scope with 100 recent selections and
 100 locally stored messages requiring preparation. Local selections are spaced
@@ -216,6 +216,27 @@ this measurement. GPU presentation remains unmeasured.
 A subsequent Time Profiler launch attempt failed to connect to DTServiceHub.
 The exported trace has zero duration and no process or data tables; it provides
 no performance evidence. Process sampling is the current profiling fallback.
+
+macOS also produced an automatic CPU report for the accepted reader run: 90 CPU
+seconds over 101 seconds. Twenty-one of 36 coarse snapshots include SwiftUI list
+diffing, with app frames in ThreadListView row construction reading selection and
+rebuilding swipe actions. Fifty-four samples were lost and scenarios are not
+separated, so these counts do not provide precise attribution. The source-level
+selection dependency is the next optimization target.
+
+A short normal/omitted/normal command-tree comparison completed every visible
+switch and found no material benefit from omitting MailCommands. Its CPU medians
+matched the second normal run, so the experiment was removed and menus remain
+unchanged. Results are in `/tmp/tern-performance-command-controls/`.
+
+Reader sessions now keep a stable display order while retaining their separate
+MRU eviction order. Nine focused optimized tests passed, and direct UI checks
+verified Collapse, Expand, Find and standard selected-text Reply when the active
+reader precedes a hidden session. Performance impact remains unmeasured. The
+hosted-test app exited unexpectedly after discarding that draft; logs are
+consistent with SIGSEGV, but no crash stack was available. A normal-linkage
+standalone reproduction is required before release. The hosted artifact has
+duplicate package linkage and is not a timing or installation candidate.
 
 Evidence is retained under
 `/tmp/tern-performance-audit-build/reports/20261101T003603Z-100/` and
