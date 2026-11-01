@@ -44,6 +44,7 @@ struct SidebarView: View {
                         ForEach(accountBoxes) { box in
                             let boxID = MailboxID.account(owner.account.id, box.id)
                             MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
+                                .ternHover(isEnabled: mailbox.sidebarSelection != boxID)
                                 .conversationDropTarget(boxID, mailbox: mailbox)
                                 .tag(boxID)
                             if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
@@ -172,7 +173,11 @@ struct SidebarView: View {
         if mailbox.listPreferences.showsMore {
             DisclosureGroup("More") {
                 ForEach(moreBoxes(owner), id: \.id) { box in
-                    Label(box.title, systemImage: box.systemImage).tag(MailboxID.account(owner.account.id, box.id))
+                    Label(box.title, systemImage: box.systemImage)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .ternHover(isEnabled: mailbox.sidebarSelection != .account(owner.account.id, box.id))
+                        .tag(MailboxID.account(owner.account.id, box.id))
                         .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
                 }
                 ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
@@ -321,6 +326,7 @@ private struct CombinedMailboxRows: View {
             box: box, title: box.title, color: box.color,
             count: isExpanded ? 0 : mailbox.sidebarBadgeCount(combinedID), isExpanded: isExpanded
         )
+        .ternHover(isEnabled: mailbox.sidebarSelection != combinedID)
         .conversationDropTarget(combinedID, mailbox: mailbox)
         .tag(combinedID)
         .onTapGesture(perform: selectAndToggle)
@@ -340,6 +346,9 @@ private struct CombinedMailboxRows: View {
                         count: mailbox.sidebarBadgeCount(boxID), isAccount: true
                     )
                     .padding(.leading, Tokens.Space.s8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .ternHover(isEnabled: mailbox.sidebarSelection != boxID)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
                     .conversationDropTarget(boxID, mailbox: mailbox)
@@ -455,6 +464,9 @@ private struct LabelRow: View {
                 .foregroundStyle(color ?? .secondary)
                 .frame(width: Tokens.Space.s5 * scale)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .ternHover(isEnabled: !isPending && mailbox.sidebarSelection != .account(label.accountID, label.id))
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
         .conversationDropTarget(.account(label.accountID, label.id), mailbox: mailbox)
