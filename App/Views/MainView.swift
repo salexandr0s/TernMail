@@ -425,8 +425,6 @@ struct MainView: View {
         case .allMail: SystemLabel.allMail
         }
     }
-
-    /// Undoing a send or a discard reopens the message's window.
 }
 
 /// Keeps the assistant's account access current as the mailbox changes.
