@@ -83,4 +83,24 @@ import Testing
         #expect(performance.records.last?.timingOrigin == .programmatic)
         #expect(performance.records.last?.inputQueueDelayMilliseconds == nil)
     }
+
+    @Test func explicitExportWritesOnlyTheBoundedDiagnosticSnapshot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "NavigationPerformanceTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appending(path: "report.json")
+        let performance = NavigationPerformance(capacity: 2)
+        performance.configureReportExport(to: destination)
+        for _ in 0..<3 {
+            let generation = performance.begin(.reader, destination: "must never be exported")
+            performance.contentReady(.reader, cacheTier: .retained)
+            performance.didCommitVisibleContent(.reader, generation: generation)
+        }
+        await performance.waitForReportExport()
+        let data = try Data(contentsOf: destination)
+        let report = try JSONDecoder().decode(NavigationPerformance.Report.self, from: data)
+        #expect(report.records.count == 2)
+        #expect(report.records.allSatisfy { $0.outcome == .visibleCommit && $0.destination == nil })
+        #expect(!String(decoding: data, as: UTF8.self).contains("must never be exported"))
+    }
 }

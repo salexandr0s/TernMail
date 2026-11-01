@@ -95,17 +95,39 @@ final class NavigationPerformance {
     private var inputMonitor: Any?
     private var inputSerial: UInt64 = 0
     private var currentInput: (serial: UInt64, started: ContinuousClock.Instant, queueDelay: Double)?
+    private var reportExporter: NavigationReportExporter?
+    private var reportExportTask: Task<Void, Never>?
+    private var reportExportGeneration = UUID()
+    private var reportRevision: UInt64 = 0
 
     init(capacity: Int = 4_096) { self.capacity = max(1, capacity) }
 
     /// Captures timing only; neither keys, characters, locations nor targets are read.
     func installInputMonitoring() {
+        if reportExporter == nil,
+           let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--navigation-report=") }),
+           !argument.dropFirst("--navigation-report=".count).isEmpty {
+            configureReportExport(to: URL(fileURLWithPath: String(argument.dropFirst("--navigation-report=".count))))
+        }
         guard inputMonitor == nil, !ProcessInfo.processInfo.arguments.contains("--performance-audit") else { return }
         inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .keyDown]) { [weak self] event in
             // AppKit calls local event monitors on its main event-dispatch thread.
             MainActor.assumeIsolated { self?.captureInput(timestamp: event.timestamp) }
             return event
         }
+    }
+
+    /// Explicit opt-in only. The app's normal launch never writes diagnostics.
+    func configureReportExport(to destination: URL) {
+        reportExportTask?.cancel()
+        reportExportTask = nil
+        reportExportGeneration = UUID()
+        reportExporter = NavigationReportExporter(destination: destination)
+        scheduleReportExport()
+    }
+
+    func waitForReportExport() async {
+        while let task = reportExportTask { await task.value }
     }
 
     func captureInput(timestamp: TimeInterval) {
@@ -212,6 +234,7 @@ final class NavigationPerformance {
         counters.removeAll(keepingCapacity: true)
         currentInput = nil
         SpanRecorder.shared.removeAll()
+        scheduleReportExport()
     }
 
     private func finish(_ kind: NavigationInteractionKind, outcome: Outcome) {
@@ -226,6 +249,24 @@ final class NavigationPerformance {
                               contentReadyMilliseconds: current.ready.map { Self.milliseconds(current.started.duration(to: $0)) },
                               elapsedMilliseconds: Self.milliseconds(current.started.duration(to: ended))))
         if records.count > capacity { records.removeFirst(records.count - capacity) }
+        scheduleReportExport()
+    }
+
+    private func scheduleReportExport() {
+        reportRevision &+= 1
+        guard let reportExporter, reportExportTask == nil else { return }
+        let generation = reportExportGeneration
+        reportExportTask = Task(priority: .utility) { [weak self] in
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            guard let self, self.reportExportGeneration == generation else { return }
+            let revision = self.reportRevision
+            let snapshot = self.report()
+            let written = await reportExporter.write(snapshot)
+            guard self.reportExportGeneration == generation else { return }
+            self.reportExportTask = nil
+            if !written { TernLog.ui.event("navigationReportWriteFailed") }
+            if revision != self.reportRevision { self.scheduleReportExport() }
+        }
     }
 
     private func notify(_ kind: NavigationInteractionKind) {
