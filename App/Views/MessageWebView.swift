@@ -58,6 +58,9 @@ struct MessageWebView: NSViewRepresentable {
             configuration.userContentController.add(blocker)
         }
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
+        #if DEBUG || TERN_PERFORMANCE
+        ReaderLayoutDiagnostics.shared?.register(view)
+        #endif
         NavigationPerformance.shared.increment(.webViewCreated)
         MessageWebViewWarmup.messageViewCreated()
         if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
@@ -93,6 +96,9 @@ struct MessageWebView: NSViewRepresentable {
     static func dismantleNSView(_ view: ContentSizedWebView, coordinator: Coordinator) {
         NavigationPerformance.shared.increment(.webViewDestroyed)
         coordinator.setActive(false, in: view)
+        #if DEBUG || TERN_PERFORMANCE
+        ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .dismantle)
+        #endif
         coordinator.onDismantle(view)
         view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternHeight", contentWorld: .defaultClient)
@@ -183,6 +189,13 @@ struct MessageWebView: NSViewRepresentable {
 
         func setActive(_ active: Bool, in view: WKWebView) {
             (view as? ContentSizedWebView)?.setReaderActive(active)
+            #if DEBUG || TERN_PERFORMANCE
+            if let view = view as? ContentSizedWebView {
+                ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .activation,
+                    documentRevision: revision, active: active, readable: reportedReadable,
+                    previousActive: isActive, requestedActive: active)
+            }
+            #endif
             guard active != isActive else { return }
             isActive = active
             if !active {
@@ -225,6 +238,12 @@ struct MessageWebView: NSViewRepresentable {
             loadedHTML = html
             revision += 1
             reportedReadable = false
+            #if DEBUG || TERN_PERFORMANCE
+            if let view = view as? ContentSizedWebView {
+                ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .load,
+                    documentRevision: revision, active: isActive, readable: false)
+            }
+            #endif
             let current = revision
             Task { [weak self] in
                 guard let self, self.revision == current else { return }
@@ -279,11 +298,18 @@ struct MessageWebView: NSViewRepresentable {
                     }
                 }
                 guard self?.isActive == true else { return }
+                #if DEBUG || TERN_PERFORMANCE
+                let requestEpoch = (webView as? ContentSizedWebView)?.readerLayoutState?.epoch
+                #endif
                 guard let value = try? await webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient),
                       let self, self.revision == revision,
                       let measured = (value as? NSNumber)?.doubleValue
                 else { return }
+                #if DEBUG || TERN_PERFORMANCE
+                acceptHeightWithDiagnostics(measured, in: webView, source: .nativeEvaluation, requestEpoch: requestEpoch)
+                #else
                 acceptHeight(measured)
+                #endif
             }
         }
 
@@ -303,18 +329,39 @@ struct MessageWebView: NSViewRepresentable {
                   let value = message.body as? [String: Any],
                   (value["revision"] as? NSNumber)?.intValue == revision,
                   let measured = (value["height"] as? NSNumber)?.doubleValue else { return }
+            #if DEBUG || TERN_PERFORMANCE
+            acceptHeightWithDiagnostics(measured, in: message.webView, source: .script, requestEpoch: nil)
+            #else
             acceptHeight(measured)
+            #endif
         }
 
-        private func acceptHeight(_ measured: Double) {
-            guard isActive, measured.isFinite, measured > 0 else { return }
+        @discardableResult
+        private func acceptHeight(_ measured: Double) -> (previous: CGFloat, published: Bool)? {
+            guard isActive, measured.isFinite, measured > 0 else { return nil }
             NavigationPerformance.shared.increment(.heightReport)
-            if abs(height.wrappedValue - measured) >= 1 { height.wrappedValue = measured }
+            let previous = height.wrappedValue
+            let published = abs(previous - measured) >= 1
+            if published { height.wrappedValue = measured }
             if !reportedReadable {
                 reportedReadable = true
                 if isActive { onReadable(false) }
             }
+            return (previous, published)
         }
+
+        #if DEBUG || TERN_PERFORMANCE
+        private func acceptHeightWithDiagnostics(_ measured: Double, in webView: WKWebView?,
+                                                 source: ReaderLayoutDiagnostics.HeightSource,
+                                                 requestEpoch: ReaderLayoutDiagnostics.Epoch?) {
+            let accepted = acceptHeight(measured)
+            guard let view = webView as? ContentSizedWebView else { return }
+            ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .height,
+                documentRevision: revision, active: isActive, readable: reportedReadable,
+                heightSource: source, requestEpoch: requestEpoch, receivedHeight: measured,
+                oldBindingHeight: accepted.map { Double($0.previous) }, publishedHeight: accepted?.published)
+        }
+        #endif
     }
 }
 
@@ -323,6 +370,9 @@ struct MessageWebView: NSViewRepresentable {
 /// reflow the message and change its height, and gives links their own
 /// context menu.
 final class ContentSizedWebView: WKWebView {
+    #if DEBUG || TERN_PERFORMANCE
+    var readerLayoutState: ReaderLayoutDiagnostics.RendererState?
+    #endif
     var onWidthChange: (() -> Void)?
     /// The link under the pointer, as the page script reports it.
     var hoveredLink: URL?
@@ -420,9 +470,16 @@ final class ContentSizedWebView: WKWebView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        #if DEBUG || TERN_PERFORMANCE
+        let oldSize = frame.size
+        #endif
         let scale = window?.backingScaleFactor ?? 2
         let widthChanged = (newSize.width * scale).rounded() != (frame.width * scale).rounded()
         super.setFrameSize(newSize)
+        #if DEBUG || TERN_PERFORMANCE
+        ReaderLayoutDiagnostics.shared?.recordRenderer(self, phase: .frame, widthChanged: widthChanged,
+                                                       oldFrame: oldSize, proposedFrame: newSize)
+        #endif
         if widthChanged { onWidthChange?() }
     }
 }

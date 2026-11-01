@@ -38,6 +38,10 @@ final class ReaderSessionStore {
     private var selected: ReaderSessionID?
     private var isVisible = false
     private var discardedSources: Set<ReaderSessionID> = []
+    #if DEBUG || TERN_PERFORMANCE
+    /// Shares the existing state owner's lifetime without adding observation.
+    let layoutAuditOwnerToken = ReaderLayoutDiagnostics.allocateToken()
+    #endif
     let countLimit = 3
     let byteLimit = 8 * 1_024 * 1_024
 
@@ -130,6 +134,22 @@ struct ReaderSessionContainer: View {
                         owner: mailbox.account(id: key.accountID).map(ObjectIdentifier.init) ?? ObjectIdentifier(mailbox))
     }
 
+    private var windowVisibility: ReaderWindowVisibility {
+        var observer = ReaderWindowVisibility(didChange: { isWindowVisible = $0 })
+        #if DEBUG || TERN_PERFORMANCE
+        if ReaderLayoutDiagnostics.shared != nil {
+            let owner = store
+            let visibility = $isWindowVisible
+            // Sample inside native updates, without making the visibility
+            // scalar an additional representable input during resizing.
+            observer.auditSnapshot = { [weak owner, visibility] in
+                (ownerToken: owner?.layoutAuditOwnerToken ?? 0, ownerVisible: visibility.wrappedValue)
+            }
+        }
+        #endif
+        return observer
+    }
+
     var body: some View {
         let selected = selection
         let recentSessions = store.presenting(selected)
@@ -155,7 +175,7 @@ struct ReaderSessionContainer: View {
                     .zIndex(session == selected ? 1 : 0)
             }
         }
-        .background(ReaderWindowVisibility { isWindowVisible = $0 })
+        .background(windowVisibility)
         .onChange(of: selected, initial: true) { _, id in
             store.activate(id)
             if visible { allowsHiddenBodyRetention = true }
