@@ -2,6 +2,20 @@ import Testing
 @testable import GmailAPI
 
 @Suite struct GoogleScopesTests {
+    @Test func tasksNeedsItsOwnWriteGrantAndStaysOptional() throws {
+        #expect(!GoogleScopes.initialFeatures.contains(.tasks))
+        #expect(!GoogleScopes.isCovered(.tasks, by: GoogleScopes.base + [GoogleScopes.fullCalendar]))
+        #expect(!GoogleScopes.isCovered(.tasks, by: ["https://www.googleapis.com/auth/tasks.readonly"]))
+        #expect(GoogleScopes.request(features: [.tasks], isWorkspace: false) == GoogleScopes.base + [GoogleScopes.tasks])
+        let declined = try FeatureGrant(subject: "account", granted: GoogleScopes.base, accountID: "account", features: [.tasks])
+        #expect(declined.features.isEmpty)
+        #expect(declined.missingScopes == [GoogleScopes.tasks])
+        let granted = try FeatureGrant(subject: "account", granted: GoogleScopes.base + [GoogleScopes.tasks],
+                                       accountID: "account", features: [.tasks])
+        #expect(granted.features == [.tasks])
+        #expect(GoogleScopes.featuresForSignIn(storedFeatures: ["tasks", "contacts"]) == [.tasks, .contacts])
+    }
+
     @Test func initialSignInRequestsContactsButReturningAccountsKeepTheirChoice() throws {
         let initial = GoogleScopes.featuresForSignIn(storedFeatures: nil)
         #expect(initial == [.contacts])
