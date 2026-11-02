@@ -104,6 +104,7 @@ struct AttachmentLibraryCollection: View {
         ScrollViewReader { reader in
             cardGrid
                 .focusable().focused($gridFocused)
+                .focusEffectDisabled()
                 .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow], phases: [.down, .repeat]) { press in
                     // Shift-arrow extends the range; Command-arrow doesn't toggle cards.
                     move(press.key, modifiers: press.modifiers.intersection(.shift), reader: reader)
