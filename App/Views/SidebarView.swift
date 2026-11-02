@@ -496,39 +496,52 @@ private struct SyncStatusView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            switch mailbox.syncStatus {
-            case .syncing:
-                HStack(spacing: Tokens.Space.s2) {
-                    ProgressView().controlSize(.mini)
-                    Text("Checking for mail…")
-                }
-            case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .help(message)
-                Button("Try Again") { mailbox.syncNow() }
-                    .buttonStyle(.link)
-            case .idle:
-                if let date = mailbox.lastSyncedAt {
-                    TimelineView(.periodic(from: .now, by: 30)) { _ in
-                        Label("Updated \(date.formatted(.relative(presentation: .named)))", systemImage: "checkmark.circle")
-                            .lineLimit(2)
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                switch mailbox.syncStatus {
+                case .syncing:
+                    HStack(spacing: Tokens.Space.s2) {
+                        ProgressView().controlSize(.mini)
+                            .frame(width: Tokens.Control.icon, height: Tokens.Control.icon)
+                        Text("Updating…")
+                    }
+                case .failed(let message):
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(message)
+                    Button("Try Again") { mailbox.syncNow() }
+                        .buttonStyle(.link)
+                case .idle:
+                    if let date = mailbox.lastSyncedAt {
+                        TimelineView(.periodic(from: .now, by: 30)) { _ in
+                            let title = "Updated \(date.formatted(.relative(presentation: .named)))"
+                            Label(title, systemImage: "checkmark.circle")
+                                .lineLimit(2)
+                                .help(title)
+                        }
+                    } else {
+                        Label("Not updated yet", systemImage: "arrow.clockwise")
                     }
                 }
             }
-            // With several accounts, the section titles name them.
-            if !mailbox.hasSeveralAccounts {
-                Label(mailbox.account.email, systemImage: "person.crop.circle")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(mailbox.account.email)
+            .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton, alignment: .leading)
+
+            SettingsLink {
+                Image(systemName: "gearshape")
+                    .font(.body)
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .ternHover()
+            .help("Settings (⌘,)")
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("sidebar.settings")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
     }
 }
 
