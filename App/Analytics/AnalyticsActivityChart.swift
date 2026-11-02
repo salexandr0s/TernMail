@@ -29,11 +29,13 @@ struct AnalyticsActivityChart: View {
                 Spacer(minLength: 0)
                 if snapshot.totalCount > 0 {
                     Picker("Activity display", selection: $showsTable) {
-                        Text("Chart").tag(false).accessibilityLabel("Show activity chart")
-                        Text("Values").tag(true).accessibilityLabel("Show activity values")
+                        Image(systemName: "chart.bar.xaxis").tag(false)
+                            .accessibilityLabel("Show activity chart").help("Show activity chart")
+                        Image(systemName: "tablecells").tag(true)
+                            .accessibilityLabel("Show activity values").help("Show activity values")
                     }
                     .labelsHidden().pickerStyle(.segmented)
-                    .frame(width: Tokens.Space.s16 * 2 + Tokens.Space.s4)
+                    .frame(width: Tokens.Space.s10 * 2)
                     .accessibilityIdentifier("analytics-chart-display")
                 }
             }
