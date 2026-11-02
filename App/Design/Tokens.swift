@@ -132,14 +132,16 @@ enum Tokens {
         static let windowHeight = Layout.windowHeight
         static let minWidth = Layout.conversationMinWidth
         static let minHeight = Layout.windowMinHeight
-        static let popoverWidth = Sheet.smallWidth
-        static let popoverMaxHeight = Settings.editorMaxContentHeight
-        static let chartHeight = Layout.settingsHeight
+        static let popoverWidth: CGFloat = 400
+        static let popoverMaxHeight: CGFloat = 520
+        static let contentWidth = Layout.readableWidth + Space.s16 * 2
+        static let filterWidth = Layout.emptyStateWidth
+        static let chartHeight = Layout.settingsHeight - Space.s8
         static let barWidthRatio: CGFloat = 0.7
         static let metricMinimumScale: CGFloat = 0.6
         static let sparklineHeight = Space.s10
         static let symbolSize = Space.s8
-        static let twoColumnWidth = Calendar.compactWidth
+        static let twoColumnWidth = Layout.readableWidth
         static let received = Color(nsColor: .systemTeal)
         static let sent = Color(nsColor: .systemIndigo)
     }

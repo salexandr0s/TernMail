@@ -7,64 +7,28 @@ struct AnalyticsCorrespondentsView: View {
     let selectedAccountID: String?
     @Environment(\.openWindow) private var openWindow
 
+    private var maximumCount: Int { max(1, correspondents.map(\.totalCount).max() ?? 0) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            AnalyticsListHeading(title: "Frequent contacts", count: min(correspondents.count, 10))
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            AnalyticsListHeading(title: "Frequent contacts", subtitle: "By email volume", count: min(correspondents.count, 10))
             if correspondents.isEmpty {
-                Text("Contacts appear here when mail is available for this period.")
-                    .font(.callout).foregroundStyle(.secondary)
+                AnalyticsListEmptyState(symbol: "person.2", title: "No contacts in this period",
+                    detail: "Choose another date range or load more history.")
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: Tokens.Space.s1) {
                     ForEach(correspondents.prefix(10)) { contact in
                         Button {
                             openWindow(id: MailAnalyticsWindow.sceneID,
                                 value: MailAnalyticsRoute(accountID: selectedAccountID, address: contact.address, name: contact.name))
                         } label: {
-                            HStack(spacing: Tokens.Space.s3) {
-                                Text(ContactAvatar.initials(name: contact.name ?? "", address: contact.address))
-                                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                    .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
-                                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                                    Text(contact.name ?? contact.address).font(.callout.weight(.medium))
-                                        .lineLimit(1).truncationMode(.middle)
-                                    if contact.name != nil {
-                                        Text(contact.address).font(.caption).foregroundStyle(.secondary)
-                                            .lineLimit(1).truncationMode(.middle)
-                                    }
-                                }
-                                Spacer(minLength: Tokens.Space.s3)
-                                VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
-                                    Text("^[\(contact.totalCount) email](inflect: true)").font(.callout.weight(.medium))
-                                    HStack(spacing: Tokens.Space.s2) {
-                                        Label {
-                                            Text(contact.receivedCount.formatted()).foregroundStyle(.secondary)
-                                        } icon: {
-                                            Image(systemName: "arrow.down.left").foregroundStyle(Tokens.Analytics.received)
-                                        }
-                                            .accessibilityLabel("\(contact.receivedCount) received")
-                                        Label {
-                                            Text(contact.sentCount.formatted()).foregroundStyle(.secondary)
-                                        } icon: {
-                                            Image(systemName: "arrow.up.right").foregroundStyle(Tokens.Analytics.sent)
-                                        }
-                                            .accessibilityLabel("\(contact.sentCount) sent")
-                                    }
-                                    .font(.caption)
-                                }
-                                .monospacedDigit().fixedSize()
-                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                            }
-                            .padding(.vertical, Tokens.Space.s2)
-                            .padding(.horizontal, Tokens.Space.s2)
-                            .contentShape(Rectangle())
+                            contactRow(contact)
                         }
                         .buttonStyle(.plain)
                         .ternHover()
                         .help("View analytics for \(contact.address)\nLast email \(contact.lastContactAt.formatted(date: .complete, time: .shortened))")
-                        if contact.id != correspondents.prefix(10).last?.id {
-                            Divider().padding(.leading, Tokens.Analytics.symbolSize + Tokens.Space.s3 + Tokens.Space.s2)
-                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(contact.name.map { $0 + ", " } ?? "")\(contact.address), \(contact.totalCount.formatted()) emails, \(contact.receivedCount.formatted()) received, \(contact.sentCount.formatted()) sent. View analytics.")
                     }
                 }
             }
@@ -72,6 +36,59 @@ struct AnalyticsCorrespondentsView: View {
         .padding(Tokens.Space.s5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
+    }
+
+    private func contactRow(_ contact: MailAnalyticsCorrespondent) -> some View {
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            Text(ContactAvatar.initials(name: contact.name ?? "", address: contact.address))
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
+                .background(Color.primary.opacity(Tokens.Opacity.wash), in: Circle())
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        Text(contact.name ?? contact.address).font(.callout.weight(.medium))
+                            .foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+                        if contact.name != nil {
+                            Text(contact.address).font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
+                        Text(contact.totalCount, format: .number).font(.callout.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        HStack(spacing: Tokens.Space.s2) {
+                            directionCount(contact.receivedCount, symbol: "arrow.down.left", color: Tokens.Analytics.received)
+                            directionCount(contact.sentCount, symbol: "arrow.up.right", color: Tokens.Analytics.sent)
+                        }
+                    }
+                    .monospacedDigit().fixedSize()
+                }
+                GeometryReader { geometry in
+                    Capsule().fill(Color.primary.opacity(Tokens.Opacity.wash))
+                    HStack(spacing: 0) {
+                        Rectangle().fill(Tokens.Analytics.received)
+                            .frame(width: geometry.size.width * CGFloat(contact.receivedCount) / CGFloat(maximumCount))
+                        Rectangle().fill(Tokens.Analytics.sent)
+                            .frame(width: geometry.size.width * CGFloat(contact.sentCount) / CGFloat(maximumCount))
+                    }
+                    .clipShape(Capsule())
+                }
+                .frame(height: Tokens.Space.s1)
+                .accessibilityHidden(true)
+            }
+        }
+        .padding(Tokens.Space.s2)
+        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+    }
+
+    private func directionCount(_ value: Int, symbol: String, color: Color) -> some View {
+        HStack(spacing: Tokens.Space.s0_5) {
+            Image(systemName: symbol).foregroundStyle(color)
+            Text(value, format: .number).foregroundStyle(.secondary)
+        }
+        .font(.caption2)
     }
 }
 
@@ -80,48 +97,24 @@ struct AnalyticsRecentMessagesView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            AnalyticsListHeading(title: "Recent emails", count: min(messages.count, 10))
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            AnalyticsListHeading(title: "Recent emails", subtitle: "Latest in this period", count: min(messages.count, 10))
             if messages.isEmpty {
-                Text("No messages in this period.").font(.callout).foregroundStyle(.secondary)
+                AnalyticsListEmptyState(symbol: "tray", title: "No email in this period",
+                    detail: "Choose another date range to see your messages.")
             } else {
                 VStack(spacing: 0) {
                     ForEach(messages.prefix(10)) { message in
                         AnalyticsConversationButton(link: .init(accountID: message.accountID,
                             threadID: message.threadID, messageID: message.messageID), mailbox: mailbox) {
-                            HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                                Image(systemName: message.direction == .sent ? "arrow.up.right" : "arrow.down.left")
-                                    .font(.callout.weight(.medium))
-                                    .foregroundStyle(message.direction == .sent ? Tokens.Analytics.sent : Tokens.Analytics.received)
-                                    .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
-                                    .background((message.direction == .sent ? Tokens.Analytics.sent : Tokens.Analytics.received)
-                                        .opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                                    .accessibilityLabel(message.direction == .sent ? "Sent" : "Received")
-                                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                                    Text(message.subject.isEmpty ? "No subject" : message.subject)
-                                        .font(.callout.weight(.medium)).lineLimit(2)
-                                    Text(message.sender).font(.caption).foregroundStyle(.secondary)
-                                        .lineLimit(1).truncationMode(.middle)
-                                }
-                                Spacer(minLength: Tokens.Space.s2)
-                                VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
-                                    Text(message.date, format: .dateTime.month(.abbreviated).day())
-                                        .foregroundStyle(.secondary)
-                                    Text(message.direction == .sent ? "Sent" : "Received")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .font(.caption).fixedSize()
-                            }
-                            .padding(.vertical, Tokens.Space.s2)
-                            .padding(.horizontal, Tokens.Space.s2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                            messageRow(message)
                         }
                         .buttonStyle(.plain)
                         .ternHover()
                         .help("\(message.subject.isEmpty ? "No subject" : message.subject)\n\(message.sender)\n\(message.date.formatted(date: .complete, time: .shortened))")
                         if message.id != messages.prefix(10).last?.id {
-                            Divider().padding(.leading, Tokens.Analytics.symbolSize + Tokens.Space.s3 + Tokens.Space.s2)
+                            Divider().opacity(Tokens.Opacity.outline)
+                                .padding(.leading, Tokens.Analytics.symbolSize + Tokens.Space.s3 + Tokens.Space.s2)
                         }
                     }
                 }
@@ -131,6 +124,34 @@ struct AnalyticsRecentMessagesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
+
+    private func messageRow(_ message: MailAnalyticsMessage) -> some View {
+        let sent = message.direction == .sent
+        let color = sent ? Tokens.Analytics.sent : Tokens.Analytics.received
+        return HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            Image(systemName: sent ? "arrow.up.right" : "arrow.down.left")
+                .font(.callout.weight(.medium)).foregroundStyle(color)
+                .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
+                .background(color.opacity(Tokens.Opacity.wash), in: Circle())
+                .accessibilityLabel(sent ? "Sent" : "Received")
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
+                    Text(message.sender).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    Text(message.date, format: .dateTime.month(.abbreviated).day())
+                        .font(.caption).foregroundStyle(.secondary).fixedSize()
+                }
+                Text(message.subject.isEmpty ? "No subject" : message.subject)
+                    .font(.callout.weight(.medium)).foregroundStyle(.primary)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+            }
+        }
+        .padding(.vertical, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
 }
 
 struct AnalyticsReceiptsView: View {
@@ -138,30 +159,34 @@ struct AnalyticsReceiptsView: View {
     let error: String?
     let contactAddress: String?
     let mailbox: MailboxModel
+    @State private var showsExplanation = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Read receipts").font(.headline)
-                Spacer(minLength: 0)
-                Text("All history").font(.caption).foregroundStyle(.secondary)
-            }
-            Text("Request a receipt from the send options when composing. Receipts depend on the recipient's email app and settings; no receipt does not mean unread.")
-                .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            AnalyticsListHeading(title: "Read receipts", subtitle: "Across all history", count: min(receipts.count, 10))
             if let error {
-                Text(error).font(.caption).foregroundStyle(Tokens.Status.error)
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(Tokens.Status.error)
             } else if receipts.isEmpty {
-                Label("No receipt requests yet", systemImage: "envelope.badge")
-                    .font(.callout).foregroundStyle(.secondary)
+                AnalyticsListEmptyState(symbol: "envelope.badge", title: "No receipt requests yet",
+                    detail: "Request a receipt from the send options when composing.")
             } else {
                 VStack(spacing: 0) {
                     ForEach(receipts.prefix(10)) { receipt in
                         AnalyticsReceiptRow(receipt: receipt, recipients: recipients(for: receipt), mailbox: mailbox)
-                        if receipt.id != receipts.prefix(10).last?.id { Divider() }
+                        if receipt.id != receipts.prefix(10).last?.id { Divider().opacity(Tokens.Opacity.outline) }
                     }
                 }
-                Text("Times show when the receipt arrived, not when the email was opened.")
+                Text("No receipt means the reading status is unknown.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            DisclosureGroup(isExpanded: $showsExplanation) {
+                Text("Receipts depend on the recipient's email app and settings. Times show when a receipt arrived, not when the email was opened. Request receipts from the send options when composing.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, Tokens.Space.s2)
+            } label: {
+                Text("About read receipts").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(Tokens.Space.s5)
@@ -177,14 +202,43 @@ struct AnalyticsReceiptsView: View {
 
 private struct AnalyticsListHeading: View {
     let title: String
+    let subtitle: String
     let count: Int
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.headline)
-            Spacer(minLength: Tokens.Space.s2)
-            if count > 0 { Text("\(count) shown").font(.caption).foregroundStyle(.secondary) }
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if count > 0 {
+                Text("\(count) shown").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
+                    .background(Color.primary.opacity(Tokens.Opacity.wash), in: Capsule())
+                    .fixedSize()
+            }
         }
+    }
+}
+
+private struct AnalyticsListEmptyState: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            Image(systemName: symbol).font(.title3).foregroundStyle(.tertiary)
+                .frame(width: Tokens.Analytics.symbolSize)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(title).font(.callout).foregroundStyle(.secondary)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, Tokens.Space.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -227,6 +281,6 @@ private struct AnalyticsReceiptRow: View {
                 ForEach(recipients) { ReadReceiptRecipientRow(recipient: $0) }
             }
         }
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s3)
     }
 }

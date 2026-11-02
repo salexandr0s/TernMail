@@ -21,18 +21,20 @@ struct AnalyticsActivityChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            HStack(alignment: .center, spacing: Tokens.Space.s3) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Emails over time").font(.headline)
+                    Text("Emails over time").font(.title3.weight(.semibold))
                     Text(periodDescription).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 if snapshot.totalCount > 0 {
-                    Button(showsTable ? "Chart" : "Values", systemImage: showsTable ? "chart.bar" : "tablecells") {
-                        showsTable.toggle()
+                    Picker("Activity display", selection: $showsTable) {
+                        Text("Chart").tag(false).accessibilityLabel("Show activity chart")
+                        Text("Values").tag(true).accessibilityLabel("Show activity values")
                     }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .accessibilityLabel(showsTable ? "Show activity chart" : "Show activity values")
+                    .labelsHidden().pickerStyle(.segmented)
+                    .frame(width: Tokens.Space.s16 * 2 + Tokens.Space.s4)
+                    .accessibilityIdentifier("analytics-chart-display")
                 }
             }
             if snapshot.totalCount == 0 {
@@ -49,9 +51,12 @@ struct AnalyticsActivityChart: View {
                     if showsTable { valuesTable } else { plot }
                 }
                 .frame(height: Tokens.Analytics.chartHeight)
-                Divider()
                 selectionSummary
-                    .frame(height: Tokens.Space.s8, alignment: .center)
+                    .frame(minHeight: Tokens.Space.s8, alignment: .center)
+                    .padding(.horizontal, Tokens.Space.s3)
+                    .padding(.vertical, Tokens.Space.s1)
+                    .background(Tokens.Surface.muted.opacity(Tokens.Opacity.disabled),
+                                in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
         }
         .padding(Tokens.Space.s6)
@@ -111,10 +116,12 @@ struct AnalyticsActivityChart: View {
 
     private func legend(_ title: String, value: Int, symbol: String, color: Color) -> some View {
         HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: symbol).foregroundStyle(color)
-                .frame(width: Tokens.Control.icon)
+            Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .background(color.opacity(Tokens.Opacity.wash), in: Circle())
             Text(title).foregroundStyle(.secondary)
             Text(value, format: .number).fontWeight(.semibold).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
         }
         .font(.callout)
         .accessibilityElement(children: .combine)

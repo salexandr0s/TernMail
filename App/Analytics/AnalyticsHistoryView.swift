@@ -19,22 +19,14 @@ struct AnalyticsHistoryView: View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Tokens.Space.s4) {
                     summary
-                    Spacer(minLength: Tokens.Space.s2)
-                    action
+                    Spacer(minLength: Tokens.Space.s3)
+                    action.fixedSize()
                 }
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) { summary; action }
             }
-            if model.isLoadingHistory {
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Loading history · \(model.historyPagesLoaded.formatted()) pages saved")
-                    if let account = model.historyAccountName {
-                        Text(account).lineLimit(1).truncationMode(.middle)
-                    }
-                }
-                .font(.caption).foregroundStyle(.secondary)
-            } else if !canLoadHistory {
+            if !model.isLoadingHistory, !canLoadHistory {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
-                    Text("Mail sync is paused. Enable Sync Mail in Account Settings to load older email.")
+                    Text("Mail sync is paused. Enable Sync Mail to load older email.")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     Button("Open Settings") { openSettings() }
@@ -44,67 +36,95 @@ struct AnalyticsHistoryView: View {
             if let error = model.historyError {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.caption).foregroundStyle(Tokens.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             DisclosureGroup(isExpanded: $showsDetails) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     ForEach(snapshot.coverage, id: \.accountID) { coverage in
                         accountCoverage(coverage)
                     }
-                    Text("Loading history adds older message details without changing read status. You can cancel and resume. Scan again to reconcile older changes.")
+                    Text("Loading history adds older email without changing read status. You can cancel and resume. Scan again to include older changes.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.top, Tokens.Space.s2)
+                .padding(.top, Tokens.Space.s3)
             } label: {
                 Text("History details").font(.caption).foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("analytics-history-details")
         }
-        .padding(Tokens.Space.s4)
+        .padding(Tokens.Space.s5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
 
     private var summary: some View {
         HStack(alignment: .center, spacing: Tokens.Space.s3) {
-            Image(systemName: hasScannedHistory ? "clock.arrow.circlepath" : "clock.badge.questionmark")
-                .font(.title3).foregroundStyle(.secondary)
-                .frame(width: Tokens.Analytics.symbolSize)
-                .accessibilityHidden(true)
+            Group {
+                if model.isLoadingHistory {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: hasScannedHistory ? "checkmark.circle" : "clock.arrow.circlepath")
+                        .font(.title3).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
+            .background(Color.primary.opacity(Tokens.Opacity.wash),
+                        in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(hasScannedHistory ? "History scanned" : "Partial history")
+                Text(model.isLoadingHistory ? "Loading mail history" : "Mail history")
                     .font(.callout.weight(.semibold))
-                Text(hasScannedHistory ? "Totals include the history loaded from Gmail." : "Scan your history to include older email.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if model.isLoadingHistory {
+                    Text("\(model.historyPagesLoaded.formatted()) pages saved")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    if let account = model.historyAccountName {
+                        Text(account).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                } else {
+                    Text(hasScannedHistory ? "History scanned. Totals include loaded email." : "Partial history. Older email may be missing.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
     @ViewBuilder private var action: some View {
         if model.isLoadingHistory {
-            HStack(spacing: Tokens.Space.s2) {
-                ProgressView().controlSize(.small)
-                Button("Cancel") { model.cancelHistory() }
-            }
+            Button("Cancel") { model.cancelHistory() }
+                .buttonStyle(.bordered).controlSize(.small)
         } else {
             Button(hasScannedHistory ? "Scan again" : "Load full history") {
                 model.loadHistory(accounts: owners, restart: hasScannedHistory)
             }
+            .buttonStyle(.bordered).controlSize(.small)
             .disabled(!canLoadHistory)
         }
     }
 
     private func accountCoverage(_ coverage: MailAnalyticsCoverage) -> some View {
         let email = owners.first(where: { $0.account.id == coverage.accountID })?.account.email ?? "Account"
-        return HStack(alignment: .firstTextBaseline) {
-            Text(email).lineLimit(1).truncationMode(.middle).help(email)
-            Spacer(minLength: Tokens.Space.s2)
-            if let date = coverage.historyLoadedAt {
-                Text("Scanned \(date.formatted(date: .abbreviated, time: .shortened))")
-            } else {
-                Text("\(coverage.indexedMessageCount.formatted()) indexed")
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
+                Text(email).lineLimit(1).truncationMode(.middle).help(email)
+                Spacer(minLength: Tokens.Space.s2)
+                coverageStatus(coverage).fixedSize()
+            }
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(email).lineLimit(1).truncationMode(.middle).help(email)
+                coverageStatus(coverage)
             }
         }
         .font(.caption).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private func coverageStatus(_ coverage: MailAnalyticsCoverage) -> some View {
+        if let date = coverage.historyLoadedAt {
+            Text("Scanned \(date.formatted(date: .abbreviated, time: .shortened))")
+        } else {
+            Text("\(coverage.indexedMessageCount.formatted()) indexed")
+        }
     }
 }

@@ -13,6 +13,7 @@ struct SenderProfilePopover: View {
     @State private var model = MailAnalyticsModel()
     @State private var reload = UUID()
     @State private var calendarContext = AnalyticsCalendarContext()
+    @State private var copyFeedbackID: UUID?
 
     private struct LoadIdentity: Hashable {
         let accountID: String
@@ -26,34 +27,39 @@ struct SenderProfilePopover: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            identity
+                .padding(Tokens.Space.s4)
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                    identity
-                    Divider()
                     if !isAvailable {
-                        Text("This account is no longer available in the current profile.")
+                        Label("This account is no longer available.", systemImage: "person.crop.circle.badge.exclamationmark")
                             .font(.callout).foregroundStyle(.secondary)
                     } else if model.isLoading {
                         ProgressView("Loading sender details…")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else if let error = model.error {
-                        Text(error).foregroundStyle(.secondary)
-                        Button("Try again") { reload = UUID() }
-                    } else if let snapshot = model.snapshot {
-                        HStack(spacing: Tokens.Space.s3) {
-                            compactMetric("Received", count: snapshot.receivedCount,
-                                symbol: "arrow.down.left", tint: Tokens.Analytics.received)
-                            compactMetric("Sent", count: snapshot.sentCount,
-                                symbol: "arrow.up.right", tint: Tokens.Analytics.sent)
-                            AnalyticsCoverageLabel(coverage: snapshot.coverage)
-                                .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Label("Sender details unavailable", systemImage: "exclamationmark.circle")
+                                .font(.callout.weight(.medium))
+                            Text(error).font(.caption).foregroundStyle(.secondary)
+                            Button("Try again") { reload = UUID() }
                         }
-                        .frame(height: Tokens.Space.s10)
-                        Divider()
-                        SenderProfileLinksView(links: model.profileLinks)
+                    } else if let snapshot = model.snapshot {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                                Text("All indexed mail").font(.subheadline.weight(.semibold))
+                                Spacer(minLength: 0)
+                                AnalyticsCoverageLabel(coverage: snapshot.coverage)
+                            }
+                            HStack(spacing: Tokens.Space.s3) {
+                                compactMetric("Received", count: snapshot.receivedCount,
+                                    symbol: "arrow.down.left", tint: Tokens.Analytics.received)
+                                compactMetric("Sent", count: snapshot.sentCount,
+                                    symbol: "arrow.up.right", tint: Tokens.Analytics.sent)
+                            }
+                        }
                         if snapshot.firstReceivedAt != nil || snapshot.lastContactAt != nil {
-                            Divider()
-                            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                                 if let first = snapshot.firstReceivedAt {
                                     dateRow("First received", date: first)
                                 }
@@ -61,33 +67,53 @@ struct SenderProfilePopover: View {
                                     dateRow("Last email", date: last)
                                 }
                             }
+                            .padding(.horizontal, Tokens.Space.s3)
+                            .padding(.vertical, Tokens.Space.s2)
+                            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                         }
+                        SenderProfileLinksView(links: model.profileLinks, compact: true)
                     }
                 }
-                .padding(Tokens.Space.s5)
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.bottom, Tokens.Space.s5)
             }
+            .scrollBounceBehavior(.basedOnSize)
             Divider()
             Button {
                 openWindow(id: MailAnalyticsWindow.sceneID,
                     value: MailAnalyticsRoute(accountID: accountID, address: address, name: name))
                 dismiss()
             } label: {
-                HStack(spacing: Tokens.Space.s2) {
-                    Label("View analytics", systemImage: "chart.bar.xaxis")
+                HStack(spacing: Tokens.Space.s3) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.title3.weight(.medium))
+                        .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
+                        .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                        Text("View analytics").font(.callout.weight(.semibold))
+                        Text("Activity and email history").font(.caption).foregroundStyle(Color.secondary)
+                    }
                     Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.right").font(.caption.weight(.semibold))
+                    Image(systemName: "arrow.up.right").font(.callout.weight(.medium))
                 }
+                .foregroundStyle(Color.accentColor)
                 .frame(maxWidth: .infinity)
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.vertical, Tokens.Space.s3)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
+            .ternHover()
             .disabled(!isAvailable)
             .accessibilityIdentifier("sender-view-analytics")
-            .padding(.horizontal, Tokens.Space.s5)
-            .padding(.vertical, Tokens.Space.s3)
+            .accessibilityLabel("View analytics")
+            .accessibilityHint("Opens activity and email history for this contact")
         }
         .frame(width: Tokens.Analytics.popoverWidth)
         .frame(maxHeight: Tokens.Analytics.popoverMaxHeight)
         .fixedSize(horizontal: false, vertical: true)
+        .background(Tokens.Surface.primary)
         .task(id: LoadIdentity(accountID: accountID, address: EmailAddress(address: address).normalized,
                               reload: reload, isAvailable: isAvailable, calendarContext: calendarContext)) {
             guard isAvailable else { model.stop(); return }
@@ -95,6 +121,11 @@ struct SenderProfilePopover: View {
                 query: .init(accountIDs: [accountID], contactAddress: address, period: .allTime))
         }
         .modifier(AnalyticsCalendarRefresh(context: $calendarContext))
+        .task(id: copyFeedbackID) {
+            guard copyFeedbackID != nil else { return }
+            do { try await Task.sleep(for: Tokens.Toast.info) } catch { return }
+            copyFeedbackID = nil
+        }
         .onDisappear { model.stop() }
     }
 
@@ -102,39 +133,49 @@ struct SenderProfilePopover: View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
             ContactAvatar(accountID: accountID, address: address, name: name,
                 cache: mailbox.cache, accounts: mailbox.accountStore, size: Tokens.Space.s12)
+                .clipShape(Circle())
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(name.isEmpty ? address : name).font(.title2.weight(.semibold))
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2).truncationMode(.middle)
+                    .textSelection(.enabled).help(name.isEmpty ? address : name)
                 if !name.isEmpty, name.caseInsensitiveCompare(address) != .orderedSame {
-                    Text(address).font(.callout).foregroundStyle(.secondary)
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(address).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .textSelection(.enabled).help(address)
                 }
             }
             Spacer(minLength: 0)
             Button {
                 NSPasteboard.general.replaceContents(with: address)
+                copyFeedbackID = UUID()
             } label: {
-                Image(systemName: "doc.on.doc")
+                Image(systemName: copyFeedbackID == nil ? "doc.on.doc" : "checkmark")
+                    .font(.callout)
                     .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .foregroundStyle(copyFeedbackID == nil ? Color.secondary : Tokens.Status.success)
                 .ternHover()
-                .help("Copy email address")
-                .accessibilityLabel("Copy email address")
+                .help(copyFeedbackID == nil ? "Copy email address" : "Email address copied")
+                .accessibilityLabel(copyFeedbackID == nil ? "Copy email address" : "Email address copied")
+                .accessibilityIdentifier("sender-copy-address")
         }
     }
 
     private func compactMetric(_ title: String, count: Int, symbol: String, tint: Color) -> some View {
-        HStack(spacing: Tokens.Space.s1) {
-            Image(systemName: symbol).font(.caption).foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                Text(count, format: .number).font(.headline).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
-                Text(title).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack {
+                Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(tint)
             }
+            Text(count, format: .number).font(.title.weight(.semibold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Tokens.Space.s3)
+        .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .help("\(count.formatted()) \(title.lowercased())")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count.formatted()) \(title.lowercased())")
@@ -187,19 +228,24 @@ struct AnalyticsCalendarRefresh: ViewModifier {
 
 struct SenderProfileLinksView: View {
     let links: [SenderProfileEvidence]
+    var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack {
-                Text("Profiles and websites").font(.headline)
-                Spacer(minLength: 0)
-                if !links.isEmpty {
-                    Text(links.count, format: .number).font(.caption).foregroundStyle(.secondary)
+            if !compact || !links.isEmpty {
+                HStack {
+                    Text("Profiles and websites").font(compact ? .subheadline.weight(.semibold) : .headline)
+                    Spacer(minLength: 0)
+                    if !links.isEmpty {
+                        Text(links.count, format: .number).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             if links.isEmpty {
-                Label("No profile links found in the signatures available on this Mac.", systemImage: "link")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Label("No links in available signatures", systemImage: "link")
+                    .font(compact ? .caption : .callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help("No profile or website links were found in the email signatures available on this Mac.")
             } else {
                 VStack(spacing: 0) {
                     ForEach(links) { evidence in
@@ -230,7 +276,7 @@ struct SenderProfileLinksView: View {
                         }
                     }
                 }
-                Text("Found in email signatures. Links may belong to a person or an organization.")
+                Text("From email signatures. Links may be personal or belong to an organization.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

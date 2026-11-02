@@ -76,8 +76,12 @@ import Testing
         for scheme in [ColorScheme.light, .dark] {
             try await capture(SenderProfilePopover(accountID: account.id, address: "alex@example.invalid",
                 name: "Alex Morgan with a longer display name", mailbox: mailbox),
-                size: NSSize(width: 420, height: 440), scheme: scheme, waitFor: "linkedin.com/in/alex-morgan-example",
+                size: NSSize(width: 400, height: 520), scheme: scheme, waitFor: "linkedin.com/in/alex-morgan-example",
                 name: "sender-card-\(scheme == .light ? "light" : "dark")", captureBottom: true)
+            try await capture(SenderProfilePopover(accountID: account.id, address: "jordan@example.invalid",
+                name: "Jordan Lee", mailbox: mailbox),
+                size: NSSize(width: 400, height: 440), scheme: scheme, waitFor: "No links in available signatures",
+                name: "sender-card-no-links-\(scheme == .light ? "light" : "dark")", captureBottom: false)
         }
         try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
                 address: "new-contact@example.invalid", name: "New contact"), mailbox: mailbox),
@@ -101,10 +105,12 @@ import Testing
     nonisolated private static func messages(now: Date) -> [CacheTransaction.MessageUpdate] {
         (0..<90).map { index in
             let sent = index % 3 == 1
+            let contact = index % 10 < 6 ? "Alex Morgan <alex@example.invalid>"
+                : index % 10 < 9 ? "Jordan Lee <jordan@example.invalid>" : "Casey Park <casey@example.invalid>"
             return .init(record: .init(accountID: "analytics-audit", id: "m\(index)", threadID: "t\(index / 3)", historyID: 1,
                 date: now.addingTimeInterval(-Double(index) * 86_400 * 3), snippet: "",
-                sender: sent ? "Owner <owner@example.invalid>" : "Alex Morgan <alex@example.invalid>",
-                recipients: sent ? "Alex Morgan <alex@example.invalid>" : "owner@example.invalid", cc: nil,
+                sender: sent ? "Owner <owner@example.invalid>" : contact,
+                recipients: sent ? contact : "owner@example.invalid", cc: nil,
                 subject: index == 0 ? "Project proposal and planning for the next season" : "Project update \(index + 1)",
                 sizeEstimate: 300), labelIDs: [sent ? SystemLabel.sent : SystemLabel.inbox])
         }

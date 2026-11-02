@@ -7,62 +7,71 @@ struct AnalyticsMetricsView: View {
     let period: MailAnalyticsPeriod
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
-                Text(period.title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                AnalyticsCoverageLabel(coverage: snapshot.coverage)
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) { summary; Spacer(); coverage }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) { summary; coverage }
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s3), count: 3),
-                      alignment: .leading, spacing: Tokens.Space.s3) {
-                metric("Received", value: snapshot.receivedCount, symbol: "tray.and.arrow.down",
+                      spacing: Tokens.Space.s3) {
+                metric("Received", value: snapshot.receivedCount, symbol: "arrow.down.left",
                        color: Tokens.Analytics.received, series: \.receivedCount)
-                metric("Sent", value: snapshot.sentCount, symbol: "paperplane",
+                metric("Sent", value: snapshot.sentCount, symbol: "arrow.up.right",
                        color: Tokens.Analytics.sent, series: \.sentCount)
-                metric("Conversations", value: snapshot.threadCount, symbol: "bubble.left.and.bubble.right", color: .secondary)
+                metric("Conversations", value: snapshot.threadCount, symbol: "bubble.left.and.bubble.right",
+                       color: .secondary)
             }
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                Text("Across indexed history").font(.caption).foregroundStyle(.secondary)
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: Tokens.Space.s6) { milestones }
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) { milestones }
-                }
-            }
-            .padding(.horizontal, Tokens.Space.s1)
         }
     }
 
-    @ViewBuilder private var milestones: some View {
-        milestone("First received", date: snapshot.firstReceivedAt)
-        milestone("First sent", date: snapshot.firstSentAt)
-        milestone("Last email", date: snapshot.lastContactAt)
+    private var summary: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            Text("Activity").font(.headline)
+            Text("· \(period.title)").font(.callout).foregroundStyle(.secondary)
+        }
+        .fixedSize()
     }
+
+    private var coverage: some View { AnalyticsCoverageLabel(coverage: snapshot.coverage) }
 
     private func metric(_ title: String, value: Int, symbol: String, color: Color,
                         series: KeyPath<MailAnalyticsBucket, Int>? = nil) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: symbol).foregroundStyle(color)
-                Text(title).foregroundStyle(.secondary)
-            }.font(.callout)
+                Text(title).foregroundStyle(.secondary).lineLimit(1)
+                    .minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
+            }
+            .font(.callout.weight(.medium))
             Text(value, format: .number).font(.largeTitle.weight(.semibold)).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .help(value.formatted())
             Group {
                 if let series {
                     miniChart(series: series, color: color)
                 } else {
-                    Text("Threads in this period").font(.caption).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        Text("\(snapshot.totalCount.formatted()) emails")
+                            .font(.callout.weight(.medium)).lineLimit(1)
+                            .minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
+                        Text("in this period").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 }
             }
             .frame(height: Tokens.Analytics.sparklineHeight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Tokens.Space.s4)
+        .background(alignment: .top) {
+            LinearGradient(colors: [color.opacity(Tokens.Opacity.wash), .clear],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        }
         .analyticsPanel()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title): \(value.formatted()), \(period.title)")
+        .accessibilityLabel("\(title): \(value.formatted()), \(period.title)\(series == nil ? ", \(snapshot.totalCount.formatted()) emails" : "")")
     }
 
     private func miniChart(series: KeyPath<MailAnalyticsBucket, Int>, color: Color) -> some View {
@@ -79,12 +88,41 @@ struct AnalyticsMetricsView: View {
         .chartXAxis(.hidden).chartYAxis(.hidden).chartLegend(.hidden)
         .accessibilityHidden(true)
     }
+}
+
+struct AnalyticsMilestonesView: View {
+    let snapshot: MailAnalyticsSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            HStack(spacing: Tokens.Space.s2) {
+                Image(systemName: "clock").foregroundStyle(.secondary)
+                Text("Mail history").fontWeight(.semibold)
+                Spacer(minLength: 0)
+                Text("All indexed mail").foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: Tokens.Space.s6) { milestones }
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) { milestones }
+            }
+        }
+        .padding(Tokens.Space.s5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .analyticsPanel()
+    }
+
+    @ViewBuilder private var milestones: some View {
+        milestone("First received", date: snapshot.firstReceivedAt)
+        milestone("First sent", date: snapshot.firstSentAt)
+        milestone("Latest email", date: snapshot.lastContactAt)
+    }
 
     private func milestone(_ title: String, date: Date?) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(date?.formatted(date: .abbreviated, time: .omitted) ?? "No indexed email")
-                .font(.callout.weight(.medium))
+                .font(.callout.weight(.medium)).fixedSize()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -102,7 +140,7 @@ struct AnalyticsCoverageLabel: View {
     var body: some View {
         Group {
             if let scannedAt {
-                Label("Scanned \(scannedAt.formatted(date: .abbreviated, time: .omitted))", systemImage: "clock.arrow.circlepath")
+                Label("Scanned \(scannedAt.formatted(date: .abbreviated, time: .omitted))", systemImage: "checkmark.circle")
                     .help("History has been scanned for these accounts. Scan again to reconcile older changes.")
             } else {
                 Label("Partial history", systemImage: "clock.badge.questionmark")
