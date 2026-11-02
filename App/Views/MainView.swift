@@ -160,7 +160,12 @@ struct MainView: View {
             MailShortcutContext(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID,
                 perform: perform)
         }
-        .background { WindowReader { hostWindow = $0 } }
+        .background {
+            WindowReader { window in
+                window.titlebarSeparatorStyle = .line
+                hostWindow = window
+            }
+        }
         .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
         .focusedSceneValue(\.mailboxModel, focusedMailbox)
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
