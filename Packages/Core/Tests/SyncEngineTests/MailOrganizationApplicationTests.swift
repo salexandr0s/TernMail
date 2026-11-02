@@ -235,6 +235,49 @@ import Testing
         await fixture.engine.stop()
     }
 
+    @Test func personalCorrespondenceAndSingleThreadRepetitionCannotBecomeSenderFilters() async throws {
+        let fixture = try await Fixture.make()
+        let recurring = [evidenceSample("m1", thread: "t1"), evidenceSample("m2", thread: "t2")]
+        let cases: [[MailOrganizationSample]] = [
+            [evidenceSample("m1", thread: "t1", list: false), evidenceSample("m2", thread: "t2", list: false)],
+            [evidenceSample("m1", thread: "t1"), evidenceSample("m2", thread: "t1")],
+            [evidenceSample("m1", thread: "t1"), evidenceSample("m2", thread: "t2", list: false)],
+            recurring + [evidenceSample("sent", thread: "outgoing", recipients: ["NEWS@example.com"], isSent: true)],
+            recurring + [evidenceSample("reply", thread: "t1", recipients: ["someone@example.com"], isSent: true)],
+        ]
+        for messages in cases {
+            let samples = MailOrganizationSamples(accountID: account, messages: messages, existingLabels: [],
+                selectedCount: messages.count, unavailableCount: 0, isPartial: false)
+            await #expect(throws: OrganizationApplicationError.unsafeRule) {
+                try await fixture.engine.applyOrganization(categories: [fixture.news], samples: samples)
+            }
+        }
+        #expect(try await fixture.rows().isEmpty)
+        #expect(await fixture.gmail.labelCalls.isEmpty)
+        #expect(await fixture.settings.calls.isEmpty)
+        await fixture.engine.stop()
+    }
+
+    @Test func workflowLabelsRequireOneNewestKnownTimestamp() async throws {
+        let fixture = try await Fixture.make()
+        let action = OrganizationApplicationCategory(id: "action", name: "Action", kind: .action,
+                                                     messageIDs: ["m1"], ruleSenders: [])
+        let cases: [[MailOrganizationSample]] = [
+            [evidenceSample("m1", thread: "t1", date: nil)],
+            [evidenceSample("m1", thread: "t1"), evidenceSample("m3", thread: "t1")],
+            [evidenceSample("m1", thread: "t1"), evidenceSample("m3", thread: "t1", date: nil)],
+        ]
+        for messages in cases {
+            let samples = MailOrganizationSamples(accountID: account, messages: messages, existingLabels: [],
+                selectedCount: messages.count, unavailableCount: 0, isPartial: false)
+            await #expect(throws: OrganizationApplicationError.staleSamples) {
+                try await fixture.engine.applyOrganization(categories: [action], samples: samples)
+            }
+        }
+        #expect(try await fixture.rows().isEmpty)
+        await fixture.engine.stop()
+    }
+
     @Test func unicodeLabelNormalizationDoesNotRejectAValidCategory() async throws {
         let fixture = try await Fixture.make()
         let name = String(repeating: "İ", count: 110)
@@ -290,14 +333,15 @@ private struct Fixture {
         let settings = FakeSettings(filters: [], vacation: .init())
         let clock = TestClock()
         let messages = (1...3).map { index in
-            MailOrganizationSample(messageID: "m\(index)", threadID: "t1",
+            MailOrganizationSample(messageID: "m\(index)", threadID: index == 2 ? "t2" : "t1",
                 sender: index == 3 ? "other@example.com" : "news@example.com", recipients: ["me@example.com"],
-                subject: "Issue", snippet: "", date: baseDate, isSent: false, labelIDs: [SystemLabel.inbox])
+                subject: "Issue", snippet: "", date: index == 3 ? baseDate.addingTimeInterval(-60) : baseDate,
+                isSent: false, labelIDs: [SystemLabel.inbox], hasMailingListHeaders: index < 3)
         }
         try await cache.write { tx in
             let updates = messages.map { sample in
                 CacheTransaction.MessageUpdate(record: MessageRecord(accountID: account, id: sample.messageID,
-                    threadID: sample.threadID, historyID: 1, date: baseDate, snippet: "", sender: sample.sender,
+                    threadID: sample.threadID, historyID: 1, date: sample.date ?? baseDate, snippet: "", sender: sample.sender,
                     recipients: "me@example.com", cc: nil, subject: "Issue", sizeEstimate: 0), labelIDs: sample.labelIDs)
             }
             try tx.rebuildThreads(try tx.upsertMessages(updates), accountID: account)
@@ -323,4 +367,11 @@ private struct Fixture {
             gmail: gmail, settings: settings, accounts: accounts, cache: cache, sendsAutomatically: false,
             indexesAttachmentsAutomatically: false, now: clock.now)
     }
+}
+
+private func evidenceSample(_ id: String, thread: String, recipients: [String] = ["me@example.com"],
+                            date: Date? = baseDate, isSent: Bool = false, list: Bool = true) -> MailOrganizationSample {
+    .init(messageID: id, threadID: thread, sender: isSent ? "me@example.com" : "news@example.com", recipients: recipients,
+          subject: "Issue", snippet: "", date: date, isSent: isSent, labelIDs: [isSent ? SystemLabel.sent : SystemLabel.inbox],
+          hasMailingListHeaders: list)
 }

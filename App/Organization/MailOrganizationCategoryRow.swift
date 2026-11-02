@@ -163,7 +163,7 @@ struct MailOrganizationCategoryRow: View {
             } else if category.proposal.kind != .topic {
                 SettingsNote("These labels do not clear automatically when a reply arrives.")
             } else {
-                SettingsNote("This label applies to the sample. More consistent sender history is needed for a future filter.")
+                SettingsNote("This label applies to the reviewed messages. A future rule needs recurring mail from a consistent mailing-list or automated sender.")
             }
         }
     }

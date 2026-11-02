@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MailOrganization
 import MessageContent
 
 public struct OrganizationApplicationCategory: Sendable, Equatable {
@@ -192,6 +193,10 @@ extension SyncEngine {
               Set(categories.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }).count == categories.count
         else { throw OrganizationApplicationError.invalidSelection }
         let available = Set(samples.messages.map(\.messageID))
+        let evidence = OrganizationEvidence(messages: samples.messages.map {
+            .init(id: $0.messageID, threadID: $0.threadID, sender: $0.sender, recipients: $0.recipients,
+                  date: $0.date, isSent: $0.isSent, hasMailingListHeaders: $0.hasMailingListHeaders, isAutomated: $0.isAutomated)
+        })
         var filterCount = 0
         for category in categories {
             let name = category.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,6 +211,9 @@ extension SyncEngine {
                   Set(category.messageIDs).isSubset(of: available), category.ruleSenders.count <= 30,
                   Set(category.ruleSenders.map { $0.lowercased() }).count == category.ruleSenders.count
             else { throw OrganizationApplicationError.invalidSelection }
+            if category.kind != .topic, !category.messageIDs.allSatisfy({
+                evidence.supportsState(messageID: $0, isWaiting: category.kind == .waiting)
+            }) { throw OrganizationApplicationError.staleSamples }
             guard category.createFilter, !category.ruleSenders.isEmpty else { continue }
             guard category.kind == .topic, !samples.isPartial else { throw OrganizationApplicationError.unsafeRule }
             filterCount += category.ruleSenders.count
@@ -215,8 +223,7 @@ extension SyncEngine {
                 guard sender.utf8.count <= 254,
                       sender.range(of: #"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)+$"#, options: .regularExpression) != nil
                 else { throw OrganizationApplicationError.unsafeRule }
-                let incoming = samples.messages.filter { !$0.isSent && $0.sender.lowercased() == sender.lowercased() }
-                guard incoming.count >= 2, incoming.allSatisfy({ classified.contains($0.messageID) })
+                guard evidence.supportsRule(sender: sender, classifiedMessageIDs: classified)
                 else { throw OrganizationApplicationError.unsafeRule }
             }
         }
@@ -247,7 +254,7 @@ extension SyncEngine {
                       sample.isSent == (category.kind == .waiting) else { throw OrganizationApplicationError.staleSamples }
                 for message in try tx.messages(threadID: sample.threadID, accountID: accountID)
                 where !LocalSend.isProvisional(message.id)
-                    && (message.date > date || (message.date == date && message.id < sample.messageID)) {
+                    && message.id != sample.messageID && message.date >= date {
                     let labels = try tx.labelIDs(ofMessages: [message.id], accountID: accountID)
                     if labels.isDisjoint(with: [SystemLabel.spam, SystemLabel.trash, SystemLabel.draft, "CHAT"]) {
                         throw OrganizationApplicationError.staleSamples

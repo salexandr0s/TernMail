@@ -48,9 +48,12 @@ public struct MailOrganizationSample: Sendable, Equatable {
     public let date: Date?
     public let isSent: Bool
     public let labelIDs: [String]
+    public let hasMailingListHeaders: Bool
+    public let isAutomated: Bool
 
     public init(messageID: String, threadID: String, sender: String, recipients: [String], subject: String,
-                snippet: String, date: Date?, isSent: Bool, labelIDs: [String]) {
+                snippet: String, date: Date?, isSent: Bool, labelIDs: [String],
+                hasMailingListHeaders: Bool = false, isAutomated: Bool = false) {
         self.messageID = messageID
         self.threadID = threadID
         self.sender = sender
@@ -60,6 +63,8 @@ public struct MailOrganizationSample: Sendable, Equatable {
         self.date = date
         self.isSent = isSent
         self.labelIDs = labelIDs
+        self.hasMailingListHeaders = hasMailingListHeaders
+        self.isAutomated = isAutomated
     }
 }
 

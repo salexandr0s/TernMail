@@ -1,4 +1,5 @@
 import Foundation
+import MailOrganization
 
 extension MailOrganizationAnalyzer {
     /// Gmail reserves its own names. Category output and edits use the same rules;
@@ -16,7 +17,7 @@ extension MailOrganizationAnalyzer {
             && !reserved.contains(key) && !key.hasPrefix("category_")
     }
 
-    private static func labelKey(_ name: String) -> String {
+    static func labelKey(_ name: String) -> String {
         name.precomposedStringWithCanonicalMapping.lowercased()
     }
 
@@ -59,8 +60,7 @@ extension MailOrganizationAnalyzer {
 
     private static func validate(_ result: Result, messages: [OrganizationEmail], existingLabelNames: [String]) throws -> OrganizationPlan {
         let byID = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
-        let byThread = Dictionary(grouping: messages, by: \.threadID)
-        let incoming = Dictionary(grouping: messages.filter { !$0.isSent }, by: { ruleAddress($0.sender) ?? "" })
+        let evidence = OrganizationEvidence(messages: messages.map(\.evidence))
         var names = Set<String>()
         var topicIDs = Set<String>()
         var stateIDs = Set<String>()
@@ -78,31 +78,36 @@ extension MailOrganizationAnalyzer {
                   category.messageIDs.allSatisfy({ byID[$0] != nil }),
                   category.ruleSenders.count <= 20 else { throw MailOrganizationError.invalidResponse }
             let ids = Set(category.messageIDs)
+            let existingName = existingLabelNames.first { labelKey($0) == key }
+            var retainedIDs = ids
             switch category.kind {
             case .topic:
                 guard topicIDs.isDisjoint(with: ids) else { throw MailOrganizationError.invalidResponse }
                 topicIDs.formUnion(ids)
+                // Avoid a new permanent label for one isolated conversation.
+                // Reusing a label the user already chose needs no such threshold.
+                let threads = Set(category.messageIDs.compactMap { byID[$0]?.threadID })
+                if existingName == nil && threads.count < 2 { retainedIDs = [] }
             case .action, .waiting:
-                guard category.ruleSenders.isEmpty, stateIDs.isDisjoint(with: ids) else { throw MailOrganizationError.invalidResponse }
-                for id in category.messageIDs {
-                    guard let message = byID[id], let thread = byThread[message.threadID],
-                          thread.allSatisfy({ $0.date != nil }), thread.first?.id == id,
-                          message.isSent == (category.kind == .waiting) else { throw MailOrganizationError.invalidResponse }
-                }
+                guard stateIDs.isDisjoint(with: ids) else { throw MailOrganizationError.invalidResponse }
                 stateIDs.formUnion(ids)
+                retainedIDs = ids.filter { evidence.supportsState(messageID: $0, isWaiting: category.kind == .waiting) }
             }
+            guard !retainedIDs.isEmpty else { continue }
             var senders: [String] = []
-            for raw in category.ruleSenders {
-                guard let sender = ruleAddress(raw), ruleOwners.insert(sender).inserted,
-                      ruleOwners.count <= maximumRuleSenders,
-                      let examples = incoming[sender], examples.count >= 2,
-                      examples.allSatisfy({ ids.contains($0.id) }) else { throw MailOrganizationError.invalidResponse }
+            for raw in category.ruleSenders where category.kind == .topic {
+                // Weak semantic guesses remove only their automation. Valid
+                // topic assignments remain useful for the user's review.
+                guard let sender = ruleAddress(raw),
+                      evidence.supportsRule(sender: sender, classifiedMessageIDs: retainedIDs),
+                      !ruleOwners.contains(sender), ruleOwners.count < maximumRuleSenders else { continue }
+                ruleOwners.insert(sender)
                 senders.append(sender)
             }
-            let name = existingLabelNames.first { labelKey($0) == key } ?? category.name
+            let name = existingName ?? category.name
             categories.append(OrganizationCategory(id: "category:" + key, name: name,
                 explanation: category.explanation, kind: category.kind,
-                messageIDs: messages.filter { ids.contains($0.id) }.map(\.id), ruleSenders: senders.sorted()))
+                messageIDs: messages.filter { retainedIDs.contains($0.id) }.map(\.id), ruleSenders: senders.sorted()))
         }
         return OrganizationPlan(categories: categories, analyzedCount: messages.count)
     }

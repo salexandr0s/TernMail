@@ -59,6 +59,58 @@ import Testing
         #expect(await progress.values.last == .init(stage: .reading, processedCount: 5, selectedCount: 5))
     }
 
+    @Test func organizerRequestsAndReducesMailingAndAutomationHeaders() async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        let cases: [(id: String, headers: [[String: String]], list: Bool, automated: Bool)] = [
+            ("personal", [], false, false),
+            ("list", [["name": "list-id", "value": "Weekly <weekly.example.invalid>"]], true, false),
+            ("unsubscribe", [["name": "LIST-UNSUBSCRIBE", "value": "<https://example.invalid/private-token>"]], true, false),
+            ("blank", [["name": "List-Id", "value": " \t"], ["name": "Precedence", "value": "bulk"]], false, false),
+            ("generated", [["name": "Auto-Submitted", "value": " AUTO-GENERATED ; owner-email=owner@example.invalid"]], false, true),
+            ("replied", [["name": "Auto-Submitted", "value": "auto-replied"]], false, true),
+            ("human", [["name": "Auto-Submitted", "value": "no; extension=value"]], false, false),
+            ("unknown", [["name": "Auto-Submitted", "value": "auto"]], false, false),
+            ("conflicting", [["name": "Auto-Submitted", "value": "no"], ["name": "Auto-Submitted", "value": "auto-generated"]], false, false),
+        ]
+        for item in cases { await gmail.add(try organizationMessage(item.id, extraHeaders: item.headers)) }
+        await gmail.setRecentPages([try organizationPage(cases.map(\.id))])
+        let samples = try await engine.organizationSamples()
+        for item in cases {
+            let sample = try #require(samples.messages.first { $0.messageID == item.id })
+            #expect(sample.hasMailingListHeaders == item.list)
+            #expect(sample.isAutomated == item.automated)
+        }
+        let requested = try #require(await gmail.metadataRequestHeaders.first)
+        #expect(Set(requested).isSuperset(of: ["List-Id", "List-Unsubscribe", "Auto-Submitted"]))
+        #expect(Set(SyncEngine.metadataHeaders).isDisjoint(with: ["List-Id", "List-Unsubscribe", "Auto-Submitted"]))
+        #expect(!requested.contains("Precedence"))
+        #expect(await gmail.changes.isEmpty)
+    }
+
+    @Test func correspondenceBeyondTheFirst20RecipientsPreventsASenderFilter() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let listHeader = [["name": "List-Id", "value": "Weekly <weekly.example.invalid>"]]
+        await gmail.add(try organizationMessage("list1", thread: "first", extraHeaders: listHeader))
+        await gmail.add(try organizationMessage("list2", thread: "second", extraHeaders: listHeader))
+        let recipients = (0..<20).map { "person\($0)@example.com" } + ["sender@example.com"]
+        await gmail.add(try organizationMessage("sent", labels: ["SENT"], thread: "outgoing",
+            sender: "Me <me@example.com>", recipients: recipients.joined(separator: ", ")))
+        await gmail.setRecentPages([try organizationPage(["list1", "list2", "sent"],
+            threads: ["list1": "first", "list2": "second", "sent": "outgoing"])])
+        let samples = try await engine.organizationSamples()
+        let sent = try #require(samples.messages.first { $0.isSent })
+        #expect(sent.recipients == recipients)
+        #expect(samples.messages.filter { !$0.isSent }.allSatisfy { $0.hasMailingListHeaders })
+        let category = OrganizationApplicationCategory(id: "news", name: "Newsletters", kind: .topic,
+            messageIDs: ["list1", "list2"], ruleSenders: ["sender@example.com"])
+        await #expect(throws: OrganizationApplicationError.unsafeRule) {
+            try await engine.applyOrganization(categories: [category], samples: samples)
+        }
+        #expect(try await cache.read { try $0.pendingActions(accountID: account) }.isEmpty)
+        #expect(await gmail.labelCalls.isEmpty)
+        #expect(await gmail.changes.isEmpty)
+    }
+
     @Test func cancellationAfterMetadataResponseDoesNotCacheOrReturnPrivateSamples() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         await gmail.add(try organizationMessage("held"))
@@ -134,20 +186,23 @@ private actor OrganizationProgressRecorder {
     func append(_ value: MailOrganizationSamplingProgress) { values.append(value) }
 }
 
-private func organizationPage(_ ids: [String], next: String? = nil) throws -> MessageListPage {
-    var object: [String: Any] = ["messages": ids.map { ["id": $0, "threadId": "shared"] }]
+private func organizationPage(_ ids: [String], next: String? = nil, threads: [String: String] = [:]) throws -> MessageListPage {
+    var object: [String: Any] = ["messages": ids.map { ["id": $0, "threadId": threads[$0] ?? "shared"] }]
     object["nextPageToken"] = next
     return try JSONDecoder().decode(MessageListPage.self, from: JSONSerialization.data(withJSONObject: object))
 }
 
 private func organizationMessage(_ id: String, labels: [String] = ["INBOX"], date: Int = 1_000_000,
-                                 subject: String = "Weekly news", snippet: String = "News &amp; updates") throws -> GmailMessage {
+                                 subject: String = "Weekly news", snippet: String = "News &amp; updates",
+                                 thread: String = "shared", sender: String = "Sender <sender@example.com>",
+                                 recipients: String = "Me <me@example.com>",
+                                 extraHeaders: [[String: String]] = []) throws -> GmailMessage {
     let object: [String: Any] = [
-        "id": id, "threadId": "shared", "historyId": "100", "internalDate": String(date),
+        "id": id, "threadId": thread, "historyId": "100", "internalDate": String(date),
         "labelIds": labels, "snippet": snippet,
-        "payload": ["headers": [["name": "From", "value": "Sender <sender@example.com>"],
-                                 ["name": "To", "value": "Me <me@example.com>"],
-                                 ["name": "Subject", "value": subject]]]
+        "payload": ["headers": [["name": "From", "value": sender],
+                                 ["name": "To", "value": recipients],
+                                 ["name": "Subject", "value": subject]] + extraHeaders]
     ]
     return try JSONDecoder().decode(GmailMessage.self, from: JSONSerialization.data(withJSONObject: object))
 }

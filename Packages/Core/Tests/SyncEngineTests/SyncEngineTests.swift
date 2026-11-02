@@ -1486,6 +1486,7 @@ actor FakeGmail: GmailService {
     private var metadataErrors: [String: GmailError] = [:]
     private var omittedMetadataIDs = Set<String>()
     private(set) var metadataRequests: [[String]] = []
+    private(set) var metadataRequestHeaders: [[String]] = []
 
     func add(_ message: GmailMessage, inInbox: Bool = false) {
         messagesByID[message.id] = message
@@ -1584,6 +1585,7 @@ actor FakeGmail: GmailService {
 
     func messages(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailMessage, GmailError>] {
         metadataRequests.append(ids)
+        metadataRequestHeaders.append(metadataHeaders)
         let results = Dictionary(uniqueKeysWithValues: ids.filter { !omittedMetadataIDs.contains($0) }.map { id in
             (id, metadataErrors[id].map { .failure($0) } ?? messagesByID[id].map { .success($0) } ?? Result<GmailMessage, GmailError>.failure(.notFound))
         })

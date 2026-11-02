@@ -4,6 +4,8 @@ import MailStore
 import MessageContent
 
 extension SyncEngine {
+    static let organizationMetadataHeaders = metadataHeaders + ["List-Id", "List-Unsubscribe", "Auto-Submitted"]
+
     /// Reads Gmail's recent listing window across received and sent mail. Gmail
     /// has no explicit sort option; internalDate orders the selected window.
     /// Ordinary message metadata joins the cache for exact-message label overlays.
@@ -73,7 +75,7 @@ extension SyncEngine {
             let responses: [String: Result<GmailMessage, GmailError>]
             do {
                 responses = try await gmail.messages(ids: batch.map(\.id), format: .metadata,
-                                                     metadataHeaders: Self.metadataHeaders)
+                                                     metadataHeaders: Self.organizationMetadataHeaders)
                 try await organizationCheckAccess(isAuthorized)
             } catch {
                 try await organizationCheckAccess(isAuthorized)
@@ -104,14 +106,18 @@ extension SyncEngine {
                     continue
                 }
                 let senders = EmailAddress.parseList(message.header("From") ?? "").filter(\.isValid)
+                // Header bytes are bounded above. Retain all recipients for
+                // correspondence checks; the AI request has separate limits.
                 let recipients = EmailAddress.parseList((message.header("To") ?? "") + "," + (message.header("Cc") ?? ""))
-                    .filter(\.isValid).prefix(20).map(\.normalized)
+                    .filter(\.isValid).map(\.normalized).removingDuplicates()
                 let subject = Self.organizationBound(message.header("Subject") ?? "", bytes: Limits.subjectBytes)
                 let snippet = Self.organizationBound(HTMLEntities.decode(message.snippet ?? ""), bytes: Limits.snippetBytes)
+                let hints = Self.organizationHeaderHints(message)
                 samples.append(.init(messageID: message.id, threadID: message.threadId,
                     sender: senders.count == 1 ? senders[0].normalized : "", recipients: recipients,
                     subject: subject, snippet: snippet, date: message.date,
-                    isSent: labelIDs.contains(SystemLabel.sent), labelIDs: labelIDs))
+                    isSent: labelIDs.contains(SystemLabel.sent), labelIDs: labelIDs,
+                    hasMailingListHeaders: hints.mailingList, isAutomated: hints.automated))
                 updates.append(update)
             }
             processed += batch.count
@@ -143,6 +149,19 @@ extension SyncEngine {
         return .init(accountID: accountID, messages: samples, existingLabels: labels,
                      selectedCount: selected.count, unavailableCount: selected.count - samples.count,
                      isPartial: partial || samples.count < selected.count)
+    }
+
+    private static func organizationHeaderHints(_ message: GmailMessage) -> (mailingList: Bool, automated: Bool) {
+        let headers = message.payload?.headers ?? []
+        let mailingList = headers.contains {
+            ["list-id", "list-unsubscribe"].contains($0.name.lowercased())
+                && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let submitted = headers.filter { $0.name.lowercased() == "auto-submitted" }
+        let token = submitted.first?.value.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+            .first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let automated = submitted.count == 1 && token.map { ["auto-generated", "auto-replied"].contains($0) } == true
+        return (mailingList, automated)
     }
 
     private func organizationReport(

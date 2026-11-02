@@ -43,7 +43,8 @@ enum MailOrganizationBindings {
             let messages = samples.messages.map {
                 OrganizationEmail(id: $0.messageID, threadID: $0.threadID, sender: $0.sender,
                     recipients: $0.recipients, subject: $0.subject, snippet: $0.snippet,
-                    date: $0.date, isSent: $0.isSent, labelNames: $0.labelIDs.compactMap { names[$0] })
+                    date: $0.date, isSent: $0.isSent, labelNames: $0.labelIDs.compactMap { names[$0] },
+                    hasMailingListHeaders: $0.hasMailingListHeaders, isAutomated: $0.isAutomated)
             }
             return try await MailOrganizationAnalyzer(provider: provider).analyze(
                 messages: messages, existingLabelNames: labels.map(\.name), model: modelID)

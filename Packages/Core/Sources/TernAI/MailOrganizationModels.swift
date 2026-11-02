@@ -1,4 +1,5 @@
 import Foundation
+import MailOrganization
 
 /// Metadata and short excerpts from one account. These stay in memory for the review.
 public struct OrganizationEmail: Equatable, Sendable {
@@ -12,12 +13,22 @@ public struct OrganizationEmail: Equatable, Sendable {
     public let date: Date?
     public let isSent: Bool
     public let labelNames: [String]
+    public let hasMailingListHeaders: Bool
+    public let isAutomated: Bool
 
     public init(id: String, threadID: String, sender: String, recipients: [String], subject: String,
-                snippet: String, date: Date?, isSent: Bool, labelNames: [String]) {
+                snippet: String, date: Date?, isSent: Bool, labelNames: [String],
+                hasMailingListHeaders: Bool = false, isAutomated: Bool = false) {
         self.id = id; self.threadID = threadID; self.sender = sender; self.recipients = recipients
         self.subject = subject; self.snippet = snippet; self.date = date; self.isSent = isSent
         self.labelNames = labelNames
+        self.hasMailingListHeaders = hasMailingListHeaders
+        self.isAutomated = isAutomated
+    }
+
+    var evidence: OrganizationMessageEvidence {
+        .init(id: id, threadID: threadID, sender: sender, recipients: recipients, date: date,
+              isSent: isSent, hasMailingListHeaders: hasMailingListHeaders, isAutomated: isAutomated)
     }
 }
 
