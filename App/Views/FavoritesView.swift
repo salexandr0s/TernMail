@@ -2,6 +2,7 @@ import MailStore
 import SwiftUI
 
 struct FavoritesView: View {
+    @Environment(\.sidebarRowSize) private var sidebarRowSize
     let mailbox: MailboxModel
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
@@ -40,11 +41,21 @@ struct FavoritesView: View {
         let isExpanded = expanded.ids.contains(box.id)
         let canExpand = accounts(for: box).count > 1
         HStack(spacing: Tokens.Space.s1) {
-            // With several accounts, every favorite keeps the chevron's width so titles line up.
-            if mailbox.presentedAccounts.count > 1 {
-                SidebarDisclosureChevron(isExpanded: canExpand && isExpanded, isHovered: canExpand && hoveredBox == box)
+            Label {
+                Text(title(favorite)).lineLimit(1)
+            } icon: {
+                let scale = Tokens.Control.sidebarIconScale(sidebarRowSize)
+                Image(systemName: symbol(favorite))
+                    .font(.system(size: Tokens.Control.icon * scale))
+                    .imageScale(.medium)
+                    .foregroundStyle(mailbox.sidebarSelection == box ? .primary : color(favorite))
+                    .frame(width: Tokens.Space.s5 * scale)
             }
-            Label(title(favorite), systemImage: symbol(favorite)).lineLimit(1)
+            Spacer(minLength: Tokens.Space.s1)
+            if canExpand {
+                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: hoveredBox == box)
+                    .padding(.trailing, Tokens.Space.s2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -61,6 +72,7 @@ struct FavoritesView: View {
             }
         }
         .accessibilityLabel(title(favorite))
+        .help(title(favorite))
         .accessibilityValue(canExpand ? (isExpanded ? "Expanded" : "Collapsed") : "")
         .contextMenu {
             MailboxContextMenu(mailbox: mailbox, box: box, isSystemMailbox: favorite.target.isSystemMailbox)
@@ -81,7 +93,7 @@ struct FavoritesView: View {
                 } icon: {
                     Image(systemName: symbol(favorite)).foregroundStyle(accountColor(owner.account.id))
                 }
-                    .lineLimit(1).padding(.leading, Tokens.Space.s8)
+                    .lineLimit(1).padding(.leading, Tokens.Space.s4)
                     .help(owner.account.email)
                     .badge(mailbox.sidebarBadgeCount(accountBox))
                     .conversationDropTarget(accountBox, mailbox: mailbox)
@@ -109,7 +121,7 @@ struct FavoritesView: View {
 
     private func title(_ favorite: MailFavorite) -> String {
         switch favorite.target {
-        case .mailbox(let label, _): return SystemMailbox.all.first { $0.id == label }?.title ?? label
+        case .mailbox(let label, _): return SystemMailbox(labelID: label).title
         case .label(let account, let label): return mailbox.account(id: account)?.labels.first { $0.id == label }?.title ?? "Missing Label"
         case .savedSearch(let id): return mailbox.navigation.searches.first { $0.id == id }?.name ?? "Saved Search"
         }
@@ -117,10 +129,24 @@ struct FavoritesView: View {
 
     private func symbol(_ favorite: MailFavorite) -> String {
         switch favorite.target {
-        case .mailbox(let label, _): SystemMailbox.all.first { $0.id == label }?.systemImage ?? "tray"
+        case .mailbox(let label, _): return SystemMailbox(labelID: label).systemImage
         case .label(let account, let label):
-            mailbox.account(id: account)?.labels.first { $0.id == label }?.isSystem == true ? SystemMailbox(labelID: label).systemImage : "tag"
-        case .savedSearch: "magnifyingglass"
+            guard let record = mailbox.account(id: account)?.labels.first(where: { $0.id == label }) else { return "tag" }
+            if record.isSystem { return SystemMailbox(labelID: label).systemImage }
+            let icon = LabelAppearance.shared.icon(for: record)
+            return icon == "tag" && Color(gmailHex: record.backgroundColor) != nil ? "tag.fill" : icon
+        case .savedSearch: return "magnifyingglass"
+        }
+    }
+
+    private func color(_ favorite: MailFavorite) -> Color {
+        switch favorite.target {
+        case .mailbox(let label, _): SystemMailbox(labelID: label).color
+        case .label(let account, let label):
+            if let record = mailbox.account(id: account)?.labels.first(where: { $0.id == label }) {
+                record.isSystem ? SystemMailbox(labelID: label).color : Color(gmailHex: record.backgroundColor) ?? .secondary
+            } else { .secondary }
+        case .savedSearch: .secondary
         }
     }
 
@@ -183,7 +209,7 @@ struct InboxCategoryRows: View {
         ForEach(InboxCategory.allCases.filter { mailbox.accountPresentation[accountID]?.inboxCategories.contains($0) == true }, id: \.rawValue) { category in
             let box = SystemMailbox(labelID: category.labelID)
             Label(box.title, systemImage: box.systemImage)
-                .padding(.leading, Tokens.Space.s12)
+                .padding(.leading, Tokens.Space.s8)
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
                 .tag(MailboxID.account(accountID, category.labelID))
         }
