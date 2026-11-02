@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// The small bar leaves the message editable. Its popover holds longer replies
