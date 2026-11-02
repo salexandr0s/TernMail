@@ -266,7 +266,7 @@ import TernAI
         #expect(!fixture.model.canRun(.summarizeThread))
     }
 
-    @Test(arguments: [AssistantSuggestion.awaitingReplies, .priorities, .followUps, .recentMail])
+    @Test(arguments: [AssistantSuggestion.awaitingReplies, .tasksFromMail, .eventsFromMail, .priorities, .followUps, .recentMail])
     func suggestionsSendImmediatelyWithoutWideningTheActiveScope(_ suggestion: AssistantSuggestion) async throws {
         let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Selected priorities.")), .complete(Self.answer("Awaiting replies."))])
         let fixture = try Fixture(provider: provider)
@@ -301,6 +301,56 @@ import TernAI
         fixture.model.run(suggestion)
         #expect(await provider.requests.count == 2)
         #expect(fixture.model.enabledAccountIDs == ["a"])
+    }
+
+    @Test func structuredResultsSurviveAnEmptyAnswerAndLoseActionsWhenAccessChanges() async throws {
+        let source = Self.source("a")
+        let evidence = "Send the proposal by November 6. Meet on November 9 at 10:00 UTC."
+        let read = AIToolCall(id: "read", namespace: "tern", name: "read_thread", arguments: "{}")
+        let tasks = AIToolCall(id: "tasks", namespace: "tern", name: "present_tasks", arguments: try AIJSON.object([
+            "tasks": .array([.object(["source_id": .string(source.id), "title": .string("Send the proposal"),
+                "owner": .null, "notes": .null, "due_date": .string("2026-11-06"), "evidence": .string(evidence)])])
+        ]).jsonString())
+        let events = AIToolCall(id: "events", namespace: "tern", name: "present_events", arguments: try AIJSON.object([
+            "events": .array([.object(["source_id": .string(source.id), "proposal": .object([
+                "title": .string("Proposal meeting"), "start": .string("2026-11-09T10:00:00Z"),
+                "end": .null, "all_day": .bool(false), "time_zone": .string("UTC"),
+                "location": .null, "notes": .null, "evidence": .string(evidence), "uncertainties": .array([])
+            ])])])
+        ]).jsonString())
+        // Reads and presentation may share one provider batch; only accepted
+        // read results can back subsequent cards.
+        let calls = [read, tasks, events]
+        let response = AIResponse(output: calls.flatMap { Self.callResponse($0).output }, text: "", toolCalls: calls)
+        let provider = AssistantProviderFixture(replies: [.complete(response), .complete(Self.emptyAnswer())])
+        var underlyingCalls: [String] = []
+        let fixture = try Fixture(provider: provider, execute: { call in
+            underlyingCalls.append(call.name)
+            return .init(data: .object(["account_id": .string("a"), "thread_id": .string("t"),
+                "messages": .array([.object(["message_id": .string("m"), "thread_id": .string("t"), "text": .string(evidence)])])]),
+                sources: [source])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show my tasks and events")
+        await fixture.model.waitForCurrentTurn()
+        let message = try #require(fixture.model.messages.last)
+        #expect(message.state == .completed)
+        #expect(underlyingCalls == ["read_thread"])
+        #expect(message.taskResults.count == 1)
+        #expect(message.eventResults.count == 1)
+        #expect(message.calendarProposals.isEmpty)
+        let task = try #require(message.taskResults.first)
+        let event = try #require(message.eventResults.first)
+        #expect(fixture.model.canUseTaskResult(task))
+        #expect(fixture.model.canUseEventResult(event))
+        #expect(task.request.source?.messageID == "m")
+        #expect(event.canAddToCalendar)
+        fixture.context.revision += 1
+        #expect(!fixture.model.canUseTaskResult(task))
+        #expect(!fixture.model.canUseEventResult(event))
+        fixture.model.refreshAccess()
+        #expect(fixture.model.messages.isEmpty)
     }
 
     @Test func onlyExplicitlyPresentedEmailsBecomeOrderedCards() async throws {
@@ -361,7 +411,7 @@ import TernAI
         await fixture.model.waitForCurrentTurn()
         let requests = await provider.requests
         #expect(requests.count == AssistantModel.maximumRounds)
-        #expect(requests[6].tools.map(\.name) == ["present_emails"])
+        #expect(Set(requests[6].tools.map(\.name)) == ["present_emails", "present_tasks", "present_events"])
         #expect(requests[7].tools.isEmpty)
         #expect(executions == 7)
         #expect(fixture.model.messages.last?.state == .completed)
@@ -374,7 +424,7 @@ import TernAI
         let reads = (0..<22).map { AIToolCall(id: "read-\($0)", namespace: "tern", name: "read_thread", arguments: "{}") }
         let lateDrafts = (0..<2).map { AIToolCall(id: "late-\($0)", namespace: "tern", name: "prepare_draft", arguments: "{}") }
         let calls = [draft] + reads + lateDrafts
-        let present = (0..<2).map { AIToolCall(id: "present-\($0)", namespace: "tern", name: "present_emails", arguments: "{}") }
+        let present = (0..<4).map { AIToolCall(id: "present-\($0)", namespace: "tern", name: "present_emails", arguments: "{}") }
         func batch(_ calls: [AIToolCall]) -> AIResponse {
             .init(output: calls.flatMap { Self.callResponse($0).output }, text: "", toolCalls: calls)
         }
@@ -384,7 +434,7 @@ import TernAI
         var draftCount = 0
         let fixture = try Fixture(provider: provider, execute: { call in
             executions += 1
-            if call.id == "read-21" { throw AttachmentTextReader.ReadError.noPDFText }
+            if call.id == "read-19" { throw AttachmentTextReader.ReadError.noPDFText }
             if call.name == "prepare_draft" {
                 draftCount += 1
                 return .init(data: .object(["draft_id": .string("saved-draft")]), createdDraftID: "saved-draft")
@@ -397,13 +447,13 @@ import TernAI
         await fixture.model.waitForCurrentTurn()
         let requests = await provider.requests
         #expect(requests.count == 3)
-        #expect(requests[1].tools.map(\.name) == ["present_emails"])
+        #expect(Set(requests[1].tools.map(\.name)) == ["present_emails", "present_tasks", "present_events"])
         #expect(requests[2].tools.isEmpty)
         #expect(executions == AssistantModel.maximumToolCalls)
         #expect(draftCount == 1)
         let outputs = requests[2].input.filter { $0["type"]?.stringValue == "function_call_output" }
         #expect(Set(outputs.compactMap { $0["call_id"]?.stringValue }) == Set((calls + present).map(\.id)))
-        for id in ["late-0", "late-1", "present-1"] {
+        for id in ["read-20", "read-21", "late-0", "late-1", "present-3"] {
             let output = try #require(outputs.first { $0["call_id"]?.stringValue == id }?["output"]?.stringValue)
             #expect(try AIJSON.decode(Data(output.utf8))["status"]?.stringValue == "not_run")
         }
@@ -449,7 +499,7 @@ import TernAI
         await fixture.model.waitForCurrentTurn()
         let requests = await provider.requests
         #expect(requests.count == 3)
-        #expect(requests[1].tools.map(\.name) == ["present_emails"])
+        #expect(Set(requests[1].tools.map(\.name)) == ["present_emails", "present_tasks", "present_events"])
         #expect(requests[2].tools.isEmpty)
         #expect(fixture.model.messages.last?.state == (answers ? .completed : .failed))
         #expect((fixture.model.errorMessage == nil) == answers)
@@ -470,7 +520,7 @@ import TernAI
         await fixture.model.waitForCurrentTurn()
         let requests = await provider.requests
         #expect(requests.count == 4)
-        #expect(requests[2].tools.map(\.name) == ["present_emails"])
+        #expect(Set(requests[2].tools.map(\.name)) == ["present_emails", "present_tasks", "present_events"])
         #expect(requests[3].tools.isEmpty)
         #expect(fixture.model.messages.last?.state == .completed)
         #expect(fixture.model.messages.last?.text == preamble + "\n\n" + answer)

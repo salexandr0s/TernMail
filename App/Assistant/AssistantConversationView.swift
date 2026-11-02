@@ -30,6 +30,7 @@ struct AssistantConversationView<Welcome: View>: View {
         let last = model.messages.last
         return AssistantScrollContent(messageCount: model.messages.count, text: last?.text,
                                       emailCount: last?.emailResults.count, draftCount: last?.draftIDs.count,
+                                      taskCount: last?.taskResults.count, eventCount: last?.eventResults.count,
                                       proposalCount: last?.calendarProposals.count,
                                       availabilityCount: last?.availabilityChoices.count,
                                       state: last?.state, status: model.statusText)
@@ -77,7 +78,7 @@ struct AssistantConversationView<Welcome: View>: View {
                              status: model.statusText, canRetry: model.canRetry(message.id),
                              onRetry: { scrollTracking.followLatest(); model.retry(message.id) },
                              onOpenSource: onOpenSource, onOpenSourceInNewWindow: openInNewWindow,
-                             onOpenDraft: onOpenDraft)
+                             onOpenDraft: onOpenDraft, model: model)
         if !message.calendarProposals.isEmpty || !message.availabilityChoices.isEmpty {
             AssistantCalendarActionsView(message: message, model: model)
         }
@@ -182,6 +183,8 @@ private struct AssistantScrollContent: Equatable {
     let text: String?
     let emailCount: Int?
     let draftCount: Int?
+    let taskCount: Int?
+    let eventCount: Int?
     let proposalCount: Int?
     let availabilityCount: Int?
     let state: AssistantMessage.State?

@@ -51,17 +51,22 @@ struct AssistantToolResult: Sendable {
     let sources: [AssistantSource]
     let createdDraftID: String?
     let emailResults: [AssistantEmailResult]
+    let taskResults: [AssistantTaskResult]
+    let eventResults: [AssistantEventResult]
     let calendarProposals: [AssistantCalendarProposal]
     let availabilityChoices: [AssistantAvailabilityChoice]
     let draftStyleNote: String?
 
     init(data: AIJSON, sources: [AssistantSource] = [], createdDraftID: String? = nil,
          emailResults: [AssistantEmailResult] = [], calendarProposals: [AssistantCalendarProposal] = [],
-         availabilityChoices: [AssistantAvailabilityChoice] = [], draftStyleNote: String? = nil) {
+         availabilityChoices: [AssistantAvailabilityChoice] = [], draftStyleNote: String? = nil,
+         taskResults: [AssistantTaskResult] = [], eventResults: [AssistantEventResult] = []) {
         self.data = data
         self.sources = sources
         self.createdDraftID = createdDraftID
         self.emailResults = emailResults
+        self.taskResults = taskResults
+        self.eventResults = eventResults
         self.calendarProposals = calendarProposals
         self.availabilityChoices = availabilityChoices
         self.draftStyleNote = draftStyleNote

@@ -55,16 +55,57 @@ struct AssistantMarkdownTests {
 
     @Test func preservesTableCellBoundariesAcrossInlineFormatting() throws {
         let blocks = AssistantMarkdown.parse("""
-        | Sender | Status |
-        | --- | --- |
-        | **Alex** Kim | Waiting |
+        | Sender | Due | Status |
+        | --- | --- | --- |
+        | **Alex** Kim | | Waiting |
+        | | Friday | |
         """)
         let table = try #require(blocks.first)
 
         #expect(table.kind == .table)
-        #expect(table.rows.count == 2)
+        #expect(table.rows.count == 3)
         #expect(table.rows.first?.isHeader == true)
-        #expect(table.rows.last?.cells.map { String($0.characters) } == ["Alex Kim", "Waiting"])
+        #expect(table.rows[1].cells.map { String($0.characters) } == ["Alex Kim", "", "Waiting"])
+        #expect(table.rows.last?.cells.map { String($0.characters) } == ["", "Friday", ""])
+    }
+
+    @Test func checklistsPreserveCompletionFormattingAndLiteralBrackets() throws {
+        let markdown = """
+        - [ ] Read **the proposal**
+          - [x] Request the estimate
+        - [X] Reply to Alex
+        - \\[x] Literal brackets
+        - `[ ]` Code sample
+
+        [ ] A paragraph, not a task
+        """
+        let blocks = AssistantMarkdown.parse(markdown)
+        let tasks = blocks.filter { $0.isTaskCompleted != nil }
+        #expect(tasks.map(\.isTaskCompleted) == [false, true, true])
+        #expect(tasks.map { String($0.text.characters) } == ["Read the proposal", "Request the estimate", "Reply to Alex"])
+        #expect(tasks[1].listDepth == 2)
+        #expect(tasks[0].text.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+        #expect(blocks.filter { $0.isTaskCompleted == nil }.map { String($0.text.characters) } == [
+            "[x] Literal brackets", "[ ] Code sample", "[ ] A paragraph, not a task"
+        ])
+        #expect(AssistantMarkdown.plainText(markdown) == "☐ Read the proposal\n\t☑ Request the estimate\n☑ Reply to Alex\n• [x] Literal brackets\n• [ ] Code sample\n\n[ ] A paragraph, not a task")
+    }
+
+    @Test func continuedListParagraphsDoNotBecomeAdditionalTasks() {
+        let markdown = """
+        - [ ] Send the proposal
+
+          Include the estimate.
+
+          - Check the dates
+
+          [x] This is a continuation, not a second task.
+        """
+        let blocks = AssistantMarkdown.parse(markdown)
+        #expect(blocks.filter { $0.marker != nil }.count == 2)
+        #expect(blocks.filter(\.isListContinuation).count == 2)
+        #expect(blocks.filter { $0.isTaskCompleted != nil }.count == 1)
+        #expect(AssistantMarkdown.plainText(markdown) == "☐ Send the proposal\n\n\tInclude the estimate.\n\t• Check the dates\n\n\t[x] This is a continuation, not a second task.")
     }
 
     @Test func onlyClosedSupportedMermaidFencesBecomeDiagrams() throws {

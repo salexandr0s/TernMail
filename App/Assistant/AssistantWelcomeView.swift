@@ -107,6 +107,8 @@ struct AssistantWelcomeView: View {
     private func detail(for suggestion: AssistantSuggestion) -> String {
         switch suggestion {
         case .awaitingReplies: "Unanswered questions and requests, urgent first"
+        case .tasksFromMail: "Open tasks and due dates, ready for your task list"
+        case .eventsFromMail: "Dates, times, and events to add to Calendar"
         case .priorities: "What needs doing and when it is due"
         case .followUps: "People you are waiting to hear back from"
         case .recentMail: "Important updates and decisions from the past week"

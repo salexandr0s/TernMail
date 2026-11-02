@@ -5,8 +5,19 @@ extension GoogleTasksModel {
     /// Email additions always use the email's account, even if another account
     /// is visible. A list selection is captured before the first suspension.
     @discardableResult
-    func add(_ request: TaskCreationRequest, retryAfterReview: Bool = false) async -> Bool {
+    func add(_ request: TaskCreationRequest, retryAfterReview: Bool = false,
+             isAuthorized: @MainActor () -> Bool = { true }) async -> Bool {
         guard !isCreating, !stopped else { return false }
+        func checkAuthorization() -> Bool {
+            guard isAuthorized() else {
+                errorMessage = "Assistant access changed. Close this review and start again."
+                if uncertainReferences[request.reference] == nil,
+                   pendingCreation?.reference == request.reference { pendingCreation = nil }
+                return false
+            }
+            return true
+        }
+        guard checkAuthorization() else { return false }
         let preferredAccount = request.source?.accountID ?? request.accountID ?? selectedAccountID
         let preferredList = request.listID ?? preferredAccount.flatMap { defaults.string(forKey: listKey($0)) }
         let wasUncertain = uncertainReferences[request.reference] != nil
@@ -24,6 +35,7 @@ extension GoogleTasksModel {
             }
         }
         await refreshAccounts()
+        guard checkAuthorization() else { return false }
         guard !stopped, let accountID = preferredAccount ?? selectedAccountID,
               let account = accounts.first(where: { $0.id == accountID }) else {
             errorMessage = "The email's account is no longer available."
@@ -41,15 +53,15 @@ extension GoogleTasksModel {
         do {
             let draft = try request.draft(email: account.email)
             let availableLists = try await client.allTaskLists()
-            guard validAccount(accountID, access: access) else { return false }
-            guard let destination = availableLists.first(where: { $0.id == preferredList }) ?? availableLists.first else {
-                throw GoogleTasksModelError.noLists
-            }
-            pendingCreation?.listID = destination.id
+            guard checkAuthorization(), validAccount(accountID, access: access) else { return false }
+            guard !availableLists.isEmpty else { throw GoogleTasksModelError.noLists }
+            let destination = availableLists.first(where: { $0.id == preferredList })
+                ?? (request.listID == nil ? availableLists.first : nil)
+            pendingCreation?.listID = request.listID ?? destination?.id
             // Search every list: a task may have been moved in Google's app.
             for list in availableLists {
                 let existing = try await client.allTasks(listID: list.id)
-                guard validAccount(accountID, access: access) else { return false }
+                guard checkAuthorization(), validAccount(accountID, access: access) else { return false }
                 if existing.contains(where: { ($0.notes ?? "").components(separatedBy: .newlines).contains(request.marker) }) {
                     showDestination(accountID: accountID, lists: availableLists, listID: list.id, tasks: existing)
                     reconcileMarkers(existing, accountID: accountID, listID: list.id)
@@ -58,17 +70,23 @@ extension GoogleTasksModel {
                     return true
                 }
             }
+            guard let destination else {
+                errorMessage = "The selected task list is no longer available. Reload lists and choose another."
+                return false
+            }
             guard uncertainReferences[request.reference] == nil || retryAfterReview else {
                 errorMessage = "Google hasn't confirmed whether this task was added. Check Google Tasks before adding it again."
                 return false
             }
-            guard validAccount(accountID, access: access), !Task.isCancelled else { return false }
+            guard checkAuthorization(), validAccount(accountID, access: access), !Task.isCancelled else { return false }
             // Persist before sending: quitting or losing the response must never
             // turn the next click into an unreviewed duplicate POST.
             uncertainReferences[request.reference] = accountID
             defaults.set(uncertainReferences, forKey: Self.uncertaintyKey)
             beganInsert = true
             let created = try await client.insertTask(listID: destination.id, draft: draft)
+            // The explicit save has already reached Google. Revoking assistant
+            // access now must not hide its confirmed outcome or permit a retry.
             guard validAccount(accountID, access: access) else { return false }
             creationStates[request.reference] = .added
             confirmedTasks[request.reference] = (GoogleTaskLocation(accountID: accountID, listID: destination.id), created.id)

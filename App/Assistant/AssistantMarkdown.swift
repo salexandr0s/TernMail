@@ -17,7 +17,10 @@ enum AssistantMarkdown {
         var language: String?
         var marker: String?
         var listDepth = 0
+        var isListContinuation = false
+        var isTaskCompleted: Bool?
         var quoteDepth = 0
+        var tableColumnCount = 0
         var rows: [Row] = []
         var diagram: AssistantDiagram?
     }
@@ -26,11 +29,12 @@ enum AssistantMarkdown {
     static func parse(_ input: String, isBounded: Bool = true) -> [Block] {
         let bounded = isBounded ? String(input.prefix(131_072)) : input
         guard let document = try? AttributedString(markdown: bounded, options: .init(
-            interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible
+            interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible,
+            appliesSourcePositionAttributes: true
         )) else { return [Block(id: 0, text: AttributedString(bounded))] }
         var blocks: [Block] = []
         var activeID: Int?
-        var activeCellID: Int?
+        var seenListItems = Set<Int>()
         for run in document.runs {
             let components = run.presentationIntent?.components ?? []
             let tableID = components.first { if case .table = $0.kind { true } else { false } }?.identity
@@ -39,6 +43,7 @@ enum AssistantMarkdown {
             piece.link = nil
             piece.imageURL = nil
             piece.presentationIntent = nil
+            piece.markdownSourcePosition = nil
             if run.inlinePresentationIntent?.contains(.code) == true {
                 piece.font = .system(.body, design: .monospaced)
             }
@@ -47,9 +52,22 @@ enum AssistantMarkdown {
                     blocks.append(Block(id: -1, text: AttributedString("Response too long to format. Use Copy response to read the full text.")))
                     break
                 }
-                blocks.append(makeBlock(id: identity, components: components, isTable: tableID != nil))
+                var block = makeBlock(id: identity, components: components, isTable: tableID != nil)
+                if let listItem = components.first(where: { if case .listItem = $0.kind { true } else { false } }) {
+                    block.isListContinuation = !seenListItems.insert(listItem.identity).inserted
+                    if block.isListContinuation { block.marker = nil }
+                }
+                if block.kind == .paragraph, block.marker != nil,
+                   run.inlinePresentationIntent?.contains(.code) != true,
+                   piece.characters.count >= 4,
+                   let position = run.markdownSourcePosition, let range = Range(position, in: bounded),
+                   let completed = taskState(in: bounded[range]) {
+                    block.isTaskCompleted = completed
+                    let end = piece.characters.index(piece.startIndex, offsetBy: 4)
+                    piece.removeSubrange(piece.startIndex..<end)
+                }
+                blocks.append(block)
                 activeID = identity
-                activeCellID = nil
             }
             guard let index = blocks.indices.last else { continue }
             if tableID != nil {
@@ -60,17 +78,14 @@ enum AssistantMarkdown {
                 if blocks[index].rows.last?.id != rowID {
                     let isHeader: Bool
                     if case .tableHeaderRow = row?.kind { isHeader = true } else { isHeader = false }
-                    blocks[index].rows.append(Row(id: rowID, isHeader: isHeader, cells: []))
-                    activeCellID = nil
+                    blocks[index].rows.append(Row(id: rowID, isHeader: isHeader,
+                        cells: Array(repeating: AttributedString(), count: blocks[index].tableColumnCount)))
                 }
                 guard let rowIndex = blocks[index].rows.indices.last else { continue }
-                let cellID = components.first?.identity ?? rowID
-                if activeCellID != cellID {
-                    blocks[index].rows[rowIndex].cells.append(piece)
-                    activeCellID = cellID
-                } else if let cellIndex = blocks[index].rows[rowIndex].cells.indices.last {
-                    blocks[index].rows[rowIndex].cells[cellIndex].append(piece)
-                }
+                guard let cell = components.first(where: { if case .tableCell = $0.kind { true } else { false } }),
+                      case .tableCell(let column) = cell.kind,
+                      blocks[index].rows[rowIndex].cells.indices.contains(column) else { continue }
+                blocks[index].rows[rowIndex].cells[column].append(piece)
             } else {
                 blocks[index].text.append(piece)
             }
@@ -89,6 +104,18 @@ enum AssistantMarkdown {
             blocks.append(Block(id: -2, text: AttributedString("Response shortened for display. Copy response to read the full text.")))
         }
         return blocks
+    }
+
+    /// Check the source as well as the parsed text so escaped brackets and code
+    /// stay literal. A checkbox is only recognized at the start of a list item.
+    private static func taskState(in source: Substring) -> Bool? {
+        let prefix = source.prefix(4)
+        guard prefix.count == 4, prefix.last?.isWhitespace == true else { return nil }
+        switch prefix.prefix(3) {
+        case "[ ]": return false
+        case "[x]", "[X]": return true
+        default: return nil
+        }
     }
 
     /// Foundation accepts an unfinished fence as a code block. Wait for a real
@@ -117,7 +144,13 @@ enum AssistantMarkdown {
 
     private static func makeBlock(id: Int, components: [PresentationIntent.IntentType], isTable: Bool) -> Block {
         var block = Block(id: id)
-        if isTable { block.kind = .table; return block }
+        if isTable {
+            block.kind = .table
+            for component in components {
+                if case .table(let columns) = component.kind { block.tableColumnCount = columns.count }
+            }
+            return block
+        }
         var ordinal: Int?
         var ordered: Bool?
         for component in components {

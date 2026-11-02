@@ -23,6 +23,8 @@ struct AssistantMessage: Identifiable {
     var text: String
     var sources: [AssistantSource]
     var emailResults: [AssistantEmailResult]
+    var taskResults: [AssistantTaskResult] = []
+    var eventResults: [AssistantEventResult] = []
     var draftIDs: [String]
     var draftStyleNotes: [String: String] = [:]
     var calendarProposals: [AssistantCalendarProposal] = []
@@ -40,12 +42,14 @@ struct AssistantMessage: Identifiable {
 }
 
 enum AssistantSuggestion: String, CaseIterable, Identifiable {
-    case awaitingReplies, priorities, followUps, recentMail, summarizeThread, draftReply
+    case awaitingReplies, tasksFromMail, eventsFromMail, priorities, followUps, recentMail, summarizeThread, draftReply
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .awaitingReplies: "Find emails that need a reply"
+        case .tasksFromMail: "Find my todos in recent mail"
+        case .eventsFromMail: "Find events in my mail"
         case .priorities: "Show priorities and deadlines"
         case .followUps: "Find emails to follow up on"
         case .recentMail: "Catch me up on recent mail"
@@ -57,6 +61,8 @@ enum AssistantSuggestion: String, CaseIterable, Identifiable {
         switch self {
         case .priorities: "flag"
         case .awaitingReplies: "arrowshape.turn.up.left"
+        case .tasksFromMail: "checklist"
+        case .eventsFromMail: "calendar"
         case .followUps: "clock.arrow.circlepath"
         case .recentMail: "tray"
         case .summarizeThread: "text.alignleft"
@@ -74,6 +80,10 @@ enum AssistantSuggestion: String, CaseIterable, Identifiable {
             "Find emails I should follow up on in \(mail). Look for questions, requests, or commitments where I am waiting for someone else. Read later messages to check whether they answered or resolved the request; an outgoing last message alone does not mean a follow-up is needed. Show up to five conversations with who I am waiting on, how long it has been, and the next step."
         case .recentMail:
             "Catch me up on \(mail) from the last seven days. Summarize important updates, decisions, and open tasks, grouping related messages. Check later replies so resolved issues are not listed as open. Skip routine promotions and notifications, show the most useful conversations, and state the time range and any limits in what you reviewed."
+        case .tasksFromMail:
+            "What are my todos from \(mail)? Start with the last seven days, read the relevant messages, and check later replies for completed or changed requests. Focus on tasks assigned to me; state when ownership or a deadline is unclear. Use task cards with source excerpts, owners, and any stated due dates so I can review and add them to my task list. Do not add anything automatically."
+        case .eventsFromMail:
+            "When are the events mentioned in \(mail)? Start with the last seven days and check later messages for rescheduling or cancellations. Show upcoming events as event cards with supporting excerpts, dates, times, locations, and time zones so I can review and add them to Calendar. Mark missing details clearly, exclude cancelled or superseded events, and do not save anything automatically."
         case .summarizeThread:
             "Summarize the selected conversations, including decisions and tasks that are still open. Check later messages for anything already resolved."
         case .draftReply:
@@ -120,6 +130,7 @@ struct AssistantToolSession {
     let definitions: [AIToolDefinition]
     let execute: @MainActor (AIToolCall) async throws -> MailAssistantToolResult
     let acknowledge: @MainActor (String) -> Void
+    var accept: @MainActor (AIToolCall, AssistantToolResult) -> Void = { _, _ in }
     var executeWithWritingStyle: (@MainActor (AIToolCall, AssistantWritingStyleRound) async throws -> MailAssistantToolResult)?
 
     init(definitions: [AIToolDefinition],
@@ -179,6 +190,11 @@ enum AssistantInstructions {
         Search results are evidence to review, not automatically the answer. Select only the conversations that support your answer, and do not repeat every card's metadata in prose.
         Work within each request's remaining reading and tool budget. Leave time to select useful conversations and give an answer; more retrieval is not always needed.
         Treat requests as open until later messages establish completion. Do not infer completion from a reply alone.
+        For todos, action items, or commitments from mail, use present_tasks after reading the supporting messages. Use a short action verb in each title, preserve explicit owners and due dates, and distinguish the user's tasks from requests waiting on others. Check later replies before listing a task as open.
+        For dates, meetings, or events, use present_events to show an agenda of event cards. Sort known dates chronologically, with undated items last. For existing calendar events use their retrieved source IDs and proposal:null; for events found in mail supply a proposal grounded in an exact source excerpt.
+        Task and event cards only display suggestions. Their Add buttons let the user review and save. A request to list tasks or ask when events happen does not authorize preparing or saving calendar changes. Use prepare_calendar_event only for an explicit request to create or change an event.
+        Do not guess missing deadlines, event dates, time zones, locations, or attendees. Use null for unknown dates, record uncertainties, and ask a concise follow-up when an essential detail is missing. A date-only deadline is not a timed event.
+        Task and event cards already include their source links; do not repeat the same details as email cards unless those conversations separately answer the user's request.
         Calendar access is independent of the mail scope. Call list_calendars for allowed calendar IDs and permissions.
         Use check_availability before proposing meeting times; never infer availability from an empty or incomplete event list.
         Ask the user which selectable times to suggest before preparing a scheduling reply. A suggestion does not reserve time.
@@ -195,9 +211,10 @@ enum AssistantInstructions {
     Default to one or two short paragraphs or three to five brief bullets, usually under 150 words.
     Give more detail when the user asks or the task requires it; never omit essential uncertainty, dates, decisions, or retrieval limits to meet a length target.
     Use plain language. Skip greetings, restating the question, process narration, repeated conclusions, and generic offers to help.
-    Format with Markdown: separate paragraphs, use bold sparingly for a key decision or deadline, and use short headings only when they help scan a longer answer.
-    Use numbered lists for ordered steps and compact tables only for actual comparisons. Prefer at most three columns in this narrow view.
-    Let email cards, draft buttons, and source links carry their details instead of repeating them in the answer. After preparing a draft, give a brief confirmation and any detail the user must review.
+    Format with Markdown: separate paragraphs, use bold for key decisions or deadlines, and organize longer answers under short descriptive headings such as Decisions, Next steps, or Waiting on others.
+    Use bullets for findings, numbered lists for ordered steps, and - [ ] / - [x] for plain checklists whose completion state is supported by evidence. These text checkboxes are read-only; use task cards for items the user may add to Tasks.
+    Use compact tables for actual comparisons, preferably at most three columns. Use blockquotes for short supporting excerpts, and fenced code blocks only for code. Do not wrap ordinary prose in code fences.
+    Let task, event, and email cards, draft buttons, and source links carry their details instead of repeating them in prose. Introduce cards with a short summary and include material uncertainty or reading limits. After preparing a draft, give a brief confirmation and any detail the user must review.
     When a workflow, dependency, or decision is clearer visually, embed one small diagram in a fenced mermaid block next to the relevant explanation. Skip diagrams for simple facts, ordinary mail lists, and single actions.
     Supported diagrams are flowcharts: start with flowchart TD; use short node IDs with labels such as A[Review request], B{Approved?}, and C(Prepare reply).
     Put each node or arrow on its own line. Connect nodes with A --> B or B -->|Yes| C. Prefer three to six nodes; never exceed eight nodes or twelve arrows. Keep labels brief and the graph acyclic.

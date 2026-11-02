@@ -101,7 +101,7 @@ final class AssistantModel {
     var availableAccounts: [AccountRecord] { context().accounts }
 
     var suggestions: [AssistantSuggestion] {
-        [.awaitingReplies, .priorities, .followUps, .recentMail]
+        [.awaitingReplies, .tasksFromMail, .eventsFromMail, .priorities, .followUps, .recentMail]
     }
 
     var contextualSuggestions: [AssistantSuggestion] {
@@ -339,6 +339,28 @@ final class AssistantModel {
         app?.calendar.openProposal(proposal.id)
     }
 
+    var taskDestinationModel: GoogleTasksModel? { app?.tasks }
+
+    func canUseTaskResult(_ result: AssistantTaskResult) -> Bool {
+        observedScope == scope(in: context()) && scope(in: context()).allows(result.source)
+            && messages.contains { $0.taskResults.contains(result) }
+    }
+
+    func canUseEventResult(_ result: AssistantEventResult) -> Bool {
+        observedScope == scope(in: context()) && scope(in: context()).allows(result.source)
+            && messages.contains { $0.eventResults.contains(result) }
+    }
+
+    func reviewEventResult(_ result: AssistantEventResult) async throws {
+        refreshAccess()
+        guard canUseEventResult(result), let app else { throw AssistantError.accessChanged }
+        let epoch = conversationEpoch
+        try await app.calendar.reviewAssistantEvent(result, isAuthorized: { [weak self] in
+            guard let self else { return false }
+            return conversationEpoch == epoch && canUseEventResult(result)
+        })
+    }
+
     func useAvailabilityChoices(_ choices: [AssistantAvailabilityChoice]) async {
         guard !isRunning, !isCheckingCalendarAvailability, !choices.isEmpty, choices.count <= 6,
               let app else { return }
@@ -551,6 +573,22 @@ final class AssistantModel {
                 return try await tools.execute(call, writingStyleRound: round)
             }
         }
+        let underlying = session
+        let results = AssistantResultTools(scope: snapshot)
+        session = AssistantToolSession(definitions: underlying.definitions + AssistantResultTools.definitions,
+            acknowledge: underlying.acknowledge, execute: { call in
+                if AssistantResultTools.toolNames.contains(call.name) { return try results.execute(call) }
+                return try await underlying.execute(call)
+            })
+        session.executeWithWritingStyle = { call, round in
+            if AssistantResultTools.toolNames.contains(call.name) { return try results.execute(call) }
+            if let execute = underlying.executeWithWritingStyle { return try await execute(call, round) }
+            return try await underlying.execute(call)
+        }
+        session.accept = { call, result in
+            underlying.accept(call, result)
+            results.register(result, from: call)
+        }
         toolSession = session
         return session
     }
@@ -593,14 +631,14 @@ final class AssistantModel {
                 let styleRound = writingStyle.round(accountIDs: snapshot.accountIDs, requestID: turn)
                 let styleInstructions = try styleRound.promptContext()
                 let answerOnly = answerNext || round == Self.maximumRounds - 1
-                let presentationOnly = !answerOnly && (finalizeNext || round >= Self.maximumRounds - 2 || callCount >= Self.maximumToolCalls - 1)
-                let roundDefinitions = answerOnly ? [] : (presentationOnly ? definitions.filter { $0.name == "present_emails" } : definitions)
-                let allowance = answerOnly ? 0 : (presentationOnly ? min(1, Self.maximumToolCalls - callCount) : Self.maximumToolCalls - 1 - callCount)
+                let presentationOnly = !answerOnly && (finalizeNext || round >= Self.maximumRounds - 2 || callCount >= Self.maximumToolCalls - 3)
+                let roundDefinitions = answerOnly ? [] : (presentationOnly ? definitions.filter { Self.presentationToolNames.contains($0.name) } : definitions)
+                let allowance = answerOnly ? 0 : (presentationOnly ? min(3, Self.maximumToolCalls - callCount) : Self.maximumToolCalls - 3 - callCount)
                 let budgetInstructions: String
                 if answerOnly {
                     budgetInstructions = "This is the final response. No tools remain. Answer from completed results and displayed conversations. State any incomplete coverage or skipped operations; never claim a skipped action succeeded."
                 } else if presentationOnly {
-                    budgetInstructions = "Reading and action time is over. Use one present_emails call to select up to five relevant retrieved conversations, then answer from completed results. If no emails are relevant, answer directly. Do not request more reads or actions."
+                    budgetInstructions = "Reading and action time is over. Use up to three presentation calls (present_tasks, present_events, or present_emails) for the relevant completed results, then answer. Do not request more reads or actions. If no cards are useful, answer directly."
                 } else {
                     budgetInstructions = "You have \(Self.maximumRounds - 2 - round) reading rounds and \(allowance) tool calls left before presentation and the final answer. Read at most five promising conversations; use search metadata to choose them. Finish early when you have enough evidence, and mention any incomplete coverage."
                 }
@@ -628,7 +666,7 @@ final class AssistantModel {
                 if response.toolCalls.isEmpty {
                     let visible = messages.first(where: { $0.id == messageID })
                     let hasOutcome = !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (visible.map {
-                        !$0.emailResults.isEmpty || !$0.draftIDs.isEmpty
+                        !$0.emailResults.isEmpty || !$0.draftIDs.isEmpty || !$0.taskResults.isEmpty || !$0.eventResults.isEmpty
                             || !$0.calendarProposals.isEmpty || !$0.availabilityChoices.isEmpty
                     } ?? false)
                     if !hasOutcome {
@@ -665,7 +703,7 @@ final class AssistantModel {
                         continue
                     }
                     try checkpoint(input, pending: Array(response.toolCalls.dropFirst(index)), uncertainDraft: call.name == "prepare_draft" ? call.id : nil)
-                    statusText = call.name == "prepare_draft" ? "Preparing draft…"
+                    statusText = Self.presentationToolNames.contains(call.name) ? "Organizing results…" : call.name == "prepare_draft" ? "Preparing draft…"
                         : (CalendarAssistantTools.definitions.contains(where: { $0.name == call.name }) ? "Checking calendar…" : "Reading mail…")
                     let output: AIJSON
                     var acceptedResult: MailAssistantToolResult?
@@ -679,6 +717,10 @@ final class AssistantModel {
                         guard result.sources.allSatisfy(snapshot.allows),
                               result.emailResults.allSatisfy({ !$0.source.isCalendar && snapshot.allows($0.source) }),
                               result.emailResults.isEmpty || call.name == "present_emails",
+                              result.taskResults.isEmpty || call.name == "present_tasks",
+                              result.eventResults.isEmpty || call.name == "present_events",
+                              result.taskResults.allSatisfy({ snapshot.allows($0.source) && result.sources.contains($0.source) }),
+                              result.eventResults.allSatisfy({ snapshot.allows($0.source) && result.sources.contains($0.source) }),
                               result.calendarProposals.allSatisfy({ $0.accessRevision == snapshot.calendarScope.revision && snapshot.calendarScope.allows($0.calendar) }),
                               result.availabilityChoices.allSatisfy({ $0.accessRevision == snapshot.calendarScope.revision && $0.calendarKeys.allSatisfy { snapshot.calendarScope.allows($0) } })
                         else { throw AssistantError.invalidSource }
@@ -688,6 +730,8 @@ final class AssistantModel {
                             if let id = result.createdDraftID, !message.draftIDs.contains(id) { message.draftIDs.append(id) }
                             if let id = result.createdDraftID, let note = result.draftStyleNote { message.draftStyleNotes[id] = note }
                             if call.name == "present_emails" { message.emailResults = result.emailResults }
+                            if call.name == "present_tasks" { message.taskResults = result.taskResults }
+                            if call.name == "present_events" { message.eventResults = result.eventResults }
                             for proposal in result.calendarProposals where !message.calendarProposals.contains(where: { $0.id == proposal.id }) {
                                 message.calendarProposals.append(proposal)
                             }
@@ -704,7 +748,10 @@ final class AssistantModel {
                     try checkpoint(input, pending: Array(response.toolCalls.dropFirst(index + 1)))
                     // Delivery is accepted only once its outcome is retained.
                     // A cancelled caller leaves its reservation available for retry.
-                    if acceptedResult != nil { tools.acknowledge(call.id) }
+                    if let acceptedResult {
+                        tools.accept(call, acceptedResult)
+                        tools.acknowledge(call.id)
+                    }
                 }
                 if presentationOnly { answerNext = true }
                 statusText = "Thinking…"
@@ -731,6 +778,8 @@ final class AssistantModel {
         guard !earlier.isEmpty, !later.isEmpty else { return earlier + later }
         return earlier + "\n\n" + later
     }
+
+    private static let presentationToolNames = AssistantResultTools.toolNames.union(["present_emails"])
 
     private struct RetryContext {
         let messageID: UUID
@@ -825,6 +874,7 @@ extension AssistantModel {
             try Task.checkCancellation()
             guard isValid() else { throw AssistantError.accessChanged }
             guard result.createdDraftID == nil, result.calendarProposals.isEmpty,
+                  result.taskResults.isEmpty, result.eventResults.isEmpty,
                   result.sources.allSatisfy(snapshot.allows),
                   result.emailResults.allSatisfy({ snapshot.allows($0.source) }),
                   result.availabilityChoices.allSatisfy({ choice in

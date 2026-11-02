@@ -32,7 +32,7 @@ extension AssistantMarkdown {
             let text = richText(of: block, body: body)
             guard text.length > 0 else { continue }
             if let previous {
-                let continuesList = block.listDepth > 0 && previous.listDepth > 0
+                let continuesList = block.listDepth > 0 && previous.listDepth > 0 && !block.isListContinuation
                 output.append(NSAttributedString(string: continuesList ? "\n" : "\n\n", attributes: [.font: body]))
             }
             output.append(text)
@@ -63,9 +63,14 @@ extension AssistantMarkdown {
             return inline(block.text, font: NSFont.preferredFont(forTextStyle: style).adding(.bold))
         case .paragraph:
             let indent = String(repeating: "\t", count: max(block.listDepth - 1, 0))
-            let output = NSMutableAttributedString(string: block.marker.map { "\(indent)\($0) " } ?? "",
-                                                   attributes: [.font: body])
+            let marker = block.isTaskCompleted.map { $0 ? "☑" : "☐" } ?? block.marker
+            let prefix = marker.map { "\(indent)\($0) " } ?? (block.isListContinuation ? indent + "\t" : "")
+            let output = NSMutableAttributedString(string: prefix, attributes: [.font: body])
             output.append(inline(block.text, font: body))
+            if block.isTaskCompleted == true {
+                output.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
+                    range: NSRange(location: prefix.utf16.count, length: output.length - prefix.utf16.count))
+            }
             return output
         }
     }

@@ -7,13 +7,23 @@ Tern uses Sign in with ChatGPT to connect its assistant to your ChatGPT plan. Mo
 1. Open Tern, then **Settings → Assistant**, or **Assistant Options → Assistant Settings…** in the assistant's header.
 2. Choose **Continue with ChatGPT** and finish signing in in your browser. Grant ChatGPT plan usage when offered. An identity-only connection cannot run the assistant.
 3. Enable the mail accounts the assistant may use and choose an available model.
-4. Select a conversation, open the assistant, and ask a question. Change the scope to use the current account or all enabled accounts when needed.
+4. Open the assistant and ask a question. Mail scope starts at **All enabled accounts**. Choose **Mailbox accounts** or **Selected conversations** to narrow it; New Chat keeps your current choice.
 
 Choose a suggestion to ask immediately, or write a request such as “What needs my attention this week?” Suggestions respect the selected scope. Summary and draft suggestions require selected conversations; drafting requires one conversation. Open an email card or source to read the supporting conversation. **Review Draft** opens the normal Tern composer for editing and sending.
 
 The assistant can search mail, read threads, extract supported attachments, and prepare drafts. Search results are paginated and subject to request limits; a single request does not read an entire mailbox. The initial attachment reader supports plain text, CSV, Markdown, JSON, XML, and PDFs with selectable text. Files are limited to 5 MB; extraction is limited to 60,000 characters and 40 PDF pages. Scans need OCR, which is not included.
 
 Broad requests review a bounded selection of conversations. Tern reserves the end of each request for displaying relevant emails and answering from the results already gathered; replies should identify incomplete coverage.
+
+## Tasks and events in responses
+
+Ask “What are my todos from my recent mail?” to get task cards with owners, stated due dates, and supporting email excerpts. **Add to Tasks** opens a review where you can edit the title, notes, and due date and choose a list in the email's account. Saving uses Google Tasks; the card shows **Added to Tasks** after confirmation. If a save response is lost, **Check saved task** opens a review. **Check again** searches for the existing task; **Add Again…** requires explicit confirmation before another addition.
+
+Ask “When are these events?” or use **Find events in my mail** for event cards. Each card shows its date, time zone, location, and source. **Add to Calendar** opens the normal editable calendar review; only its Save action adds the event. Dates that are missing stay marked **Date to be confirmed**, and a missing duration is identified for review. All-day dates retain their calendar day across time zones. Events already retrieved from Calendar offer **Open in Calendar**.
+
+Task and event cards require sources the assistant has read. Reading or listing them does not save tasks, book events, or send invitations. Later replies should be checked for completed tasks, rescheduled meetings, and cancellations. Source excerpts help you verify each result; generated titles and interpretations still need review.
+
+Responses support headings, nested lists, quotes, checklists, tables, code, and small flowcharts. Text checkboxes display reported completion and are read-only; task cards provide the save controls. Tables become labeled rows when the sidebar is narrow. Copying a response includes its task and event details, and copying a checklist preserves its checked state.
 
 ## Write in the compose window
 

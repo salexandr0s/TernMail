@@ -15,7 +15,7 @@ import Testing
         defer { Task { await insert.release(); await refresh.release() } }
         await service.delayInsert(insert, refresh: refresh)
         var request = Self.request("a")
-        request.listID = "removed-list"
+        request.listID = "list"
         let saving = Task { await model.add(request) }
         await insert.waitUntilHeld()
         #expect(model.pendingCreation?.accountID == "a")
@@ -45,6 +45,22 @@ import Testing
         await refresh.release()
         #expect(await saving.value)
         #expect(model.tasks.map(\.id) == [created.id, "existing"])
+    }
+
+    @Test func missingExplicitListFailsWhileAnUnspecifiedListCanUseTheDefault() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        fixture.defaults.set("removed-list", forKey: "googleTasks.selectedList.a")
+        let service = MemoryTasksService()
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        var request = Self.request("a")
+        request.listID = "removed-list"
+        #expect(await model.add(request) == false)
+        #expect(await service.inserts == 0)
+        #expect(model.errorMessage?.contains("Reload lists") == true)
+        request.listID = nil
+        #expect(await model.add(request))
+        #expect(await service.insertLists == ["list"])
     }
 
     @Test func disabledAccountCannotReadOrWriteWithAStillGrantedToken() async throws {
@@ -162,6 +178,46 @@ import Testing
         await gate.release()
         #expect(await add.value == false)
         #expect(await service.inserts == 0)
+    }
+
+    @Test func assistantRevocationBeforeInsertDoesNotLeaveAPendingAddition() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let gate = TasksReadGate()
+        let service = MemoryTasksService(gate: gate)
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        let request = Self.request("a")
+        var authorized = true
+        let add = Task { await model.add(request, isAuthorized: { authorized }) }
+        await gate.waitUntilHeld()
+        authorized = false
+        await gate.release()
+        #expect(await add.value == false)
+        #expect(await service.inserts == 0)
+        #expect(model.pendingCreation == nil)
+        #expect(model.creationState(for: request) == .idle)
+    }
+
+    @Test func assistantRevocationAfterDispatchStillRecordsTheConfirmedTask() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let insert = TasksReadGate(), refresh = TasksReadGate()
+        await service.delayInsert(insert, refresh: refresh)
+        let request = Self.request("a")
+        var authorized = true
+        let add = Task { await model.add(request, isAuthorized: { authorized }) }
+        await insert.waitUntilHeld()
+        authorized = false
+        await insert.release()
+        await refresh.waitUntilHeld()
+        #expect(model.creationState(for: request) == .added)
+        #expect(model.pendingCreation == nil)
+        await refresh.release()
+        #expect(await add.value)
+        #expect(await service.inserts == 1)
     }
 
     @Test func remoteDeletionClearsTheAddedState() async throws {
