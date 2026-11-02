@@ -29,6 +29,9 @@ final class AppModel {
     private(set) var mailbox: MailboxModel?
     @ObservationIgnored private var assistantModel: AssistantModel?
     @ObservationIgnored private var calendarModel: CalendarModel?
+    @ObservationIgnored private var tasksModel: GoogleTasksModel?
+    /// A task created from a detached reader can reveal the main window's sidebar.
+    private(set) var tasksSidebarRequest: UUID?
     private(set) var accountPreferences: AccountPreferencesModel?
     private(set) var mailNotifications: MailNotificationCoordinator?
     private(set) var isResettingCache = false
@@ -304,6 +307,44 @@ final class AppModel {
         let value = CalendarModel(app: self)
         calendarModel = value
         return value
+    }
+
+    var tasks: GoogleTasksModel {
+        if let tasksModel { return tasksModel }
+        let value = GoogleTasksModel(app: self)
+        tasksModel = value
+        return value
+    }
+
+    func showTasks() {
+        showMainWindow()
+        tasksSidebarRequest = UUID()
+    }
+
+    func didShowTasks() { tasksSidebarRequest = nil }
+
+    func tasksAccounts() async throws -> [AccountRecord] {
+        try await accounts?.accounts() ?? []
+    }
+
+    func tasksService(for accountID: String) -> GoogleTasksClient? {
+        guard let session = sessions[accountID], session.isSignedIn,
+              !accountsNeedingSignIn.contains(accountID),
+              let scopes = session.grantedScopes, GoogleScopes.isCovered(.tasks, by: scopes) else { return nil }
+        return GoogleTasksClient(tokens: session)
+    }
+
+    func enableTasks(for accountID: String) async throws {
+        let needsSignIn = sessions[accountID]?.isSignedIn != true || accountsNeedingSignIn.contains(accountID)
+        if needsSignIn {
+            await signInAgain(to: accountID)
+            guard sessions[accountID]?.isSignedIn == true, !accountsNeedingSignIn.contains(accountID) else {
+                throw CancellationError()
+            }
+        }
+        let rejectedGrant = !needsSignIn && tasksModel?.selectedAccountID == accountID && tasksModel?.issue?.needsConnection == true
+        guard let grant = try await enableFeature(.tasks, for: accountID, forceConsent: rejectedGrant) else { throw CancellationError() }
+        guard grant.features.contains(.tasks) else { throw GoogleTasksModelError.unavailable }
     }
 
     func showCalendar() { destination = .calendar }
@@ -617,6 +658,7 @@ final class AppModel {
             let turnedOff = AccountFeature.named(stored?.enabledFeatures ?? []).subtracting(AccountFeature.named(account.enabledFeatures))
             if turnedOff.contains(.contacts) { ContactThumbnailCache.shared.remove(accountID: account.id) }
             if turnedOff.contains(.calendar) { await EmailCalendarPreparation.shared.remove(accountID: account.id) }
+            tasksModel?.invalidateAccount(account.id)
             defer { if !turnedOff.isEmpty { reportTurnedOff(turnedOff, for: account) } }
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
@@ -689,14 +731,14 @@ final class AppModel {
     /// - Throws: `GoogleAuth.AuthError.otherAccount` or
     ///   `.gmailAccessNotGranted`, with the old session kept, and errors from
     ///   Google's page or storing the session.
-    func enableFeature(_ feature: AccountFeature, for accountID: String) async throws -> FeatureGrant? {
+    func enableFeature(_ feature: AccountFeature, for accountID: String, forceConsent: Bool = false) async throws -> FeatureGrant? {
         guard !isSigningIn, let accounts, let session = sessions[accountID], session.isSignedIn else { return nil }
         isSigningIn = true
         defer { isSigningIn = false }
         guard let stored = try await accounts.accounts().first(where: { $0.id == accountID }) else { return nil }
         // Several features use the same full-mail grant. Enabling another
         // covered feature changes local use without another consent screen.
-        if let granted = session.grantedScopes, GoogleScopes.isCovered(feature, by: granted) {
+        if !forceConsent, let granted = session.grantedScopes, GoogleScopes.isCovered(feature, by: granted) {
             return try await changeAccounts(returning: { [self] in
                 guard sessions[accountID] === session, session.isSignedIn else { return nil }
                 guard let updated = try await accounts.updateAccount(id: accountID, { account in
@@ -705,6 +747,7 @@ final class AppModel {
                 }) else { return nil }
                 await refreshInboxUpdates()
                 await calendarModel?.refresh()
+                tasksModel?.invalidateAccount(accountID)
                 return try FeatureGrant(subject: accountID, granted: granted, accountID: accountID,
                     features: AccountFeature.named(updated.enabledFeatures))
             })
@@ -739,6 +782,7 @@ final class AppModel {
                 await EmailCalendarPreparation.shared.remove(accountID: accountID)
             }
             await calendarModel?.refresh()
+            tasksModel?.invalidateAccount(accountID)
             await inboxWatchers.removeValue(forKey: accountID)?.stop()
             await refreshInboxUpdates()
             return user.grant
@@ -758,6 +802,7 @@ final class AppModel {
                 ContactThumbnailCache.shared.remove(accountID: accountID)
                 try await cache.write { tx in try tx.deleteContacts(accountID: accountID) }
             }
+            if feature == .tasks { await tasksModel?.removeAccount(accountID) }
             await refreshInboxUpdates()
             if feature == .calendar {
                 await EmailCalendarPreparation.shared.remove(accountID: accountID)
@@ -932,6 +977,7 @@ final class AppModel {
         }
         assistantModel?.refreshAccess()
         calendarModel?.accessExpired(accountID)
+        tasksModel?.invalidateAccount(accountID)
     }
 
     // MARK: Quitting
@@ -962,6 +1008,7 @@ final class AppModel {
         assistantModel?.stop()
         assistantModel?.connection.cancelSignIn()
         await calendarModel?.stop()
+        tasksModel?.stop()
     }
 
     /// A user can keep Tern open after its final send attempt fails.
@@ -970,6 +1017,7 @@ final class AppModel {
         maintenanceModel?.resume()
         await refreshInboxUpdates()
         await calendarModel?.start()
+        tasksModel?.resume()
         assistantModel?.refreshAccess()
         schedulePreferenceReconciliation()
         mailURLRouter?.resume()
@@ -1105,6 +1153,7 @@ final class AppModel {
         await mailNotifications?.removeAccount(account.id)
         try await accounts.deleteAccount(id: account.id)
         await calendarModel?.removeAccount(account.id)
+        await tasksModel?.removeAccount(account.id)
         await session?.signOut()
         // A session that failed to restore at launch can leave its item behind.
         try? await KeychainStore.delete(account: account.id)

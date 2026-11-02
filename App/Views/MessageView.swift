@@ -178,6 +178,12 @@ struct MessageView: View {
                         onReadable(retained ? .retained : preparationTier, retained ? nil : requiredContentReadyAt)
                     },
                     onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
+                    onAddSelectionToTasks: app.tasks.isCreating ? nil : { text in
+                        guard let request = EmailTaskRequest.selection(text, message: message,
+                            accountEmail: mailbox.account(id: message.record.accountID)?.account.email) else { return }
+                        app.showTasks()
+                        Task { await app.tasks.add(request) }
+                    },
                     onOpenMailLink: { app.mailURLs.receive($0) },
                     onCreate: { finder.register($0, for: message.id) },
                     onDismantle: { finder.unregister($0) })

@@ -20,6 +20,7 @@ struct MessageWebView: NSViewRepresentable {
     var onReadable: (_ retained: Bool) -> Void = { _ in }
     var onHover: (String?) -> Void = { _ in }
     var onSelectionChange: (String) -> Void = { _ in }
+    var onAddSelectionToTasks: ((String) -> Void)?
     /// `mailto:` and `tern:` links stay in Tern; the app's router opens them.
     var onOpenMailLink: (URL) -> Void = { _ in }
     /// The find bar searches the web views that exist; these report each one.
@@ -71,6 +72,7 @@ struct MessageWebView: NSViewRepresentable {
             coordinator?.measure(view)
         }
         view.onOpenLink = { [weak coordinator = context.coordinator] url, behind in coordinator?.open(url, behind: behind) }
+        view.onAddSelectionToTasks = onAddSelectionToTasks
         context.coordinator.setActive(isActive, in: view)
         context.coordinator.load(html, in: view)
         onCreate(view)
@@ -81,6 +83,7 @@ struct MessageWebView: NSViewRepresentable {
         context.coordinator.height = $height
         context.coordinator.onHover = onHover
         context.coordinator.onSelectionChange = onSelectionChange
+        view.onAddSelectionToTasks = onAddSelectionToTasks
         context.coordinator.onOpenMailLink = onOpenMailLink
         context.coordinator.onDismantle = onDismantle
         context.coordinator.onReadable = onReadable
@@ -169,12 +172,14 @@ struct MessageWebView: NSViewRepresentable {
             const link = event.target.closest?.('a[href]'); hover(link?.href ?? '');
           });
           document.addEventListener('mouseleave', () => hover(''));
-          document.addEventListener('selectionchange', () => {
+          const reportSelection = (force = false) => {
             const selection = (getSelection()?.toString() ?? '').slice(0, 100000);
-            if (selection === lastSelection) return;
+            if (!force && selection === lastSelection) return;
             lastSelection = selection;
             send({selection});
-          });
+          };
+          document.addEventListener('selectionchange', () => reportSelection());
+          globalThis.__ternReading = {reportSelection};
         })()
         """ }
 
@@ -211,6 +216,9 @@ struct MessageWebView: NSViewRepresentable {
                 interruptedLoad = view.isLoading
                 view.stopLoading()
             } else {
+                // A retained page keeps its DOM selection while its native
+                // menu snapshot is invalidated. Restore the current selection.
+                view.evaluateJavaScript("globalThis.__ternReading?.reportSelection(true)", in: nil, in: .defaultClient) { _ in }
                 if reportedReadable {
                     let currentRevision = revision
                     Task { [weak self] in
@@ -245,6 +253,7 @@ struct MessageWebView: NSViewRepresentable {
             guard html != loadedHTML else { return }
             guard isActive else { return }
             loadedHTML = html
+            (view as? ContentSizedWebView)?.clearTaskSelection()
             revision += 1
             reportedReadable = false
             needsHeightReport = true
@@ -324,7 +333,11 @@ struct MessageWebView: NSViewRepresentable {
                     (message.webView as? ContentSizedWebView)?.hoveredLink = link.flatMap { URL(string: $0) }
                     onHover(link)
                 }
-                if let selection = value["selection"] as? String { onSelectionChange(String(selection.prefix(100_000))) }
+                if let selection = value["selection"] as? String {
+                    let text = String(selection.prefix(100_000))
+                    (message.webView as? ContentSizedWebView)?.taskSelectionText = text
+                    onSelectionChange(text)
+                }
                 return
             }
             guard message.name == "ternHeight", message.frameInfo.isMainFrame,
@@ -381,6 +394,9 @@ final class ContentSizedWebView: WKWebView {
     var hoveredLink: URL?
     /// Opens a link in front of Tern, or behind it when `behind` is true.
     var onOpenLink: ((_ url: URL, _ behind: Bool) -> Void)?
+    var onAddSelectionToTasks: ((String) -> Void)?
+    var taskSelectionText = ""
+    private var taskSelectionRevision = 0
     private var scrollDirection = ScrollDirection()
     private var isReaderActive = true
 
@@ -393,6 +409,7 @@ final class ContentSizedWebView: WKWebView {
     }
 
     func setReaderActive(_ active: Bool) {
+        if !active { clearTaskSelection() }
         isReaderActive = active
         // WebKit can put focus in an internal descendant instead of this
         // wrapper. Native hiding removes the whole subtree from the key-view
@@ -434,7 +451,40 @@ final class ContentSizedWebView: WKWebView {
                 menu.insertItem(item, at: index)
             }
         }
+        addTaskSelectionItem(to: menu)
         removeStraySeparators(from: menu)
+    }
+
+    /// Freeze the selection while the native menu has focus. An inactive or
+    /// replaced document invalidates that snapshot before it can be used.
+    func addTaskSelectionItem(to menu: NSMenu) {
+        guard isReaderActive, let action = onAddSelectionToTasks else { return }
+        let text = taskSelectionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let item = NSMenuItem(title: "Add to Google Tasks", action: #selector(addSelectionToTasks(_:)), keyEquivalent: "")
+        item.identifier = NSUserInterfaceItemIdentifier("tern.add-selection-to-tasks")
+        item.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: nil)
+        item.target = self
+        item.representedObject = TaskSelection(text: text, revision: taskSelectionRevision, action: action)
+        menu.insertItem(item, at: 0)
+        if menu.items.count > 1 { menu.insertItem(.separator(), at: 1) }
+    }
+
+    func clearTaskSelection() {
+        taskSelectionText = ""
+        taskSelectionRevision += 1
+    }
+
+    private struct TaskSelection {
+        let text: String
+        let revision: Int
+        let action: (String) -> Void
+    }
+
+    @objc private func addSelectionToTasks(_ item: NSMenuItem) {
+        guard isReaderActive, let selection = item.representedObject as? TaskSelection,
+              selection.revision == taskSelectionRevision else { return }
+        selection.action(selection.text)
     }
 
     private func removeStraySeparators(from menu: NSMenu) {

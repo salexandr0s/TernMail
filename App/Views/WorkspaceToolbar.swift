@@ -22,6 +22,8 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     let isAssistantPresented: Bool
     let isAssistantAvailable: Bool
     let onToggleAssistant: () -> Void
+    var isTasksPresented = false
+    var onToggleTasks: () -> Void = {}
 
     private var showsProfile: Bool { section == .mail && accounts?.profiles.isEmpty == false }
     private var compactActions: Bool {
@@ -68,6 +70,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
         WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar, libraryToolbar: library,
             section: section, isFolded: width < Tokens.Layout.searchFoldWidth)
         WorkspaceAssistantToolbar(isAssistantPresented: isAssistantPresented,
-            onToggleAssistant: onToggleAssistant, isAssistantAvailable: isAssistantAvailable)
+            onToggleAssistant: onToggleAssistant, isAssistantAvailable: isAssistantAvailable,
+            isTasksPresented: isTasksPresented, onToggleTasks: onToggleTasks)
     }
 }

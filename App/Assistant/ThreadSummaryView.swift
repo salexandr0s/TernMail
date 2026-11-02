@@ -17,6 +17,7 @@ struct ThreadSummaryView: View {
     @State private var showsSettings = false
     @State private var attempt = 0
     @State private var handledAttempt = 0
+    @Environment(AppModel.self) private var app
 
     private struct LoadIdentity: Equatable {
         let source: ThreadSummaryDisplayState.Source
@@ -40,7 +41,12 @@ struct ThreadSummaryView: View {
                         isRefreshing: loadedIdentity != identity,
                         refreshError: loadedIdentity == identity ? model.errorMessage : nil,
                         onOpenSource: onOpenSource, onRefresh: { attempt += 1 },
-                        onSettings: { showsSettings = true })
+                        onSettings: { showsSettings = true }, tasks: app.tasks,
+                        taskAccountEmail: app.mailbox?.account(id: detail.thread.accountID)?.account.email,
+                        onAddTask: { request in
+                            app.showTasks()
+                            Task { await app.tasks.add(request) }
+                        })
                         .id(identity.source)
                 } else {
                     let error = loadedIdentity == identity ? model.errorMessage : nil
@@ -104,6 +110,9 @@ struct ThreadSummaryContent: View {
     let onOpenSource: (AssistantSource) -> Void
     let onRefresh: () -> Void
     let onSettings: () -> Void
+    var tasks: GoogleTasksModel? = nil
+    var taskAccountEmail: String? = nil
+    var onAddTask: ((TaskCreationRequest) -> Void)? = nil
 
     private enum Section: String, Hashable { case tasks, decisions }
 
@@ -364,6 +373,11 @@ struct ThreadSummaryContent: View {
                         VStack(alignment: .leading, spacing: Tokens.Space.s1) { taskMetadata(task) }
                     }
                     .font(.caption).foregroundStyle(.secondary)
+                }
+                if let tasks, let onAddTask {
+                    SummaryTaskAddButton(request: EmailTaskRequest.suggestion(task, report: report,
+                        detail: detail, accountEmail: taskAccountEmail), model: tasks, onAdd: onAddTask)
+                        .accessibilityIdentifier("summary-task-add-\(index)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
