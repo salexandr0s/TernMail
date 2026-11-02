@@ -98,7 +98,8 @@ extension MailboxModel {
     }
 
     func openSavedSearch(_ saved: SavedMailSearch) {
-        selectedMailbox = .combined(MailNavigationModel.searchPrefix + saved.id)
+        guard let destination = favoriteMailboxID(.savedSearch(id: saved.id)) else { return }
+        selectedMailbox = destination
         activateSavedSearch(saved)
     }
 

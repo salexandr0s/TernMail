@@ -56,9 +56,12 @@ extension MailboxModel {
     var sidebarSelection: MailboxID? {
         get { search.isActive && selectedSavedSearch == nil ? nil : selectedMailbox }
         set {
-            if let newValue, newValue == selectedMailbox {
+            // Collapsing or rebuilding native rows can clear List's selection.
+            // The open mailbox and reader remain active until another row is chosen.
+            guard let newValue else { return }
+            if newValue == selectedMailbox {
                 if selectedSavedSearch == nil { search.clear() }
-            } else if newValue != nil || sidebarSelection != nil {
+            } else {
                 selectedMailbox = newValue
             }
         }

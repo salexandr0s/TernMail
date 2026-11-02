@@ -5,6 +5,166 @@ import Testing
 @testable import Tern
 
 @Suite(.serialized) @MainActor struct FavoritesInteractionTests {
+    @Test func sidebarRowsKeepOneSelectionAcrossDisclosureAndDuplicateDestinations() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let suite = "SidebarSelectionInteractionTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set("", forKey: SidebarExpansion.storageKey)
+        settings.set(false, forKey: "sidebarFavoritesCollapsed")
+        defer { settings.removePersistentDomain(forName: suite) }
+        let controller = NSHostingController(rootView: SidebarView(mailbox: mailbox)
+            .environment(app).defaultAppStorage(settings))
+        controller.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Tokens.Layout.sidebarMaxWidth, height: 800),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: Tokens.Layout.sidebarMaxWidth, height: 800))
+        window.orderFront(nil)
+        defer { window.close(); window.contentViewController = nil }
+
+        do {
+            try await eventually("Synthetic accounts and labels must finish loading") {
+                mailbox.hasSyncedOnce && mailbox.presentedAccounts.count == 2
+                    && mailbox.presentedAccounts.allSatisfy { !$0.labels.isEmpty }
+            }
+            try await settle()
+            let table = try #require(descendants(controller.view).compactMap { $0 as? NSTableView }.first)
+            mailbox.selectedMailbox = .combined(SystemLabel.starred)
+            try await settle()
+            let inboxRow = try #require(nativeRows(label: "Inbox", in: table).first)
+            let rowCount = table.numberOfRows
+            try await selectSidebarRow(row: inboxRow, in: table)
+            try await eventually("Selecting Inbox must update the destination and native selected row") {
+                mailbox.selectedMailbox == .combined(SystemLabel.inbox)
+                    && table.selectedRowIndexes == IndexSet(integer: inboxRow)
+            }
+            #expect(settings.string(forKey: SidebarExpansion.storageKey) == "")
+            #expect(table.numberOfRows == rowCount, "Selecting a mailbox must not expand accounts")
+
+            for (name, expanded) in [("Show Accounts", true), ("Hide Accounts", false)] {
+                let nodes = elements(in: controller.view)
+                let candidate = nodes.first {
+                    $0.accessibilityLabel() == "Inbox" && $0.customActions.contains { $0.name == name }
+                }
+                if candidate == nil {
+                    for node in nodes where node.accessibilityLabel()?.contains("Inbox") == true {
+                        print("Sidebar Inbox AX: role=\(node.accessibilityRole()?.rawValue ?? "nil"), label=\(String(reflecting: node.accessibilityLabel())), actions=\(node.customActions.map(\.name))")
+                    }
+                }
+                let inbox = try #require(candidate, "Inbox must expose the named \(name) action")
+                try performAction(name, on: inbox)
+                try await eventually("\(name) must update account disclosure") {
+                    (settings.string(forKey: SidebarExpansion.storageKey)?.contains(SystemLabel.inbox) == true) == expanded
+                        && (expanded ? table.numberOfRows > rowCount : table.numberOfRows == rowCount)
+                        && self.elements(in: controller.view).contains {
+                            $0.accessibilityLabel() == "Inbox"
+                                && $0.customActions.contains { $0.name == (expanded ? "Hide Accounts" : "Show Accounts") }
+                        }
+                }
+                #expect(mailbox.selectedMailbox == .combined(SystemLabel.inbox))
+                #expect(table.selectedRowIndexes == IndexSet(integer: inboxRow))
+            }
+
+            let owner = try #require(mailbox.presentedAccounts.first { $0.account.id == "ui-audit" })
+            let label = try #require(owner.labels.first { !$0.isSystem && !$0.name.contains("/") })
+            let destination = MailboxID.account(owner.account.id, label.id)
+            try #require(await mailbox.navigation.addFavorite(.label(accountID: owner.account.id, labelID: label.id)))
+            try await eventually("The label must appear in both Favorites and its account section") {
+                self.nativeRows(label: label.name, in: table).count == 2
+            }
+            let copies = nativeRows(label: label.name, in: table)
+            for row in copies.reversed() {
+                try await selectSidebarRow(row: row, in: table)
+                try await eventually("Selecting label occurrence \(row) must update the destination") {
+                    mailbox.selectedMailbox == destination && table.selectedRowIndexes == IndexSet(integer: row)
+                }
+                try await settle()
+                #expect(table.selectedRowIndexes == IndexSet(integer: row), "The chosen occurrence must retain its highlight")
+            }
+
+            let expandedFavoritesRowCount = table.numberOfRows
+            try performHeaderAction("Collapse Favorites", in: controller.view)
+            try await eventually("Collapse Favorites must hide the selected section") {
+                settings.bool(forKey: "sidebarFavoritesCollapsed") && table.numberOfRows < expandedFavoritesRowCount
+                    && self.element(id: "favorites.header", in: controller.view)?.accessibilityValue() == "Collapsed"
+            }
+            #expect(mailbox.selectedMailbox == destination, "Collapsing the selected section must preserve the destination")
+            try performHeaderAction("Expand Favorites", in: controller.view)
+            try await eventually("Reopening Favorites must restore the selected occurrence") {
+                !settings.bool(forKey: "sidebarFavoritesCollapsed")
+                    && table.selectedRowIndexes == IndexSet(integer: copies[0])
+                    && table.numberOfRows == expandedFavoritesRowCount
+                    && self.element(id: "favorites.header", in: controller.view)?.accessibilityValue() == "Expanded"
+            }
+            #expect(mailbox.selectedMailbox == destination)
+
+            mailbox.selectedMailbox = .combined(SystemLabel.starred)
+            try await settle()
+            try performHeaderAction("Collapse Favorites", in: controller.view)
+            try await eventually("Favorites must be collapsed before programmatic navigation") {
+                settings.bool(forKey: "sidebarFavoritesCollapsed") && table.numberOfRows < expandedFavoritesRowCount
+                    && self.element(id: "favorites.header", in: controller.view)?.accessibilityValue() == "Collapsed"
+            }
+            mailbox.selectedMailbox = destination
+            try await eventually("Programmatic navigation must reveal and select the favorite") {
+                !settings.bool(forKey: "sidebarFavoritesCollapsed")
+                    && table.selectedRowIndexes == IndexSet(integer: copies[0])
+                    && table.numberOfRows == expandedFavoritesRowCount
+                    && self.element(id: "favorites.header", in: controller.view)?.accessibilityValue() == "Expanded"
+            }
+
+            let accountID = owner.account.id
+            let child = LabelRecord(accountID: accountID, id: "Label_sidebar_child", name: "\(label.name)/Trips", isSystem: false)
+            let labels = owner.labels + [child]
+            try await mailbox.cache.write { try $0.replaceLabels(labels, accountID: accountID) }
+            try await eventually("The account must observe its added child label") { owner.labels.contains { $0.id == child.id } }
+            let childDestination = MailboxID.account(accountID, child.id)
+            mailbox.selectedMailbox = childDestination
+            try await eventually("Navigating to a nested label must reveal and highlight it") {
+                guard let row = self.nativeRows(label: child.name, in: table).first else { return false }
+                return table.selectedRowIndexes == IndexSet(integer: row)
+            }
+            let childRow = try #require(nativeRows(label: child.name, in: table).first)
+            try await selectSidebarRow(row: childRow, in: table)
+            for (name, expanded) in [("Hide Labels", false), ("Show Labels", true), ("Hide Labels", false)] {
+                let parent = try #require(elements(in: controller.view).first {
+                    $0.accessibilityLabel() == label.name && $0.customActions.contains { $0.name == name }
+                })
+                try performAction(name, on: parent)
+                try await eventually("\(name) must update nested label disclosure") {
+                    !self.nativeRows(label: child.name, in: table).isEmpty == expanded
+                }
+                #expect(mailbox.selectedMailbox == childDestination, "Label disclosure must preserve the destination")
+                if expanded {
+                    let row = try #require(nativeRows(label: child.name, in: table).first)
+                    #expect(table.selectedRowIndexes == IndexSet(integer: row))
+                }
+            }
+            mailbox.selectedMailbox = destination
+            try await settle()
+            mailbox.selectedMailbox = childDestination
+            try await eventually("Navigating back to the child must reveal and highlight its native row") {
+                guard let row = self.nativeRows(label: child.name, in: table).first else { return false }
+                return table.selectedRowIndexes == IndexSet(integer: row)
+            }
+            for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                window.appearance = NSAppearance(named: appearance)
+                try await settle()
+                try capture(controller.view, name: "tern-sidebar-selection-\(name).png")
+            }
+        } catch {
+            let table = descendants(controller.view).compactMap { $0 as? NSTableView }.first
+            print("Sidebar selection failure: mailbox=\(String(describing: mailbox.selectedMailbox)), rows=\(table?.selectedRowIndexes.map { $0 } ?? []), rowCount=\(table?.numberOfRows ?? -1), active=\(NSApp.isActive), key=\(window.isKeyWindow)")
+            try? capture(controller.view, name: "tern-sidebar-selection-failure.png")
+            await app.signOut()
+            throw error
+        }
+        await app.signOut()
+    }
+
     @Test func collapsedFavoritesCanAddAnAccountLabelAndCancelWithoutSaving() async throws {
         let app = AppModel()
         await app.start()
@@ -251,7 +411,11 @@ import Testing
 
     private func performHeaderAction(_ name: String, in view: NSView) throws {
         let header = try #require(element(id: "favorites.header", in: view))
-        let action = try #require(header.customActions.first { $0.name == name }, "Missing Favorites action: \(name)")
+        try performAction(name, on: header)
+    }
+
+    private func performAction(_ name: String, on element: NativeAccessibilityElement) throws {
+        let action = try #require(element.customActions.first { $0.name == name }, "Missing sidebar action: \(name)")
         if let handler = action.handler {
             try #require(handler(), "Favorites action did not execute: \(name)")
         } else {
@@ -269,6 +433,24 @@ import Testing
                 try #require(unsafeBitCast(implementation, to: Action.self)(target, selector))
             }
         }
+    }
+
+    private func nativeRows(label: String, in table: NSTableView) -> [Int] {
+        guard let window = table.window, let root = window.contentView else { return [] }
+        return Set(elements(in: root).filter { $0.accessibilityLabel() == label }.compactMap { element in
+            let frame = element.accessibilityFrame()
+            guard !frame.isEmpty else { return nil }
+            let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
+            let index = table.row(at: table.convert(point, from: nil))
+            return index >= 0 ? index : nil
+        }).sorted()
+    }
+
+    private func selectSidebarRow(row: Int, in table: NSTableView) async throws {
+        table.scrollRowToVisible(row)
+        try await settle()
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        try await settle()
     }
 
     private func element(id: String, in view: NSView) -> NativeAccessibilityElement? {
