@@ -36,6 +36,7 @@ struct MailColumnsContent: View, Equatable {
         MailWorkspaceColumns(columnVisibility: $columnVisibility, showsReader: identity.showsReader) {
             SidebarView(mailbox: mailbox)
                 .scrollContentBackground(.hidden)
+                .padding(.trailing, Tokens.Layout.columnGutter)
                 .background(SidebarMaterial())
                 // AppKit asserts when the system toggle, or any item over the sidebar
                 // column, meets a saved customizable toolbar or a second window, so
@@ -46,7 +47,6 @@ struct MailColumnsContent: View, Equatable {
                     MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation,
                         isPresented: identity.showsAssistant, toolbarSidebarWidth: identity.toolbarSidebarWidth)
                 }
-                .padding(.trailing, Tokens.Layout.columnGutter)
                 .overlay(alignment: .trailing) {
                     SplitDividerHandle()
                         .frame(width: Tokens.Layout.columnGutter)
