@@ -133,6 +133,27 @@ import Testing
         #expect(model.creationState(for: request) == .idle)
     }
 
+    @Test func missingListEndpointDoesNotReportATaskConflictAndRefreshCanRecover() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        await service.setReadFailure(.notFound)
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        #expect(model.issue == .unavailable)
+        #expect(model.lists.isEmpty)
+        #expect(model.lastSyncedAt == nil)
+        #expect(!model.isLoading)
+        #expect(GoogleTasksIssue(GmailError.http(status: 412, reason: nil)) == .conflict)
+
+        await service.setReadFailure(nil)
+        await service.put(.init(id: "remote", title: "Existing task"), listID: "list")
+        await model.refresh()
+        #expect(model.issue == nil)
+        #expect(model.tasks.map(\.id) == ["remote"])
+        #expect(model.lastSyncedAt != nil)
+    }
+
     @Test func editingNotesPreservesTheSourceAndDuplicateReference() throws {
         var request = Self.request("a")
         request.notes = "Ask for the revised figures."

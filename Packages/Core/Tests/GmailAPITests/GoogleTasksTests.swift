@@ -18,7 +18,8 @@ import Testing
         let requests = await transport.requests
         #expect(requests.count == 4)
         #expect(requests[0].url?.host == "tasks.googleapis.com")
-        #expect(requests[1].percentEncodedTarget?.contains("pageToken=lists%2B2") == true)
+        #expect(requests[0].percentEncodedTarget == "/tasks/v1/users/@me/lists?maxResults=1000")
+        #expect(requests[1].percentEncodedTarget == "/tasks/v1/users/@me/lists?maxResults=1000&pageToken=lists%2B2")
         #expect(requests[2].percentEncodedTarget?.contains("work%2Fa%2Bb") == true)
         #expect(requests[3].percentEncodedTarget?.contains("pageToken=tasks%2B2") == true)
         let query = try #require(requests[2].url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems })

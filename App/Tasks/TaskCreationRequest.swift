@@ -92,7 +92,7 @@ enum GoogleTasksIssue: Equatable {
         case .unauthorized: self = .connection
         case .http where error.isMissingScope: self = .permission
         case .http(status: 403, reason: "SERVICE_DISABLED"), .http(status: 403, reason: "accessNotConfigured"): self = .apiDisabled
-        case .http(status: 412, reason: _), .notFound: self = .conflict
+        case .http(status: 412, reason: _): self = .conflict
         case .transport: self = .network
         default: self = .unavailable
         }
