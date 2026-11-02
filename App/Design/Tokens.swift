@@ -32,6 +32,15 @@ enum Tokens {
         static let border = Color(nsColor: .separatorColor)
     }
 
+    enum MessageList {
+        static let unreadWeight: Font.Weight = .bold
+        static let readWeight: Font.Weight = .regular
+
+        static func backgroundTint(isUnread: Bool, colorScheme: ColorScheme) -> Color {
+            Color.primary.opacity(isUnread == (colorScheme == .dark) ? Opacity.pressed : 0)
+        }
+    }
+
     enum Border {
         static let hairline: CGFloat = 1
         static let focus: CGFloat = 2

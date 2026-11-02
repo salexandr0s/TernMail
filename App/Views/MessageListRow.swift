@@ -100,6 +100,7 @@ private struct MessageListVisualRow: View, Equatable {
     let accountColor: Color
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
     @State private var showsSender = false
 
@@ -112,6 +113,9 @@ private struct MessageListVisualRow: View, Equatable {
     private let avatarSize = Tokens.Control.listAvatar
     private var scale: Double { ReadingPreferences.textScale(textScale) }
     private var thread: ThreadRecord { item.thread }
+    private var textWeight: Font.Weight {
+        thread.isUnread ? Tokens.MessageList.unreadWeight : Tokens.MessageList.readWeight
+    }
     private var displayedLabels: [LabelRecord] { item.visibleLabels }
     /// Only the unread gutter spans the row; the avatar belongs to the header.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s2 + Tokens.Space.s1_5 }
@@ -169,14 +173,18 @@ private struct MessageListVisualRow: View, Equatable {
         }
         .padding(.horizontal, Tokens.Space.s1)
         .padding(.vertical, Tokens.Space.s1)
+        .ternHover(isEnabled: !selected)
         .background {
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .fill(Color.accentColor.opacity(thread.isUnread && !selected ? Tokens.Opacity.wash : 0))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if !selected {
+                let shape = RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                shape
+                    .fill(Tokens.MessageList.backgroundTint(isUnread: thread.isUnread, colorScheme: colorScheme))
+                    .background(Tokens.Surface.primary, in: shape)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         .onHover { isHovered = $0 }
-        .ternHover(isEnabled: !selected)
         .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
@@ -212,7 +220,7 @@ private struct MessageListVisualRow: View, Equatable {
             avatar
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                 Text(senderText)
-                    .font(scaledFont(.body, weight: thread.isUnread ? .semibold : .regular))
+                    .font(scaledFont(.body, weight: textWeight))
                     .lineLimit(1)
                     .help(senderDetails)
                 if thread.messageCount > 1 {
@@ -241,7 +249,8 @@ private struct MessageListVisualRow: View, Equatable {
                 .opacity(showsStar ? 1 : 0)
                 .help(thread.isStarred ? "Remove Star" : "Star")
                 .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
-                Text(date).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary)
+                Text(date).font(scaledFont(.caption1, weight: textWeight).monospacedDigit())
+                .foregroundStyle(thread.isUnread ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .fixedSize()
                 .help(thread.lastDate.formatted(date: .complete, time: .shortened))
             }
@@ -254,7 +263,7 @@ private struct MessageListVisualRow: View, Equatable {
                 Text("Draft").font(scaledFont(.caption1, weight: .medium)).foregroundStyle(Tokens.Status.error)
             }
             Text(thread.subject.isEmpty ? AttributedString("No Subject") : mailbox.search.highlights.subject(thread.subject))
-                .font(scaledFont(.callout, weight: thread.isUnread ? .semibold : .regular))
+                .font(scaledFont(.callout, weight: textWeight))
                 .foregroundStyle(thread.subject.isEmpty ? Color.secondary : Color.primary)
                 .lineLimit(1)
                 .help(thread.subject.isEmpty ? "No Subject" : thread.subject)
