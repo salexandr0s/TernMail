@@ -1,4 +1,5 @@
 import AppKit
+import JavaScriptCore
 import MailStore
 import MessageContent
 import SwiftUI
@@ -151,6 +152,81 @@ import WebKit
         #expect(directions == [false, true, true, false, false, true, false])
     }
 
+    @Test func readingEventsOnlyCrossTheBridgeWhenTheirValueChanges() throws {
+        let context = try #require(JSContext())
+        context.evaluateScript("""
+            globalThis.messages = [];
+            globalThis.listeners = {};
+            globalThis.webkit = {messageHandlers: {ternReading: {postMessage: value => messages.push(value)}}};
+            globalThis.document = {addEventListener: (name, callback) => listeners[name] = callback};
+            globalThis.selection = '';
+            globalThis.getSelection = () => ({toString: () => selection});
+            """)
+        context.evaluateScript(MessageWebView.readingScript(revision: 7))
+        context.evaluateScript("""
+            const hover = href => listeners.mouseover({target: {closest: () => href ? {href} : null}});
+            for (let i = 0; i < 100; i++) hover('https://example.invalid/first');
+            hover('https://example.invalid/second');
+            listeners.mouseleave(); listeners.mouseleave(); hover('');
+            selection = 'Selected text';
+            for (let i = 0; i < 100; i++) listeners.selectionchange();
+            selection = ''; listeners.selectionchange(); listeners.selectionchange();
+            """)
+        #expect(context.exception == nil)
+        #expect(context.evaluateScript("messages.length")?.toInt32() == 5)
+        #expect(context.evaluateScript("JSON.stringify(messages.map(value => value.hover ?? value.selection))")?.toString()
+            == #"["https://example.invalid/first","https://example.invalid/second","","Selected text",""]"#)
+        #expect(context.evaluateScript("messages.every(value => value.revision === 7)")?.toBool() == true)
+    }
+
+    @Test func sizingCoalescesCallbacksAndReportsBothGrowthAndShrinkage() throws {
+        let context = try #require(JSContext())
+        context.evaluateScript("""
+            globalThis.messages = []; globalThis.frames = []; globalThis.listeners = {};
+            globalThis.measurements = 0; globalThis.contentHeight = 200;
+            globalThis.webkit = {messageHandlers: {ternHeight: {postMessage: value => messages.push(value)}}};
+            globalThis.requestAnimationFrame = callback => frames.push(callback);
+            globalThis.getComputedStyle = () => ({paddingTop: '0', paddingBottom: '0', marginTop: '0', marginBottom: '0'});
+            globalThis.ResizeObserver = class {
+              constructor(callback) { globalThis.resize = callback; }
+              observe() {}
+            };
+            globalThis.document = {
+              body: {getBoundingClientRect: () => ({top: 0})},
+              createRange: () => {
+                measurements++;
+                return {selectNodeContents() {}, getBoundingClientRect: () => ({bottom: contentHeight})};
+              },
+              querySelectorAll: () => [],
+              addEventListener: (name, callback) => listeners[name] = callback,
+              fonts: {ready: {then: callback => globalThis.fontsReady = callback}}
+            };
+            """)
+        context.evaluateScript(MessageWebView.sizingScript(revision: 3))
+        #expect(context.evaluateScript("messages.length")?.toInt32() == 1)
+        context.evaluateScript("""
+            for (let i = 0; i < 100; i++) { resize(); listeners.load(); }
+            fontsReady();
+            """)
+        #expect(context.evaluateScript("frames.length")?.toInt32() == 1)
+        context.evaluateScript("frames.shift()()")
+        #expect(context.evaluateScript("measurements")?.toInt32() == 2)
+        #expect(context.evaluateScript("messages.length")?.toInt32() == 1)
+        context.evaluateScript("""
+            contentHeight = 400; resize(); listeners.load(); frames.shift()();
+            contentHeight = 100; resize(); fontsReady(); frames.shift()();
+            """)
+        #expect(context.evaluateScript("JSON.stringify(messages.map(value => value.height))")?.toString() == "[200,400,100]")
+        #expect(context.evaluateScript("measurements")?.toInt32() == 4)
+        #expect(context.evaluateScript("messages.every(value => value.revision === 3)")?.toBool() == true)
+        // Explicit measurements bypass scheduling when animation frames are suspended.
+        context.evaluateScript("contentHeight = 650; resize(); __ternSizing.report()")
+        #expect(context.evaluateScript("messages.at(-1).height")?.toInt32() == 650)
+        context.evaluateScript("contentHeight = 100; frames.shift()()")
+        #expect(context.evaluateScript("messages.at(-1).height")?.toInt32() == 100)
+        #expect(context.exception == nil)
+    }
+
     @Test func textHeightIsReportedWhileAnImageIsStillLoading() async throws {
         let height = HeightValue()
         let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
@@ -239,6 +315,9 @@ private struct ReaderColors: Decodable {
     let script = #"""
         (() => {
           if (!document.querySelector('#hidden') || document.readyState !== 'complete') return null;
+          // WebKit can change the media query before the theme listener restores inline styles.
+          const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+          if ((document.documentElement.style.getPropertyValue('color-scheme') === 'dark') !== dark) return null;
           const parse = value => value.match(/[\d.]+/g).map(Number);
           const blend = (over, under) => over.slice(0, 3).map((v, i) => v * (over[3] ?? 1) + under[i] * (1 - (over[3] ?? 1)));
           const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)

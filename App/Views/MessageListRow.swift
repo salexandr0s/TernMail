@@ -44,19 +44,22 @@ struct MessageListRow: View {
     var body: some View {
         // alignmentGuide closures are Sendable, so they take a copy rather than reading the view.
         let separatorLeading = textLeading
+        let labels = displayedLabels
+        let lineHeight = senderLineHeight
+        let date = ThreadDate.short(thread.lastDate)
         HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
             Circle().fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
-                .frame(height: senderLineHeight)
+                .frame(height: lineHeight)
                 .opacity(thread.isUnread ? 1 : 0)
             avatar
-                .frame(height: senderLineHeight)
+                .frame(height: lineHeight)
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                senderLine
-                    .frame(minHeight: senderLineHeight)
+                senderLine(date: date)
+                    .frame(minHeight: lineHeight)
                 subjectLine
                 if !compact { previewLine }
-                if !displayedLabels.isEmpty || !item.attachments.isEmpty { detailLine }
+                if !labels.isEmpty || !item.attachments.isEmpty { detailLine(labels: labels) }
             }
             .padding(.leading, Tokens.Space.s0_5)
         }
@@ -67,7 +70,7 @@ struct MessageListRow: View {
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilitySummary)
+        .accessibilityLabel(accessibilitySummary(labels: labels, date: date))
     }
 
     @ViewBuilder private var avatar: some View {
@@ -79,7 +82,7 @@ struct MessageListRow: View {
         }
     }
 
-    private var senderLine: some View {
+    private func senderLine(date: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
             Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .medium)).lineLimit(1)
             if thread.messageCount > 1 {
@@ -100,7 +103,7 @@ struct MessageListRow: View {
             .opacity(showsStar ? 1 : 0)
             .help(thread.isStarred ? "Remove Star" : "Star")
             .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
-            Text(ThreadDate.short(thread.lastDate)).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+            Text(date).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
             if mailbox.listPreferences.showsAccountBadges, mailbox.listMixesAccounts, let accountMark {
                 HStack(spacing: Tokens.Space.s0_5) {
                     // The account's color would vanish on an accent-colored selection.
@@ -134,9 +137,8 @@ struct MessageListRow: View {
         }
     }
 
-    private var detailLine: some View {
-        let labels = displayedLabels
-        return HStack(spacing: Tokens.Space.s1) {
+    private func detailLine(labels: [LabelRecord]) -> some View {
+        HStack(spacing: Tokens.Space.s1) {
             ForEach(Array(labels.prefix(2)), id: \.id) { label in
                 MailLabelBadge(label: label, font: labelFont)
             }
@@ -173,15 +175,15 @@ struct MessageListRow: View {
         return thread.participants.isEmpty ? "No Sender" : thread.participants
     }
 
-    private var accessibilitySummary: String {
+    private func accessibilitySummary(labels: [LabelRecord], date: String) -> String {
         let account = mailbox.listMixesAccounts
             ? mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } : nil
         return Self.accessibilitySummary(
             unread: thread.isUnread, sender: senderText, subject: thread.subject,
-            date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? ThreadDate.short(thread.lastDate),
+            date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? date,
             messageCount: thread.messageCount, starred: thread.isStarred,
             important: mailbox.listPreferences.showsImportance && item.labels.contains(SystemLabel.important),
-            labels: displayedLabels.map(\.title), attachments: item.attachments.count, account: account)
+            labels: labels.map(\.title), attachments: item.attachments.count, account: account)
     }
 
     /// VoiceOver reads the row as one line: state first, then who, what and when.

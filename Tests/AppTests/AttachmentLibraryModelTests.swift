@@ -2,6 +2,7 @@ import Foundation
 import MailStore
 import MessageContent
 import Observation
+import Synchronization
 import Testing
 @testable import Tern
 
@@ -105,6 +106,39 @@ import Testing
         let remainingAccount = Task { await model.reload() }
         defer { remainingAccount.cancel() }
         try await waitUntil { model.items.map(\.messageID) == ["kept"] }
+        await mailbox.stop()
+    }
+
+    @Test func pageRefreshOnlyNotifiesSelectionObserversWhenSelectedFilesDisappear() async throws {
+        let mailbox = try mailbox()
+        let message = MessageRecord(accountID: "audit", id: "refresh", threadID: "refresh",
+            historyID: 1, date: .now, snippet: "", sender: "Example", recipients: "", cc: nil,
+            subject: "Documents", sizeEstimate: 64)
+        let files = ["kept", "added"].map { part in
+            AttachmentRecord(accountID: "audit", messageID: message.id, partID: part, attachmentID: nil,
+                filename: "\(part).pdf", mimeType: "application/pdf", size: 32, isInline: false)
+        }
+        try await mailbox.cache.write { try $0.replaceLibraryAttachments([files[0]], message: message, labelIDs: []) }
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        let observing = Task { await model.reload() }
+        defer { observing.cancel() }
+        try await waitUntil { model.totalCount == 1 && !model.isLoading }
+        let selected = try #require(model.items.first).id
+        model.selection = [selected]
+
+        let selectionChanges = Mutex(0)
+        withObservationTracking { _ = model.selection } onChange: { selectionChanges.withLock { $0 += 1 } }
+        try await mailbox.cache.write { try $0.replaceLibraryAttachments(files, message: message, labelIDs: []) }
+        try await waitUntil { model.totalCount == 2 }
+        #expect(model.selection == [selected])
+        #expect(selectionChanges.withLock { $0 } == 0)
+
+        try await mailbox.cache.write { try $0.deleteLibraryAttachments(messageIDs: [message.id], accountID: "audit") }
+        try await waitUntil { model.totalCount == 0 }
+        #expect(model.selection.isEmpty)
+        #expect(selectionChanges.withLock { $0 } == 1)
+        observing.cancel()
+        await observing.value
         await mailbox.stop()
     }
 

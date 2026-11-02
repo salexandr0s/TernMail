@@ -202,6 +202,7 @@ struct ThreadListView: View {
     /// Keep the native scroll view mounted while mailbox and search states change.
     private var list: some View {
         let rows = mailbox.listItems
+        let selection = mailbox.selectedListRowIDs
         let isSearching = mailbox.search.isActive
         let accountMarks = compactAccountMarks
         let accountColors = AccountAppearance.colorIndexes(
@@ -212,7 +213,7 @@ struct ThreadListView: View {
             // Keyed by account too, since thread IDs repeat across accounts.
             ForEach(rows) { row in
                 MessageListRow(
-                    item: row, mailbox: mailbox, isSelected: mailbox.selectedListRowIDs.contains(row.id),
+                    item: row, mailbox: mailbox, isSelected: selection.contains(row.id),
                     accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
                 )
                     .tag(row.id)
@@ -259,7 +260,7 @@ struct ThreadListView: View {
         .dragContainer(for: ConversationDragItem.self, itemID: \.rowID, in: dragNamespace) { ids in
             ids.map { ConversationDragItem(mailbox.conversationLink(for: $0)) }
         }
-        .dragContainerSelection(Array(mailbox.selectedListRowIDs), containerNamespace: dragNamespace)
+        .dragContainerSelection(Array(selection), containerNamespace: dragNamespace)
         .contextMenu(forSelectionType: MailListRowID.self) { ids in
             MessageListMenu(mailbox: mailbox, rows: ids)
         } primaryAction: { ids in

@@ -116,28 +116,47 @@ struct MessageWebView: NSViewRepresentable {
               range.getBoundingClientRect().bottom - body.getBoundingClientRect().top)
               + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
           };
+          let lastHeight;
           const report = () => {
-            webkit.messageHandlers.ternHeight.postMessage({height: measure(), revision: \(revision)});
+            const height = measure();
+            if (height === lastHeight) return;
+            lastHeight = height;
+            webkit.messageHandlers.ternHeight.postMessage({height, revision: \(revision)});
           };
-          const observer = new ResizeObserver(report);
+          let pendingFrame = false;
+          const schedule = () => {
+            if (pendingFrame) return;
+            pendingFrame = true;
+            requestAnimationFrame(() => { pendingFrame = false; report(); });
+          };
+          const observer = new ResizeObserver(schedule);
           observer.observe(document.body);
           document.querySelectorAll('img').forEach(image => observer.observe(image));
-          document.addEventListener('load', report, true);
-          document.fonts.ready.then(report);
-          globalThis.__ternSizing = {measure, observer, revision: \(revision)};
+          document.addEventListener('load', schedule, true);
+          document.fonts.ready.then(schedule);
+          globalThis.__ternSizing = {report, observer, revision: \(revision)};
           report();
         })()
         """ }
 
-    private static func readingScript(revision: Int) -> String { """
+    static func readingScript(revision: Int) -> String { """
         (() => {
           const send = value => webkit.messageHandlers.ternReading.postMessage({...value, revision: \(revision)});
+          let lastHover = '', lastSelection = '';
+          const hover = value => {
+            if (value === lastHover) return;
+            lastHover = value;
+            send({hover: value});
+          };
           document.addEventListener('mouseover', event => {
-            const link = event.target.closest?.('a[href]'); send({hover: link?.href ?? ''});
+            const link = event.target.closest?.('a[href]'); hover(link?.href ?? '');
           });
-          document.addEventListener('mouseleave', () => send({hover: ''}));
+          document.addEventListener('mouseleave', () => hover(''));
           document.addEventListener('selectionchange', () => {
-            send({selection: (getSelection()?.toString() ?? '').slice(0, 100000)});
+            const selection = (getSelection()?.toString() ?? '').slice(0, 100000);
+            if (selection === lastSelection) return;
+            lastSelection = selection;
+            send({selection});
           });
         })()
         """ }
@@ -206,17 +225,10 @@ struct MessageWebView: NSViewRepresentable {
 
         func measure(_ webView: WKWebView) {
             // Runs in Tern's own script world, which page JavaScript settings don't affect.
-            let revision = revision
             let script = """
-                globalThis.__ternSizing?.revision === \(revision) ? globalThis.__ternSizing.measure() : 0
+                if (globalThis.__ternSizing?.revision === \(revision)) globalThis.__ternSizing.report();
                 """
-            Task { [weak self] in
-                guard let value = try? await webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient),
-                      let self, self.revision == revision,
-                      let measured = (value as? NSNumber)?.doubleValue
-                else { return }
-                acceptHeight(measured)
-            }
+            webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { _ in }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

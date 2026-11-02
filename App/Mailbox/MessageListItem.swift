@@ -43,11 +43,33 @@ struct MessageListItem: Identifiable, Equatable {
     let id: MailListRowID
     let thread: ThreadRecord
     let messages: [MessageListEntry]
-    var labels: Set<String> { messages.reduce(into: []) { $0.formUnion($1.labels) } }
-    var attachments: [AttachmentRecord] {
-        var seen = Set<String>()
-        return messages.flatMap(\.attachments).filter { seen.insert($0.messageID + ":" + $0.partID).inserted }
+    private let metadata: Metadata
+
+    var labels: Set<String> { metadata.labels }
+    var attachments: [AttachmentRecord] { metadata.attachments }
+
+    init(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry]) {
+        self.id = id
+        self.thread = thread
+        self.messages = messages
+        metadata = Metadata(messages: messages)
     }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.thread == rhs.thread && lhs.messages == rhs.messages
+    }
+
+    private final class Metadata {
+        let messages: [MessageListEntry]
+        lazy var labels: Set<String> = messages.reduce(into: []) { $0.formUnion($1.labels) }
+        lazy var attachments: [AttachmentRecord] = {
+            var seen = Set<String>()
+            return messages.flatMap(\.attachments).filter { seen.insert($0.messageID + ":" + $0.partID).inserted }
+        }()
+
+        init(messages: [MessageListEntry]) { self.messages = messages }
+    }
+
     var recipients: String { messages.first?.message.recipients ?? "" }
 
     func displayedLabels(from available: [LabelRecord], mailboxID: String?) -> [LabelRecord] {

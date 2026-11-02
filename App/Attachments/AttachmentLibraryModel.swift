@@ -197,7 +197,8 @@ final class AttachmentLibraryModel {
                 guard !Task.isCancelled, observationRevision == revision, query == request else { return }
                 if loadedPage != page { loadedPage = page }
                 if loadedQuery != request { loadedQuery = request }
-                selection.formIntersection(page.items.map(\.id))
+                let retainedSelection = selection.intersection(page.items.map(\.id))
+                if selection != retainedSelection { selection = retainedSelection }
                 if isLoading { isLoading = false }
             }
         } catch {

@@ -58,14 +58,33 @@ enum ContactPhotoImages {
         return output as Data
     }
 
+    /// Cached bytes still need validation, but ImageIO work must not occupy the UI actor.
+    static func prepareCachedThumbnail(_ data: Data) async throws -> Data {
+        try Task.checkCancellation()
+        let preparation = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let result = try thumbnail(data)
+            try Task.checkCancellation()
+            return result
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await preparation.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            preparation.cancel()
+        }
+    }
+
     @MainActor
     static func image(for record: ContactPhotoRecord, address: String, cache: MailCache, accounts: AccountStore) async -> NSImage? {
         do {
             guard try await isEnabled(record.accountID, accounts: accounts) else { return nil }
             let data: Data
             if let cached = record.data, let date = record.fetchedAt, date > Date().addingTimeInterval(-7 * 86400),
-               let clean = try? thumbnail(cached) { data = clean }
+               let clean = try? await prepareCachedThumbnail(cached) { data = clean }
             else {
+                try Task.checkCancellation()
                 data = try await loadThumbnail(url: record.url)
                 try Task.checkCancellation()
                 guard try await isEnabled(record.accountID, accounts: accounts),

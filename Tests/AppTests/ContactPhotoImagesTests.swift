@@ -42,6 +42,18 @@ import Testing
         #expect(throws: ContactPhotoImages.PhotoError.self) { try ContactPhotoImages.thumbnail(tooManyPixels) }
     }
 
+    @Test func cachedPreparationBoundsImagesAndPropagatesCancellation() async throws {
+        let picture = try png(width: 512, height: 256)
+        let prepared = try await ContactPhotoImages.prepareCachedThumbnail(picture)
+        let source = try #require(CGImageSourceCreateWithData(prepared as CFData, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        #expect((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue == 160)
+        #expect((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue == 80)
+        let canceled = Task { try await ContactPhotoImages.prepareCachedThumbnail(picture) }
+        canceled.cancel()
+        await #expect(throws: CancellationError.self) { try await canceled.value }
+    }
+
     private func png(width: Int, height: Int) throws -> Data {
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))

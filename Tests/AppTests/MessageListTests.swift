@@ -122,6 +122,28 @@ import Testing
         #expect(mailbox.listItems.isEmpty)
         mailbox.listPreferences.filters = []
         #expect(mailbox.listItems.count == 1)
+
+        mailbox.listPreferences.conversations = true
+        var sibling = message
+        sibling.id = "sibling"
+        var siblingFile = file
+        siblingFile.messageID = sibling.id
+        mailbox.listEntries = [
+            .init(message: message, labels: [SystemLabel.inbox], attachments: [file, file]),
+            .init(message: sibling, labels: [SystemLabel.inbox, SystemLabel.starred], attachments: [siblingFile])
+        ]
+        let row = try #require(mailbox.listItems.first)
+        let uncached = MessageListItem(id: row.id, thread: row.thread, messages: row.messages)
+        #expect(row == uncached)
+        #expect(row.labels == [SystemLabel.inbox, SystemLabel.starred])
+        #expect(row.attachments == [file, siblingFile])
+        #expect(row == uncached)
+
+        mailbox.listEntries = [.init(message: message, labels: [SystemLabel.inbox])]
+        let refreshed = try #require(mailbox.listItems.first)
+        #expect(refreshed.id == row.id)
+        #expect(refreshed.labels == [SystemLabel.inbox])
+        #expect(refreshed.attachments.isEmpty)
     }
 
     @Test(arguments: [true, false])
