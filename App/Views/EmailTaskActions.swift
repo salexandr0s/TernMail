@@ -44,20 +44,34 @@ struct SummaryTaskAddButton: View {
     let onAdd: (TaskCreationRequest) -> Void
 
     private var state: TaskCreationState { model.creationState(for: request) }
+    private var isDisabled: Bool { model.isCreating || state == .added }
+
+    private var actionLabel: String {
+        switch state {
+        case .idle: "Add to Google Tasks"
+        case .adding: "Adding to Google Tasks"
+        case .added: "Added to Google Tasks"
+        case .uncertain: "Check whether this task was added"
+        }
+    }
 
     var body: some View {
         Button { onAdd(request) } label: {
-            HStack(spacing: Tokens.Space.s1_5) {
+            ZStack {
                 if state == .adding { ProgressView().controlSize(.mini) }
-                else { Image(systemName: state == .added ? "checkmark" : state == .uncertain ? "arrow.clockwise" : "plus") }
-                Text(state == .added ? "Added to Tasks" : state == .adding ? "Adding…" : state == .uncertain ? "Check Tasks" : "Add to Tasks")
+                else {
+                    Image(systemName: state == .added ? "checkmark" : state == .uncertain ? "arrow.clockwise" : "plus")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(state == .added ? Color.secondary : Color.accentColor)
+                }
             }
-            .font(.caption.weight(.medium))
+            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(model.isCreating || state == .added)
-        .help(state == .added ? "Saved in Google Tasks" : "Add this suggestion to Google Tasks")
-        .accessibilityLabel(state == .added ? "Added to Google Tasks: \(request.title)" : "Add to Google Tasks: \(request.title)")
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .ternHover(isEnabled: !isDisabled)
+        .help(actionLabel)
+        .accessibilityLabel("\(actionLabel): \(request.title)")
     }
 }
