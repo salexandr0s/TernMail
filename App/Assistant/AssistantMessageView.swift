@@ -19,24 +19,16 @@ struct AssistantMessageView: View {
         HStack(alignment: .top, spacing: 0) {
             if message.isUser { Spacer(minLength: Tokens.Assistant.bubbleInset) }
             VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s2) {
-                if startsGroup, !message.isUser {
-                    HStack(spacing: Tokens.Space.s2) {
-                        ChatGPTBrand(size: Tokens.Space.s3)
-                            .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                            .accessibilityHidden(true)
-                        Text("Assistant")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
                 bubble
                 footer
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(message.isUser ? "Your message" : "Assistant response")
+            .accessibilityHint(messageDate)
             .contextMenu { messageMenu }
             .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         }
-        .padding(.top, startsGroup ? Tokens.Space.s5 : 0)
+        .padding(.top, startsGroup ? Tokens.Space.s6 : Tokens.Space.s2)
         .task(id: copied) {
             guard copied else { return }
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
@@ -51,8 +43,10 @@ struct AssistantMessageView: View {
                     Text(message.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         .lineSpacing(Tokens.Space.s0_5)
                         .accessibilityLabel("You: \(message.text)")
+                        .help(messageDate)
                 } else {
                     AssistantMarkdownView(text: message.text)
+                        .help(messageDate)
                 }
             }
             if message.state == .streaming {
@@ -140,12 +134,14 @@ struct AssistantMessageView: View {
                     .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
             }
         }
-        .padding(message.isUser ? Tokens.Space.s3 : 0)
+        .padding(.horizontal, message.isUser ? Tokens.Space.s4 : 0)
+        .padding(.vertical, message.isUser ? Tokens.Space.s3 : 0)
         .foregroundStyle(.primary)
-        .background(message.isUser ? bubbleColor : .clear, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .background(message.isUser ? Tokens.Assistant.chatBubble : .clear,
+                    in: RoundedRectangle(cornerRadius: Tokens.Assistant.bubbleRadius))
         .overlay {
             if message.isUser, contrast == .increased {
-                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                RoundedRectangle(cornerRadius: Tokens.Assistant.bubbleRadius)
                     .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
@@ -154,18 +150,13 @@ struct AssistantMessageView: View {
 
     private var footer: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Text(message.createdAt, format: .dateTime.hour().minute())
-                .help(message.createdAt.formatted(date: .abbreviated, time: .shortened))
             if message.state == .cancelled { Text("Stopped") }
             if message.state == .failed { Label("Incomplete", systemImage: "exclamationmark.circle") }
             if !message.text.isEmpty {
                 Button { copy(.formatted) } label: {
-                    HStack(spacing: Tokens.Space.s1) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        if !message.isUser { Text(copied ? "Copied" : "Copy") }
-                    }
-                    .frame(minWidth: Tokens.Space.s6, minHeight: Tokens.Space.s6)
-                    .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
                 .buttonStyle(.borderless)
                 .help(copied ? "Copied" : (message.isUser ? "Copy message" : "Copy response"))
@@ -173,13 +164,18 @@ struct AssistantMessageView: View {
                 .onChange(of: message.text) { copied = false }
             }
             if canRetry {
-                Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
-                    .buttonStyle(.borderless)
+                Button(action: onRetry) {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                }
+                .buttonStyle(.borderless)
+                .help("Retry").accessibilityLabel("Retry")
             }
         }
         .font(.caption2).foregroundStyle(.secondary)
         .labelStyle(.titleAndIcon)
-        .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
+        .padding(.horizontal, message.isUser ? Tokens.Space.s2 : 0)
     }
 
     @ViewBuilder private var messageMenu: some View {
@@ -205,9 +201,8 @@ struct AssistantMessageView: View {
         copied = true
     }
 
-    private var bubbleColor: Color {
-        if message.isUser, contrast != .increased { return Tokens.Assistant.userBubble }
-        return Tokens.Assistant.assistantBubble
+    private var messageDate: String {
+        message.createdAt.formatted(date: .abbreviated, time: .shortened)
     }
 
     private var emails: [AssistantEmailResult] {

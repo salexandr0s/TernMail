@@ -38,7 +38,9 @@ struct AssistantConversationView<Welcome: View>: View {
     private func conversationScroll(viewportHeight: CGFloat) -> some View {
         ScrollView {
             transcript
-                .padding(Tokens.Space.s4)
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.top, Tokens.Space.s2)
+                .padding(.bottom, Tokens.Space.s5)
                 .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 .background {
@@ -86,15 +88,11 @@ struct AssistantConversationView<Welcome: View>: View {
     }
 
     private func daySeparator(_ date: Date) -> some View {
-        HStack(spacing: Tokens.Space.s3) {
-            Rectangle().fill(Tokens.Surface.border).frame(height: Tokens.Border.hairline)
-            Text(dayTitle(date))
-                .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                .fixedSize()
-            Rectangle().fill(Tokens.Surface.border).frame(height: Tokens.Border.hairline)
-        }
-        .padding(.vertical, Tokens.Space.s1)
-        .accessibilityElement(children: .combine)
+        Text(dayTitle(date))
+            .font(.caption2).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, Tokens.Space.s6)
+            .padding(.bottom, Tokens.Space.s1)
     }
 
     @ViewBuilder private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
@@ -130,7 +128,7 @@ struct AssistantConversationView<Welcome: View>: View {
     }
 
     private func beginsDay(at index: Int) -> Bool {
-        index == 0 || !Calendar.current.isDate(model.messages[index - 1].createdAt, inSameDayAs: model.messages[index].createdAt)
+        index > 0 && !Calendar.current.isDate(model.messages[index - 1].createdAt, inSameDayAs: model.messages[index].createdAt)
     }
 
     private func dayTitle(_ date: Date) -> String {

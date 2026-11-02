@@ -22,13 +22,7 @@ struct AssistantView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                if !isDetached { header }
-                scopePicker
-            }
-            .padding(.top, isDetached ? Tokens.Space.s3 : 0)
-            .background(Tokens.Surface.muted)
-            Divider()
+            if !isDetached { header }
             AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
                                       onOpenDraft: { openWindow(id: ComposeWindow.sceneID, value: $0) }) {
                 AssistantWelcomeView(model: model, setup: setupPrompt, onSettings: { showsSettings = true }) { suggestion in
@@ -37,7 +31,11 @@ struct AssistantView: View {
                     isComposerFocused = true
                 }
             }
-            composer
+            AssistantComposer(model: model, setup: setupPrompt, canSubmit: canSubmit, isFocused: $isComposerFocused,
+                              onSubmit: submit, onSettings: { showsSettings = true })
+                .padding(Tokens.Space.s3)
+                .frame(maxWidth: Tokens.Assistant.contentWidth)
+                .frame(maxWidth: .infinity)
         }
         .background(Tokens.Surface.primary)
         .onKeyPress(.escape) { closeOnEscape() }
@@ -62,7 +60,7 @@ struct AssistantView: View {
         .sheet(isPresented: $showsSettings) {
             AssistantSettingsView(model: model, isSheet: true)
         }
-        .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: modelName,
+        .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: "ChatGPT",
                                          onNewChat: startNewChat, onSettings: { showsSettings = true }))
     }
 
@@ -70,15 +68,8 @@ struct AssistantView: View {
         HStack(spacing: Tokens.Space.s2) {
             ChatGPTBrand(size: Tokens.Space.s5)
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                Text("Assistant").font(.headline).lineLimit(1)
-                Text(modelName)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .help(modelName)
-            }
-            .accessibilityElement(children: .combine)
+            Text("ChatGPT").font(.headline).lineLimit(1)
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s0_5) {
                 iconButton("New Chat", symbol: "plus", action: startNewChat)
@@ -100,114 +91,6 @@ struct AssistantView: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, Tokens.Space.s4).padding(.top, Tokens.Space.s3).padding(.bottom, Tokens.Space.s2)
-    }
-
-    private var scopePicker: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "envelope")
-                .foregroundStyle(.secondary).accessibilityHidden(true)
-            Menu {
-                Picker("Mail scope", selection: $model.selectedScope) {
-                    ForEach(AssistantScope.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Text(model.selectedScope.title).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .menuIndicator(.visible).menuStyle(.borderlessButton).controlSize(.small)
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel("Mail scope").accessibilityValue(model.selectedScope.title)
-            .help("Mail scope: \(model.selectedScope.title). Calendar access is managed separately in settings.")
-            Divider().frame(height: Tokens.Space.s4)
-            Button { showsSettings = true } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                    .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            }
-            .buttonStyle(.borderless).fixedSize()
-            .help("Manage mail and calendar access")
-            .accessibilityLabel("Manage assistant access. \(model.enabledAccountIDs.count) enabled mail accounts")
-        }
-        .font(.caption)
-        .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s1)
-        .ternSurface(radius: Tokens.Radius.md)
-        .padding(.horizontal, Tokens.Space.s4).padding(.bottom, Tokens.Space.s3)
-    }
-
-    private var composer: some View {
-        VStack(spacing: 0) {
-            Divider()
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                TextField(model.messages.isEmpty ? "Ask about mail or calendar…" : "Ask a follow-up…",
-                          text: $model.composerText, axis: .vertical)
-                    .font(.body).textFieldStyle(.plain).lineLimit(2...6)
-                    .focused($isComposerFocused)
-                    .onKeyPress(.return, phases: .down) { press in
-                        if let editor = NSApp.keyWindow?.firstResponder as? NSTextInputClient,
-                           editor.hasMarkedText() { return .ignored }
-                        if press.modifiers.contains(.shift) {
-                            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
-                            editor.insertNewlineIgnoringFieldEditor(nil)
-                            return .handled
-                        }
-                        guard !press.modifiers.contains(.option),
-                              !press.modifiers.contains(.control) else { return .ignored }
-                        submit()
-                        return .handled
-                    }
-                    .accessibilityLabel("Message to assistant")
-                    .accessibilityHint("Return to send. Shift-Return for a new line.")
-                    .disabled(setupPrompt != nil)
-                HStack(spacing: Tokens.Space.s2) {
-                    composerHint
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: Tokens.Space.s2)
-                    if model.isRunning {
-                        Button { model.stop() } label: {
-                            Image(systemName: "stop.fill")
-                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                        }
-                        .buttonStyle(.bordered).buttonBorderShape(.circle)
-                        .help("Stop response").accessibilityLabel("Stop response")
-                    } else {
-                        Button(action: submit) {
-                            Image(systemName: "arrow.up").font(.body.weight(.semibold))
-                                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                        }
-                        .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(!canSubmit).help("Send message (Return or ⌘ Return)")
-                        .accessibilityLabel("Send message")
-                    }
-                }
-            }
-            .padding(Tokens.Space.s3)
-            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-            .ternOutline(radius: Tokens.Radius.lg)
-            .padding(Tokens.Space.s3)
-            .frame(maxWidth: Tokens.Assistant.contentWidth)
-            .frame(maxWidth: .infinity)
-        }
-        .background(Tokens.Surface.muted)
-    }
-
-    @ViewBuilder private var composerHint: some View {
-        if model.isRunning {
-            Label("Working…", systemImage: "ellipsis")
-        } else if let setupPrompt {
-            // An empty chat shows the welcome setup card, the panel's one setup prompt.
-            if !model.messages.isEmpty {
-                Button(setupPrompt.action, action: { showsSettings = true }).buttonStyle(.link)
-            }
-        } else {
-            Text("Return to send · ⇧ Return for a new line")
-        }
-    }
-
-    private var modelName: String {
-        model.models.first(where: { $0.id == model.selectedModelID })?.displayName ?? "ChatGPT"
     }
 
     private var setupPrompt: AssistantSetupPrompt? {
@@ -290,7 +173,7 @@ private struct AssistantToolbarButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(isHovered || configuration.isPressed ? Tokens.Surface.primary : .clear,
+            .background(isHovered || configuration.isPressed ? Tokens.Assistant.chatBubble : .clear,
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .overlay {
                 if contrast == .increased && (isHovered || configuration.isPressed) {

@@ -75,7 +75,10 @@ enum Tokens {
         static let contentWidth: CGFloat = 720
         static let bubbleInset = Space.s10
         static let userBubble = Color.accentColor.opacity(0.14)
-        static let assistantBubble = Surface.primary
+        static let chatBubble = Color.primary.opacity(Opacity.hover)
+        static let bubbleRadius = Space.s5
+        static let composerBackground = Color.primary.opacity(Opacity.wash)
+        static let composerRadius = Space.s6
     }
 
     enum Compose {
