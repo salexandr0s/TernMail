@@ -10,3 +10,9 @@ Build Google Tasks into Tern's existing Google account connection and trailing s
 Google Cloud must have the Google Tasks API enabled and the Tasks OAuth scope configured. Existing accounts grant Tasks access separately. Live Google validation requires that grant; automated tests use an injected service and never modify the user's tasks.
 
 Existing reader and summary changes in this checkout are preserved. API/auth and task model/UI work have separate owners; the integration owner wires the workspace, email reader, and composition root.
+
+## Visual refinement
+
+1. Give the selected list a clear heading, make account controls quieter, and place quick entry above the task list.
+2. Refine row density, due-date badges, source-email links, completed tasks, hover/focus states, and the editor using existing native tokens.
+3. Render the actual views at narrow and wide widths in light/dark mode, inspect long text and empty/error states, then run the affected native interaction and model checks.

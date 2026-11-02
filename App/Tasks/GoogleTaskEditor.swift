@@ -20,7 +20,8 @@ struct GoogleTaskEditor: View {
     @State private var isSaving = false
     @State private var creation = TaskCreationRequest(title: "")
     @State private var error: String?
-    @FocusState private var titleFocused: Bool
+    private enum Field { case title, notes }
+    @FocusState private var focusedField: Field?
 
     init(model: GoogleTasksModel, context: GoogleTaskEditorContext) {
         self.model = model
@@ -33,16 +34,22 @@ struct GoogleTaskEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(context.task == nil ? "New task" : "Edit task").font(.title2.weight(.semibold))
-                Label(context.listTitle, systemImage: "list.bullet").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "checklist").font(.title2).foregroundStyle(Color.accentColor)
+                    .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
+                    .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(context.task == nil ? "New task" : "Task details").font(.title3.weight(.semibold))
+                    Text(context.listTitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(context.listTitle)
+                }
             }
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                     Text("Title").font(.caption).foregroundStyle(.secondary)
                     TextField("What needs to be done?", text: $title, axis: .vertical)
-                        .font(.body.weight(.medium)).textFieldStyle(.plain)
-                        .lineLimit(2...4).focused($titleFocused)
+                        .font(.title3.weight(.medium)).textFieldStyle(.plain)
+                        .lineLimit(2...4).focused($focusedField, equals: .title)
                         .accessibilityLabel("Task title")
                         .accessibilityIdentifier("google-task-title")
                 }
@@ -51,13 +58,14 @@ struct GoogleTaskEditor: View {
                     Text("Notes").font(.caption).foregroundStyle(.secondary)
                     TextField("Add details", text: $notes, axis: .vertical)
                         .textFieldStyle(.plain).lineLimit(3...8)
+                        .focused($focusedField, equals: .notes)
                         .accessibilityLabel("Task notes")
                         .accessibilityIdentifier("google-task-notes")
                 }
             }
-            .padding(Tokens.Space.s3)
-            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
+            .padding(Tokens.Space.s4)
+            .ternSurface(style: .grouped)
+            .ternOutline(radius: Tokens.Radius.lg, style: .contrastOnly, focus: focusedField == nil ? nil : .accentColor)
             .disabled(isSaving)
             HStack {
                 Toggle("Due date", isOn: $hasDueDate).toggleStyle(.checkbox)
@@ -67,10 +75,29 @@ struct GoogleTaskEditor: View {
                         .datePickerStyle(.field).labelsHidden()
                 }
             }
+            .padding(Tokens.Space.s3)
+            .ternSurface(style: .grouped)
             .disabled(isSaving)
             if let url = GoogleTaskRow.emailURL(context.task?.notes ?? "") {
-                Button("Open Source Email", systemImage: "envelope") { openURL(url) }
-                    .buttonStyle(.link)
+                Button { openURL(url) } label: {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Image(systemName: "envelope").foregroundStyle(Color.accentColor)
+                            .frame(width: Tokens.Space.s6)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                            Text("Source email").font(.caption2).foregroundStyle(.secondary)
+                            Text(GoogleTaskRow.emailSubject(context.task?.notes ?? "") ?? "Open source email")
+                                .font(.callout).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(Tokens.Space.s3)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .ternSurface(style: .grouped)
+                .ternHover(radius: Tokens.Radius.lg)
+                .accessibilityLabel("Open source email")
             }
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
@@ -89,8 +116,9 @@ struct GoogleTaskEditor: View {
         }
         .padding(Tokens.Space.s5)
         .frame(width: Tokens.Sheet.smallWidth)
+        .background(Tokens.Surface.primary.overlay(Color.primary.opacity(Tokens.Opacity.hover)))
         .interactiveDismissDisabled(isSaving)
-        .task { titleFocused = true }
+        .task { focusedField = .title }
     }
 
     private func save() async {
