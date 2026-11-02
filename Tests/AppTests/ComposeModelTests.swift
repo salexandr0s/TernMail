@@ -118,7 +118,7 @@ import Testing
         #expect(try Data(contentsOf: agendaCopy) == Data("agenda".utf8))
 
         model.removeAttachment(agenda)
-        #expect(!FileManager.default.fileExists(atPath: agendaCopy.path(percentEncoded: false)))
+        try await waitUntil { !FileManager.default.fileExists(atPath: agendaCopy.path(percentEncoded: false)) }
         #expect(FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)))
         model.windowClosed()
         #expect(!FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)))
@@ -207,12 +207,14 @@ import Testing
         model.attach([.data(Data("agenda".utf8), filename: "agenda.txt", mimeType: "text/plain")])
         try await waitUntil { model.attachments.count == 1 }
         let agenda = try #require(model.attachments.first)
+        let previewCopy = try #require(await model.attachmentFileURL(agenda))
 
         try file.refuse("DELETE", on: "outgoingAttachment")
         model.removeAttachment(agenda)
         try await waitUntil { !model.failedAttachments.isEmpty }
         #expect(model.failedAttachments.first?.removedID == agenda.id)
         #expect(model.attachments.map(\.id) == [agenda.id])
+        #expect((try? Data(contentsOf: previewCopy)) == Data("agenda".utf8))
         #expect(await model.send() == false)
         #expect(model.alert?.message == "“agenda.txt” couldn't be removed. Retry or keep it first.")
 
@@ -220,6 +222,7 @@ import Testing
         let failure = try #require(model.failedAttachments.first)
         model.retry(failure)
         try await waitUntil { model.attachments.isEmpty }
+        try await waitUntil { !FileManager.default.fileExists(atPath: previewCopy.path(percentEncoded: false)) }
         #expect(model.failedAttachments.isEmpty)
         #expect(await model.send())
         await mailbox.stop()

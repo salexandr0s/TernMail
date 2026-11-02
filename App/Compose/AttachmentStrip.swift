@@ -22,6 +22,8 @@ struct AttachmentStrip: View {
     @State private var previewItems: [URL] = []
     /// The files Quick Look pages through, so removing one closes it.
     @State private var previewIDs: Set<Int64> = []
+    @State private var previewTask: Task<Void, Never>?
+    @State private var previewRequestID: UUID?
     @FocusState private var focusedID: Int64?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -75,8 +77,12 @@ struct AttachmentStrip: View {
         .background(Tokens.Surface.muted)
         .quickLookPreview($previewURL, in: previewItems)
         .onChange(of: attachments.compactMap(\.id)) { _, ids in
-            if !previewIDs.isSubset(of: ids) { previewURL = nil }
+            if !previewIDs.isSubset(of: ids) { dismissPreview() }
         }
+        .onChange(of: previewURL) { _, url in
+            if url == nil { dismissPreview() }
+        }
+        .onDisappear(perform: dismissPreview)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachmentCount)\(attachments.isEmpty ? "" : ", \(totalSize)")")
     }
@@ -114,7 +120,7 @@ struct AttachmentStrip: View {
         .focused($focusedID, equals: attachment.id)
         .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .onKeyPress(.space) {
-            if previewURL == nil { preview(attachment) } else { previewURL = nil }
+            if previewURL == nil && previewTask == nil { preview(attachment) } else { dismissPreview() }
             return .handled
         }
         .draggable(OutgoingAttachmentFileItem(filename: attachment.filename) { await fileURL(attachment) })
@@ -169,22 +175,39 @@ struct AttachmentStrip: View {
 
     /// Quick Look pages through the draft's files, so each gets its copy first.
     private func preview(_ attachment: OutgoingAttachment) {
+        previewTask?.cancel()
+        let requestID = UUID()
+        previewRequestID = requestID
+        previewIDs = Set(attachments.compactMap(\.id))
         focusedID = attachment.id
-        Task {
+        previewTask = Task {
             var files: [URL] = []
             var ids: Set<Int64> = []
             var selected: URL?
             for item in attachments {
+                guard !Task.isCancelled, previewRequestID == requestID else { return }
                 guard let file = await fileURL(item) else { continue }
+                guard !Task.isCancelled, previewRequestID == requestID else { return }
                 files.append(file)
                 if let id = item.id { ids.insert(id) }
                 if item.id == attachment.id { selected = file }
             }
+            guard !Task.isCancelled, previewRequestID == requestID else { return }
+            previewTask = nil
             guard let selected else { return }
             previewItems = files
             previewIDs = ids
             previewURL = selected
         }
+    }
+
+    private func dismissPreview() {
+        previewTask?.cancel()
+        previewTask = nil
+        previewRequestID = nil
+        previewURL = nil
+        previewItems = []
+        previewIDs = []
     }
 
     private func reveal(_ attachment: OutgoingAttachment) {

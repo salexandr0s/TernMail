@@ -9,31 +9,38 @@ import MailStore
 final class OutgoingAttachmentFiles {
     private let folder: URL
     private var urls: [Int64: URL] = [:]
+    private var generations: [Int64: UUID] = [:]
     private var isClosed = false
 
     init(localDraftID: String) {
         folder = FileManager.default.temporaryDirectory
             .appending(path: "Tern/Compose/\(localDraftID)", directoryHint: .isDirectory)
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     }
 
     /// The copy of `attachment`, written from `data` the first time it's asked for.
     func url(for attachment: OutgoingAttachment, data: () async throws -> Data) async -> URL? {
-        guard !isClosed, let id = attachment.id else { return nil }
+        guard !isClosed, !Task.isCancelled, let id = attachment.id else { return nil }
         if let url = urls[id], FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) { return url }
+        let generation = generations[id] ?? UUID()
+        generations[id] = generation
         let directory = folder.appending(path: String(id), directoryHint: .isDirectory)
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
         let url = directory.appending(path: Self.safeName(attachment.filename))
         do {
             let bytes = try await data()
+            guard !isClosed, !Task.isCancelled, generations[id] == generation else { return nil }
             try await Task.detached(priority: .userInitiated) {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try bytes.write(to: url, options: .atomic)
             }.value
         } catch {
+            try? FileManager.default.removeItem(at: isClosed ? folder : directory)
             return nil
         }
-        // The window closed while the file was copied.
-        guard !isClosed else {
-            try? FileManager.default.removeItem(at: directory)
+        // Removal, cancellation or window close may have happened during the write.
+        guard !isClosed, !Task.isCancelled, generations[id] == generation else {
+            try? FileManager.default.removeItem(at: isClosed ? folder : directory)
             return nil
         }
         urls[id] = url
@@ -41,13 +48,16 @@ final class OutgoingAttachmentFiles {
     }
 
     func remove(_ attachment: OutgoingAttachment) {
-        guard let id = attachment.id, let url = urls.removeValue(forKey: id) else { return }
-        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        guard let id = attachment.id else { return }
+        generations[id] = UUID()
+        urls.removeValue(forKey: id)
+        try? FileManager.default.removeItem(at: folder.appending(path: String(id), directoryHint: .isDirectory))
     }
 
     func removeAll() {
         isClosed = true
         urls = [:]
+        generations = [:]
         try? FileManager.default.removeItem(at: folder)
     }
 

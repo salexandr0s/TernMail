@@ -577,11 +577,11 @@ final class ComposeModel {
         guard isEditable, let rowID = attachment.id else { return }
         markChanged()
         failedAttachments.removeAll { $0.removedID == rowID }
-        attachmentFiles.remove(attachment)
         guard let engine = owner?.engine else { return }
         serially { [self] in
             do {
                 try await engine.removeAttachment(id: rowID)
+                attachmentFiles.remove(attachment)
             } catch {
                 // Still attached, so it stays listed until Retry works or it's kept.
                 failedAttachments.append(FailedAttachment(
