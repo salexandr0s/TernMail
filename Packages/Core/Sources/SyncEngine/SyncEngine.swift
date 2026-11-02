@@ -60,7 +60,7 @@ public struct UndoHolds: Sendable, Equatable {
 
 public actor SyncEngine {
     /// The threading headers let a reply answer a message without fetching it.
-    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"]
+    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To", "Content-Type"]
     static let inboxCap = 5000
     /// Releasing a search hold keeps what this lists, so both use one window.
     static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
@@ -473,6 +473,7 @@ public actor SyncEngine {
             changed = true
         }
         try await releaseExpiredHolds()
+        try await retryPendingReadReceipts()
         // Historical attachment scans compete with the first mail download.
         // Start them only after a usable baseline has committed.
         if hasStarted, indexesAttachmentsAutomatically, !isStopped, !Task.isCancelled {
@@ -541,6 +542,8 @@ public actor SyncEngine {
                 deleted.withLock { $0.formUnion(gone) }
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
                 var threads = try tx.upsertMessages(live)
+                try tx.deleteAnalyticsMessages(messageIDs: Array(gone), accountID: accountID)
+                if reset { try tx.invalidateAnalyticsCoverage(accountID: accountID) }
                 threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
                 threads.formUnion(try tx.deleteMessages(notIn: kept, accountID: accountID, through: historyID))
                 try tx.dropSentActions(confirmedThrough: historyID, passStart: passStart, accountID: accountID)
@@ -609,6 +612,7 @@ public actor SyncEngine {
                         threads.insert(threadID)
                     }
                 }
+                try tx.deleteAnalyticsMessages(messageIDs: Array(gone), accountID: accountID)
                 threads.formUnion(try tx.deleteMessages(ids: gone, accountID: accountID))
                 let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
                 threads.formUnion(try tx.upsertMessages(live))
@@ -734,11 +738,13 @@ public actor SyncEngine {
         let results = try await gmail.messages(ids: ids, format: .metadata, metadataHeaders: Self.metadataHeaders)
         var updates: [CacheTransaction.MessageUpdate] = []
         var missing = Set<String>()
+        var receiptCandidates: [GmailMessage] = []
         for id in ids {
             switch results[id] {
             case .success(let message)?:
                 guard message.id == id else { throw GmailError.decoding("Message identity") }
                 updates.append(try Mapping.message(message, accountID: accountID))
+                receiptCandidates.append(message)
             case .failure(.notFound)?:
                 missing.insert(id)
             case nil:
@@ -747,6 +753,7 @@ public actor SyncEngine {
                 throw error
             }
         }
+        try await ingestReadReceiptMetadata(receiptCandidates)
         return (updates, missing)
     }
 

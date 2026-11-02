@@ -17,12 +17,14 @@ public struct DraftContent: Sendable, Equatable {
     public var signatureAboveQuote: Bool
     public var signatureSeparator: Bool
     public var archiveAfterSend: Bool
+    public var requestsReadReceipt: Bool
 
     public init(
         to: [EmailAddress] = [], cc: [EmailAddress] = [], bcc: [EmailAddress] = [],
         subject: String = "", body: ComposeDocument = ComposeDocument(),
         fromAddress: String? = nil, signatureHTML: String? = nil, composeFont: ComposeFont = .sansSerif,
-        signatureAboveQuote: Bool = true, signatureSeparator: Bool = false, archiveAfterSend: Bool = false
+        signatureAboveQuote: Bool = true, signatureSeparator: Bool = false, archiveAfterSend: Bool = false,
+        requestsReadReceipt: Bool = false
     ) {
         self.to = to
         self.cc = cc
@@ -35,6 +37,7 @@ public struct DraftContent: Sendable, Equatable {
         self.signatureAboveQuote = signatureAboveQuote
         self.signatureSeparator = signatureSeparator
         self.archiveAfterSend = archiveAfterSend
+        self.requestsReadReceipt = requestsReadReceipt
     }
 }
 
@@ -80,6 +83,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     public var signatureAboveQuote: Bool
     public var signatureSeparator: Bool
     public var archiveAfterSend: Bool
+    public var requestsReadReceipt: Bool
     /// For an invitation reply, the `text/calendar` REPLY it sends.
     public var calendarPart: String?
     /// The quoted original, or an imported draft's quote, sent unchanged after the new text.
@@ -113,7 +117,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         case id, accountID, gmailDraftID, savedMessageID, threadID, kind, sourceMessageID
         case to = "toAddresses", cc = "ccAddresses", bcc = "bccAddresses"
         case subject, body, fromAddress, signatureHTML, calendarPart, quotedHTML, quotedPlainText, rfcMessageID, inReplyTo
-        case composeFont, signatureAboveQuote, signatureSeparator, archiveAfterSend
+        case composeFont, signatureAboveQuote, signatureSeparator, archiveAfterSend, requestsReadReceipt
         case references = "referencesHeader"
         case revision, savedRevision, state, sendError, hasUnrecordedUpload, sendRequested, importPending, createdAt, updatedAt
     }
@@ -153,6 +157,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
         signatureAboveQuote = content.signatureAboveQuote
         signatureSeparator = content.signatureSeparator
         archiveAfterSend = content.archiveAfterSend
+        requestsReadReceipt = content.requestsReadReceipt
         self.calendarPart = calendarPart
         self.quotedHTML = quotedHTML
         self.quotedPlainText = quotedPlainText
@@ -175,7 +180,8 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
             DraftContent(
                 to: to, cc: cc, bcc: bcc, subject: subject, body: body,
                 fromAddress: fromAddress, signatureHTML: signatureHTML, composeFont: composeFont,
-                signatureAboveQuote: signatureAboveQuote, signatureSeparator: signatureSeparator, archiveAfterSend: archiveAfterSend
+                signatureAboveQuote: signatureAboveQuote, signatureSeparator: signatureSeparator, archiveAfterSend: archiveAfterSend,
+                requestsReadReceipt: requestsReadReceipt
             )
         }
         set {
@@ -190,6 +196,7 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
             signatureAboveQuote = newValue.signatureAboveQuote
             signatureSeparator = newValue.signatureSeparator
             archiveAfterSend = newValue.archiveAfterSend
+            requestsReadReceipt = newValue.requestsReadReceipt
         }
     }
 

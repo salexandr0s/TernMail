@@ -482,6 +482,8 @@ enum Schema {
                 t.add(column: "dateHeaderOffset", .integer)
             }
         }
+        MailAnalyticsSchema.register(in: &migrator)
+        ReadReceiptSchema.register(in: &migrator)
         return migrator
     }
 

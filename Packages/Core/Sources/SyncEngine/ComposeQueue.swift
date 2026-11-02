@@ -511,8 +511,14 @@ extension SyncEngine {
         let accountID = accountID
         let deleted = deletedMessageIDs
         let completedAt = now()
+        let primarySender = sender.address
         try await write { tx in
             if !sent { try tx.deleteInvitationReply(localDraftID: localDraftID, accountID: accountID) }
+            if sent, let draft = try tx.localDraft(id: localDraftID), draft.accountID == accountID {
+                try tx.recordReadReceiptRequest(for: draft, senderAddress: draft.fromAddress ?? primarySender,
+                    messageID: sentMessageID, threadID: sentMessage?.record.threadID ?? draft.threadID,
+                    sentAt: sentMessage?.record.date ?? completedAt)
+            }
             if sent, let draft = try tx.localDraft(id: localDraftID), draft.archiveAfterSend, let threadID = draft.threadID {
                 _ = try tx.enqueue(.modifyThreads, accountID: accountID, threadIDs: [threadID],
                                    remove: [SystemLabel.inbox], now: completedAt, notBefore: completedAt)
@@ -604,6 +610,7 @@ extension SyncEngine {
         message.subject = draft.subject
         message.date = date
         message.messageID = draft.rfcMessageID
+        message.dispositionNotificationTo = draft.requestsReadReceipt ? sender : nil
         message.inReplyTo = draft.inReplyTo
         message.references = draft.references
         let separator = draft.signatureSeparator ? "<div>-- </div>" : ""
