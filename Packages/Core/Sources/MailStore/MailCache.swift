@@ -543,9 +543,9 @@ public struct CacheTransaction {
         var exclusive = Set<String>()
         var shared = Set<String>()
         var claimed: [PendingAction] = []
-        for var action in try pendingActions(accountID: accountID) where action.state != .sent && action.kind.lane == lane {
+        for var action in try pendingActions(accountID: accountID) where action.state != .sent {
             let keys = try claimKeys(of: action)
-            if action.state == .queued, action.notBefore <= now,
+            if action.kind.lane == lane, action.state == .queued, action.notBefore <= now,
                keys.exclusive.isDisjoint(with: exclusive), keys.exclusive.isDisjoint(with: shared),
                keys.shared.isDisjoint(with: exclusive) {
                 action.state = .sending
@@ -579,7 +579,10 @@ public struct CacheTransaction {
             case .vacation: "settings:vacation"
             case .signature(let address, _, _): "settings:signature:" + address.lowercased()
             }
-            return ([key], [])
+            // Only creation of an unresolved label must hold the settings lane.
+            // A disabled settings feature cannot block deleting an existing label.
+            let pendingLabels = change.requiredLabelIDs.filter(LabelRules.isTemporary)
+            return ([key], Set(pendingLabels.map { "label:" + $0 }))
         }
         if action.kind.changesLabel {
             let own = action.labelID.map { Set(["label:" + $0]) } ?? []

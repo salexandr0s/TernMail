@@ -169,6 +169,7 @@ struct SettingsView: View {
         case .attachments: AttachmentPreferencesView()
         case .writing, .templates, .suggestions: ComposeSettingsPane(destination: destination)
         case .signatures: SignaturesSettingsPane()
+        case .organizeMail: MailOrganizationView()
         case .filters: IntegrationSettingsView(pane: .filters)
         case .blocked: IntegrationSettingsView(pane: .blocked)
         case .vacation: IntegrationSettingsView(pane: .vacation)

@@ -37,7 +37,7 @@ public struct ChatGPTProvider: AIProvider {
                 for model in models {
                     guard let visibility = model["visibility"]?.stringValue else { throw AIProviderError.invalidResponse }
                     guard visibility == "list" else { continue }
-                    guard let id = model["slug"]?.stringValue, identifier(id),
+                    guard let id = model["slug"]?.stringValue, Self.identifier(id),
                           let name = model["display_name"]?.stringValue, !name.isEmpty, name.utf8.count <= 256,
                           seen.insert(id).inserted else { throw AIProviderError.invalidResponse }
                     result.append(AIModel(id: id, displayName: name))
@@ -64,7 +64,7 @@ public struct ChatGPTProvider: AIProvider {
     }
 
     private func consume(_ request: AIRequest, continuation: AsyncThrowingStream<AIEvent, any Error>.Continuation) async throws {
-        let payload = try requestBody(request)
+        let payload = try Self.requestBody(request)
         var http = try await authorizedRequest(path: "responses", method: "POST")
         http.httpBody = payload
         http.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -120,7 +120,10 @@ public struct ChatGPTProvider: AIProvider {
         throw AIProviderError.streamInterrupted
     }
 
-    private func requestBody(_ request: AIRequest) throws -> Data {
+    static let maximumRequestBytes = 524_288
+
+    /// Shared with bounded analyses so their complete encoded request fits this transport.
+    static func requestBody(_ request: AIRequest) throws -> Data {
         guard identifier(request.model), !request.input.isEmpty, request.input.count <= 512,
               request.instructions.utf8.count <= 32_768, request.tools.count <= 16,
               Set(request.tools.map(\.name)).count == request.tools.count else { throw AIProviderError.invalidRequest }
@@ -149,7 +152,7 @@ public struct ChatGPTProvider: AIProvider {
             ])])
         }
         let data = try AIJSON.object(body).encoded()
-        guard data.count <= 524_288 else { throw AIProviderError.invalidRequest }
+        guard data.count <= maximumRequestBytes else { throw AIProviderError.invalidRequest }
         return data
     }
 
@@ -180,7 +183,7 @@ public struct ChatGPTProvider: AIProvider {
                 }
             case "function_call":
                 guard item["namespace"]?.stringValue == "tern", let name = item["name"]?.stringValue, allowed.contains(name),
-                      let id = item["call_id"]?.stringValue, identifier(id), callIDs.insert(id).inserted,
+                      let id = item["call_id"]?.stringValue, Self.identifier(id), callIDs.insert(id).inserted,
                       let arguments = item["arguments"]?.stringValue, arguments.utf8.count <= 65_536,
                       (try? AIJSON.decode(Data(arguments.utf8)).objectValue) != nil,
                       item["status"] == nil || item["status"]?.stringValue == "completed" else { throw AIProviderError.malformedResponse(.functionCall) }
@@ -272,7 +275,7 @@ public struct ChatGPTProvider: AIProvider {
         }
     }
 
-    private func identifier(_ value: String) -> Bool {
+    private static func identifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 200 && value.unicodeScalars.allSatisfy { !$0.properties.isWhitespace && !CharacterSet.controlCharacters.contains($0) }
     }
 
