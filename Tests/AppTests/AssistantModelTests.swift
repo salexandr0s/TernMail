@@ -208,14 +208,73 @@ import TernAI
         #expect(await provider.requests.count == 1)
     }
 
-    @Test func suggestionsSendImmediatelyWithoutWideningTheActiveScope() async throws {
+    @Test func defaultScopeSearchesAllEnabledAccountsAndExcludesRevokedAccounts() async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Both accounts.")), .complete(Self.answer("One account."))])
+        let fixture = try Fixture(provider: provider, restoredAccountIDs: ["a", "b"], initialScope: nil)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        #expect(fixture.model.selectedScope == .allEnabledAccounts)
+        #expect(fixture.model.suggestions.first == .awaitingReplies)
+        fixture.model.run(.awaitingReplies)
+        await fixture.model.waitForCurrentTurn()
+        let first = try #require(await provider.requests.first)
+        #expect(first.instructions.contains("a@example.invalid"))
+        #expect(first.instructions.contains("b@example.invalid"))
+        #expect(first.instructions.contains("\"selected_threads\":null"))
+
+        fixture.model.setAccountEnabled("b", enabled: false)
+        fixture.context.currentAccounts = ["b"]
+        fixture.context.selectedThreads = []
+        fixture.model.newChat()
+        #expect(fixture.model.selectedScope == .allEnabledAccounts)
+        fixture.model.run(.followUps)
+        await fixture.model.waitForCurrentTurn()
+        let second = try #require(await provider.requests.last)
+        #expect(second.instructions.contains("a@example.invalid"))
+        #expect(!second.instructions.contains("b@example.invalid"))
+        #expect(fixture.model.enabledAccountIDs == ["a"])
+        #expect(await provider.requests.count == 2)
+
+        fixture.model.selectedScope = .currentAccount
+        fixture.model.newChat()
+        #expect(fixture.model.selectedScope == .currentAccount)
+    }
+
+    @Test func contextualSuggestionsUseOnlySelectedMailWithinTheActiveScope() async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Summary."))])
+        let fixture = try Fixture(provider: provider, restoredAccountIDs: ["a", "b"], initialScope: nil)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        #expect(fixture.model.contextualSuggestions == [.summarizeThread, .draftReply])
+        fixture.context.selectedThreads.insert(.init(accountID: "b", threadID: "other"))
+        #expect(fixture.model.contextualSuggestions == [.summarizeThread])
+        #expect(!fixture.model.canRun(.draftReply))
+        fixture.model.selectedScope = .currentAccount
+        #expect(fixture.model.contextualSuggestions.isEmpty)
+        #expect(!fixture.model.canRun(.summarizeThread))
+
+        fixture.context.selectedThreads = [.init(accountID: "a", threadID: "t")]
+        fixture.model.run(.summarizeThread)
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.selectedScope == .selectedThreads)
+        let request = try #require(await provider.requests.first)
+        #expect(request.instructions.contains("\"thread_id\":\"t\""))
+        #expect(!request.instructions.contains("b@example.invalid"))
+
+        fixture.context.selectedThreads = []
+        #expect(fixture.model.contextualSuggestions.isEmpty)
+        #expect(!fixture.model.canRun(.summarizeThread))
+    }
+
+    @Test(arguments: [AssistantSuggestion.awaitingReplies, .priorities, .followUps, .recentMail])
+    func suggestionsSendImmediatelyWithoutWideningTheActiveScope(_ suggestion: AssistantSuggestion) async throws {
         let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Selected priorities.")), .complete(Self.answer("Awaiting replies."))])
         let fixture = try Fixture(provider: provider)
         defer { fixture.clean() }
         fixture.model.selectedScope = .selectedThreads
         await fixture.model.refreshConnection()
-        #expect(fixture.model.canRun(.priorities))
-        fixture.model.run(.priorities)
+        #expect(fixture.model.canRun(suggestion))
+        fixture.model.run(suggestion)
         await fixture.model.waitForCurrentTurn()
         #expect(fixture.model.selectedScope == .selectedThreads)
         #expect(fixture.model.messages.first?.isUser == true)
@@ -225,13 +284,13 @@ import TernAI
 
         fixture.context.selectedThreads = []
         fixture.model.refreshAccess()
-        #expect(!fixture.model.canRun(.priorities))
-        #expect(fixture.model.requirement(for: .priorities) != nil)
-        fixture.model.run(.priorities)
+        #expect(!fixture.model.canRun(suggestion))
+        #expect(fixture.model.requirement(for: suggestion) != nil)
+        fixture.model.run(suggestion)
         #expect(await provider.requests.count == 1)
 
         fixture.model.selectedScope = .currentAccount
-        fixture.model.run(.awaitingReplies)
+        fixture.model.run(suggestion)
         await fixture.model.waitForCurrentTurn()
         let second = try #require(await provider.requests.last)
         #expect(second.instructions.contains("\"selected_threads\":null"))
@@ -239,7 +298,7 @@ import TernAI
         #expect(fixture.model.enabledAccountIDs == ["a"])
         fixture.context.currentAccounts = ["b"]
         fixture.model.refreshAccess()
-        fixture.model.run(.priorities)
+        fixture.model.run(suggestion)
         #expect(await provider.requests.count == 2)
         #expect(fixture.model.enabledAccountIDs == ["a"])
     }
@@ -640,6 +699,7 @@ import TernAI
 
         init(provider: any AIProvider,
              accountsReady: Bool = true, restoredAccountIDs: [String] = [],
+             initialScope: AssistantScope? = .currentAccount,
              writingStyle: AssistantWritingStyleModel? = nil,
              acknowledge: @escaping @MainActor (String) -> Void = { _ in },
              execute: @escaping @MainActor (AIToolCall) async throws -> MailAssistantToolResult = { _ in .init(data: .null) }) throws {
@@ -653,7 +713,7 @@ import TernAI
                 provider: provider, defaults: defaults, context: { context.value() }, makeTools: { _ in
                     .init(definitions: MailAssistantTools.definitions, acknowledge: acknowledge, execute: execute)
                 }, writingStyle: writingStyle)
-            model.selectedScope = .currentAccount
+            if let initialScope { model.selectedScope = initialScope }
             model.setAccountEnabled("a", enabled: true)
         }
         func clean() { model.stop(); defaults.removePersistentDomain(forName: domain) }

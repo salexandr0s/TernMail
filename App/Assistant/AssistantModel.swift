@@ -30,7 +30,7 @@ final class AssistantModel {
     private(set) var errorMessage: String?
     private(set) var statusText: String?
     private(set) var usage: AIUsage?
-    var selectedScope: AssistantScope = .selectedThreads {
+    var selectedScope: AssistantScope = .allEnabledAccounts {
         didSet { if selectedScope != oldValue { refreshAccess() } }
     }
     private(set) var enabledAccountIDs: Set<String> {
@@ -101,17 +101,20 @@ final class AssistantModel {
     var availableAccounts: [AccountRecord] { context().accounts }
 
     var suggestions: [AssistantSuggestion] {
-        context().selectedThreads.isEmpty
-            ? [.priorities, .awaitingReplies, .summarizeThread, .draftReply]
-            : [.summarizeThread, .draftReply, .priorities, .awaitingReplies]
+        [.awaitingReplies, .priorities, .followUps, .recentMail]
+    }
+
+    var contextualSuggestions: [AssistantSuggestion] {
+        let current = context()
+        let selected = scope(in: current, selection: .selectedThreads)
+        guard let threads = selected.threadIDs, !threads.isEmpty,
+              selected.accountIDs.isSubset(of: scope(in: current).accountIDs) else { return [] }
+        return threads.count == 1 ? [.summarizeThread, .draftReply] : [.summarizeThread]
     }
 
     func title(for suggestion: AssistantSuggestion) -> String {
-        if selectedScope == .selectedThreads {
-            if suggestion == .priorities { return "Prioritize these conversations" }
-            if suggestion == .awaitingReplies { return "Which of these need a reply?" }
-        }
-        if suggestion == .summarizeThread, context().selectedThreads.count > 1 {
+        if suggestion == .summarizeThread,
+           (scope(in: context(), selection: .selectedThreads).threadIDs?.count ?? 0) > 1 {
             return "Summarize these conversations"
         }
         return suggestion.title
@@ -124,6 +127,12 @@ final class AssistantModel {
         let snapshot = scope(in: current, selection: selection)
         do {
             try validateStart(snapshot, selection: selection)
+            if selection == .selectedThreads, snapshot.threadIDs?.isEmpty != false {
+                return "Select a conversation in an enabled mail account."
+            }
+            guard !snapshot.accountIDs.isEmpty else {
+                return "Enable a mail account in assistant settings or choose a scope with mail access."
+            }
             guard snapshot.accountIDs.isSubset(of: scope(in: current).accountIDs) else {
                 return "Select a conversation within the current mail scope."
             }
@@ -140,13 +149,7 @@ final class AssistantModel {
         refreshAccess()
         if let requirement = requirement(for: suggestion) { errorMessage = requirement; return }
         selectedScope = suggestionScope(suggestion)
-        let prompt: String
-        if selectedScope == .selectedThreads, suggestion == .priorities {
-            prompt = "What needs my attention in the selected conversations? Identify open requests and upcoming deadlines, check for later replies that resolve them, and show the conversations in priority order."
-        } else if selectedScope == .selectedThreads, suggestion == .awaitingReplies {
-            prompt = "Which of the selected conversations need my reply? Read the latest messages, exclude anything already answered, and show the conversations with a short reason."
-        } else { prompt = suggestion.prompt }
-        send(prompt)
+        send(suggestion.prompt(for: selectedScope))
     }
 
     private func suggestionScope(_ suggestion: AssistantSuggestion) -> AssistantScope {

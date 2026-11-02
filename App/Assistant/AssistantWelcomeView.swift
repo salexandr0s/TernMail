@@ -17,7 +17,7 @@ struct AssistantWelcomeView: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s8) {
             VStack(spacing: Tokens.Space.s3) {
                 Text("How can I help?").font(.title.weight(.semibold))
-                Text("Catch up on a conversation, prepare a reply, or find time to meet.")
+                Text("Find what needs a reply, keep track of commitments, or catch up on your mail.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -28,17 +28,29 @@ struct AssistantWelcomeView: View {
             if let setup {
                 setupCard(setup)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s2)],
-                          alignment: .leading, spacing: Tokens.Space.s2) {
-                    ForEach(model.suggestions) { suggestion in
-                        let requirement = model.requirement(for: suggestion)
-                        AssistantSuggestionRow(
-                            title: model.title(for: suggestion),
-                            detail: requirement ?? detail(for: suggestion),
-                            systemImage: suggestion.systemImage,
-                            requirement: requirement,
-                            action: { onSuggestion(suggestion) }
-                        )
+                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s2)],
+                              alignment: .leading, spacing: Tokens.Space.s2) {
+                        ForEach(model.suggestions) { suggestion in
+                            let requirement = model.requirement(for: suggestion)
+                            AssistantSuggestionRow(
+                                title: model.title(for: suggestion),
+                                detail: requirement ?? detail(for: suggestion),
+                                systemImage: suggestion.systemImage,
+                                requirement: requirement,
+                                action: { onSuggestion(suggestion) }
+                            )
+                        }
+                    }
+                    if !model.contextualSuggestions.isEmpty {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Text("With your selection")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: Tokens.Space.s2) { selectionButtons }
+                                VStack(alignment: .leading, spacing: Tokens.Space.s2) { selectionButtons }
+                            }
+                        }
                     }
                 }
             }
@@ -50,6 +62,18 @@ struct AssistantWelcomeView: View {
         }
         .font(.callout).fixedSize(horizontal: false, vertical: true)
         .padding(.top, Tokens.Space.s12).padding(.bottom, Tokens.Space.s6)
+    }
+
+    private var selectionButtons: some View {
+        ForEach(model.contextualSuggestions) { suggestion in
+            let requirement = model.requirement(for: suggestion)
+            Button(suggestion == .summarizeThread ? "Summarize" : "Draft a reply", systemImage: suggestion.systemImage) {
+                onSuggestion(suggestion)
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .disabled(requirement != nil)
+            .help(requirement ?? model.title(for: suggestion))
+        }
     }
 
     private func setupCard(_ setup: AssistantSetupPrompt) -> some View {
@@ -82,8 +106,10 @@ struct AssistantWelcomeView: View {
 
     private func detail(for suggestion: AssistantSuggestion) -> String {
         switch suggestion {
-        case .priorities: "Open requests and upcoming deadlines"
-        case .awaitingReplies: "Conversations that still need an answer"
+        case .awaitingReplies: "Unanswered questions and requests, urgent first"
+        case .priorities: "What needs doing and when it is due"
+        case .followUps: "People you are waiting to hear back from"
+        case .recentMail: "Important updates and decisions from the past week"
         case .summarizeThread: "Key decisions and open tasks"
         case .draftReply: "A reply you can review and edit"
         }

@@ -40,13 +40,15 @@ struct AssistantMessage: Identifiable {
 }
 
 enum AssistantSuggestion: String, CaseIterable, Identifiable {
-    case priorities, awaitingReplies, summarizeThread, draftReply
+    case awaitingReplies, priorities, followUps, recentMail, summarizeThread, draftReply
 
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .priorities: "What needs my attention?"
-        case .awaitingReplies: "Who is waiting for my reply?"
+        case .awaitingReplies: "Find emails that need a reply"
+        case .priorities: "Show priorities and deadlines"
+        case .followUps: "Find emails to follow up on"
+        case .recentMail: "Catch me up on recent mail"
         case .summarizeThread: "Summarize this conversation"
         case .draftReply: "Draft a reply"
         }
@@ -55,16 +57,23 @@ enum AssistantSuggestion: String, CaseIterable, Identifiable {
         switch self {
         case .priorities: "flag"
         case .awaitingReplies: "arrowshape.turn.up.left"
+        case .followUps: "clock.arrow.circlepath"
+        case .recentMail: "tray"
         case .summarizeThread: "text.alignleft"
         case .draftReply: "square.and.pencil"
         }
     }
-    var prompt: String {
-        switch self {
+    func prompt(for scope: AssistantScope) -> String {
+        let mail = scope == .selectedThreads ? "the selected conversations" : "recent mail in the current mail scope"
+        return switch self {
         case .priorities:
-            "What needs my attention in my recent mail? Find open requests and upcoming deadlines, check whether later replies resolve them, and show the most important conversations."
+            "Find priorities and deadlines in \(mail). Identify time-sensitive requests, decisions I need to make, and commitments that are still open. Check later messages for completion or changed dates. Show up to five conversations in priority order, with the next action and any stated deadline. Do not invent due dates."
         case .awaitingReplies:
-            "Which conversations are waiting for my reply? Read the latest messages, exclude anything already answered, and show the conversations with a short reason."
+            "Find emails that need my reply in \(mail). Read the latest messages and identify direct questions or requests addressed to me. Exclude requests I have already answered or that were resolved, newsletters, and automated notifications that do not need a response. Show up to five conversations, most urgent first, with what each person needs from me and any stated deadline."
+        case .followUps:
+            "Find emails I should follow up on in \(mail). Look for questions, requests, or commitments where I am waiting for someone else. Read later messages to check whether they answered or resolved the request; an outgoing last message alone does not mean a follow-up is needed. Show up to five conversations with who I am waiting on, how long it has been, and the next step."
+        case .recentMail:
+            "Catch me up on \(mail) from the last seven days. Summarize important updates, decisions, and open tasks, grouping related messages. Check later replies so resolved issues are not listed as open. Skip routine promotions and notifications, show the most useful conversations, and state the time range and any limits in what you reviewed."
         case .summarizeThread:
             "Summarize the selected conversations, including decisions and tasks that are still open. Check later messages for anything already resolved."
         case .draftReply:

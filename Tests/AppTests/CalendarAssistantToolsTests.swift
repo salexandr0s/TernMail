@@ -264,6 +264,12 @@ import TernAI
         await model.refreshConnection()
         #expect(model.enabledAccountIDs.isEmpty)
         #expect(model.hasCalendarAccess)
+        for suggestion in AssistantSuggestion.allCases {
+            #expect(!model.canRun(suggestion))
+            model.run(suggestion)
+        }
+        #expect(model.messages.isEmpty)
+        #expect(model.contextualSuggestions.isEmpty)
         model.send("What is on my calendar?")
         await model.waitForCurrentTurn()
         #expect(model.messages.last?.state == .completed)
