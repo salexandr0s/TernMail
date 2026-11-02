@@ -112,9 +112,17 @@ private struct MessageListVisualRow: View, Equatable {
     private var scale: Double { ReadingPreferences.textScale(textScale) }
     private var thread: ThreadRecord { item.thread }
     private var displayedLabels: [LabelRecord] { item.visibleLabels }
-    /// Text starts past the unread dot and the avatar; the separator starts with it.
-    private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s1_5 * 3 + Tokens.Space.s0_5 + avatarSize }
+    /// Only the unread gutter spans the row; the avatar belongs to the header.
+    private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s2 + Tokens.Space.s1_5 }
     private var showsStar: Bool { thread.isStarred || isHovered || selected }
+    private var showsAccount: Bool {
+        mailbox.listPreferences.showsAccountBadges && mailbox.listMixesAccounts && accountMark != nil
+    }
+    private var accountDescription: String {
+        guard let account = mailbox.account(id: item.id.accountID)?.account else { return item.id.accountID }
+        let title = mailbox.accountTitle(account)
+        return title == account.email ? title : "\(title) (\(account.email))"
+    }
     private var senderLineHeight: CGFloat {
         let font = NSFont.systemFont(ofSize: MessageListFontMetrics.size(for: .body) * scale)
         return max(avatarSize, ceil(font.ascender - font.descender + font.leading))
@@ -145,22 +153,27 @@ private struct MessageListVisualRow: View, Equatable {
         #endif
         HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
             Circle().fill(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
-                .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
+                .frame(width: Tokens.Space.s2, height: Tokens.Space.s2)
                 .frame(height: lineHeight)
                 .opacity(thread.isUnread ? 1 : 0)
-            avatar
-                .frame(height: lineHeight)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 senderLine(date: date)
                     .frame(minHeight: lineHeight)
                 subjectLine
                 if !compact { previewLine }
-                if !labels.isEmpty || !item.attachments.isEmpty { detailLine(labels: labels) }
+                if !labels.isEmpty || !item.attachments.isEmpty || showsAccount { detailLine(labels: labels) }
             }
-            .padding(.leading, Tokens.Space.s0_5)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, Tokens.Space.s1)
-        .padding(.vertical, compact ? Tokens.Space.s1 : Tokens.Space.s1_5)
+        .padding(.vertical, Tokens.Space.s1)
+        .background {
+            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                .fill(Color.accentColor.opacity(thread.isUnread && !selected ? Tokens.Opacity.wash : 0))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .onHover { isHovered = $0 }
         .ternHover(isEnabled: !selected)
         .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
@@ -180,36 +193,43 @@ private struct MessageListVisualRow: View, Equatable {
     }
 
     private func senderLine(date: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-            Text(senderText).font(scaledFont(.body, weight: thread.isUnread ? .semibold : .medium)).lineLimit(1)
-            if thread.messageCount > 1 {
-                Text("\(thread.messageCount)").font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
-            }
-            Spacer(minLength: Tokens.Space.s2)
-            if mailbox.listPreferences.showsImportance, item.labels.contains(SystemLabel.important) {
-                Image(systemName: "exclamationmark").font(scaledFont(.caption1, weight: .semibold))
-                    .foregroundStyle(Tokens.Status.important).accessibilityLabel("Important")
-            }
-            Button { mailbox.toggleListStar([item.id]) } label: {
-                Image(systemName: thread.isStarred ? "star.fill" : "star")
-                    .font(scaledFont(.caption1))
-                    .foregroundStyle(thread.isStarred ? Tokens.Status.star : Color.secondary)
-            }
-            .buttonStyle(.borderless)
-            // Unstarred rows show the star on hover, so the date column stays quiet.
-            .opacity(showsStar ? 1 : 0)
-            .help(thread.isStarred ? "Remove Star" : "Star")
-            .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
-            Text(date).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary).fixedSize()
-            if mailbox.listPreferences.showsAccountBadges, mailbox.listMixesAccounts, let accountMark {
-                HStack(spacing: Tokens.Space.s0_5) {
-                    // The account's color would vanish on an accent-colored selection.
-                    Circle().fill(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(accountColor))
-                        .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
-                    Text(accountMark).font(scaledFont(.caption2, weight: .medium)).foregroundStyle(.secondary)
+        HStack(spacing: Tokens.Space.s1_5) {
+            // Preserve the shared avatar's image shape, transparency and size policy.
+            avatar
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
+                Text(senderText)
+                    .font(scaledFont(.body, weight: thread.isUnread ? .semibold : .regular))
+                    .lineLimit(1)
+                    .help(senderDetails)
+                if thread.messageCount > 1 {
+                    Text("\(thread.messageCount)")
+                        .font(scaledFont(.caption2).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, Tokens.Space.s1)
+                        .background(.primary.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                        .fixedSize()
+                        .help("\(thread.messageCount) messages")
                 }
+                Spacer(minLength: Tokens.Space.s1)
+                if mailbox.listPreferences.showsImportance, item.labels.contains(SystemLabel.important) {
+                    Image(systemName: "exclamationmark").font(scaledFont(.caption1, weight: .semibold))
+                        .foregroundStyle(Tokens.Status.important).accessibilityLabel("Important")
+                }
+                Button { mailbox.toggleListStar([item.id]) } label: {
+                    Image(systemName: thread.isStarred ? "star.fill" : "star")
+                        .font(scaledFont(.caption1))
+                        .foregroundStyle(thread.isStarred ? Tokens.Status.star : Color.secondary)
+                        .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                // Keep the action's space even while hidden, so hover never moves the date.
+                .opacity(showsStar ? 1 : 0)
+                .help(thread.isStarred ? "Remove Star" : "Star")
+                .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
+                Text(date).font(scaledFont(.caption1).monospacedDigit()).foregroundStyle(.secondary)
                 .fixedSize()
-                .help(mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } ?? item.id.accountID)
+                .help(thread.lastDate.formatted(date: .complete, time: .shortened))
             }
         }
     }
@@ -220,63 +240,99 @@ private struct MessageListVisualRow: View, Equatable {
                 Text("Draft").font(scaledFont(.caption1, weight: .medium)).foregroundStyle(Tokens.Status.error)
             }
             Text(thread.subject.isEmpty ? AttributedString("No Subject") : mailbox.search.highlights.subject(thread.subject))
-                .font(scaledFont(.callout, weight: thread.isUnread ? .medium : .regular))
+                .font(scaledFont(.callout, weight: thread.isUnread ? .semibold : .regular))
                 .foregroundStyle(thread.subject.isEmpty ? Color.secondary : Color.primary)
                 .lineLimit(1)
+                .help(thread.subject.isEmpty ? "No Subject" : thread.subject)
         }
     }
 
     @ViewBuilder private var previewLine: some View {
         if let wake = wakeTime {
-            Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock").font(scaledFont(.caption1)).foregroundStyle(.secondary)
+            Label("Returns \(ThreadDate.wake(wake))", systemImage: "clock")
+                .font(scaledFont(.caption1)).foregroundStyle(.secondary).lineLimit(1)
+                .help("Returns \(ThreadDate.wake(wake))")
         } else if !thread.snippet.isEmpty {
             Text(mailbox.search.highlights.preview(thread.snippet)).font(scaledFont(.caption1)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 
     private func detailLine(labels: [LabelRecord]) -> some View {
-        HStack(spacing: Tokens.Space.s1) {
-            ForEach(Array(labels.prefix(2)), id: \.id) { label in
-                MailLabelBadge(label: label, font: labelFont)
+        HStack(spacing: Tokens.Space.s2) {
+            if !labels.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    labelGroup(labels, visibleCount: min(2, labels.count)).fixedSize(horizontal: true, vertical: false)
+                    if labels.count > 1 {
+                        labelGroup(labels, visibleCount: 1).fixedSize(horizontal: true, vertical: false)
+                    }
+                    // A single long label can truncate while the overflow count remains visible.
+                    labelGroup(labels, visibleCount: 1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let attachment = item.attachments.first {
+                Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType))
+                    .font(scaledFont(.caption1))
+                    .lineLimit(1).help(attachment.filename)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if item.attachments.count > 1 {
+                    Text("+\(item.attachments.count - 1)")
+                        .font(scaledFont(.caption1).monospacedDigit()).fixedSize()
+                }
+            } else {
+                Spacer(minLength: 0)
             }
-            if labels.count > 2 {
-                Text("+\(labels.count - 2)")
+            if !labels.isEmpty, !item.attachments.isEmpty {
+                Label("\(item.attachments.count)", systemImage: "paperclip")
                     .font(labelFont.monospacedDigit())
                     .fixedSize()
-                    .help(labels.dropFirst(2).map(\.title).joined(separator: ", "))
+                    .help(item.attachments.map(\.filename).joined(separator: "\n"))
+                    .accessibilityLabel(item.attachments.map(\.filename).joined(separator: ", "))
             }
-            if let attachment = item.attachments.first {
-                if labels.isEmpty {
-                    Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType))
-                        .font(scaledFont(.caption1))
-                        .lineLimit(1).help(attachment.filename)
-                    if item.attachments.count > 1 {
-                        Text("+\(item.attachments.count - 1)")
-                            .font(scaledFont(.caption1).monospacedDigit()).fixedSize()
-                    }
-                } else {
-                    Label("\(item.attachments.count)", systemImage: "paperclip")
-                        .font(labelFont.monospacedDigit())
-                        .fixedSize()
-                        .help(item.attachments.map(\.filename).joined(separator: "\n"))
-                        .accessibilityLabel(item.attachments.map(\.filename).joined(separator: ", "))
+            if showsAccount, let accountMark {
+                HStack(spacing: Tokens.Space.s0_5) {
+                    Circle().fill(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(accountColor))
+                        .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
+                    Text(accountMark).font(scaledFont(.caption2, weight: .medium))
                 }
+                .fixedSize()
+                .help(accountDescription)
+                .accessibilityLabel(accountDescription)
             }
         }
         .foregroundStyle(.secondary)
-        .padding(.top, Tokens.Space.s0_5)
+    }
+
+    private func labelGroup(_ labels: [LabelRecord], visibleCount: Int) -> some View {
+        HStack(spacing: Tokens.Space.s1) {
+            ForEach(Array(labels.prefix(visibleCount)), id: \.id) { label in
+                MailLabelBadge(label: label, font: labelFont)
+            }
+            if labels.count > visibleCount {
+                Text("+\(labels.count - visibleCount)")
+                    .font(labelFont.monospacedDigit())
+                    .fixedSize()
+                    .help(labels.dropFirst(visibleCount).map(\.title).joined(separator: ", "))
+                    .accessibilityLabel(labels.dropFirst(visibleCount).map(\.title).joined(separator: ", "))
+            }
+        }
+    }
+
+    private var showsRecipients: Bool {
+        [SystemLabel.sent, SystemLabel.draft].contains(mailbox.selectedLabelID ?? "") && !item.recipients.isEmpty
     }
 
     private var senderText: String {
-        if [SystemLabel.sent, SystemLabel.draft].contains(mailbox.selectedLabelID ?? ""), !item.recipients.isEmpty { return "To: " + item.recipients }
-        return thread.participants.isEmpty ? "No Sender" : thread.participants
+        showsRecipients ? "To: " + item.recipientPresentation.compact : item.senderPresentation.compact
+    }
+
+    private var senderDetails: String {
+        showsRecipients ? "To: " + item.recipientPresentation.full : item.senderPresentation.full
     }
 
     private func accessibilitySummary(labels: [LabelRecord], date: String) -> String {
-        let account = mailbox.listMixesAccounts
-            ? mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } : nil
+        let account = mailbox.listMixesAccounts ? accountDescription : nil
         return MessageListRow.accessibilitySummary(
-            unread: thread.isUnread, sender: senderText, subject: thread.subject,
+            unread: thread.isUnread, sender: senderDetails, subject: thread.subject,
             date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? date,
             messageCount: thread.messageCount, starred: thread.isStarred,
             important: mailbox.listPreferences.showsImportance && item.labels.contains(SystemLabel.important),
@@ -310,6 +366,7 @@ private struct MailLabelBadge: View {
         .font(font)
         .foregroundStyle(Color(gmailHex: colors.textColor) ?? .primary)
         .padding(.horizontal, Tokens.Space.s1)
+        .padding(.vertical, Tokens.Space.s0_5)
         .background(Color(gmailHex: colors.backgroundColor) ?? Tokens.Surface.muted,
                     in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .overlay {

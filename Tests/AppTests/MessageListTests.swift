@@ -241,6 +241,82 @@ import Testing
                                                     messageCount: 1, starred: false) == "Sender, No Subject, Oct 30")
     }
 
+    @Test func participantSummariesKeepDistinctAddressesAndQuotedNames() {
+        let aliases = MessageListParticipants(headers: [
+            "Alex <alex@work.example>", "Alex <alex@personal.example>",
+            "Alex <alex+projects@work.example>", "Alex <ALEX@WORK.EXAMPLE>"
+        ], fallback: "Alex")
+        #expect(aliases.compact == "alex@work.example, alex@personal.example, +1 more")
+        #expect(aliases.full == "Alex <alex@work.example>, Alex <alex@personal.example>, Alex <alex+projects@work.example>, Alex <ALEX@WORK.EXAMPLE>")
+
+        let names = MessageListParticipants(headers: [
+            "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>",
+            "Rowan <rowan@example.com>", "Casey <casey@example.com>"
+        ], fallback: "Original participants")
+        #expect(names.compact == "Doe, Jane, Sam, +2 more")
+        #expect(names.full == "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>, Rowan <rowan@example.com>, Casey <casey@example.com>")
+        for malformed in ["Sam <sam@example.com>, missing address", "alex@work.example alex@personal.example"] {
+            let presentation = MessageListParticipants(headers: [malformed], fallback: "Original participants")
+            #expect(presentation.compact == "Original participants")
+            #expect(presentation.full == malformed)
+        }
+        let namedAddress = "\"Team @ Work\" <team@work.example>"
+        let conservative = MessageListParticipants(headers: [namedAddress], fallback: "Team @ Work")
+        #expect(conservative.compact == "Team @ Work")
+        #expect(conservative.full == namedAddress)
+    }
+
+    @Test func participantPresentationUsesCompleteHeadersWithoutWideningFilteredRows() throws {
+        let earlier = MessageRecord(accountID: "a", id: "earlier", threadID: "thread", historyID: 1,
+            date: Date(timeIntervalSince1970: 1), snippet: "", sender: "Alex <alex@work.example>",
+            recipients: "Team <team@example.com>", cc: nil, subject: "Planning", sizeEstimate: 1)
+        var later = earlier
+        later.id = "later"
+        later.date = Date(timeIntervalSince1970: 2)
+        later.sender = "Alex <alex@personal.example>"
+        later.recipients = "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>"
+        let entries = [MessageListEntry(message: later, labels: [SystemLabel.inbox, SystemLabel.unread]),
+                       MessageListEntry(message: earlier, labels: [SystemLabel.sent])]
+        var thread = entries[0].rowThread
+        thread.participants = "Alex"
+        thread.messageCount = 2
+        func project(_ entries: [MessageListEntry], conversations: Bool = true,
+                     previous: [MessageListItem] = []) -> [MessageListItem] {
+            MessageListItem.project(threads: [thread], entries: entries, conversations: conversations,
+                filters: [], mailboxID: SystemLabel.inbox, categories: [:],
+                addresses: ["a": ["alex@work.example", "alex@personal.example"]], reusing: previous)
+        }
+        let rows = project(entries)
+        let row = try #require(rows.first)
+        #expect(row.messages.map(\.message.id) == [later.id])
+        #expect(row.senderPresentation.compact == "alex@work.example, alex@personal.example")
+        #expect(row.senderPresentation.full == "Alex <alex@work.example>, Alex <alex@personal.example>")
+        #expect(row.recipientPresentation.compact == "Doe, Jane, Sam")
+        #expect(row.recipientPresentation.full == later.recipients)
+
+        // An address change in a filtered-out message still changes display identity.
+        var revised = earlier
+        revised.sender = "Alex <alex+projects@work.example>"
+        let refreshed = try #require(project([entries[0], .init(message: revised, labels: [SystemLabel.sent])], previous: rows).first)
+        #expect(refreshed.messages == row.messages)
+        #expect(refreshed.thread == row.thread)
+        #expect(refreshed.senderPresentation.compact == "alex+projects@work.example, alex@personal.example")
+        #expect(refreshed != row)
+
+        // Search or a partially cached thread must not present an incomplete list as complete.
+        let partial = try #require(project([entries[0]], previous: rows).first)
+        #expect(partial.senderPresentation.compact == thread.participants)
+        #expect(partial.senderPresentation.full == "Alex; available details: Alex <alex@personal.example>")
+        let message = try #require(project(entries, conversations: false).first)
+        #expect(message.senderPresentation.compact == "Alex")
+        #expect(message.senderPresentation.full == later.sender)
+
+        var foreign = earlier
+        foreign.accountID = "b"
+        foreign.sender = "Other account <other@example.com>"
+        #expect(project(entries + [.init(message: foreign, labels: [SystemLabel.inbox])]) == rows)
+    }
+
     @Test func searchHighlightsMatchWholeWordsAndStartLongPreviewsNearTheMatch() {
         func bold(_ string: AttributedString) -> [String] {
             string.runs.compactMap { run in
