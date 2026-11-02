@@ -130,8 +130,11 @@ struct SettingsView: View {
                     .lineLimit(1)
             } icon: {
                 Image(systemName: item.symbol)
-                    .font(.callout.weight(.medium))
+                    .resizable()
+                    .scaledToFit()
+                    .fontWeight(.medium)
                     .foregroundStyle(.white)
+                    .padding(Tokens.Space.s1_5 / 2)
                     .frame(width: Tokens.Settings.navigationIcon, height: Tokens.Settings.navigationIcon)
                     .background(item.tint.gradient, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                     .accessibilityHidden(true)
