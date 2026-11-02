@@ -1,4 +1,5 @@
 import AppKit
+import GmailAPI
 import MailStore
 import MessageContent
 import Observation
@@ -132,6 +133,91 @@ import WebKit
             {"description":"Send the proposal","owner":"Sam","due_date":"2026-11-05","source_ids":["\(trusted.id)"]}
             """.utf8))
         #expect(EmailTaskRequest.suggestion(otherOwner, report: report, detail: detail, accountEmail: nil).reference != request.reference)
+    }
+
+    @Test func calendarTaskRequestsKeepTheDisplayedDaySourceAndSuggestionIdentity() async throws {
+        let detail = try await detail()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))
+        var event = GoogleCalendarEvent(summary: "Planning call")
+        event.start = CalendarDateTime(dateTime: "2031-07-15T23:30:00Z")
+        event.location = "Studio"
+        var item = EmailCalendarItem(id: "interpreted:planning", messageID: "message", title: "Planning call",
+            evidence: "Let's meet to plan the launch.", kind: .proposed, event: event)
+        func request(_ item: EmailCalendarItem) -> TaskCreationRequest? {
+            EmailTaskRequest.calendarSuggestion(item, detail: detail, calendar: calendar, accountEmail: "owner@example.invalid")
+        }
+        let task = try #require(request(item))
+        #expect(task.title == "Planning call")
+        #expect(task.dueDate == "2031-07-16")
+        #expect(task.source?.accountID == "source-account")
+        #expect(task.source?.messageID == "message")
+        #expect(task.notes.contains(EmailCalendarPresentation(item: item, calendar: calendar).dateLine))
+        #expect(task.notes.contains("Studio"))
+        #expect(task.notes.contains(item.evidence))
+        #expect(try task.draft(email: "owner@example.invalid").notes?.contains("authuser=owner@example.invalid") == true)
+        #expect(try #require(request(item)).reference == task.reference)
+        let other = EmailCalendarItem(id: "interpreted:another", messageID: "message", title: item.title,
+            evidence: item.evidence, kind: .proposed, event: event)
+        #expect(try #require(request(other)).reference != task.reference)
+
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        item.event?.start = CalendarDateTime(date: "2031-07-15", timeZone: "Europe/Vienna")
+        #expect(request(item)?.dueDate == "2031-07-15")
+        #expect(request(item)?.reference == task.reference)
+        item.isOutdated = true
+        #expect(request(item) == nil)
+        item.isOutdated = false
+        item.kind = .cancelled
+        item.existingEventID = "saved-event"
+        #expect(request(item) == nil)
+        let foreign = EmailCalendarItem(id: "foreign", messageID: "other-thread-message", title: item.title,
+            evidence: item.evidence, kind: .proposed, event: event)
+        #expect(request(foreign) == nil)
+    }
+
+    @Test(arguments: [560, 280])
+    func calendarSuggestionPlusAddsATaskAndKeepsReviewAvailable(width: Int) async throws {
+        let detail = try await detail()
+        let suite = "tern.tasks.calendar." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let tasks = GoogleTasksModel(defaults: defaults, loadAccounts: { [] }, service: { _ in nil }, enable: { _ in })
+        let calendar = Calendar(identifier: .gregorian)
+        let suggestions = EmailCalendarModel()
+        let item = EmailCalendarItem(id: "interpreted:planning", messageID: "message", title: "Planning call",
+            evidence: "Let's meet to plan the launch.", kind: .proposed,
+            event: GoogleCalendarEvent(summary: "Planning call", start: CalendarDateTime(date: "2031-07-15")))
+        suggestions.update(messages: [EmailCalendarMessage(id: "message", subject: item.title, date: .now, text: item.evidence)],
+            addresses: [], now: Date(timeIntervalSince1970: 1_800_000_000))
+        try #require(suggestions.restoreInterpretation([item], for: suggestions.revision))
+        var additions: [TaskCreationRequest] = []
+        var reviews: [String] = []
+        let root = EmailCalendarSuggestionsView(model: suggestions, calendar: calendar,
+            onReview: { reviews.append($0.id) }, onOpenExisting: { _ in }, onRespond: { _, _ in }, tasks: tasks,
+            taskRequest: { EmailTaskRequest.calendarSuggestion($0, detail: detail, calendar: calendar, accountEmail: nil) },
+            onAddTask: { additions.append($0) })
+        let controller = NSHostingController(rootView: root)
+        controller.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 240),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderBack(nil)
+        defer { window.close() }
+        let addID = "calendar-task-add-" + item.id
+        let reviewID = "calendar-review-" + item.id
+        try await waitFor { self.element(addID, in: controller.view) != nil && self.element(reviewID, in: controller.view) != nil }
+        try #require(press(try #require(element(addID, in: controller.view))))
+        try await waitFor { additions.count == 1 }
+        #expect(additions[0].title == item.title)
+        #expect(additions[0].dueDate == "2031-07-15")
+        #expect(reviews.isEmpty)
+        tasks.creationStates[additions[0].reference] = .added
+        try await waitFor { self.element(addID, in: controller.view)?.value(forKey: "accessibilityEnabled") as? Bool == false }
+        try #require(press(try #require(element(reviewID, in: controller.view))))
+        try await waitFor { reviews == [item.id] }
+        #expect(additions.count == 1)
     }
 
     private func detail() async throws -> ThreadDetail {

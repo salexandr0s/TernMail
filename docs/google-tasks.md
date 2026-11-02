@@ -4,6 +4,8 @@ Open **Google Tasks** from the toolbar beside Assistant. The two panels share th
 
 Select text in an email, right-click, and choose **Add to Google Tasks**. In an expanded AI summary, click the **+** beside a detected task. A spinner appears while it saves, then a checkmark confirms it was added. Both actions use the email's Google account and save a link to the source email. AI suggestions keep their due date and put any named owner in the notes; they do not assign the task to another person.
 
+Calendar suggestions also have a **+** beside **Review**. It adds the detected event to Google Tasks, using the date shown on the card as the due date and keeping the time, location, and email excerpt in the notes. Review and the plus remain available in a narrow reader. Cancelled or superseded suggestions cannot be added as tasks.
+
 Use the field above the list to add a task, or its details button to include notes and a due date. Click a task's title to edit it. The circle completes a task, and the Completed section lets you reopen it. A task's email link opens its source message; the options menu also includes deletion. Deletion removes subtasks in Google Tasks too.
 
 ## Connect an account
@@ -25,7 +27,7 @@ The sidebar needs a network connection. It does not queue offline edits. Google 
 After enabling the API and granting an account access:
 
 1. Add selected email text and confirm the task and email link appear in the chosen list on Google Tasks.
-2. Add an AI suggestion twice and confirm that there is one task, with the suggested due date.
+2. Add an AI task suggestion and a calendar suggestion using their plus buttons. Confirm each appears once with its due date and source link; Review still opens the calendar suggestion after its task is saved.
 3. Edit, complete, reopen, and delete a temporary task in Tern; confirm each change in Google Tasks.
 4. Change a task in Google Tasks and return to Tern; confirm the refreshed result.
 5. Switch between accounts and lists, then disable Tasks for one account. Confirm that its tasks are no longer read or changed in Tern.

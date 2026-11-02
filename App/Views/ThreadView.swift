@@ -218,7 +218,15 @@ struct ThreadView: View {
                                         do { responseReview = try await app.calendar.prepareEmailResponse(item, answer: answer, key: key) }
                                         catch { calendarNotice = error.localizedDescription }
                                     }
-                                }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } })
+                                }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } },
+                                tasks: app.tasks,
+                                taskRequest: { item in
+                                    EmailTaskRequest.calendarSuggestion(item, detail: detail, calendar: app.calendar.calendar,
+                                        accountEmail: mailbox.account(id: key.accountID)?.account.email)
+                                }, onAddTask: { request in
+                                    app.showTasks()
+                                    Task { await app.tasks.add(request) }
+                                })
                                 .disabled(calendarReplyBusy)
                             if let calendarNotice {
                                 Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)

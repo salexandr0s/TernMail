@@ -11,6 +11,9 @@ struct EmailCalendarSuggestionsView: View {
     let onOpenExisting: (EmailCalendarItem) -> Void
     let onRespond: (EmailCalendarItem, InvitationReply.Answer) -> Void
     var onDismiss: (String) -> Void = { _ in }
+    var tasks: GoogleTasksModel? = nil
+    var taskRequest: (EmailCalendarItem) -> TaskCreationRequest? = { _ in nil }
+    var onAddTask: (TaskCreationRequest) -> Void = { _ in }
     @State private var showsAll = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -35,7 +38,7 @@ struct EmailCalendarSuggestionsView: View {
                         onRespond: { onRespond(item, $0) }, onDismiss: {
                             model.dismiss(item.id)
                             onDismiss(item.id)
-                        })
+                        }, tasks: tasks, taskRequest: taskRequest(item), onAddTask: onAddTask)
                 }
                 if model.isInterpreting {
                     HStack(spacing: Tokens.Space.s2) {
@@ -101,6 +104,9 @@ private struct EmailCalendarSuggestionRow: View {
     let onOpenExisting: () -> Void
     let onRespond: (InvitationReply.Answer) -> Void
     let onDismiss: () -> Void
+    let tasks: GoogleTasksModel?
+    let taskRequest: TaskCreationRequest?
+    let onAddTask: (TaskCreationRequest) -> Void
     @State private var showsDetails = false
 
     private var presentation: EmailCalendarPresentation { .init(item: item, calendar: calendar) }
@@ -112,16 +118,22 @@ private struct EmailCalendarSuggestionRow: View {
                     dateTile
                     summary.frame(minWidth: Tokens.Space.s16 * 2)
                     HStack(spacing: Tokens.Space.s1) {
-                        primaryAction
+                        eventActions
                         moreMenu
                     }
                     .controlSize(.small)
                     .fixedSize()
                 }
-                HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                    dateTile
-                    summary
-                    moreMenu.controlSize(.small).fixedSize()
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    HStack(alignment: .center, spacing: Tokens.Space.s3) {
+                        dateTile
+                        summary
+                        moreMenu.controlSize(.small).fixedSize()
+                    }
+                    eventActions
+                        .controlSize(.small)
+                        .fixedSize()
+                        .padding(.leading, Tokens.ConversationHeader.dateTile + Tokens.Space.s3)
                 }
             }
             if showsDetails { details }
@@ -214,6 +226,16 @@ private struct EmailCalendarSuggestionRow: View {
         .accessibilityHidden(true)
     }
 
+    private var eventActions: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            primaryAction
+            if let tasks, let taskRequest {
+                EmailTaskAddButton(request: taskRequest, model: tasks, onAdd: onAddTask)
+                    .accessibilityIdentifier("calendar-task-add-\(item.id)")
+            }
+        }
+    }
+
     @ViewBuilder private var primaryAction: some View {
         if item.canReview && (item.kind == .updated || item.kind == .cancelled) {
             reviewButton
@@ -233,6 +255,7 @@ private struct EmailCalendarSuggestionRow: View {
         Button("Review", action: onReview)
             .help(reviewTitle)
             .accessibilityLabel("\(reviewTitle): \(presentation.title)")
+            .accessibilityIdentifier("calendar-review-\(item.id)")
     }
 
     private var reviewTitle: String {
