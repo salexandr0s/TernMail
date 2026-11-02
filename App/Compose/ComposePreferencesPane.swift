@@ -22,12 +22,15 @@ struct ComposePreferencesPane: View {
                     .frame(maxWidth: Tokens.Settings.pickerWidth)
                 }
             } header: {
-                Text("New messages")
+                Text("Sender")
             } footer: {
                 Text("Automatic uses the selected mailbox's account. In combined mailboxes, it uses the account that last exchanged mail with the first recipient.")
             }
 
-            Section("Writing") {
+            Section {
+                MailTextAppearancePreview(font: Font(AttributedDocument.baseFont(ComposeFont(rawValue: font) ?? .sansSerif)),
+                    context: .writing)
+                    .accessibilityIdentifier("settings.writing.preview")
                 SettingsControlRow("Default font") {
                     Picker("Default font", selection: $font) {
                         Text("Sans serif").tag(ComposeFont.sansSerif.rawValue)
@@ -38,9 +41,13 @@ struct ComposePreferencesPane: View {
                     .fixedSize()
                 }
                 SettingsToggleRow("Format Markdown", detail: "Apply formatting to typed and pasted Markdown.", isOn: $markdown)
+            } header: {
+                Text("Message text")
+            } footer: {
+                Text("The sample shows your writing font. Recipients may see a similar font if it is unavailable on their device.")
             }
 
-            Section("Replies and recipients") {
+            Section("Replies") {
                 SettingsControlRow("Quote selected text") {
                     Picker("Quote selected text", selection: $quote) {
                         Text("Ask").tag(QuoteSelectionPolicy.ask.rawValue)
@@ -50,6 +57,8 @@ struct ComposePreferencesPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+            }
+            Section("Recipients") {
                 SettingsToggleRow("Show full recipient addresses", isOn: $fullAddresses)
             }
         }

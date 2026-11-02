@@ -20,26 +20,22 @@ struct ComposeTemplatesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section("Template") {
-                SettingsControlRow("Template") {
-                    HStack(spacing: Tokens.Space.s2) {
-                        Picker("Template", selection: guardedSelection) {
-                            Text("New Template").tag(String?.none)
-                            ForEach(templates) { Text($0.name).tag(Optional($0.id)) }
-                        }
-                        .accessibilityIdentifier("compose-template-selection")
-                        .frame(maxWidth: Tokens.Settings.pickerWidth)
-                        Button("New", systemImage: "plus") { unsaved.request { load(nil) } }
-                            .help("Create a new template")
-                            .accessibilityLabel("Create a new template")
-                            .accessibilityIdentifier("compose-template-new")
-                    }
+            Section {
+                ComposeLibraryPicker(title: "Saved templates", newItemLabel: "Create a new template",
+                    symbol: "doc.text", identifierPrefix: "compose-template",
+                    items: templates.map { .init(id: $0.id, name: $0.name) }, selection: guardedSelection) {
+                    unsaved.request { load(nil) }
                 }
-                TextField("Name", text: $name, prompt: Text("Template name"))
-                    .accessibilityIdentifier("compose-template-name")
             }
             Section {
                 VStack(alignment: .leading, spacing: 0) {
+                    TextField("Template name", text: $name, prompt: Text("Template name"))
+                        .labelsHidden()
+                        .textFieldStyle(.plain)
+                        .font(Tokens.Workspace.pageTitle)
+                        .padding(Tokens.Space.s4)
+                        .accessibilityIdentifier("compose-template-name")
+                    Divider()
                     FormatBar(format: format, isEnabled: focused && !isSaving, editor: editor) { editingLink = true }
                         .popover(isPresented: $editingLink) {
                             LinkEditor(existingURL: format.linkURL, width: Tokens.Layout.linkEditorWidth) { editor?.setLink($0) }
@@ -52,7 +48,7 @@ struct ComposeTemplatesPane: View {
                 .ternSurface(radius: Tokens.Radius.sm)
                 .accessibilityLabel("Template message")
             } header: {
-                Text("Message")
+                Text(selection == nil ? "New template" : "Edit template")
             } footer: {
                 Text("Templates hold text and formatting. Add attachments when composing a message.")
             }

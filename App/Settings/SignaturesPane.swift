@@ -11,11 +11,7 @@ struct SignaturesPane: View {
     var body: some View {
         SettingsPage {
             header
-            Section("Signature defaults") {
-                SettingsAsyncToggleRow("Include in replies and forwards", isOn: signatureOnReplies) { enabled in
-                    signatureOnReplies = enabled
-                    await model.setSignatureOnReplies(enabled)
-                }
+            Section("Sender") {
                 SettingsControlRow("From address") {
                     Picker("From address", selection: $selectedAddress) {
                         ForEach(model.identities, id: \.lowercasedAddress) { identity in
@@ -28,6 +24,12 @@ struct SignaturesPane: View {
             }
             if let identity = model.identities.first(where: { $0.address == selectedAddress }) {
                 SignatureEditor(identity: identity, model: model).id(identity.lowercasedAddress)
+            }
+            Section("Signature defaults") {
+                SettingsAsyncToggleRow("Include in replies and forwards", isOn: signatureOnReplies) { enabled in
+                    signatureOnReplies = enabled
+                    await model.setSignatureOnReplies(enabled)
+                }
             }
         }
         .task { signatureOnReplies = await model.signatureReplyPreference() }
@@ -54,6 +56,16 @@ private struct SignatureEditor: View {
 
     var body: some View {
         Section {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Text(identity.address)
+                    .font(.callout.weight(.semibold))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if isEditable {
+                    Label("Changes save to Gmail as you type.", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if !identity.isPrimary {
                 SettingsNote("Gmail lets Tern edit the primary address's signature. Change alias signatures in Gmail.", systemImage: "lock")
             }
@@ -61,10 +73,6 @@ private struct SignatureEditor: View {
                 .accessibilityLabel("Gmail signature")
         } header: {
             Text("Signature")
-        } footer: {
-            if isEditable {
-                Text("Changes save to Gmail as you type.")
-            }
         }
         .onChange(of: draft.document) { _, _ in
             guard isEditable, (draft.savedHTML ?? "") != savedHTML else { return }

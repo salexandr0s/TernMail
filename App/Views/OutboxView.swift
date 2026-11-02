@@ -10,9 +10,37 @@ struct OutboxView: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        VStack(spacing: 0) {
+            heading
+            Divider()
+            messages
+        }
+        .background(Tokens.Surface.primary)
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            TernPageHeader(title: "Outbox", subtitle: messageCount)
+            if attentionCount > 0 {
+                Label(attentionCount == 1 ? "1 message needs attention" : "\(attentionCount.formatted()) messages need attention",
+                      systemImage: "exclamationmark.circle")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Tokens.Status.error)
+            } else if retryCount > 0 {
+                Label("Tern will retry when Gmail is available.", systemImage: "arrow.clockwise")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, Tokens.Workspace.pageGutter)
+        .padding(.vertical, Tokens.Space.s5)
+        .accessibilityIdentifier("outbox.heading")
+    }
+
+    private var messages: some View {
         List(selection: $selection) {
             ForEach(mailbox.selectedOutbox) { activity in
-                OutboxRow(activity: activity)
+                OutboxRow(activity: activity, onOpen: { open(activity.id) },
+                    onCancelSend: Self.canUndoSend(activity) ? { undoSend(activity.id) } : nil)
                     .tag(activity.id)
             }
         }
@@ -42,7 +70,19 @@ struct OutboxView: View {
         .onChange(of: mailbox.selectedOutbox.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = nil }
         }
-        .background(Tokens.Surface.primary)
+    }
+
+    private var messageCount: String {
+        let count = mailbox.selectedOutbox.count
+        return count == 1 ? "1 message waiting for Gmail" : "\(count.formatted()) messages waiting for Gmail"
+    }
+
+    private var attentionCount: Int {
+        mailbox.selectedOutbox.count { $0.draft.sendError != nil }
+    }
+
+    private var retryCount: Int {
+        mailbox.selectedOutbox.count { $0.isWaitingToRetry }
     }
 
     /// A queued send whose delivery has never been requested, including a
@@ -59,61 +99,5 @@ struct OutboxView: View {
         Task {
             if await mailbox.undoSend(id) { open(id) }
         }
-    }
-}
-
-private struct OutboxRow: View {
-    let activity: DraftActivity
-
-    var body: some View {
-        let draft = activity.draft
-        let status = Self.status(activity)
-        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-                Text(recipients)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                    .help(recipients)
-                Spacer(minLength: Tokens.Space.s2)
-                Text(ThreadDate.short(draft.updatedAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text(draft.subject.isEmpty ? "No Subject" : draft.subject)
-                .font(.callout.weight(.medium))
-                .lineLimit(1)
-                .help(draft.subject)
-            TernBadge(text: status.title, systemImage: status.icon, tint: status.tint)
-            if let detail = status.detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .help(detail)
-            }
-        }
-        .padding(.vertical, Tokens.Space.s2)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var recipients: String {
-        let draft = activity.draft
-        let names = (draft.to + draft.cc + draft.bcc).map { address in
-            address.name.flatMap { $0.isEmpty ? nil : $0 } ?? address.address
-        }
-        return names.isEmpty ? "No Recipients" : names.joined(separator: ", ")
-    }
-
-    private static func status(_ activity: DraftActivity) -> (title: String, detail: String?, icon: String, tint: Color) {
-        if let error = activity.draft.sendError {
-            return ("Not Sent", error, "exclamationmark.triangle", Tokens.Status.error)
-        }
-        if activity.isWaitingToRetry {
-            return ("Retrying", "Can't reach Gmail. Tern will keep trying.", "arrow.clockwise", Tokens.Status.warning)
-        }
-        if activity.rows.contains(where: { $0.kind == .sendDraft && $0.state == .sending }) {
-            return ("Sending…", nil, "paperplane", .accentColor)
-        }
-        return ("Waiting to Send", nil, "clock", .secondary)
     }
 }
