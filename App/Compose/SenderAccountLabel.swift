@@ -8,7 +8,6 @@ struct SenderAccountLabel: View {
     var address: String?
     var avatarModel: AddressAvatarModel?
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
 
     private static let avatarSize = Tokens.Space.s5
@@ -34,16 +33,7 @@ struct SenderAccountLabel: View {
 
     @ViewBuilder private var avatar: some View {
         if let image = displayedImage {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: displaysLogo ? .fit : .fill)
-                .padding(displaysLogo ? Tokens.Space.s0_5 : 0)
-                .frame(width: Self.avatarSize, height: Self.avatarSize)
-                .clipShape(Circle())
-                .overlay {
-                    Circle().strokeBorder(contrast == .increased ? Color.primary : Tokens.Surface.border,
-                                          lineWidth: Tokens.Border.hairline)
-                }
+            AvatarImage(image: image, size: Self.avatarSize)
         } else {
             TernAvatar(name: avatarName, size: Self.avatarSize)
         }
@@ -53,10 +43,6 @@ struct SenderAccountLabel: View {
         if let photo = AccountProfileImages.shared.image(for: account.id) { return photo }
         guard avatarModel?.isLogo != true || showsLogos else { return nil }
         return avatarModel?.image
-    }
-
-    private var displaysLogo: Bool {
-        AccountProfileImages.shared.image(for: account.id) == nil && avatarModel?.isLogo == true
     }
 
     private var avatarName: String {

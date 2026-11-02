@@ -198,9 +198,7 @@ private struct AttachmentSenderAvatar: View {
 
     var body: some View {
         if let account = matchingAccount, let image = AccountProfileImages.shared.image(for: account.id) {
-            Image(nsImage: image).resizable().scaledToFill()
-                .frame(width: size, height: size)
-                .clipShape(Circle()).accessibilityHidden(true)
+            AvatarImage(image: image, size: size)
         } else {
             DomainLogoAvatar(address: AttachmentPresentation.senderAddress(sender), size: size) {
                 TernAvatar(name: sender, size: size)

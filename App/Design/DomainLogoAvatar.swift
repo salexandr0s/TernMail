@@ -26,14 +26,10 @@ struct DomainLogoAvatar<Placeholder: View>: View {
     var body: some View {
         Group {
             if request.enabled, loadedAddress == request.address, let image {
-                Image(nsImage: image).resizable().scaledToFit()
-                    .padding(Tokens.Space.s0_5)
-                    .frame(width: size, height: size)
-                    .background(Tokens.Surface.canvas)
+                AvatarImage(image: image, size: size)
             } else { placeholder }
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
         .accessibilityHidden(true)
         .task(id: request) {
             image = nil

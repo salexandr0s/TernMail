@@ -122,15 +122,18 @@ private final class RecipientAvatarOverlay: NSView {
 enum RecipientAvatarDrawing {
     static func draw(image: NSImage?, address: EmailAddress, in frame: NSRect) {
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(ovalIn: frame).addClip()
-        NSColor.windowBackgroundColor.setFill()
-        frame.fill()
         if let image {
             let factor = min(frame.width / max(image.size.width, 1), frame.height / max(image.size.height, 1))
             let size = NSSize(width: image.size.width * factor, height: image.size.height * factor)
-            image.draw(in: NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2, width: size.width, height: size.height),
+            let fitted = NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2, width: size.width, height: size.height)
+            let radius = AvatarImage.cornerRadius(for: min(fitted.width, fitted.height))
+            NSBezierPath(roundedRect: fitted, xRadius: radius, yRadius: radius).addClip()
+            image.draw(in: fitted,
                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         } else {
+            NSBezierPath(ovalIn: frame).addClip()
+            NSColor.windowBackgroundColor.setFill()
+            frame.fill()
             let label = ContactAvatar.initials(name: address.name ?? "", address: address.address)
             var font = NSFont.preferredFont(forTextStyle: .caption1)
             // Initials shrink to the square inside a small circle, such as a token's.

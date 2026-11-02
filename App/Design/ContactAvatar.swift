@@ -24,12 +24,12 @@ struct ContactAvatar: View {
             Text(Self.initials(name: name, address: address))
                 .font(size > Tokens.Control.avatar ? .headline : .caption.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: size, height: size)
                 .background(color.opacity(Tokens.Calendar.eventTint))
+                .clipShape(Circle())
+                .ternOutline(radius: size / 2)
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
-        .ternOutline(radius: size / 2)
         .accessibilityHidden(true)
     }
 

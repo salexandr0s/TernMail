@@ -104,9 +104,7 @@ struct AssistantEmailCard: View {
 
     @ViewBuilder private var avatar: some View {
         if let data = email.avatarData, let image = NSImage(data: data) {
-            Image(nsImage: image).resizable().scaledToFill()
-                .frame(width: Tokens.Control.avatar, height: Tokens.Control.avatar)
-                .clipShape(Circle()).accessibilityHidden(true)
+            AvatarImage(image: image)
         } else {
             DomainLogoAvatar(address: email.senderEmail) { TernAvatar(name: sender) }
         }

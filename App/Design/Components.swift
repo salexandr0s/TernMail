@@ -34,6 +34,30 @@ struct TernBadge: View {
     }
 }
 
+/// Photos and logos retain their proportions and transparent edges.
+struct AvatarImage: View {
+    let image: NSImage
+    var size: CGFloat = Tokens.Control.avatar
+
+    private var fittedSize: CGSize {
+        let factor = min(size / max(image.size.width, 1), size / max(image.size.height, 1))
+        return CGSize(width: image.size.width * factor, height: image.size.height * factor)
+    }
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .frame(width: fittedSize.width, height: fittedSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius(for: min(fittedSize.width, fittedSize.height)), style: .continuous))
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+
+    static func cornerRadius(for size: CGFloat) -> CGFloat {
+        Tokens.Radius.sm * size / Tokens.Control.avatar
+    }
+}
+
 /// Initials accompany an already visible sender or account name.
 struct TernAvatar: View {
     let name: String

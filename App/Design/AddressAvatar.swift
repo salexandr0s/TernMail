@@ -43,14 +43,10 @@ struct AddressAvatar<Placeholder: View>: View {
     var body: some View {
         Group {
             if configuredIdentity == identity, !model.isLogo || showsLogos, let image = model.image {
-                if model.isLogo {
-                    Image(nsImage: image).resizable().scaledToFit().padding(Tokens.Space.s0_5)
-                        .background(Tokens.Surface.canvas)
-                } else { Image(nsImage: image).resizable().scaledToFill() }
+                AvatarImage(image: image, size: size)
             } else { placeholder }
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
         .accessibilityHidden(true)
         .onAppear(perform: configure)
         .onChange(of: identity) { _, _ in configure() }
