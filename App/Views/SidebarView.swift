@@ -631,12 +631,13 @@ private struct SyncStatusView: View {
             HStack(spacing: Tokens.Space.s2) {
                 SettingsLink {
                     Image(systemName: "gearshape")
-                        .font(.system(size: Tokens.Control.icon, weight: .medium))
+                        .font(.system(size: Tokens.Control.icon))
+                        .foregroundStyle(.primary)
                         .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 }
                 .buttonStyle(.borderless)
-                .background(Color.primary.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
                 .ternHover(radius: Tokens.Radius.md)
                 .help("Settings (⌘,)")
@@ -646,20 +647,23 @@ private struct SyncStatusView: View {
                 status
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .multilineTextAlignment(.trailing)
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .accessibilityIdentifier("sidebar.syncStatus")
             }
 
             if case .failed(let message) = mailbox.syncStatus {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     Text(message)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
+                        .help(message)
                     Button("Try Again", systemImage: "arrow.clockwise") { mailbox.syncNow() }
                         .buttonStyle(.link)
                         .foregroundStyle(Color.accentColor)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                .padding(Tokens.Space.s2)
+                .padding(Tokens.Space.s3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .ternOutline(radius: Tokens.Radius.sm, style: .contrastOnly)
@@ -687,9 +691,14 @@ private struct SyncStatusView: View {
             if let date = mailbox.lastSyncedAt {
                 TimelineView(.periodic(from: .now, by: 30)) { _ in
                     let relativeDate = date.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))
-                    statusLabel("Updated \(relativeDate)", symbol: "checkmark.circle.fill", tint: Tokens.Status.success)
-                        .help("Last updated \(date.formatted(date: .abbreviated, time: .shortened))")
-                        .accessibilityLabel("Updated \(date.formatted(.relative(presentation: .named)))")
+                    ViewThatFits(in: .horizontal) {
+                        statusLabel("Updated \(relativeDate)", symbol: "checkmark.circle", tint: Tokens.Status.success)
+                            .fixedSize(horizontal: true, vertical: false)
+                        statusLabel(relativeDate, symbol: "checkmark.circle", tint: Tokens.Status.success)
+                    }
+                    .help("Last updated \(date.formatted(date: .abbreviated, time: .shortened))")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Updated \(date.formatted(.relative(presentation: .named)))")
                 }
             } else {
                 statusLabel("Not updated yet", symbol: "circle.dashed")
