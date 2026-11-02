@@ -128,13 +128,20 @@ enum Tokens {
     }
 
     enum Analytics {
-        static let windowWidth = Layout.readableWidth
-        static let windowHeight = Layout.shortcutsHeight
+        static let windowWidth = Layout.readableWidth + Space.s16
+        static let windowHeight = Layout.windowHeight
         static let minWidth = Layout.conversationMinWidth
         static let minHeight = Layout.windowMinHeight
         static let popoverWidth = Sheet.smallWidth
         static let popoverMaxHeight = Settings.editorMaxContentHeight
-        static let chartHeight = Settings.pickerWidth
+        static let chartHeight = Layout.settingsHeight
+        static let barWidthRatio: CGFloat = 0.7
+        static let metricMinimumScale: CGFloat = 0.6
+        static let sparklineHeight = Space.s10
+        static let symbolSize = Space.s8
+        static let twoColumnWidth = Calendar.compactWidth
+        static let received = Color(nsColor: .systemTeal)
+        static let sent = Color(nsColor: .systemIndigo)
     }
 
     /// Native controls use the contract's compact dimensions.

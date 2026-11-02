@@ -40,21 +40,21 @@ struct SenderProfilePopover: View {
                         Text(error).foregroundStyle(.secondary)
                         Button("Try again") { reload = UUID() }
                     } else if let snapshot = model.snapshot {
-                        AnalyticsCoverageLabel(coverage: snapshot.coverage)
-                        HStack(spacing: Tokens.Space.s6) {
-                            compactMetric("Received", count: snapshot.receivedCount)
-                            compactMetric("Sent", count: snapshot.sentCount)
-                            Spacer(minLength: 0)
+                        HStack(spacing: Tokens.Space.s3) {
+                            compactMetric("Received", count: snapshot.receivedCount,
+                                symbol: "arrow.down.left", tint: Tokens.Analytics.received)
+                            compactMetric("Sent", count: snapshot.sentCount,
+                                symbol: "arrow.up.right", tint: Tokens.Analytics.sent)
                         }
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                             if let first = snapshot.firstReceivedAt {
-                                LabeledContent("First received", value: first.formatted(date: .abbreviated, time: .omitted))
+                                dateRow("First received", date: first)
                             }
                             if let last = snapshot.lastContactAt {
-                                LabeledContent("Last email", value: last.formatted(date: .abbreviated, time: .omitted))
+                                dateRow("Last email", date: last)
                             }
                         }
-                        .font(.caption).foregroundStyle(.secondary)
+                        AnalyticsCoverageLabel(coverage: snapshot.coverage)
                         Divider()
                         SenderProfileLinksView(links: model.profileLinks)
                     }
@@ -67,8 +67,12 @@ struct SenderProfilePopover: View {
                     value: MailAnalyticsRoute(accountID: accountID, address: address, name: name))
                 dismiss()
             } label: {
-                Label("View analytics", systemImage: "chart.bar.xaxis")
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: Tokens.Space.s2) {
+                    Label("View analytics", systemImage: "chart.bar.xaxis")
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right").font(.caption.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(!isAvailable)
@@ -94,26 +98,52 @@ struct SenderProfilePopover: View {
             ContactAvatar(accountID: accountID, address: address, name: name,
                 cache: mailbox.cache, accounts: mailbox.accountStore, size: Tokens.Space.s12)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(name.isEmpty ? address : name).font(.title3.weight(.semibold))
+                Text(name.isEmpty ? address : name).font(.title2.weight(.semibold))
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                Text(address).font(.callout).foregroundStyle(.secondary)
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if !name.isEmpty, name.caseInsensitiveCompare(address) != .orderedSame {
+                    Text(address).font(.callout).foregroundStyle(.secondary)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
             Button {
                 NSPasteboard.general.replaceContents(with: address)
-            } label: { Image(systemName: "doc.on.doc") }
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+            }
                 .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .ternHover()
                 .help("Copy email address")
                 .accessibilityLabel("Copy email address")
         }
     }
 
-    private func compactMetric(_ title: String, count: Int) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text(count, format: .number).font(.title2.weight(.semibold)).monospacedDigit()
-            Text(title).font(.caption).foregroundStyle(.secondary)
+    private func compactMetric(_ title: String, count: Int, symbol: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Label {
+                Text(title).foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: symbol).foregroundStyle(tint)
+            }
+            .font(.caption.weight(.medium))
+            Text(count, format: .number).font(.title.weight(.semibold)).monospacedDigit()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Tokens.Space.s3)
+        .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func dateRow(_ title: String, date: Date) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.secondary)
+            Spacer(minLength: Tokens.Space.s3)
+            Text(date, format: .dateTime.day().month(.abbreviated).year()).fontWeight(.medium)
+        }
+        .font(.caption)
+        .help(date.formatted(date: .complete, time: .shortened))
         .accessibilityElement(children: .combine)
     }
 }
@@ -155,30 +185,46 @@ struct SenderProfileLinksView: View {
     let links: [SenderProfileEvidence]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Text("Profiles and websites").font(.headline)
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            HStack {
+                Text("Profiles and websites").font(.headline)
+                Spacer(minLength: 0)
+                if !links.isEmpty {
+                    Text(links.count, format: .number).font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if links.isEmpty {
-                Text("No profile links found in the signatures available on this Mac.")
-                    .font(.callout).foregroundStyle(.secondary)
+                Label("No profile links found in the signatures available on this Mac.", systemImage: "link")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(links) { evidence in
-                    Link(destination: evidence.link.url) {
-                        HStack(spacing: Tokens.Space.s2) {
-                            Image(systemName: evidence.link.kind == .website ? "globe" : "person.crop.square")
-                                .frame(width: Tokens.Control.icon)
-                            Text(evidence.link.label).layoutPriority(1)
-                            if let detail = destinationDetail(evidence.link) {
-                                Text(detail).font(.caption)
-                                    .foregroundStyle(Color.secondary).lineLimit(1).truncationMode(.middle)
+                VStack(spacing: 0) {
+                    ForEach(links) { evidence in
+                        Link(destination: evidence.link.url) {
+                            HStack(spacing: Tokens.Space.s3) {
+                                Image(systemName: symbol(for: evidence.link.kind))
+                                    .font(.callout).foregroundStyle(Color.accentColor)
+                                    .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
+                                    .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                                        in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                                    Text(evidence.link.label).font(.callout.weight(.medium)).foregroundStyle(.primary)
+                                    Text(destinationDetail(evidence.link)).font(.caption)
+                                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
                             }
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right").font(.caption)
+                            .padding(Tokens.Space.s2)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, Tokens.Space.s1)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .ternHover(pointer: .link)
+                        .help("\(evidence.link.url.absoluteString)\nFound in an email signature from \(evidence.date.formatted(date: .abbreviated, time: .omitted))")
+                        .accessibilityLabel("\(evidence.link.label), \(evidence.link.url.absoluteString)")
+                        if evidence.id != links.last?.id {
+                            Divider().padding(.leading, Tokens.Analytics.symbolSize + Tokens.Space.s3 + Tokens.Space.s2)
+                        }
                     }
-                    .help("\(evidence.link.url.absoluteString)\nFound in an email signature from \(evidence.date.formatted(date: .abbreviated, time: .omitted))")
-                    .accessibilityLabel("\(evidence.link.label), \(evidence.link.url.absoluteString)")
                 }
                 Text("Found in email signatures. Links may belong to a person or an organization.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -186,11 +232,24 @@ struct SenderProfileLinksView: View {
         }
     }
 
-    private func destinationDetail(_ link: SenderProfileLink) -> String? {
+    private func destinationDetail(_ link: SenderProfileLink) -> String {
         let path = link.url.path(percentEncoded: false)
         let query = link.url.query(percentEncoded: false).map { "?" + $0 } ?? ""
-        let host = link.kind == .mastodon ? (link.url.host() ?? "") : ""
+        let host = link.kind == .website ? "" : (link.url.host() ?? "")
         let detail = host + path + query
-        return detail.isEmpty ? nil : detail
+        return detail.isEmpty ? "Website" : detail
+    }
+
+    private func symbol(for kind: SenderProfileLinkKind) -> String {
+        switch kind {
+        case .linkedin: "briefcase"
+        case .instagram: "camera"
+        case .facebook: "person.2"
+        case .x, .mastodon: "bubble.left.and.bubble.right"
+        case .github: "curlybraces"
+        case .youtube: "play.rectangle"
+        case .tiktok: "music.note"
+        case .website: "globe"
+        }
     }
 }

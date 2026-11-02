@@ -1,5 +1,4 @@
 import MailStore
-import MessageContent
 import SwiftUI
 
 struct MailAnalyticsWindow: View {
@@ -69,6 +68,7 @@ struct MailAnalyticsWorkspace: View {
             }
             .padding(.horizontal, Tokens.Space.s4)
             .frame(height: Tokens.Space.s12 + Tokens.Space.s2)
+            .background(.bar)
             Divider()
             if owners.isEmpty {
                 ContentUnavailableView("Account unavailable", systemImage: "person.crop.circle.badge.exclamationmark",
@@ -105,7 +105,6 @@ private struct MailAnalyticsDashboard: View {
     @State private var model = MailAnalyticsModel()
     @State private var reload = UUID()
     @State private var calendarContext = AnalyticsCalendarContext()
-    @Environment(\.openWindow) private var openWindow
 
     private struct ObservationIdentity: Hashable {
         let reload: UUID
@@ -113,41 +112,47 @@ private struct MailAnalyticsDashboard: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-                heading
-                if model.isLoading {
-                    ProgressView("Loading mail analytics…")
-                        .frame(maxWidth: .infinity, minHeight: Tokens.Layout.editorMinHeight)
-                } else if let error = model.error {
-                    ContentUnavailableView {
-                        Label("Analytics unavailable", systemImage: "chart.bar.xaxis")
-                    } description: { Text(error) } actions: {
-                        Button("Try again") { reload = UUID() }
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+                    heading
+                    if model.isLoading {
+                        ProgressView("Loading mail analytics…")
+                            .frame(maxWidth: .infinity, minHeight: Tokens.Layout.editorMinHeight)
+                    } else if let error = model.error {
+                        ContentUnavailableView {
+                            Label("Analytics unavailable", systemImage: "chart.bar.xaxis")
+                        } description: { Text(error) } actions: {
+                            Button("Try again") { reload = UUID() }
+                        }
+                    } else if let snapshot = model.snapshot {
+                        AnalyticsMetricsView(snapshot: snapshot, period: period)
+                        AnalyticsActivityChart(snapshot: snapshot)
+                        AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)
+                        if geometry.size.width >= Tokens.Analytics.twoColumnWidth {
+                            HStack(alignment: .top, spacing: Tokens.Space.s5) {
+                                VStack(spacing: Tokens.Space.s5) {
+                                    people(snapshot: snapshot)
+                                    receipts
+                                }
+                                .frame(maxWidth: .infinity)
+                                AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        } else {
+                            people(snapshot: snapshot)
+                            receipts
+                            AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
+                        }
+                        Text("Counts exclude drafts, spam and trash. Each account counts its own copy of an email. Dates use this Mac's time zone.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.horizontal, Tokens.Space.s1)
                     }
-                } else if let snapshot = model.snapshot {
-                    AnalyticsMetricsView(snapshot: snapshot, period: period)
-                    AnalyticsActivityChart(snapshot: snapshot)
-                    AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)
-                    if route.address != nil {
-                        SenderProfileLinksView(links: model.profileLinks)
-                            .padding(Tokens.Space.s5)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .ternSurface()
-                    } else {
-                        AnalyticsCorrespondentsView(correspondents: snapshot.correspondents,
-                            selectedAccountID: selectedAccountID)
-                    }
-                    AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
-                    AnalyticsReceiptsView(receipts: model.receipts, error: model.receiptError,
-                        contactAddress: route.address, mailbox: mailbox)
-                    Text("Counts exclude drafts, spam and trash. A message in two accounts counts once in each account. Dates use this Mac's time zone.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
+                .padding(Tokens.Space.s6)
+                .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
-            .padding(Tokens.Space.s6)
-            .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
         }
         .task(id: ObservationIdentity(reload: reload, calendarContext: calendarContext)) {
             await model.observe(cache: mailbox.cache,
@@ -157,103 +162,44 @@ private struct MailAnalyticsDashboard: View {
         .onDisappear { model.stop() }
     }
 
+    @ViewBuilder private func people(snapshot: MailAnalyticsSnapshot) -> some View {
+        if route.address != nil {
+            SenderProfileLinksView(links: model.profileLinks)
+                .padding(Tokens.Space.s5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .analyticsPanel()
+        } else {
+            AnalyticsCorrespondentsView(correspondents: snapshot.correspondents,
+                selectedAccountID: selectedAccountID)
+        }
+    }
+
+    private var receipts: some View {
+        AnalyticsReceiptsView(receipts: model.receipts, error: model.receiptError,
+            contactAddress: route.address, mailbox: mailbox)
+    }
+
     private var heading: some View {
-        HStack(spacing: Tokens.Space.s3) {
+        HStack(alignment: .center, spacing: Tokens.Space.s4) {
             if let address = route.address, let owner = owners.first {
                 ContactAvatar(accountID: owner.account.id, address: address, name: route.name ?? address,
                     cache: mailbox.cache, accounts: mailbox.accountStore, size: Tokens.Space.s12)
-            } else {
-                Image(systemName: "chart.bar.xaxis")
-                    .font(.title).foregroundStyle(Color.accentColor)
-                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
-                    .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             }
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(route.address == nil ? "Overview" : "Correspondence")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Text(route.name ?? route.address ?? "Mail activity")
-                    .font(.title2.weight(.semibold)).textSelection(.enabled)
+                    .font(.largeTitle.weight(.bold)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let address = route.address {
                     Text(address).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                 } else {
-                    Text("Email sent and received across your selected accounts.")
+                    Text("Sent and received email across your selected accounts.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
         }
-    }
-}
-
-private struct AnalyticsHistoryView: View {
-    let snapshot: MailAnalyticsSnapshot
-    let model: MailAnalyticsModel
-    let owners: [AccountMailbox]
-    @Environment(\.openSettings) private var openSettings
-
-    private var hasScannedHistory: Bool {
-        !snapshot.coverage.isEmpty && snapshot.coverage.allSatisfy(\.isComplete)
-    }
-
-    private var canLoadHistory: Bool { owners.contains(where: \.syncEnabled) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                Image(systemName: hasScannedHistory ? "clock.arrow.circlepath" : "clock.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text(hasScannedHistory ? "History scanned" : "Partial history").font(.headline)
-                    Text(hasScannedHistory
-                        ? "These totals include the history loaded from Gmail. Scan again to reconcile older changes."
-                        : "Totals currently cover indexed messages. Load full history to include older mail and find the earliest email.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            ForEach(snapshot.coverage, id: \.accountID) { coverage in
-                HStack(alignment: .firstTextBaseline) {
-                    Text(owners.first(where: { $0.account.id == coverage.accountID })?.account.email ?? "Account")
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: Tokens.Space.s2)
-                    if let date = coverage.historyLoadedAt {
-                        Text("Scanned \(date.formatted(date: .abbreviated, time: .shortened))")
-                    } else {
-                        Text("\(coverage.indexedMessageCount.formatted()) indexed")
-                    }
-                }
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            if model.isLoadingHistory {
-                HStack(spacing: Tokens.Space.s2) {
-                    ProgressView().controlSize(.small)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                        Text("Loading history · \(model.historyPagesLoaded.formatted()) pages saved")
-                        if let account = model.historyAccountName {
-                            Text(account).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        }
-                    }.font(.caption)
-                    Spacer(minLength: Tokens.Space.s2)
-                    Button("Cancel") { model.cancelHistory() }
-                }
-            } else {
-                Button(hasScannedHistory ? "Scan history again" : "Load full history") {
-                    model.loadHistory(accounts: owners, restart: hasScannedHistory)
-                }
-                .disabled(!canLoadHistory)
-                if !canLoadHistory {
-                    Text("Mail sync is paused for the selected accounts. Turn on Sync Mail in Account Settings to load older messages.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button("Open Settings") { openSettings() }
-                    .buttonStyle(.borderless).font(.caption)
-                }
-            }
-            if let error = model.historyError {
-                Text(error).font(.caption).foregroundStyle(Tokens.Status.error)
-            }
-            Text("Loading history downloads message details and leaves read status unchanged. You can cancel and resume.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(Tokens.Space.s5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .ternSurface()
+        .padding(.vertical, Tokens.Space.s2)
     }
 }

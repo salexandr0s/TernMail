@@ -31,7 +31,7 @@ Signature links are extracted locally; they are not verified identities and no s
 
 Other chats had active reader, assistant, sidebar and Tasks edits. Their work was preserved and shared-file changes stayed small. The workspace agent roles configured for another model were unavailable; the available collaboration agents performed those roles with disjoint file ownership.
 
-## Verification record
+## Initial feature verification
 
 - Core implementation is committed in `67f5535`. The full core suite passed: 649 tests in 110 suites (`build/Verification/analytics/core-full-final.log`). The final run includes a deterministic cancellation test after replacing an unreliable polling handshake.
 - Native build-for-testing passed after the final design changes (`design-pass2-contrast-build.log`).
@@ -40,3 +40,13 @@ Other chats had active reader, assistant, sidebar and Tasks edits. Their work wa
 - The final visual audit passed with 16 attachments (`DesignPass2Verified.xcresult`). Images and logs live under `build/Verification/analytics/`.
 - Tests used synthetic mail and a fixed source snapshot while other chats changed the shared checkout. The tested analytics source and integration files match the workspace. No live email was sent to test receipts.
 - Final source review found no remaining blockers. Whitespace checks pass; the new production files contain no forced casts, forced tries, or TODO/FIXME markers.
+
+## Additional visual pass — 2026-11-02
+
+The user requested a further pass focused on appearance, with substantial improvements to every chart and the surrounding components. The activity chart now uses coordinated teal/indigo series, rounded grouped bars, a zero-based integer scale, quieter horizontal gridlines, inward-aligned endpoint dates, and a fixed-height selection summary. A custom legend combines direction symbols and totals. The values table has aligned columns, consistent row spacing and a fixed header. Received and Sent cards use real bucket sparklines on a shared scale; Conversations remains a distinct-thread count. Large totals stay on one line with their exact values available to accessibility and help.
+
+The dashboard has a stronger heading, consistent panel edges, and a larger default window. At wide widths, contact/profile information and receipt summaries form one column beside recent emails; narrow windows stack the same content. History loading is a compact status/action row with expandable account details. Errors, progress, cancellation and paused-sync guidance remain visible. Sender cards use paired metric tiles, aligned dates, structured destination rows and the fixed Analytics action. Recent email rows use direction tiles; multi-recipient receipt groups use native disclosures. Small labels use semantic text colors, with series/status color confined to icons and chart marks.
+
+Verification passed in the main checkout: Debug build-for-testing (`visual-refinement-reviewed-build.log`) and four native tests in three suites (`VisualRefinementFinal.xcresult`, `visual-refinement-final-tests.log`). These include both header expansion cases and the existing analytics observation regressions. The visual audit produced 24 captures in `build/Verification/analytics/visual-refinement-final-images/`, covering light/dark, narrow and 760-point layouts, long names, sparse and dense daily activity, selected month values, the table, million-scale counts, empty states and long recipient lists. Render review caught and corrected faint axes, clipped endpoint labels and excess empty column space. Source review and whitespace checks passed.
+
+The backend is unchanged, so the core suite was not repeated. SwiftPM restored the package-only lockfile. This pass does not push or replace the installed app.

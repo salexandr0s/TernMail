@@ -4,9 +4,13 @@ Click a sender's profile picture in the message list or message reader to open t
 
 Analytics includes account and date filters, sent and received counts, conversation counts, a chart with a table of values, frequent contacts, and recent emails. First and latest email dates use all indexed history; count cards and the chart use the selected period. Open a recent email to view it in a conversation window. Tern downloads its metadata first if the reading cache no longer has it.
 
+Select a bar to see that period's sent and received counts, or choose **Values** for the table. The small charts in the Received and Sent cards share a scale and show the same activity by period.
+
 ## History coverage
 
 The index starts with messages already cached on this Mac. **Load full history** adds older Gmail metadata without opening messages or changing their read status. Loading can be canceled and resumed. Completed pages survive restarts and normal cache cleanup.
+
+Expand **History details** for each account's scan date or indexed count. If mail sync is paused, enable **Sync Mail** in Account Settings before loading history.
 
 A completed scan shows its date. Gmail can change during a scan, so this is a dated enumeration rather than an atomic snapshot. Normal sync applies new mail, label changes and confirmed deletions. If Gmail's incremental history expires, coverage becomes partial until another scan reconciles it.
 
@@ -21,6 +25,8 @@ Discovered links may belong to the person or their organization. The link's help
 ## Read receipts
 
 In the compose window's **More** menu, enable **Request Read Receipt**. The option defaults off and persists with the draft. After Gmail accepts the send, Tern keeps a request record for the actual recipients. The sent-message header and Analytics show a confirmation only after a matching displayed receipt arrives. **No receipt yet** means the outcome is unknown.
+
+For messages sent to multiple recipients, expand the receipt summary to see each recipient's status and receipt arrival time.
 
 The receipt date is its arrival time, not an exact reading time. Recipient apps and settings determine whether a receipt is returned; personal Gmail accounts do not provide Gmail's read receipt feature. Strict matching may also omit receipts returned through a separate reporting address. Requests apply to future messages and cannot recover past opens. Tern does not automatically return receipts to other senders.
 
