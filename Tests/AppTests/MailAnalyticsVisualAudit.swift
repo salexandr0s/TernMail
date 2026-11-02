@@ -35,11 +35,37 @@ import Testing
                                     grantedScopes: [], addedAt: now)
         let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(),
                                    outgoingDirectory: .temporaryDirectory, syncEnabled: false)
-        for (name, width, scheme) in [("wide-light", 880.0, ColorScheme.light), ("narrow-dark", 560.0, ColorScheme.dark)] {
+        for (name, width, scheme) in [("wide-light", 880.0, ColorScheme.light),
+                                      ("breakpoint-light", 760.0, .light), ("narrow-dark", 560.0, .dark)] {
             try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox),
                 size: NSSize(width: width, height: 950), scheme: scheme, waitFor: "Emails over time",
                 name: "analytics-\(name)", captureBottom: true)
         }
+        let snapshot = try await cache.mailAnalytics(query: .init(accountIDs: [account.id], period: .year, now: now))
+        let largeSnapshot = MailAnalyticsSnapshot(sentCount: snapshot.sentCount * 50_000,
+            receivedCount: snapshot.receivedCount * 50_000, threadCount: snapshot.threadCount * 50_000,
+            firstReceivedAt: snapshot.firstReceivedAt, firstSentAt: snapshot.firstSentAt, lastContactAt: snapshot.lastContactAt,
+            bucketUnit: snapshot.bucketUnit, buckets: snapshot.buckets.map {
+                MailAnalyticsBucket(date: $0.date, sentCount: $0.sentCount * 50_000, receivedCount: $0.receivedCount * 50_000)
+            }, coverage: [.init(accountID: account.id, indexedMessageCount: snapshot.totalCount * 50_000)])
+        try await capture(AnalyticsMetricsView(snapshot: largeSnapshot, period: .year).padding(Tokens.Space.s6),
+            size: NSSize(width: 560, height: 360), scheme: .light, waitFor: "Conversations",
+            name: "metrics-large-counts-narrow", captureBottom: false)
+        let selected = snapshot.buckets.first(where: { $0.receivedCount > 0 })?.date
+        try await capture(AnalyticsActivityChart(snapshot: snapshot, selectedDate: selected).padding(Tokens.Space.s6),
+            size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Emails over time",
+            name: "chart-selected-month", captureBottom: false)
+        try await capture(AnalyticsActivityChart(snapshot: snapshot, showsTable: true).padding(Tokens.Space.s6),
+            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Show activity chart",
+            name: "chart-values-month", captureBottom: true)
+        let daily = Self.chartSnapshot(now: now, days: 90, sparse: false)
+        try await capture(AnalyticsActivityChart(snapshot: daily, selectedDate: daily.buckets[42].date).padding(Tokens.Space.s6),
+            size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Emails over time",
+            name: "chart-dense-daily", captureBottom: false)
+        let sparse = Self.chartSnapshot(now: now, days: 30, sparse: true)
+        try await capture(AnalyticsActivityChart(snapshot: sparse).padding(Tokens.Space.s6),
+            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Emails over time",
+            name: "chart-sparse-daily", captureBottom: false)
         try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
                 address: "alex@example.invalid", name: "Alex Morgan"), mailbox: mailbox),
             size: NSSize(width: 880, height: 950), scheme: .light, waitFor: "Emails over time",
@@ -79,6 +105,19 @@ import Testing
                 subject: index == 0 ? "Project proposal and planning for the next season" : "Project update \(index + 1)",
                 sizeEstimate: 300), labelIDs: [sent ? SystemLabel.sent : SystemLabel.inbox])
         }
+    }
+
+    nonisolated private static func chartSnapshot(now: Date, days: Int, sparse: Bool) -> MailAnalyticsSnapshot {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: now)
+        let buckets = (0..<days).map { index in
+            MailAnalyticsBucket(date: calendar.date(byAdding: .day, value: index - days + 1, to: today) ?? today,
+                sentCount: sparse ? (index == 20 ? 1 : 0) : (index * 3 + 1) % 9,
+                receivedCount: sparse ? (index == 6 ? 1 : 0) : (index * 7 + 4) % 17)
+        }
+        return MailAnalyticsSnapshot(sentCount: buckets.reduce(0) { $0 + $1.sentCount },
+            receivedCount: buckets.reduce(0) { $0 + $1.receivedCount }, threadCount: 0,
+            bucketUnit: .day, buckets: buckets)
     }
 
     private func capture<Content: View>(_ content: Content, size: NSSize, scheme: ColorScheme, waitFor: String,
