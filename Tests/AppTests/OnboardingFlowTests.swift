@@ -23,7 +23,7 @@ struct OnboardingFlowTests {
         #expect(app.onboarding.isPresented)
 
         let host = NSHostingView(rootView: OnboardingView(preferenceDefaults: defaults).environment(app))
-        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1000, height: 680),
+        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1000, height: 600),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -46,6 +46,44 @@ struct OnboardingFlowTests {
         #expect(app.assistant.connection.account == nil)
         await app.prepareToQuit()
         await app.mailbox?.stop()
+    }
+
+    @Test func windowPresentationPreservesNormalLaunchAndRestoresWindowControls() async throws {
+        let controller = OnboardingWindowPresentation.Controller()
+        let host = NSHostingView(rootView: OnboardingWindowPresentation(isPresented: false, reduceMotion: true, controller: controller))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1100, height: 740),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        let originalFrame = window.frame
+        let originalStyle = window.styleMask
+        try await settle(host)
+        #expect(window.frame == originalFrame)
+        #expect(window.styleMask == originalStyle)
+
+        host.rootView = OnboardingWindowPresentation(isPresented: false, reduceMotion: true, controller: controller, isReady: false)
+        try await settle(host)
+        #expect(window.alphaValue == 0)
+        #expect(window.frame == originalFrame)
+
+        host.rootView = OnboardingWindowPresentation(isPresented: true, reduceMotion: true, controller: controller)
+        try await settle(host)
+        #expect(window.alphaValue == 1)
+        #expect(window.styleMask == originalStyle)
+        #expect(window.titleVisibility == .hidden)
+        #expect(window.frame.width == Tokens.Onboarding.width)
+
+        // The mailbox can replace the native hosting view. Its window state
+        // must survive that replacement to restore chrome and expand.
+        let mailboxHost = NSHostingView(rootView: OnboardingWindowPresentation(isPresented: false, reduceMotion: true, controller: controller))
+        window.contentView = mailboxHost
+        try await settle(mailboxHost)
+        #expect(window.styleMask == originalStyle)
+        #expect(window.titleVisibility == .visible)
+        #expect(window.isMovableByWindowBackground == false)
+        #expect(window.frame.width > Tokens.Onboarding.width)
+        #expect(window.frame.height > Tokens.Onboarding.height)
     }
 
     private func settle(_ view: NSView) async throws {

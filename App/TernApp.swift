@@ -317,15 +317,26 @@ struct RootView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var windowPresentation = OnboardingWindowPresentation.Controller()
 
     var body: some View {
         content
+            .background(OnboardingWindowPresentation(isPresented: model.onboarding.isPresented,
+                                                     reduceMotion: reduceMotion, controller: windowPresentation,
+                                                     isReady: windowRouteIsReady))
             .onAppear {
                 model.openMainWindow = {
                     NSApp.activate()
                     openWindow(id: Self.sceneID)
                 }
             }
+    }
+
+    private var windowRouteIsReady: Bool {
+        // A startup failure must remain visible even before accounts are loaded.
+        if case .failed = model.phase { return true }
+        return model.onboarding.isResolved
     }
 
     @ViewBuilder private var content: some View {

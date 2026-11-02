@@ -4,6 +4,11 @@ Tern opens setup when the account store is empty on its first successful launch.
 The flow introduces Tern, connects Google accounts, offers ChatGPT, saves key
 preferences, and ends with a review before opening the mailbox.
 
+Setup fills a compact native window with a 1000 × 600 point content area. Open
+Tern expands that same window into the mailbox and restores its normal toolbar
+and resizing controls. The expansion respects Reduce Motion and stays within the
+current display. Normal launches after setup keep the existing window behavior.
+
 - Google supports repeated account additions, cancellation, retry, and reconnecting
   expired accounts. At least one connected account is required to continue.
 - ChatGPT uses the existing account connection and model discovery. Mail access
@@ -28,9 +33,10 @@ Preferences at 720 × 480 in high-contrast dark appearance.
 
 ## Verification
 
-`TernTests` covers saved progress, migration, completion guards, and hosted rendering.
+`TernTests` covers saved progress, migration, completion guards, hosted rendering,
+and restoring normal window controls without resizing an existing user's window.
 `TernUITests` exercises the empty first-run path and a two-account journey through
-ChatGPT skipping, preference edits, back navigation, and opening the mailbox.
+ChatGPT skipping, preference edits, back navigation, and expanding into the mailbox.
 The existing Google, ChatGPT, and assistant tests cover authentication and account
 access behavior. Live provider consent and the macOS notification prompt require
 interactive verification with a real account.

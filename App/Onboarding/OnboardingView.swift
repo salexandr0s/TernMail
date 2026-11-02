@@ -50,10 +50,6 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Tokens.Surface.primary)
             }
-            .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-            .ternOutline(radius: Tokens.Radius.lg)
-            .frame(maxWidth: Tokens.Onboarding.width, maxHeight: Tokens.Onboarding.height)
-            .padding(compact ? Tokens.Space.s4 : Tokens.Space.s8)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: Tokens.Layout.windowMinWidth, minHeight: Tokens.Layout.windowMinHeight)

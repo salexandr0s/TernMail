@@ -8,6 +8,7 @@ final class OnboardingUITests: XCTestCase {
         defer { app.terminate() }
 
         waitForLabel("Get started", on: control("continue", in: app))
+        _ = waitForSetupWindow(in: app)
         capture(app, named: "Welcome")
         control("continue", in: app).click()
 
@@ -15,6 +16,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(connect.waitForExistence(timeout: 10))
         XCTAssertFalse(connect.isEnabled, "Ordinary previews must not start live Google sign-in.")
         waitForEnabled(false, on: control("continue", in: app))
+        _ = waitForSetupWindow(in: app)
         capture(app, named: "Google — no accounts")
 
         control("back", in: app).click()
@@ -28,6 +30,7 @@ final class OnboardingUITests: XCTestCase {
 
         let next = control("continue", in: app)
         waitForLabel("Get started", on: next)
+        let setupSize = waitForSetupWindow(in: app)
         next.click()
 
         XCTAssertTrue(control("connectGoogle", in: app).waitForExistence(timeout: 10))
@@ -78,6 +81,7 @@ final class OnboardingUITests: XCTestCase {
         next.click()
         waitForLabel("Open Tern", on: next)
         waitForEnabled(true, on: next)
+        _ = waitForSetupWindow(in: app)
         capture(app, named: "Ready")
         next.click()
 
@@ -85,6 +89,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
         let inbox = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", "Inbox", "Inbox")).firstMatch
         XCTAssertTrue(inbox.waitForExistence(timeout: 10))
+        waitForWorkspaceGrowth(from: setupSize, in: app)
         capture(app, named: "Mailbox after setup")
     }
 
@@ -92,13 +97,45 @@ final class OnboardingUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-audit", "--ui-audit-light",
             connected ? "--ui-audit-onboarding-connected" : "--ui-audit-onboarding",
-            "--ui-audit-onboarding-step=welcome"]
+            "--ui-audit-onboarding-step=welcome", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
         return app
     }
 
     private func control(_ name: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: "onboarding.\(name)").firstMatch
+    }
+
+    private func mainWindow(in app: XCUIApplication) -> XCUIElement {
+        app.windows.matching(identifier: "main").firstMatch
+    }
+
+    private func waitForSetupWindow(in app: XCUIApplication) -> CGSize {
+        let window = mainWindow(in: app)
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let sized = XCTNSPredicateExpectation(predicate: NSPredicate { element, _ in
+            guard let window = element as? XCUIElement else { return false }
+            let size = window.frame.size
+            // Accessibility includes the native titlebar in the window frame.
+            return abs(size.width - 1000) <= 2 && (600...680).contains(size.height)
+        }, object: window)
+        XCTAssertEqual(XCTWaiter.wait(for: [sized], timeout: 10), .completed)
+        let size = window.frame.size
+        XCTAssertEqual(size.width, 1000, accuracy: 2)
+        XCTAssertGreaterThanOrEqual(size.height, 600)
+        XCTAssertLessThanOrEqual(size.height, 680)
+        return size
+    }
+
+    private func waitForWorkspaceGrowth(from setupSize: CGSize, in app: XCUIApplication) {
+        let window = mainWindow(in: app)
+        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { element, _ in
+            guard let window = element as? XCUIElement else { return false }
+            return window.frame.width > setupSize.width && window.frame.height > setupSize.height
+        }, object: window)
+        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 10), .completed)
+        XCTAssertGreaterThan(window.frame.width, setupSize.width)
+        XCTAssertGreaterThan(window.frame.height, setupSize.height)
     }
 
     private func select(_ title: String, in picker: XCUIElement, app: XCUIApplication) {
@@ -136,7 +173,7 @@ final class OnboardingUITests: XCTestCase {
     }
 
     private func capture(_ app: XCUIApplication, named name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: mainWindow(in: app).screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
