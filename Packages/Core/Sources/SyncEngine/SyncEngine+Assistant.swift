@@ -54,8 +54,9 @@ extension SyncEngine {
               messages.allSatisfy({ $0.threadId == threadID }) else { throw AssistantMailError.invalidTarget }
         var result: [AssistantMessage] = []
         var remaining = AssistantMailLimits.charactersPerThread
-        // Preserve chronological order while selecting the newest bounded set.
-        for message in messages.suffix(AssistantMailLimits.messagesPerThread) {
+        // Reserve content for the current outcome before older quoted history.
+        // Restore chronological order after allocating the shared text budget.
+        for message in messages.suffix(AssistantMailLimits.messagesPerThread).reversed() {
             try checkAssistantAccess()
             let body = try await assistantBody(message)
             let text = body.value.plainText ?? SearchText.body(html: body.value.html, plainText: nil)
@@ -74,7 +75,7 @@ extension SyncEngine {
         }
         try checkAssistantAccess()
         return AssistantThread(
-            accountID: accountID, threadID: threadID, messages: result, totalMessages: messages.count,
+            accountID: accountID, threadID: threadID, messages: result.reversed(), totalMessages: messages.count,
             truncated: result.count < messages.count || result.contains(where: \.truncated),
             snippet: String((messages.last?.snippet ?? "").prefix(1_000)),
             labelIDs: Array(Set(messages.flatMap { $0.labelIds ?? [] })).sorted()

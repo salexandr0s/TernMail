@@ -36,6 +36,22 @@ import Testing
         #expect(result.messages[1].limitations == ["A message body part could not be downloaded."])
     }
 
+    @Test func longThreadsKeepTheLatestRequestBeforeSpendingTheBudgetOnOlderQuotes() async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        let old = try (0..<6).map {
+            try assistantFixture(id: "old-\($0)", thread: "t", text: String(repeating: "Earlier quoted conversation. ", count: 1_000))
+        }
+        let latest = try assistantFixture(id: "latest", thread: "t", text: "Please approve the final proof.")
+        await gmail.setThread(try assistantThreadFixture(old + [latest], id: "t"))
+
+        let result = try await engine.assistantReadThread("t")
+        #expect(result.messages.map(\.messageID) == old.map(\.id) + ["latest"])
+        #expect(result.messages.last?.text == "Please approve the final proof.")
+        #expect(result.messages.first?.text.isEmpty == true)
+        #expect(result.truncated)
+        #expect(result.messages.reduce(0) { $0 + $1.text.count } <= AssistantMailLimits.charactersPerThread)
+    }
+
     @Test func stoppedEngineDoesNotReturnAResponseThatArrivedLate() async throws {
         let (engine, _, gmail, _) = try await makeEngine()
         await gmail.setThread(try assistantThreadFixture([try assistantFixture(id: "m", thread: "t")], id: "t"))

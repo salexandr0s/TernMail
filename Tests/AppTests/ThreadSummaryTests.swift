@@ -171,7 +171,8 @@ import TernAI
     }
 
     @Test func newerLoadWinsAndFailureCanRetryWithoutChatState() async throws {
-        let provider = SummaryProvider(replies: [nil, try Self.response("New message summary"), .init(output: [], text: "invalid JSON", toolCalls: []), try Self.response("Retried summary")])
+        let invalid = AIResponse(output: [], text: "invalid JSON", toolCalls: [])
+        let provider = SummaryProvider(replies: [nil, try Self.response("New message summary"), invalid, invalid, try Self.response("Retried summary")])
         let fixture = Fixture(provider: provider)
         await fixture.model.refreshConnection()
         let reader = ThreadSummaryModel()
@@ -187,6 +188,7 @@ import TernAI
         await reader.load(key: Self.key, revision: "new", assistant: fixture.model, forceRefresh: true)
         #expect(reader.report == nil)
         #expect(reader.errorMessage != nil)
+        #expect(await provider.requests.count == 4, "Automatic recovery must stop after one retry")
         await reader.load(key: Self.key, revision: "new", assistant: fixture.model, forceRefresh: true)
         #expect(reader.report?.summary.summary == "Retried summary")
         #expect(reader.errorMessage == nil)
@@ -211,6 +213,59 @@ import TernAI
         #expect(throws: ThreadSummaryError.self) { try report.validateMessages(["m", "uncited", "omitted"]) }
         #expect(report.hasPartialCoverage == (coverage != "complete"))
         #expect(await provider.requests.first?.tools.isEmpty == true)
+    }
+
+    @Test func longUnicodeThreadsFitTheSummaryRequestAndKeepRecentEvidence() async throws {
+        let provider = SummaryProvider(replies: [try Self.response("The final proof needs approval.")])
+        let sources = (0..<6).map {
+            AssistantSource(accountID: "a", threadID: "t", messageID: $0 == 5 ? "m" : "old-\($0)", partID: nil, title: "Proposal")
+        }
+        let latest = "Please approve the final proof."
+        let messages: [AIJSON] = sources.enumerated().map { index, source in
+            .object([
+                "message_id": .string(source.messageID ?? ""), "subject": .string("Proposal"),
+                "text": .string(index == 5 ? latest : String(repeating: "🐕\"\\\n", count: 4_000)),
+                "attachments": .array([.object(["filename": .string("photo.png"), "content_id": .string(String(repeating: "x", count: 40_000))])]),
+                "truncated": .bool(false), "limitations": .array([])
+            ])
+        }
+        let data = AIJSON.object(["messages": .array(messages), "total_messages": .number(6), "truncated": .bool(false)])
+        #expect(try data.encoded().count > AssistantModel.maximumHistoryBytes)
+        let tools = AssistantToolSession(definitions: [], execute: { _ in .init(data: data, sources: sources) })
+        let report = try await AssistantSummaryService(provider: provider, model: "test", tools: tools,
+            isScopeValid: { true }).report(thread: Self.key)
+
+        let request = try #require(await provider.requests.first)
+        let input = try #require(request.input.first?["content"]?.stringValue)
+        #expect(input.utf8.count <= AssistantModel.maximumHistoryBytes)
+        let sent = try AIJSON.decode(Data(input.utf8))
+        #expect(sent["messages"]?.arrayValue?.last?["text"]?.stringValue == latest)
+        #expect(sent["messages"]?.arrayValue?.last?["source_id"]?.stringValue == Self.source.id)
+        #expect(report.sources == [Self.source])
+        #expect(report.messageIDs == Set(sources.compactMap(\.messageID)))
+        #expect(report.hasPartialCoverage)
+        #expect(report.totalMessages == 6)
+    }
+
+    @Test(arguments: ["json", "citation", "interrupted", "sign-in"])
+    func malformedSummaryRetriesOnceWithoutOpeningReplyOrReadingMailAgain(failure: String) async throws {
+        let invalid = failure == "citation"
+            ? try Self.response("Invented citation", sourceID: "unknown").text
+            : "invalid JSON"
+        let errors: [Int: AIProviderError] = failure == "interrupted" ? [0: .streamInterrupted]
+            : failure == "sign-in" ? [0: .signInRequired] : [:]
+        let provider = SummaryProvider(replies: [
+            .init(output: [], text: invalid, toolCalls: []), try Self.response("Recovered summary")
+        ], failures: errors)
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let reader = ThreadSummaryModel()
+        await reader.load(key: Self.key, revision: "r1", assistant: fixture.model)
+        #expect(reader.report?.summary.summary == (failure == "sign-in" ? nil : "Recovered summary"))
+        #expect((reader.errorMessage == nil) == (failure != "sign-in"))
+        #expect(await provider.requests.count == (failure == "sign-in" ? 1 : 2))
+        #expect(fixture.context.reads == 1)
+        #expect(fixture.model.messages.isEmpty)
     }
 
     @Test(arguments: [Set(["older"]), Set(["m", "older"])])
@@ -299,9 +354,9 @@ import TernAI
         return visit(root)
     }
 
-    private static func response(_ text: String) throws -> AIResponse {
+    private static func response(_ text: String, sourceID: String? = nil) throws -> AIResponse {
         let content = try AIJSON.object([
-            "summary": .string(text), "source_ids": .array([.string(source.id)]),
+            "summary": .string(text), "source_ids": .array([.string(sourceID ?? source.id)]),
             "decisions": .array([]), "open_tasks": .array([])
         ]).jsonString()
         return .init(output: [], text: content, toolCalls: [])
@@ -345,11 +400,12 @@ import TernAI
 private actor SummaryProvider: AIProvider {
     private var replies: [AIResponse?]
     private var modelIDs: [String]
+    private let failures: [Int: AIProviderError]
     private(set) var requests: [AIRequest] = []
     private var suspended: [Int: AsyncThrowingStream<AIEvent, any Error>.Continuation] = [:]
     private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    init(replies: [AIResponse?], modelIDs: [String] = ["test", "alternate"]) {
-        self.replies = replies; self.modelIDs = modelIDs
+    init(replies: [AIResponse?], modelIDs: [String] = ["test", "alternate"], failures: [Int: AIProviderError] = [:]) {
+        self.replies = replies; self.modelIDs = modelIDs; self.failures = failures
     }
     func models() async throws -> [AIModel] {
         modelIDs.map { .init(id: $0, displayName: $0) }
@@ -376,7 +432,9 @@ private actor SummaryProvider: AIProvider {
         waiters.removeAll { requests.count >= $0.0 }
         ready.forEach { $0.1.resume() }
         guard !replies.isEmpty else { continuation.finish(throwing: AIProviderError.invalidResponse); return }
-        if let response = replies.removeFirst() { continuation.yield(.completed(response)); continuation.finish() }
+        let reply = replies.removeFirst()
+        if let failure = failures[index] { continuation.finish(throwing: failure) }
+        else if let response = reply { continuation.yield(.completed(response)); continuation.finish() }
         else { suspended[index] = continuation }
     }
 }
