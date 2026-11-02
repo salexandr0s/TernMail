@@ -9,6 +9,7 @@ struct GoogleTasksSidebar: View {
     @State private var newTitle = ""
     @State private var showsCompleted = false
     @State private var editor: GoogleTaskEditorContext?
+    @State private var inlineEditor: GoogleTaskEditingSession?
     @State private var deletion: GoogleTaskEditorContext?
     @State private var confirmsRetry = false
     @FocusState private var entryFocused: Bool
@@ -22,8 +23,16 @@ struct GoogleTasksSidebar: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     feedback
+                    if let inlineEditor, !canShowTaskContent || inlineEditor.context.location != model.selectedLocation {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Text("Editing in \(inlineEditor.context.listTitle)").font(.caption).foregroundStyle(.secondary)
+                            editingRow(inlineEditor)
+                        }
+                    }
                     if let request = model.pendingCreation, !model.isCreating { pending(request) }
-                    if !model.hasLoadedAccounts {
+                    if canShowTaskContent {
+                        taskContent
+                    } else if !model.hasLoadedAccounts {
                         ProgressView("Loading tasks…").frame(maxWidth: .infinity).padding(.vertical, Tokens.Space.s12)
                     } else if model.accounts.isEmpty {
                         emptyState("Your tasks, beside your mail", detail: "Add a Google account in Tern to connect its tasks.", symbol: "checklist")
@@ -36,8 +45,6 @@ struct GoogleTasksSidebar: View {
                     } else if model.lists.isEmpty {
                         emptyState("No task lists", detail: "Create a list in Google Tasks, then refresh.", symbol: "list.bullet.rectangle")
                         openGoogleButton.frame(maxWidth: .infinity)
-                    } else {
-                        taskContent
                     }
                 }
                 .padding(.horizontal, Tokens.Space.s3)
@@ -85,8 +92,14 @@ struct GoogleTasksSidebar: View {
             Text("The previous request may have reached Google. Check Google Tasks first to avoid a duplicate.")
         }
         .onKeyPress(.escape) {
-            guard newTitle.isEmpty, editor == nil, let onClose else { return .ignored }
             if let input = NSApp.keyWindow?.firstResponder as? NSTextInputClient, input.hasMarkedText() { return .ignored }
+            if let inlineEditor {
+                guard !inlineEditor.isSaving else { return .ignored }
+                self.inlineEditor = nil
+                entryFocused = true
+                return .handled
+            }
+            guard newTitle.isEmpty, editor == nil, let onClose else { return .ignored }
             onClose()
             return .handled
         }
@@ -100,7 +113,9 @@ struct GoogleTasksSidebar: View {
             if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Syncing tasks") }
             taskIcon("Refresh Tasks", symbol: "arrow.clockwise") { Task { await model.refresh() } }
                 .disabled(model.isLoading)
-            if let onClose { taskIcon("Close Tasks", symbol: "xmark", action: onClose) }
+            if let onClose {
+                taskIcon("Close Tasks", symbol: "xmark", action: onClose).disabled(inlineEditor != nil)
+            }
         }
         .padding(.leading, Tokens.Space.s5)
         .padding(.trailing, Tokens.Space.s3)
@@ -128,6 +143,7 @@ struct GoogleTasksSidebar: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Tasks account")
                 .accessibilityIdentifier("google-tasks-account")
+                .disabled(inlineEditor != nil)
                 .help(model.selectedAccount?.email ?? "Choose account")
                 Spacer(minLength: 0)
             }
@@ -148,6 +164,7 @@ struct GoogleTasksSidebar: View {
                         .menuStyle(.borderlessButton)
                         .accessibilityLabel("Task list")
                         .accessibilityIdentifier("google-tasks-list")
+                        .disabled(inlineEditor != nil)
                         .help(model.selectedList?.title ?? "Choose list")
                         HStack(spacing: Tokens.Space.s1_5) {
                             Text("\(model.openTasks.count) to do")
@@ -187,7 +204,7 @@ struct GoogleTasksSidebar: View {
     }
 
     @ViewBuilder private var feedback: some View {
-        if let text = model.errorMessage ?? model.issue?.message {
+        if let text = model.errorMessage ?? model.issue?.message, text != inlineEditor?.error {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 HStack(alignment: .top, spacing: Tokens.Space.s2) {
                     Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Tokens.Status.error)
@@ -220,8 +237,13 @@ struct GoogleTasksSidebar: View {
         .padding(.vertical, Tokens.Space.s5)
     }
 
+    private var canShowTaskContent: Bool {
+        model.hasLoadedAccounts && !model.accounts.isEmpty && !model.needsConnection && !model.lists.isEmpty
+            && !(model.lastSyncedAt == nil && (model.issue != nil || (model.isLoading && model.tasks.isEmpty)))
+    }
+
     @ViewBuilder private var taskContent: some View {
-        if model.openTasks.isEmpty && pendingTask == nil {
+        if openTasks.isEmpty && pendingTask == nil {
             emptyState(model.completedTasks.isEmpty ? "A fresh list" : "All caught up",
                 detail: model.completedTasks.isEmpty ? "Add your first task above, or turn a line from an email into a task."
                     : "Everything in this list is complete. New tasks will appear here.", symbol: "checkmark.circle")
@@ -230,13 +252,13 @@ struct GoogleTasksSidebar: View {
                 if let pendingTask {
                     GoogleTaskRow(task: pendingTask, parentTitle: nil, isBusy: true, isPending: true,
                         onComplete: {}, onEdit: {}, onDelete: {})
-                    if !model.openTasks.isEmpty {
+                    if !openTasks.isEmpty {
                         Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
                     }
                 }
-                ForEach(model.openTasks) { task in
+                ForEach(openTasks) { task in
                     row(task)
-                    if task.id != model.openTasks.last?.id {
+                    if task.id != openTasks.last?.id {
                         Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
                     }
                 }
@@ -244,7 +266,7 @@ struct GoogleTasksSidebar: View {
             .padding(Tokens.Space.s1)
             .ternSurface(style: .grouped)
         }
-        if !model.completedTasks.isEmpty {
+        if !completedTasks.isEmpty {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Button { showsCompleted.toggle() } label: {
                     HStack(spacing: Tokens.Space.s2) {
@@ -266,8 +288,9 @@ struct GoogleTasksSidebar: View {
                 .accessibilityLabel("\(showsCompleted ? "Hide" : "Show") \(model.completedTasks.count) completed tasks")
                 .accessibilityValue(showsCompleted ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("google-tasks-completed-toggle")
+                .disabled(inlineEditor?.context.task?.isCompleted == true)
                 if showsCompleted {
-                    LazyVStack(spacing: 0) { ForEach(model.completedTasks) { row($0) } }
+                    LazyVStack(spacing: 0) { ForEach(completedTasks) { row($0) } }
                         .padding(Tokens.Space.s1)
                         .ternSurface(style: .grouped)
                 }
@@ -276,10 +299,42 @@ struct GoogleTasksSidebar: View {
         }
     }
 
-    private func row(_ task: GoogleTask) -> some View {
-        GoogleTaskRow(task: task, parentTitle: task.parent.flatMap { id in model.tasks.first { $0.id == id }?.title },
-            isBusy: model.taskIsBusy(task), onComplete: { Task { await model.setCompleted(task, completed: !task.isCompleted) } },
-            onEdit: { editor = context(task) }, onDelete: { deletion = context(task) })
+    @ViewBuilder private func row(_ task: GoogleTask) -> some View {
+        if let inlineEditor, inlineEditor.context.location == model.selectedLocation,
+           inlineEditor.context.task?.id == task.id {
+            editingRow(inlineEditor)
+        } else {
+            GoogleTaskRow(task: task, parentTitle: task.parent.flatMap { id in model.tasks.first { $0.id == id }?.title },
+                isBusy: model.taskIsBusy(task), allowsEditing: inlineEditor == nil,
+                onComplete: { Task { await model.setCompleted(task, completed: !task.isCompleted) } },
+                onEdit: {
+                    guard inlineEditor == nil, let context = context(task) else { return }
+                    inlineEditor = GoogleTaskEditingSession(model: model, context: context)
+                }, onDelete: { deletion = context(task) })
+        }
+    }
+
+    private func editingRow(_ session: GoogleTaskEditingSession) -> some View {
+        GoogleTaskEditor(session: session) {
+            if inlineEditor === session {
+                inlineEditor = nil
+                entryFocused = true
+            }
+        }
+        .id(session.context.id)
+    }
+
+    private var openTasks: [GoogleTask] { displayedTasks(completed: false) }
+    private var completedTasks: [GoogleTask] { displayedTasks(completed: true) }
+
+    /// A refresh may complete or remove the task. Keep its editor in the
+    /// original section until Save or Cancel so the draft stays reachable.
+    private func displayedTasks(completed: Bool) -> [GoogleTask] {
+        let tasks = completed ? model.completedTasks : model.openTasks
+        guard let session = inlineEditor, session.context.location == model.selectedLocation,
+              let original = session.context.task else { return tasks }
+        if original.isCompleted != completed { return tasks.filter { $0.id != original.id } }
+        return tasks.contains { $0.id == original.id } ? tasks : [original] + tasks
     }
 
     /// Saving uses the same row and metadata as Google's result, without
@@ -306,7 +361,7 @@ struct GoogleTasksSidebar: View {
                     .disabled(!model.canAdd)
             } else {
                 taskIcon("Add task with details", symbol: "square.and.pencil") { editor = context(nil) }
-                    .disabled(!model.canAdd)
+                    .disabled(!model.canAdd || inlineEditor != nil)
             }
         }
         .padding(.horizontal, Tokens.Space.s3)

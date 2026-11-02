@@ -7,6 +7,7 @@ struct GoogleTaskRow: View {
     let parentTitle: String?
     let isBusy: Bool
     var isPending = false
+    var allowsEditing = true
     let onComplete: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -47,7 +48,7 @@ struct GoogleTaskRow: View {
                 } else {
                     Button(action: onEdit) { taskText }
                         .buttonStyle(.plain)
-                        .disabled(isBusy)
+                        .disabled(isBusy || !allowsEditing)
                         .focused($focusedControl, equals: .title)
                         .accessibilityFocused($accessibleControl, equals: .title)
                         .help(task.title)
@@ -148,6 +149,7 @@ struct GoogleTaskRow: View {
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .buttonStyle(.plain).foregroundStyle(.secondary)
+        .disabled(control == .edit && !allowsEditing)
         .focused($focusedControl, equals: control)
         .accessibilityFocused($accessibleControl, equals: control)
         .ternHover(isEnabled: !isBusy)

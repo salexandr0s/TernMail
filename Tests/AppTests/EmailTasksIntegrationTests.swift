@@ -10,6 +10,37 @@ import WebKit
 @testable import Tern
 
 @Suite @MainActor struct EmailTasksIntegrationTests {
+    @Test(arguments: [false, true])
+    func inlineEditorHandlesReturnAndEscapeWithoutASheet(cancel: Bool) async throws {
+        let suite = "tern.tasks.inline." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = GoogleTasksModel(defaults: defaults, loadAccounts: { [] }, service: { _ in nil }, enable: { _ in })
+        let session = GoogleTaskEditingSession(model: model, context: GoogleTaskEditorContext(
+            task: .init(id: "task", title: "Review proposal"),
+            location: .init(accountID: "owner", listID: "list"), listTitle: "Work"))
+        var finishes = 0
+        let controller = NSHostingController(rootView: GoogleTaskEditor(session: session) { finishes += 1 })
+        controller.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 296, height: 220),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await waitFor { self.element("google-task-title", in: controller.view) != nil && window.firstResponder is NSTextView }
+        #expect(window.sheets.isEmpty)
+        if cancel { session.title = "Unsaved edit" }
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            characters: cancel ? "\u{1b}" : "\r", charactersIgnoringModifiers: cancel ? "\u{1b}" : "\r",
+            isARepeat: false, keyCode: cancel ? 53 : 36))
+        window.sendEvent(event)
+        try await waitFor { finishes == 1 }
+        #expect(session.error == nil)
+        #expect(window.sheets.isEmpty)
+    }
+
     @Test func rowEditAndDeleteRemainAccessibleWithoutOpeningAMenu() async throws {
         var edits = 0, deletions = 0
         let controller = NSHostingController(rootView: GoogleTaskRow(task: .init(id: "task", title: "Review proposal"),
