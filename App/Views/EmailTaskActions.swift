@@ -60,9 +60,19 @@ struct EmailTaskAddButton: View {
     let request: TaskCreationRequest
     let model: GoogleTasksModel
     let onAdd: (TaskCreationRequest) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var state: TaskCreationState { model.creationState(for: request) }
     private var isDisabled: Bool { model.isCreating || state == .added }
+
+    private var tint: Color {
+        switch state {
+        case .added: Tokens.Status.success
+        case .uncertain: Tokens.Status.warning
+        case .idle, .adding: .accentColor
+        }
+    }
 
     private var actionLabel: String {
         switch state {
@@ -76,20 +86,44 @@ struct EmailTaskAddButton: View {
     var body: some View {
         Button { onAdd(request) } label: {
             ZStack {
-                if state == .adding { ProgressView().controlSize(.mini) }
+                if state == .adding { ProgressView().controlSize(.mini).tint(tint) }
                 else {
                     Image(systemName: state == .added ? "checkmark" : state == .uncertain ? "arrow.clockwise" : "plus")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(state == .added ? Color.secondary : Color.accentColor)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(tint)
                 }
             }
             .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+            .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .overlay {
+                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                    .strokeBorder(tint.opacity(contrast == .increased ? Tokens.Opacity.outline : Tokens.Opacity.tint),
+                        lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
+            }
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(EmailTaskAddStyle(showsStatus: state == .adding || state == .added))
         .disabled(isDisabled)
         .ternHover(isEnabled: !isDisabled)
+        .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: state)
         .help(actionLabel)
         .accessibilityLabel("\(actionLabel): \(request.title)")
+    }
+}
+
+private struct EmailTaskAddStyle: ButtonStyle {
+    let showsStatus: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            // A saved checkmark is a status indicator, so it stays legible even
+            // though pressing it again is disabled.
+            .opacity(isEnabled || showsStatus ? 1 : Tokens.Opacity.disabled)
+            .background {
+                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                    .fill(Color.primary.opacity(configuration.isPressed ? Tokens.Opacity.pressed : 0))
+            }
     }
 }
