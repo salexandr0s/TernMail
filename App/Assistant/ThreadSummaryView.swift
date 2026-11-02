@@ -287,7 +287,7 @@ struct ThreadSummaryContent: View {
         if !report.summary.openTasks.isEmpty {
             disclosureSection(.tasks, title: "Open tasks", count: report.summary.openTasks.count) {
                 ForEach(report.summary.openTasks.indices, id: \.self) { index in
-                    if index > 0 { Divider().padding(.leading, Tokens.Space.s8) }
+                    if index > 0 { Divider().padding(.horizontal, Tokens.Space.s3) }
                     taskRow(report.summary.openTasks[index], index: index)
                 }
             }
@@ -357,15 +357,11 @@ struct ThreadSummaryContent: View {
     }
 
     private func taskRow(_ task: AssistantSummary.OpenTask, index: Int) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s2) {
-            Text("\(index + 1)").font(.caption.weight(.medium).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
-                .accessibilityLabel("Task \(index + 1)")
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(task.description).font(.callout)
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                Text(task.description).font(.callout.weight(.medium))
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    .padding(.top, Tokens.Space.s1)
+                    .padding(.top, Tokens.Space.s1_5)
                 if task.owner != nil || task.dueDate != nil {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: Tokens.Space.s3) { taskMetadata(task) }
@@ -380,6 +376,7 @@ struct ThreadSummaryContent: View {
                 sourceMenu(sources: report.sources.filter { task.sourceIDs.contains($0.id) },
                     title: "Sources for task \(index + 1)",
                     accessibilityID: "summary-task-sources-\(index)")
+                    .frame(height: Tokens.Control.iconButton)
                 if let tasks, let onAddTask {
                     EmailTaskAddButton(request: EmailTaskRequest.suggestion(task, report: report,
                         detail: detail, accountEmail: taskAccountEmail), model: tasks, onAdd: onAddTask)
@@ -387,8 +384,8 @@ struct ThreadSummaryContent: View {
                 }
             }
         }
-        .padding(.horizontal, Tokens.Space.s2)
-        .padding(.vertical, Tokens.Space.s1_5)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("summary-task-\(index)")
     }
@@ -402,6 +399,9 @@ struct ThreadSummaryContent: View {
         if let date = task.dueDate {
             Label("Due \(SummaryDueDate.formatted(date, locale: locale))", systemImage: "calendar")
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .padding(.horizontal, Tokens.Space.s1_5)
+                .padding(.vertical, Tokens.Space.s0_5)
+                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .help(date)
         }
     }

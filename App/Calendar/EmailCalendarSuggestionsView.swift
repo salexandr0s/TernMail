@@ -28,7 +28,7 @@ struct EmailCalendarSuggestionsView: View {
                 let displayed = showsAll ? orderedItems : Array(orderedItems.prefix(2))
                 ForEach(displayed) { item in
                     if item.id != displayed.first?.id {
-                        Divider().padding(.horizontal, Tokens.Space.s3)
+                        Divider().padding(.horizontal, Tokens.Space.s4)
                     }
                     EmailCalendarSuggestionRow(
                         item: item, calendar: calendar, accountID: accountID,
@@ -117,14 +117,14 @@ private struct EmailCalendarSuggestionRow: View {
                 HStack(alignment: .center, spacing: Tokens.Space.s3) {
                     dateTile
                     summary.frame(minWidth: Tokens.Space.s16 * 2)
-                    HStack(spacing: Tokens.Space.s1) {
+                    HStack(spacing: Tokens.Space.s2) {
                         eventActions
                         moreMenu
                     }
                     .controlSize(.small)
                     .fixedSize()
                 }
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     HStack(alignment: .center, spacing: Tokens.Space.s3) {
                         dateTile
                         summary
@@ -138,18 +138,19 @@ private struct EmailCalendarSuggestionRow: View {
             }
             if showsDetails { details }
         }
-        .padding(.horizontal, Tokens.Space.s3)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s3)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.title)
         .accessibilityValue(presentation.badge.text)
     }
 
     private var summary: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             Text(presentation.title)
                 .font(.callout.weight(.semibold))
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
                 .help(presentation.title)
                 .textSelection(.enabled)
             Text(presentation.dateLine)
@@ -227,7 +228,7 @@ private struct EmailCalendarSuggestionRow: View {
     }
 
     private var eventActions: some View {
-        HStack(spacing: Tokens.Space.s1) {
+        HStack(spacing: Tokens.Space.s1_5) {
             primaryAction
             if let tasks, let taskRequest {
                 EmailTaskAddButton(request: taskRequest, model: tasks, onAdd: onAddTask)
@@ -252,10 +253,19 @@ private struct EmailCalendarSuggestionRow: View {
     }
 
     private var reviewButton: some View {
-        Button("Review", action: onReview)
-            .help(reviewTitle)
-            .accessibilityLabel("\(reviewTitle): \(presentation.title)")
-            .accessibilityIdentifier("calendar-review-\(item.id)")
+        Button(action: onReview) {
+            Text("Review")
+                .font(.callout.weight(.medium))
+                .padding(.horizontal, Tokens.Space.s3)
+                .frame(height: Tokens.Control.iconButton)
+                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        }
+        .buttonStyle(.plain)
+        .ternHover()
+        .help(reviewTitle)
+        .accessibilityLabel("\(reviewTitle): \(presentation.title)")
+        .accessibilityIdentifier("calendar-review-\(item.id)")
     }
 
     private var reviewTitle: String {
