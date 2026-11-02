@@ -17,6 +17,8 @@ public enum HTMLImporter {
 
     /// - Parameter detachingQuote: False keeps the quote as ordinary text.
     public static func importHTML(_ html: String, detachingQuote: Bool = true, preservingInlineImages: Bool = false) -> Result {
+        // Browsers turn CR LF and lone CR into LF before parsing HTML. SwiftSoup doesn't.
+        let html = html.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         guard let document = try? SwiftSoup.parse(html), let body = document.body() else {
             return Result(document: ComposeDocument(plainText: html), quotedTail: nil, droppedFormatting: true)
         }
@@ -63,6 +65,28 @@ public enum HTMLImporter {
         var italic = false
         var underline = false
         var link: URL?
+        var whitespace = Whitespace.collapse
+    }
+
+    /// How text treats spaces, tabs and line breaks, as `pre` or a CSS
+    /// `white-space` style sets it.
+    private enum Whitespace {
+        /// Runs of spaces, tabs and line breaks become one space.
+        case collapse
+        /// Spaces, tabs and line breaks stay as written.
+        case preserve
+        /// Line breaks stay, and runs of spaces and tabs become one space.
+        case preserveLineBreaks
+
+        /// Reads a value of `white-space` or of its longhand `white-space-collapse`.
+        init?(css value: String) {
+            switch value {
+            case "normal", "nowrap", "collapse": self = .collapse
+            case "pre", "pre-wrap", "break-spaces", "preserve": self = .preserve
+            case "pre-line", "preserve-breaks": self = .preserveLineBreaks
+            default: return nil
+            }
+        }
     }
 
     private struct Walker {
@@ -71,6 +95,9 @@ public enum HTMLImporter {
         var dropped = false
         private var runs: [ComposeDocument.Run] = []
         private var style = Style()
+        /// False when the line's latest text kept its whitespace, so ending the
+        /// line leaves its trailing spaces alone.
+        private var trimsTrailingSpace = true
         private var lists: [ComposeDocument.BlockKind] = []
         private var listItem: ComposeDocument.BlockKind?
 
@@ -92,7 +119,12 @@ public enum HTMLImporter {
 
         mutating func walk(_ node: Node) {
             if let text = node as? TextNode {
-                append(text.getWholeText())
+                var raw = text.getWholeText()
+                // An HTML parser drops a newline right after `<pre>`, but SwiftSoup keeps it.
+                if raw.first == "\n", text.siblingIndex == 0, (text.parent() as? Element)?.tagName().lowercased() == "pre" {
+                    raw.removeFirst()
+                }
+                append(raw)
                 return
             }
             guard let element = node as? Element else { return }
@@ -151,6 +183,7 @@ public enum HTMLImporter {
             case "b", "strong": style.bold = true
             case "i", "em": style.italic = true
             case "u": style.underline = true
+            case "pre": style.whitespace = .preserve
             case "a":
                 if let href = try? element.attr("href"),
                    let url = ComposeDocument.safeLink(URL(string: href.trimmingCharacters(in: .whitespacesAndNewlines))) {
@@ -173,6 +206,8 @@ public enum HTMLImporter {
                 case "text-decoration", "text-decoration-line":
                     if value.contains("underline") { style.underline = true }
                     if value.contains("line-through") { dropped = true }
+                case "white-space", "white-space-collapse":
+                    if let whitespace = Whitespace(css: value) { style.whitespace = whitespace }
                 case "color", "background", "background-color", "font-family", "font-size", "font":
                     dropped = true
                 default:
@@ -181,12 +216,20 @@ public enum HTMLImporter {
             }
         }
 
-        /// Collapses whitespace as a browser would, and treats a no-break space as a space.
+        /// Adds text to the line. Whitespace collapses as a browser would unless
+        /// `pre` or a `white-space` style keeps it. A no-break space becomes a space.
         private mutating func append(_ raw: String) {
             var text = ""
             var lastWasSpace = runs.last?.text.last.map { $0 == " " } ?? true
             for character in raw {
-                if character == " " || character == "\t" || character == "\n" || character == "\r" || character == "\u{0C}" {
+                if character == "\n", style.whitespace != .collapse {
+                    appendRun(text)
+                    text = ""
+                    endBlock(keepingEmpty: true)
+                    lastWasSpace = true
+                } else if style.whitespace == .preserve {
+                    text.append(character == "\u{00A0}" ? " " : character)
+                } else if character == " " || character == "\t" || character == "\n" || character == "\r" || character == "\u{0C}" {
                     if !lastWasSpace { text.append(" ") }
                     lastWasSpace = true
                 } else {
@@ -194,7 +237,13 @@ public enum HTMLImporter {
                     lastWasSpace = false
                 }
             }
+            appendRun(text)
+        }
+
+        /// Adds text to the last run when the formatting matches, or as a new run.
+        private mutating func appendRun(_ text: String) {
             guard !text.isEmpty else { return }
+            trimsTrailingSpace = style.whitespace != .preserve
             if var last = runs.last, last.image == nil, last.bold == style.bold, last.italic == style.italic,
                last.underline == style.underline, last.link == style.link {
                 last.text += text
@@ -206,7 +255,7 @@ public enum HTMLImporter {
 
         /// Ends the current line. A `br` keeps an empty line; block edges don't.
         mutating func endBlock(keepingEmpty: Bool = false) {
-            if var last = runs.last, last.text.hasSuffix(" ") {
+            if trimsTrailingSpace, var last = runs.last, last.text.hasSuffix(" ") {
                 last.text.removeLast()
                 if last.text.isEmpty { runs.removeLast() } else { runs[runs.count - 1] = last }
             }

@@ -16,6 +16,7 @@ import Testing
             Block(.numbered(level: 0), runs: [Run("first")]),
             Block(.numbered(level: 0), runs: [Run("second")]),
             Block(runs: [Run("<script>not markup</script>")]),
+            Block(runs: [Run("    four  two   three  "), Run(" three", bold: true)]),
         ])
 
         let html = document.html()
@@ -24,6 +25,7 @@ import Testing
         #expect(imported.document == document)
         #expect(!imported.droppedFormatting)
         #expect(html.contains("&lt;script&gt;"))
+        #expect(!html.contains("&nbsp;&nbsp;"))
         #expect(document.plainText() == """
             Hi there & you
 
@@ -32,7 +34,10 @@ import Testing
             1. first
             2. second
             <script>not markup</script>
+                four  two   three   three
             """)
+        let tabs = ComposeDocument(blocks: [Block(runs: [Run("\tone\t\ttwo")])])
+        #expect(tabs.html() == "<div><span style=\"white-space:pre\">\t</span>one<span style=\"white-space:pre\">\t\t</span>two</div>")
     }
 
     @Test func importDropsActiveContentAndRemoteImagesAndKeepsTheQuote() {
@@ -55,6 +60,41 @@ import Testing
         #expect(tail.contains("https://example.com/photo.jpg"))
         #expect(!tail.contains("script"))
         #expect(!tail.contains("onclick"))
+    }
+
+    @Test func importKeepsWhitespaceInsidePre() {
+        let html = """
+            <p>Run   it:</p><pre>
+            func greet() {
+            \t<b>let</b>  name = <span>"you"</span>
+
+                <code>print(name)  </code>
+            }
+            </pre><p>  Then   wait.  </p>
+            """
+
+        let imported = HTMLImporter.importHTML(html)
+
+        #expect(imported.document.blocks == [
+            Block(runs: [Run("Run it:")]),
+            Block(runs: [Run("func greet() {")]),
+            Block(runs: [Run("\t"), Run("let", bold: true), Run("  name = \"you\"")]),
+            Block(runs: []),
+            Block(runs: [Run("    print(name)  ")]),
+            Block(runs: [Run("}")]),
+            Block(runs: [Run("Then wait.")]),
+        ])
+        let crlf = HTMLImporter.importHTML("<pre>\r\n  a\r\n\r\n  b\r\n</pre><p>c\r\nd</p>")
+        #expect(crlf.document.blocks.map(\.text) == ["  a", "", "  b", "c d"])
+    }
+
+    @Test(arguments: ["pre", "pre-wrap", "pre-line"])
+    func importFollowsWhiteSpaceStyle(value: String) {
+        let html = "<div style=\"color: gray; white-space: \(value)\"><span>  a  b\n\tc</span></div><p> d  e </p>"
+
+        let lines = HTMLImporter.importHTML(html).document.blocks.map(\.text)
+
+        #expect(lines == (value == "pre-line" ? ["a b", "c"] : ["  a  b", "\tc"]) + ["d e"])
     }
 }
 
@@ -145,5 +185,20 @@ import Testing
         let forward = ReplyBuilder.draft(.forward, replyingTo: original, ownAddresses: [], locale: locale, timeZone: utc)
         #expect(forward.quotedPlainText.hasPrefix("---------- Forwarded message ---------\nFrom: Jane <jane@example.com>\nDate: "))
         #expect(forward.quotedPlainText.hasSuffix("\n\nHi\n> earlier\n\nbye"))
+    }
+
+    @Test func plainTextQuotesKeepSpacingAndLinks() {
+        let original = OriginalMessage(
+            threadID: "t1",
+            from: [jane],
+            body: ExtractedBody(plainText: "Steps:\r\n    1.  Run  it\r\nSee https://example.com/a?b=1&c=2  now\r\n")
+        )
+
+        let reply = ReplyBuilder.draft(.reply, replyingTo: original, ownAddresses: [])
+
+        #expect(reply.quotedHTML.contains(#"""
+            <div>Steps:<br>&nbsp; &nbsp; 1. &nbsp;Run &nbsp;it<br>See \#
+            <a href="https://example.com/a?b=1&amp;c=2">https://example.com/a?b=1&amp;c=2</a> &nbsp;now<br></div>
+            """#))
     }
 }

@@ -178,6 +178,17 @@ import Testing
         #expect(!EmailAddress(address: "jane doe@example.com").isValid)
     }
 
+    @Test func typedListsSplitOutsideQuotesCommentsAndAngleBracketsAndAtNewLines() {
+        let text = #""Doe, Jane" <jane@example.com>, "Lee \"Ops, EU\"" <lee@example.com>; (Bob, ext) bob@example.com,<a,b@example.com>"#
+            + "\ncarol@example.com\r\ndan@example.com;"
+        #expect(EmailAddress.splitList(text) == [
+            #""Doe, Jane" <jane@example.com>"#, #" "Lee \"Ops, EU\"" <lee@example.com>"#, " (Bob, ext) bob@example.com",
+            "<a,b@example.com>", "carol@example.com", "dan@example.com", "",
+        ])
+        // A quote left open ends with its line, so the next line is still its own entry.
+        #expect(EmailAddress.splitList("\"Doe, Jane\nbob@example.com") == ["\"Doe, Jane", "bob@example.com"])
+    }
+
     @Test func encodedWordsSplitInsideACharacterDecodeTogether() {
         #expect(MIMEReader.decodeEncodedWords("=?UTF-8?B?ww==?= =?UTF-8?B?qQ==?=") == "é")
         #expect(MIMEReader.decodeEncodedWords("Re: =?ISO-8859-1?Q?caf=E9_ok?= thanks") == "Re: café ok thanks")

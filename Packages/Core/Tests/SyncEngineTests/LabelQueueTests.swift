@@ -269,6 +269,24 @@ import Testing
         #expect(try await rows(cache).isEmpty)
         #expect(try await shownNames(cache) == ["Trips"])
     }
+
+    @Test(arguments: [SystemLabel.trash, SystemLabel.spam])
+    func aMoveOutOfTrashOrSpamTakesThatLabelOffWithTheInbox(mailbox: String) async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await setLabels([("Label_1", "Trips")], cache, gmail)
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox, mailbox])])
+        let move = try #require(try await engine.move(threadIDs: ["t1"], to: "Label_1", from: mailbox))
+        #expect(try await listed(cache, mailbox).isEmpty)
+        #expect(try await listed(cache, SystemLabel.inbox).isEmpty)
+        #expect(try await listed(cache, "Label_1") == ["t1"])
+        clock.advance(3)
+
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.changes == [Change("modifyThreads", ["t1"], add: ["Label_1"], remove: [mailbox, SystemLabel.inbox])])
+        try await engine.undo(move)
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.changes.last == Change("batchModify", ["m1"], add: [SystemLabel.inbox, mailbox], remove: ["Label_1"]))
+    }
 }
 
 // MARK: Helpers

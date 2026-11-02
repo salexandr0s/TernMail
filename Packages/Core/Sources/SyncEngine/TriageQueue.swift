@@ -74,12 +74,8 @@ extension SyncEngine {
     public func move(target: MailActionTarget, to labelID: String, from mailboxLabelID: String) async throws -> ActionReceipt? {
         if case .threads(let ids) = target { return try await move(threadIDs: ids, to: labelID, from: mailboxLabelID) }
         let accountID = accountID
-        let source = try await cache.read { tx in
-            let id = try tx.resolvedLabelID(mailboxLabelID, accountID: accountID)
-            let user = try tx.displayedLabels(accountID: accountID).contains { $0.id == id && !$0.isSystem }
-            return id == SystemLabel.inbox || user ? id : SystemLabel.inbox
-        }
-        return try await queueMessageChanges(target, add: [labelID], remove: [source])
+        let remove = try await cache.read { tx in try Self.labelsRemoved(movingFrom: mailboxLabelID, accountID: accountID, in: tx) }
+        return try await queueMessageChanges(target, add: [labelID], remove: remove)
     }
 
     private func queueMessageChanges(

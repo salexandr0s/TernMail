@@ -60,7 +60,11 @@ struct RecipientField: NSViewRepresentable {
         // ComposeView outlines the whole row, including its label and padding.
         field.focusRingType = .none
         field.font = NSFont.preferredFont(forTextStyle: .body)
-        field.tokenizingCharacterSet = CharacterSet(charactersIn: ",;")
+        // The field can't tell a comma that ends a recipient from one in a
+        // quoted name such as "Doe, Jane", so it ends tokens only at the
+        // terminator, which the coordinator inserts after each comma or
+        // semicolon that ends an entry.
+        field.tokenizingCharacterSet = CharacterSet(charactersIn: String(entryTerminator))
         field.completionDelay = 0.1
         field.cell?.wraps = true
         field.cell?.isScrollable = false
@@ -127,11 +131,20 @@ struct RecipientField: NSViewRepresentable {
         return "\"\(escaped)\" <\(address.address)>"
     }
 
-    /// An address as text the field turns back into one token. The name
-    /// leaves out commas and semicolons, which would end the token.
-    static func tokenText(_ address: EmailAddress) -> String {
-        let name = address.name?.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: ";", with: "")
-        return name.map { "\($0) <\(address.address)>" } ?? address.address
+    /// Ends a token. Nobody types it; see `makeField`.
+    private static let entryTerminator: Character = "\u{1F}"
+
+    /// An address as completion text, with a plain name so the text stays one
+    /// entry whatever is typed after it. `Coordinator.completions` keeps the full name.
+    private static func completionText(_ address: EmailAddress) -> String {
+        let name = address.name.map(plainName) ?? ""
+        return name.isEmpty ? address.address : "\(name) <\(address.address)>"
+    }
+
+    /// A name without the punctuation that separates addresses or starts a
+    /// quote, comment or angle brackets.
+    private static func plainName(_ name: String) -> String {
+        name.filter { !",;\"()<>".contains($0) }.trimmingCharacters(in: .whitespaces)
     }
 
     /// The address in one token. Tokens hold objects, not values.
@@ -148,6 +161,13 @@ struct RecipientField: NSViewRepresentable {
         init(_ group: ContactGroupSuggestion) { self.group = group }
     }
 
+    /// The tokens for text with more than one entry, such as a pasted list.
+    /// `shouldAdd` adds each of them in its place.
+    final class TokenList: NSObject {
+        let tokens: [NSObject]
+        init(_ tokens: [NSObject]) { self.tokens = tokens }
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTokenFieldDelegate {
         var parent: RecipientField
@@ -161,11 +181,9 @@ struct RecipientField: NSViewRepresentable {
         private var loadedDirectory: [EmailAddress] = []
         private var groupCompletions: [String: ContactGroupSuggestion] = [:]
         private var groupTasks: [String: Task<Void, Never>] = [:]
-        /// Completion strings and the addresses they stand for. A name's commas
-        /// are left out of its completion string, since a comma ends a token.
+        /// Completion strings and the addresses they stand for. A completion
+        /// string leaves some punctuation out of the name; see `completionText`.
         private var completions: [String: EmailAddress] = [:]
-        /// Text that Edit made from a token, and the address it stands for.
-        private var editedAddresses: [String: EmailAddress] = [:]
         private var loadTask: Task<Void, Never>?
         private var queryGeneration = 0
         /// Never on screen or edited, so SwiftUI can measure it at any time.
@@ -242,9 +260,13 @@ struct RecipientField: NSViewRepresentable {
         }
 
         func controlTextDidChange(_ notification: Notification) {
-            if let editor = field?.currentEditor() as? NSTextView, editor.hasMarkedText() {
-                avatars.hideSuggestions()
-                return
+            if let editor = field?.currentEditor() as? NSTextView {
+                if editor.hasMarkedText() {
+                    avatars.hideSuggestions()
+                    return
+                }
+                // Inserting the terminator is a change of its own, which publishes.
+                if endEntryAtSeparator(in: editor) { return }
             }
             publish()
             dismissedQuery = nil
@@ -253,6 +275,9 @@ struct RecipientField: NSViewRepresentable {
 
         func controlTextDidEndEditing(_ notification: Notification) {
             publish()
+            // The field turns the text left at the end of editing into a token
+            // without asking `shouldAdd`, so a list can still be one object.
+            if (field?.objectValue as? [Any])?.contains(where: { $0 is TokenList }) == true { show(shownAddresses) }
             avatars.hideSuggestions()
             reportFocus()
         }
@@ -332,15 +357,14 @@ struct RecipientField: NSViewRepresentable {
         }
 
         func tokenField(_ tokenField: NSTokenField, representedObjectForEditing editingString: String) -> Any? {
-            let text = editingString.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            if let group = groupCompletions[text] { return GroupToken(group) }
-            if let address = completions[text] ?? editedAddresses[text] { return Token(address) }
-            return Token(EmailAddress.parseList(text).first ?? EmailAddress(address: text))
+            let tokens = self.tokens(for: editingString)
+            return tokens.count > 1 ? TokenList(tokens) : tokens.first
         }
 
         func tokenField(_ tokenField: NSTokenField, displayStringForRepresentedObject object: Any) -> String? {
             if let group = object as? GroupToken { return group.group.name }
+            // A list shows as its text until it becomes one token per entry.
+            if object is TokenList { return self.tokenField(tokenField, editingStringForRepresentedObject: object) }
             guard let token = object as? Token else { return object as? String }
             let display: String
             if parent.showsFullAddresses { display = token.address.displayString }
@@ -351,10 +375,14 @@ struct RecipientField: NSViewRepresentable {
 
         func tokenField(_ tokenField: NSTokenField, editingStringForRepresentedObject object: Any) -> String? {
             if let group = object as? GroupToken { return group.group.name }
+            if let list = object as? TokenList {
+                return list.tokens.compactMap { self.tokenField(tokenField, editingStringForRepresentedObject: $0) }.joined(separator: ", ")
+            }
             return (object as? Token).map { RecipientField.editingString($0.address) } ?? object as? String
         }
 
         func tokenField(_ tokenField: NSTokenField, shouldAdd tokens: [Any], at index: Int) -> [Any] {
+            let tokens = tokens.flatMap(expanded)
             for token in tokens.compactMap({ $0 as? GroupToken }) {
                 let group = token.group
                 guard groupTasks[group.id] == nil else { continue }
@@ -380,7 +408,7 @@ struct RecipientField: NSViewRepresentable {
 
         func tokenField(_ tokenField: NSTokenField, writeRepresentedObjects objects: [Any], to pasteboard: NSPasteboard) -> Bool {
             let text = objects
-                .compactMap { ($0 as? Token).map { RecipientField.editingString($0.address) } ?? $0 as? String }
+                .compactMap { $0 is GroupToken ? nil : self.tokenField(tokenField, editingStringForRepresentedObject: $0) }
                 .joined(separator: ", ")
             pasteboard.clearContents()
             return pasteboard.setString(text, forType: .string)
@@ -442,15 +470,12 @@ struct RecipientField: NSViewRepresentable {
             NSPasteboard.general.replaceContents(with: RecipientField.editingString(token.address))
         }
 
-        /// Turns the token back into selected text, so typing replaces it.
-        /// Until it changes, the text stands for the original address, whose
-        /// name may hold the commas the text leaves out.
+        /// Turns the token back into its editing text, selected, so typing replaces it.
         @objc private func editToken(_ item: NSMenuItem) {
             guard parent.isEditable, let field, let token = item.representedObject as? Token else { return }
             if field.currentEditor() == nil { field.window?.makeFirstResponder(field) }
             guard let editor = field.currentEditor() as? NSTextView, let range = Self.range(of: token, in: editor) else { return }
-            let text = RecipientField.tokenText(token.address)
-            editedAddresses[text] = token.address
+            let text = RecipientField.editingString(token.address)
             editor.insertText(text, replacementRange: range)
             editor.setSelectedRange(NSRange(location: range.location, length: (text as NSString).length))
         }
@@ -494,13 +519,13 @@ struct RecipientField: NSViewRepresentable {
         }
 
         private func completionString(_ address: EmailAddress) -> String {
-            let string = RecipientField.tokenText(address)
+            let string = RecipientField.completionText(address)
             completions[string] = address
             return string
         }
 
         private func groupCompletionString(_ group: ContactGroupSuggestion) -> String {
-            let name = group.name.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: ";", with: "")
+            let name = RecipientField.plainName(group.name)
             let coverage = group.isComplete ? "" : " · list incomplete"
             let base = "\(name) (group · \(group.memberCount)\(coverage))"
             var text = base
@@ -515,17 +540,48 @@ struct RecipientField: NSViewRepresentable {
             guard let field else { return }
             let objects = field.objectValue as? [Any] ?? []
             avatars.updateChips(objects.compactMap { ($0 as? Token)?.address })
-            let addresses = objects.flatMap { object -> [EmailAddress] in
-                if let token = object as? Token { return [token.address] }
-                guard let text = (object as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
-                    return []
-                }
-                if let address = editedAddresses[text] { return [address] }
-                let parsed = EmailAddress.parseList(text)
-                return parsed.isEmpty ? [EmailAddress(address: text)] : parsed
-            }
+            let addresses = objects.flatMap(expanded).compactMap { ($0 as? Token)?.address }
             shownAddresses = addresses
             if parent.addresses != addresses { parent.addresses = addresses }
+        }
+
+        /// The tokens for typed or pasted text: one for each entry between
+        /// separators, leaving out blank ones.
+        private func tokens(for text: String) -> [NSObject] {
+            EmailAddress.splitList(text).compactMap { entry -> NSObject? in
+                let text = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                if let group = groupCompletions[text] { return GroupToken(group) }
+                if let address = completions[text] { return Token(address) }
+                return Token(EmailAddress.parseList(text).first ?? EmailAddress(address: text))
+            }
+        }
+
+        /// The tokens one of the field's objects stands for. The field keeps
+        /// text as a string when there's no token for it, such as a lone comma.
+        private func expanded(_ object: Any) -> [Any] {
+            if let list = object as? TokenList { return list.tokens }
+            if let text = object as? String { return tokens(for: text) }
+            return [object]
+        }
+
+        /// Ends the entry before the cursor when the character just typed is a
+        /// comma or semicolon outside quotes, comments and angle brackets. The
+        /// terminator goes in after it as if typed, so the field makes the
+        /// token and Undo works as it does for the field's own separators.
+        private func endEntryAtSeparator(in editor: NSTextView) -> Bool {
+            let caret = editor.selectedRange()
+            guard caret.length == 0, editor.undoManager?.isUndoing != true, editor.undoManager?.isRedoing != true else {
+                return false
+            }
+            // The text typed since the last token.
+            let text = editor.string as NSString
+            var start = caret.location
+            while start > 0, text.character(at: start - 1) != unichar(NSTextAttachment.character) { start -= 1 }
+            let entries = EmailAddress.splitList(text.substring(with: NSRange(location: start, length: caret.location - start)))
+            guard entries.count > 1, entries.last?.isEmpty == true else { return false }
+            editor.insertText(String(RecipientField.entryTerminator), replacementRange: NSRange(location: NSNotFound, length: 0))
+            return true
         }
     }
 }

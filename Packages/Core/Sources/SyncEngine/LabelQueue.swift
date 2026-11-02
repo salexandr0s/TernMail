@@ -134,9 +134,22 @@ extension SyncEngine {
 
     /// Moves conversations to `labelID`: adds it, and takes them out of the
     /// mailbox being viewed when that is the Inbox or a user label, or else
-    /// out of the Inbox.
+    /// out of the Inbox. A move out of Trash or Spam takes them out of that
+    /// mailbox as well (`labelsRemoved(movingFrom:accountID:in:)`).
     public func move(threadIDs: [String], to labelID: String, from mailboxLabelID: String) async throws -> ActionReceipt? {
         try await queueLabelEdits(threadIDs: threadIDs, add: [labelID], remove: [], leaving: mailboxLabelID)
+    }
+
+    /// The labels a move removes for the mailbox being viewed. Trash and Spam
+    /// hide a message's other labels, so a move out of them removes TRASH or
+    /// SPAM along with the Inbox. Gmail lists both as labels clients can
+    /// apply, so the modify request takes them off and `threads.untrash`
+    /// isn't needed.
+    static func labelsRemoved(movingFrom mailboxLabelID: String, accountID: String, in tx: CacheTransaction) throws -> [String] {
+        let mailbox = try tx.resolvedLabelID(mailboxLabelID, accountID: accountID)
+        let isUserLabel = try tx.displayedLabels(accountID: accountID).contains { $0.id == mailbox && !$0.isSystem }
+        if mailbox == SystemLabel.inbox || isUserLabel { return [mailbox] }
+        return [SystemLabel.trash, SystemLabel.spam].contains(mailbox) ? [mailbox, SystemLabel.inbox] : [SystemLabel.inbox]
     }
 
     private func queueLabelEdits(
@@ -154,9 +167,7 @@ extension SyncEngine {
             let add = try resolve(add)
             var remove = try resolve(remove)
             if let mailboxLabelID {
-                let mailbox = try tx.resolvedLabelID(mailboxLabelID, accountID: accountID)
-                let isUserLabel = try tx.displayedLabels(accountID: accountID).contains { $0.id == mailbox && !$0.isSystem }
-                remove.append(mailbox == SystemLabel.inbox || isUserLabel ? mailbox : SystemLabel.inbox)
+                remove += try Self.labelsRemoved(movingFrom: mailboxLabelID, accountID: accountID, in: tx)
             }
             remove = remove.filter { !add.contains($0) }.removingDuplicates()
             guard !add.isEmpty || !remove.isEmpty else { return [] }

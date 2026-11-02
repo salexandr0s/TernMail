@@ -61,7 +61,8 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
     // MARK: Output
 
     /// Markup for the text/html part: a `div` per paragraph, as Gmail writes
-    /// it, and nested `ul` or `ol` lists.
+    /// it, and nested `ul` or `ol` lists. Leading and repeated spaces and tabs
+    /// keep their width.
     public func html() -> String {
         var output = ""
         var openLists: [String] = []
@@ -124,11 +125,14 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
 
     private static func html(_ runs: [Run]) -> String {
         guard runs.contains(where: { !$0.text.isEmpty || $0.image != nil }) else { return "<br>" }
+        var previous = Previous.lineStart
         return runs.map { run in
             if let image = run.image, image.isValid {
+                // HTMLImporter drops a plain space after an image, as it does at the start of a line.
+                previous = .lineStart
                 return "<img src=\"cid:\(MessageDocument.escaped(image.contentID))\" alt=\"\(MessageDocument.escaped(image.altText))\">"
             }
-            var text = MessageDocument.escaped(run.text).replacingOccurrences(of: "\n", with: "<br>")
+            var text = markup(run.text, after: &previous)
             if run.underline { text = "<u>\(text)</u>" }
             if run.italic { text = "<i>\(text)</i>" }
             if run.bold { text = "<b>\(text)</b>" }
@@ -137,6 +141,56 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
             }
             return text
         }.joined()
+    }
+
+    /// What the line so far ends with, which decides how a space after it is written.
+    private enum Previous {
+        /// Nothing yet, or a line break.
+        case lineStart
+        /// A visible character, or a tab, which its `pre` span keeps.
+        case text
+        case space
+        case noBreakSpace
+    }
+
+    /// Escapes run text and writes its spacing so the HTML keeps what the
+    /// editor shows. A line break becomes `br`, and tabs go in a
+    /// `white-space:pre` span, which keeps their width. A space becomes
+    /// `&nbsp;` where HTML would drop or collapse it: at the start of a line
+    /// and after a plain space. Plain spaces stay between those, so long runs
+    /// can still wrap. `HTMLImporter` drops a plain space that starts a run
+    /// right after any space, so such a space is written as `&nbsp;` too.
+    private static func markup(_ text: String, after previous: inout Previous) -> String {
+        var output = ""
+        var inTabs = false
+        for (offset, character) in MessageDocument.escaped(text).enumerated() {
+            if character == "\t" {
+                if !inTabs { output += "<span style=\"white-space:pre\">" }
+                inTabs = true
+                output.append(character)
+                previous = .text
+                continue
+            }
+            if inTabs { output += "</span>" }
+            inTabs = false
+            switch character {
+            case "\n", "\r\n":
+                output += "<br>"
+                previous = .lineStart
+            case " ":
+                let plain = previous == .text || (previous == .noBreakSpace && offset > 0)
+                output += plain ? " " : "&nbsp;"
+                previous = plain ? .space : .noBreakSpace
+            case "\u{00A0}":
+                output.append(character)
+                previous = .noBreakSpace
+            default:
+                output.append(character)
+                previous = .text
+            }
+        }
+        if inTabs { output += "</span>" }
+        return output
     }
 
     static func safeLink(_ url: URL?) -> URL? {

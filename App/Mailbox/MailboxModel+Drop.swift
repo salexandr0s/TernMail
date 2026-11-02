@@ -79,10 +79,7 @@ extension MailboxModel {
             if leaves { selectRow(after: rows) }
             return queueUndoable("Move to Inbox", confirmation: "\(subject) moved to the Inbox", for: keys) { owner, _ in
                 guard let target = target(owner) else { return nil }
-                let removing: [String] = shown.map { label in
-                    label == SystemLabel.trash || owner.labels.contains { $0.id == label && !$0.isSystem } ? [label] : []
-                } ?? []
-                return try await owner.engine.editLabels(target: target, add: [SystemLabel.inbox], remove: removing)
+                return try await owner.engine.move(target: target, to: SystemLabel.inbox, from: shown ?? SystemLabel.inbox)
             } != nil
         case .archive:
             return performListAction(.archive, rows: rows) != nil

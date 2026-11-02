@@ -156,6 +156,18 @@ import Testing
         #expect(await gmail.changes.last == Change("batchModify", ["remote"], add: [SystemLabel.starred]))
         await engine.stop()
     }
+
+    @Test func aMessageMovedFromTrashToTheInboxLeavesTrash() async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        try await seed(cache, [("m1", "t1", [SystemLabel.trash])])
+        _ = try #require(try await engine.move(target: .messages(["m1"]), to: SystemLabel.inbox, from: SystemLabel.trash))
+        #expect(try await threadIDs(cache, SystemLabel.inbox) == ["t1"])
+        #expect(try await threadIDs(cache, SystemLabel.trash).isEmpty)
+        clock.advance(3)
+        _ = await engine.sendDueActions()
+        #expect(await gmail.changes == [Change("batchModify", ["m1"], add: [SystemLabel.inbox], remove: [SystemLabel.trash])])
+        await engine.stop()
+    }
 }
 
 private actor FakeTriageService: TriageService {
