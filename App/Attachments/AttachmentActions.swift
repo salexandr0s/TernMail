@@ -90,22 +90,38 @@ struct AttachmentPreferencesView: View {
     var body: some View {
         SettingsPage {
             Section {
-                SettingsControlRow("Open from") {
-                    Picker("Open attachments from", selection: $location) {
-                        Text("Tern's attachment folder").tag(AttachmentOpenLocation.application.rawValue)
-                        Text("Downloads → Tern").tag(AttachmentOpenLocation.downloads.rawValue)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
+                Picker("Open attachments from", selection: $location) {
+                    locationChoice("Tern's attachment folder", symbol: "tray.full",
+                        detail: "Open the downloaded file from Tern's local storage.")
+                        .tag(AttachmentOpenLocation.application.rawValue)
+                    locationChoice("Downloads → Tern", symbol: "folder",
+                        detail: "Save a separate copy in Downloads before opening it. Existing files are kept.")
+                        .tag(AttachmentOpenLocation.downloads.rawValue)
                 }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                .accessibilityLabel("Open attachments from")
             } header: {
-                Text("Opening attachments")
+                Text("When you open an attachment")
             } footer: {
                 Text(location == AttachmentOpenLocation.downloads.rawValue
-                    ? "Opening from Downloads saves a separate copy. Existing files are kept."
-                    : "Attachments open from Tern's local storage. Use Save to keep a copy in a folder you choose.")
+                    ? "Opened attachments will be available in Finder under Downloads → Tern."
+                    : "Use Save to keep a copy in a folder you choose.")
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func locationChoice(_ title: String, symbol: String, detail: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(title).font(.body.weight(.medium))
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, Tokens.Space.s2)
     }
 }

@@ -20,7 +20,7 @@ struct AssistantCalendarActionsView: View {
                 .help("Review the proposed event before saving it")
             }
             if !message.availabilityChoices.isEmpty {
-                Text("Choose times to suggest").font(.callout.weight(.medium))
+                Text("Choose up to six times to suggest").font(.callout.weight(.medium))
                 ForEach(message.availabilityChoices) { choice in
                     Toggle(isOn: $selected.contains(choice.id)) {
                         Text(choice.displayTitle).font(.callout)
@@ -43,6 +43,12 @@ struct AssistantCalendarActionsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(selected.isEmpty || selected.count > 6 || model.isRunning || model.isCheckingCalendarAvailability)
+                if selected.count > 6 {
+                    Label("Choose six times or fewer to continue.", systemImage: "exclamationmark.circle")
+                        .font(.callout)
+                        .foregroundStyle(Tokens.Status.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text("Tern checks again before drafting. These times are not reserved.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let error = model.calendarChoiceError {

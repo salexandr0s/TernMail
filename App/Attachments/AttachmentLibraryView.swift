@@ -21,7 +21,12 @@ struct AttachmentLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            pageHeader
+            Divider()
+            AttachmentSelectionActions(model: model)
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.vertical, Tokens.Space.s2)
+                .background(Tokens.Surface.primary)
             Divider()
             if let error = model.errorMessage { errorBanner(error) }
             GeometryReader { geometry in
@@ -41,19 +46,43 @@ struct AttachmentLibraryView: View {
         .task(id: model.observationKey) { await model.reload() }
     }
 
-    /// Category shortcuts and the Filters popover. Search, the layout and the
-    /// sort order are in the window's toolbar.
-    private var filterBar: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            HStack(spacing: Tokens.Space.s3) {
-                AttachmentCategoryShortcuts(model: model)
-                Spacer(minLength: 0)
+    /// Scope is the library's own account/category query, independent of Mail navigation.
+    private var pageHeader: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            TernPageHeader(title: "Attachments", subtitle: accountScope) {
                 filtersButton
             }
+            HStack(spacing: Tokens.Space.s3) {
+                Label(model.category?.title ?? "All categories", systemImage: "square.grid.2x2")
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(pageSummary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
             AttachmentActiveFilters(model: model)
         }
-        .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
+        .padding(Tokens.Workspace.pageGutter)
         .background(Tokens.Surface.primary)
+        .accessibilityIdentifier("attachments.page.heading")
+    }
+
+    private var accountScope: String {
+        guard !model.accountID.isEmpty else { return "Files from all accounts" }
+        guard let account = model.availableAccounts.first(where: { $0.id == model.accountID }) else {
+            return "Account unavailable"
+        }
+        return model.mailbox.accountTitle(account)
+    }
+
+    private var pageSummary: String {
+        guard model.isPageReady, !model.isLoading else {
+            return model.errorMessage == nil ? "Loading attachments…" : "Attachments unavailable"
+        }
+        if showsIndexProgress { return "Finding attachments…" }
+        return model.totalCount == 1 ? "1 attachment" : "\(model.totalCount.formatted()) attachments"
     }
 
     private var filtersButton: some View {
@@ -113,17 +142,11 @@ struct AttachmentLibraryView: View {
     }
 
     private var footer: some View {
-        VStack(spacing: Tokens.Space.s3) {
-            if !model.selection.isEmpty {
-                AttachmentSelectionActions(model: model)
-                Divider()
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s3) { pageControls; Spacer(minLength: Tokens.Space.s3); coverageButton }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) { pageControls; coverageButton }
-            }
-            .font(.caption).foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s3) { pageControls; Spacer(minLength: Tokens.Space.s3); coverageButton }
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) { pageControls; coverageButton }
         }
+        .font(.caption).foregroundStyle(.secondary)
         .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
     }
@@ -131,7 +154,9 @@ struct AttachmentLibraryView: View {
     private var pageControls: some View {
         HStack(spacing: Tokens.Space.s2) {
             if model.isWorking { ProgressView().controlSize(.mini); Text("Preparing files…") }
-            else if !showsIndexProgress { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
+            else if !showsIndexProgress {
+                Text(model.isLoading || !model.isPageReady ? "Loading…" : model.rangeSummary).monospacedDigit()
+            }
             if model.hasPreviousPage || model.hasMore {
                 Button { model.previousPage() } label: { Image(systemName: "chevron.left") }
                     .disabled(!model.hasPreviousPage || model.isLoading)
@@ -173,39 +198,60 @@ struct AttachmentSelectionActions: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: Tokens.Space.s3) { selectionLabel; Spacer(minLength: Tokens.Space.s3); actions }
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) { selectionLabel; actions }
+            HStack(spacing: Tokens.Space.s3) {
+                selectionLabel
+                Spacer(minLength: Tokens.Space.s3)
+                actions.labelStyle(.titleAndIcon)
+            }
+            HStack(spacing: Tokens.Space.s2) {
+                selectionLabel
+                Spacer(minLength: Tokens.Space.s2)
+                actions.labelStyle(.iconOnly)
+            }
         }
+        .frame(minHeight: Tokens.Control.iconButton)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("attachments.selection.actions")
     }
 
     private var selectionLabel: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor).accessibilityHidden(true)
-            Text("\(model.selection.count) selected").font(.callout.weight(.medium)).monospacedDigit()
+            Text(model.selection.isEmpty ? "Select files" : "\(model.selection.count.formatted()) selected")
+                .font(.callout.weight(.medium)).monospacedDigit().lineLimit(1)
+                .foregroundStyle(model.selection.isEmpty ? Color.secondary : .primary)
             Button { model.selection.removeAll() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help("Clear selection (Esc)").accessibilityLabel("Clear selection")
+                .opacity(model.selection.isEmpty ? 0 : 1)
+                .disabled(model.selection.isEmpty)
+                .accessibilityHidden(model.selection.isEmpty)
         }
-        .fixedSize()
     }
 
     private var actions: some View {
         HStack(spacing: Tokens.Space.s2) {
-            if let first = model.items.first(where: { model.selection.contains($0.id) }) {
-                Button("Quick Look", systemImage: "eye") { Task { await model.preview(first) } }.help("Quick Look (Space)")
+            Button("Quick Look", systemImage: "eye") {
+                if let first = model.items.first(where: { model.selection.contains($0.id) }) {
+                    Task { await model.preview(first) }
+                }
             }
-            if let item = selected {
-                Button("Open Conversation", systemImage: "macwindow.badge.plus") {
+            .help("Quick Look (Space)")
+            .disabled(model.selection.isEmpty)
+            Button("Open Conversation", systemImage: "macwindow.badge.plus") {
+                if let item = selected {
                     Task { await model.openSource(item) }
                 }
-                .help("Open Conversation in New Window")
             }
+            .help("Open Conversation in New Window")
+            .disabled(selected == nil)
             Button(model.selection.count == 1 ? "Save…" : "Save Files…", systemImage: "arrow.down.to.line") {
                 Task { await model.saveSelection() }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(model.selection.isEmpty)
         }
-        .fixedSize().disabled(model.isWorking)
+        .controlSize(.small)
+        .disabled(model.isWorking)
     }
 }
 

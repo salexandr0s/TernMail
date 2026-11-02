@@ -22,24 +22,26 @@ struct AssistantView: View {
     @State private var confirmsNewChat = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !isDetached { header }
-            AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
-                                      onOpenDraft: { openWindow(id: ComposeWindow.sceneID, value: $0) }) {
-                AssistantWelcomeView(model: model, setup: setupPrompt, onSettings: performSetupAction) { suggestion in
-                    scrollRequest = UUID()
-                    model.run(suggestion)
-                    isComposerFocused = true
+        GeometryReader { geometry in
+            let isCompact = geometry.size.height < Tokens.Assistant.compactHeight
+            VStack(spacing: 0) {
+                header(isCompact: isCompact)
+                AssistantContextHeader(model: model, onSettings: { showsSettings = true }, isCompact: isCompact)
+                Divider()
+                AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
+                                          onOpenDraft: { openWindow(id: ComposeWindow.sceneID, value: $0) }) {
+                    AssistantWelcomeView(model: model, setup: setupPrompt, onSettings: performSetupAction) { suggestion in
+                        scrollRequest = UUID()
+                        model.run(suggestion)
+                        isComposerFocused = true
+                    }
                 }
+                .frame(minHeight: Tokens.Assistant.minimumTranscriptHeight)
+                .accessibilityIdentifier("assistant.transcript")
+                composerDock(isCompact: isCompact)
             }
-            AssistantScopeNotice(model: model)
-            AssistantComposer(model: model, setup: setupPrompt, canSubmit: canSubmit, isFocused: $isComposerFocused,
-                              onSubmit: submit, onSettings: { showsSettings = true }, onSetup: performSetupAction)
-                .padding(Tokens.Space.s3)
-                .frame(maxWidth: Tokens.Assistant.contentWidth)
-                .frame(maxWidth: .infinity)
         }
-        .background(Tokens.Surface.primary)
+        .background(Tokens.Surface.canvas)
         .onKeyPress(.escape) { closeOnEscape() }
         .task {
             guard !hasPlacedInitialFocus else { return }
@@ -72,33 +74,69 @@ struct AssistantView: View {
                                          onNewChat: startNewChat, onSettings: { showsSettings = true }))
     }
 
-    private var header: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            ChatGPTBrand(size: Tokens.Space.s5)
-                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .accessibilityHidden(true)
-            Text("ChatGPT").font(.headline).lineLimit(1)
-            Spacer(minLength: 0)
-            HStack(spacing: Tokens.Space.s0_5) {
-                iconButton("New Chat", symbol: "plus", action: startNewChat)
-                Menu {
-                    Button("Assistant Settings…", systemImage: "gearshape") { showsSettings = true }
-                    if let onDetach { Button("Open in a Window", systemImage: "macwindow", action: onDetach) }
-                    if let onExpand {
-                        Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
+    private func header(isCompact: Bool) -> some View {
+        HStack(alignment: .center, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("Assistant")
+                    .font(isCompact ? .headline : Tokens.Workspace.pageTitle)
+                    .accessibilityAddTraits(.isHeader)
+                if !isCompact {
+                    HStack(spacing: Tokens.Space.s1_5) {
+                        ChatGPTBrand(size: Tokens.Space.s4)
+                            .accessibilityHidden(true)
+                        Text("ChatGPT").font(.caption).foregroundStyle(.secondary)
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
-                .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
-                .help("Assistant Options").accessibilityLabel("Assistant Options")
-                if let onClose { iconButton("Close Assistant", symbol: "xmark", action: onClose) }
             }
-            .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            if !isDetached {
+                HStack(spacing: Tokens.Space.s0_5) {
+                    iconButton("New Chat", symbol: "plus.bubble", action: startNewChat)
+                    Menu {
+                        Button("Assistant Settings…", systemImage: "gearshape") { showsSettings = true }
+                        if let onDetach { Button("Open in a Window", systemImage: "macwindow", action: onDetach) }
+                        if let onExpand {
+                            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    }
+                    .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
+                    .help("Assistant Options").accessibilityLabel("Assistant Options")
+                    if let onClose { iconButton("Close Assistant", symbol: "xmark", action: onClose) }
+                }
+                .foregroundStyle(.secondary)
+            }
         }
-        .padding(.horizontal, Tokens.Space.s4).padding(.top, Tokens.Space.s3).padding(.bottom, Tokens.Space.s2)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.top, isCompact ? Tokens.Space.s2 : Tokens.Space.s4)
+        .padding(.bottom, isCompact ? Tokens.Space.s2 : Tokens.Space.s3)
+        .background(Tokens.Surface.primary)
+    }
+
+    private func composerDock(isCompact: Bool) -> some View {
+        VStack(spacing: isCompact ? Tokens.Space.s2 : Tokens.Space.s3) {
+            if model.hasPendingScopeChange || model.usesPreviousMailScope {
+                AssistantScopeNotice(model: model,
+                    detailsMaxHeight: isCompact ? Tokens.Assistant.compactScopeDetailsHeight : Tokens.Layout.quoteMaxHeight)
+                    .clipShape(.rect(cornerRadius: Tokens.Radius.md))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                            .strokeBorder(Color.accentColor.opacity(Tokens.Opacity.outline), lineWidth: Tokens.Border.hairline)
+                            .allowsHitTesting(false)
+                    }
+                    .accessibilityIdentifier("assistant.scopeDecision")
+            }
+            AssistantComposer(model: model, setup: setupPrompt, canSubmit: canSubmit, isFocused: $isComposerFocused,
+                              onSubmit: submit, onSetup: performSetupAction, isCompact: isCompact)
+        }
+        .padding(isCompact ? Tokens.Space.s2 : Tokens.Space.s4)
+        .frame(maxWidth: Tokens.Assistant.contentWidth)
+        .frame(maxWidth: .infinity)
+        .background(Tokens.Surface.primary)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private var setupPrompt: AssistantSetupPrompt? {

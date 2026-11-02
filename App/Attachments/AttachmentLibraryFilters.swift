@@ -10,7 +10,7 @@ struct AttachmentLibraryFilters: View {
             PopupHeader(title: "Filter Attachments", systemImage: "line.3.horizontal.decrease",
                 subtitle: "Results update as you choose.")
             Form {
-                Section("Email") {
+                Section("Source email") {
                     Picker("Account", selection: $model.accountID) {
                         Text("All accounts").tag("")
                         ForEach(model.availableAccounts) { account in
@@ -26,15 +26,15 @@ struct AttachmentLibraryFilters: View {
                         }
                     }
                 }
-                Section("Document") {
-                    TextField("File format", text: $model.fileExtension, prompt: Text("Extension, such as pdf"))
+                Section("File") {
                     Picker("Category", selection: $model.category) {
                         Text("Any category").tag(nil as AttachmentCategory?)
                         ForEach(AttachmentCategory.allCases, id: \.self) { category in
                             Text(category.title).tag(category as AttachmentCategory?)
                         }
                     }
-                    Text("Categories are detected automatically on this Mac. You can correct them from an attachment's menu. File format uses the extension, such as pdf or docx.")
+                    TextField("File format", text: $model.fileExtension, prompt: Text("Extension, such as pdf"))
+                    Text("Categories are detected on this Mac. Correct a file's category from its actions menu.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Email date") {
@@ -56,16 +56,20 @@ struct AttachmentLibraryFilters: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .frame(minHeight: 0, maxHeight: .infinity)
             PopupFooter {
-                Button("Clear All Filters") { model.clearFilters() }
+                Button("Clear Search & Filters") { model.clearFilters() }
                     .disabled(AttachmentFilterChip.values(for: model).isEmpty)
+                    .help("Clear search, account, category and all other filters")
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }
         }
         .frame(width: Tokens.Sheet.smallWidth)
-        // As tall as the filters it holds, so nothing scrolls inside the popover.
-        .fixedSize(horizontal: false, vertical: true)
+        // Only the form scrolls; reset and Done remain reachable in short windows.
+        .frame(minHeight: Tokens.Popover.maxListHeight, idealHeight: Tokens.Layout.windowMinHeight,
+               maxHeight: Tokens.Layout.windowMinHeight)
+        .accessibilityIdentifier("attachments.filters")
     }
 
     private func dateFilter(_ title: String, isOn: Binding<Bool>, day: Binding<Date>) -> some View {
@@ -101,7 +105,7 @@ struct AttachmentFilterChip: Identifiable {
         }
         if !model.accountID.isEmpty {
             let account = model.availableAccounts.first { $0.id == model.accountID }?.email ?? "Account"
-            chips.append(.init(id: "account", title: account, remove: { model.accountID = "" }))
+            chips.append(.init(id: "account", title: "Account: \(account)", remove: { model.accountID = "" }))
         }
         if !model.sender.isEmpty {
             chips.append(.init(id: "sender", title: "From: \(model.sender)", remove: { model.sender = "" }))
@@ -110,7 +114,7 @@ struct AttachmentFilterChip: Identifiable {
             chips.append(.init(id: "format", title: "Format: \(model.fileExtension.uppercased())", remove: { model.fileExtension = "" }))
         }
         if let category = model.category {
-            chips.append(.init(id: "category", title: category.title, remove: { model.category = nil }))
+            chips.append(.init(id: "category", title: "Category: \(category.title)", remove: { model.category = nil }))
         }
         if let start = model.startDate {
             chips.append(.init(id: "start", title: "From \(start.formatted(date: .abbreviated, time: .omitted))", remove: { model.startDate = nil }))
@@ -136,10 +140,17 @@ struct AttachmentActiveFilters: View {
     let model: AttachmentLibraryModel
 
     var body: some View {
-        // Search and category already have visible, editable controls above.
-        let chips = AttachmentFilterChip.values(for: model).filter { $0.id != "search" && $0.id != "category" }
+        let chips = AttachmentFilterChip.values(for: model)
         if !chips.isEmpty {
-            HStack(spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                HStack(spacing: Tokens.Space.s2) {
+                    Text("Active filters").font(.caption.weight(.semibold))
+                    Spacer(minLength: Tokens.Space.s2)
+                    Button("Clear Search & Filters") { model.clearFilters() }
+                        .buttonStyle(.link).font(.caption)
+                        .help("Clear search, account, category and all other filters")
+                }
+                .foregroundStyle(.secondary)
                 ScrollView(.horizontal) {
                     HStack(spacing: Tokens.Space.s2) {
                         ForEach(chips) { chip in
@@ -161,57 +172,9 @@ struct AttachmentActiveFilters: View {
                     }
                     .padding(.vertical, Tokens.Space.s1)
                 }
-                .frame(height: Tokens.Space.s12)
+                .frame(height: Tokens.Space.s10)
                 .accessibilityLabel("Active filters")
-                Button("Clear all") { model.clearFilters() }
-                    .buttonStyle(.link).font(.caption).fixedSize()
             }
         }
-    }
-}
-
-/// These shortcuts filter detected and corrected categories, using the same state as the popover.
-struct AttachmentCategoryShortcuts: View {
-    @Bindable var model: AttachmentLibraryModel
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Tokens.Space.s1) {
-                categoryButton(nil)
-                ForEach(AttachmentCategory.allCases, id: \.self) { category in categoryButton(category) }
-            }
-            .fixedSize()
-            Picker("Category", selection: $model.category) {
-                Text("All categories").tag(nil as AttachmentCategory?)
-                ForEach(AttachmentCategory.allCases, id: \.self) { category in
-                    Text(category.title).tag(category as AttachmentCategory?)
-                }
-            }
-            .frame(maxWidth: Tokens.Popover.width, alignment: .leading)
-        }
-        .help("Filter automatically detected categories and your corrections")
-    }
-
-    private func categoryButton(_ category: AttachmentCategory?) -> some View {
-        let selected = model.category == category
-        return Button { model.category = category } label: {
-            Text(category?.title ?? "All categories")
-                .font(.callout.weight(selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.accentColor : .secondary)
-                .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
-                .background(selected ? Color.accentColor.opacity(Tokens.Opacity.tint) : .clear,
-                            in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(selected ? (contrast == .increased ? Color.primary : Color.accentColor.opacity(Tokens.Opacity.outline)) : .clear,
-                                      lineWidth: Tokens.Border.hairline)
-                        .allowsHitTesting(false)
-                }
-                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(category?.title ?? "All categories")
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }

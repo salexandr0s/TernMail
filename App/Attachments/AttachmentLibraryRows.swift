@@ -15,17 +15,29 @@ struct AttachmentLibraryRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s3) {
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
             AttachmentFileIcon(item: item, size: Tokens.Space.s8)
                 .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
                 .background(AttachmentPresentation.tint(item).opacity(Tokens.Opacity.wash),
                             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(item.filename).font(.body.weight(.semibold)).lineLimit(1)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                Text(item.filename).font(.body.weight(.semibold)).lineLimit(compact ? 2 : 1)
                     .truncationMode(.middle).help(item.filename)
-                Text(item.subject.isEmpty ? "(No subject)" : item.subject)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .help(item.subject)
+                HStack(spacing: Tokens.Space.s2) {
+                    Text(AttachmentPresentation.format(item))
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1).truncationMode(.middle)
+                        .padding(.horizontal, Tokens.Space.s1_5)
+                        .padding(.vertical, Tokens.Space.s0_5)
+                        .background(.primary.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    Text(AttachmentPresentation.size(item.size)).fixedSize()
+                    if item.category != .uncategorized {
+                        Text(item.category.title).lineLimit(1).help(item.category.title)
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                Label(item.subject.isEmpty ? "(No subject)" : item.subject, systemImage: "envelope")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).help(item.subject)
                 if compact {
                     HStack(spacing: Tokens.Space.s2) {
                         AttachmentSenderAvatar(sender: item.sender, accounts: accounts, size: Tokens.Space.s5)
@@ -37,21 +49,10 @@ struct AttachmentLibraryRow: View, Equatable {
                     }
                     .font(.caption).foregroundStyle(.secondary)
                 }
-                HStack(spacing: Tokens.Space.s1_5) {
-                    Text(AttachmentPresentation.format(item)).fontWeight(.medium)
-                        .lineLimit(1).truncationMode(.middle)
-                    Text("·")
-                    Text(AttachmentPresentation.size(item.size)).fixedSize()
-                    if item.category != .uncategorized {
-                        Text("·")
-                        Text(item.category.title).lineLimit(1).help(item.category.title)
-                    }
-                    if compact, accounts.count > 1 {
-                        Text("·")
-                        Text(accountName).lineLimit(1).truncationMode(.middle).help(accountName)
-                    }
+                if compact, accounts.count > 1 {
+                    Text(accountName).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle).help(accountName)
                 }
-                .font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if !compact {
@@ -93,14 +94,26 @@ struct AttachmentLibraryCard: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             fileTile
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(item.filename).font(.body.weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle).help(item.filename)
-                Text(item.subject.isEmpty ? "(No subject)" : item.subject)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).help(item.subject)
+            Text(item.filename).font(.title3.weight(.semibold))
+                .lineLimit(2).truncationMode(.middle).help(item.filename)
+                .frame(maxWidth: .infinity, minHeight: Tokens.Space.s10, alignment: .topLeading)
+            HStack(spacing: Tokens.Space.s2) {
+                Text(item.category.title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, Tokens.Space.s2)
+                    .padding(.vertical, Tokens.Space.s1)
+                    .background(Tokens.Surface.muted, in: Capsule())
+                    .help(item.categorySource == .manual ? "Category manually assigned" : item.category.title)
+                Spacer(minLength: 0)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3).foregroundStyle(Color.accentColor)
+                    .opacity(selected ? 1 : 0)
+                    .accessibilityHidden(true)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             Divider()
+            Text("Source email")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             HStack(spacing: Tokens.Space.s2) {
                 AttachmentSenderAvatar(sender: item.sender, accounts: accounts, size: Tokens.Space.s6)
                 VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
@@ -111,14 +124,13 @@ struct AttachmentLibraryCard: View, Equatable {
                 }
                 Spacer(minLength: 0)
             }
-            HStack {
-                Text(item.date, format: .dateTime.day().month().year())
-                Spacer(minLength: Tokens.Space.s1)
-                Text(AttachmentPresentation.size(item.size))
-            }
-            .font(.caption).foregroundStyle(.secondary)
+            Text(item.subject.isEmpty ? "(No subject)" : item.subject)
+                .font(.callout).lineLimit(2).help(item.subject)
+                .frame(maxWidth: .infinity, minHeight: Tokens.Space.s8, alignment: .topLeading)
+            Text(item.date, format: .dateTime.day().month().year())
+                .font(.caption).foregroundStyle(.secondary)
         }
-        .padding(Tokens.Space.s3)
+        .padding(Tokens.Space.s4)
         .background(selected ? Color.accentColor.opacity(Tokens.Opacity.tint) : Color.clear,
                     in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternSurface()
@@ -141,41 +153,21 @@ struct AttachmentLibraryCard: View, Equatable {
     }
 
     private var fileTile: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .fill(AttachmentPresentation.tint(item).opacity(Tokens.Opacity.wash))
-            AttachmentFileIcon(item: item, size: Tokens.Space.s16)
-                .padding(.top, Tokens.Space.s2)
-            VStack(alignment: .leading) {
-                HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                    Text(AttachmentPresentation.format(item))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 0)
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(selected ? Color.accentColor : Color.secondary,
-                                         Tokens.Surface.primary)
-                        .font(.title3)
-                        .opacity(selected || hovered || contrast == .increased ? 1 : Tokens.Opacity.outline)
-                        .accessibilityHidden(true)
-                }
-                Spacer(minLength: 0)
-                if item.category != .uncategorized {
-                    Text(item.category.title)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color(nsColor: .labelColor))
-                        .lineLimit(1)
-                        .padding(.horizontal, Tokens.Space.s2)
-                        .padding(.vertical, Tokens.Space.s1)
-                        .background(Tokens.Surface.primary, in: Capsule())
-                        .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
-                }
+        HStack(spacing: Tokens.Space.s3) {
+            AttachmentFileIcon(item: item, size: Tokens.Space.s10)
+                .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+                .background(AttachmentPresentation.tint(item).opacity(Tokens.Opacity.wash),
+                    in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(AttachmentPresentation.format(item))
+                    .font(.caption.weight(.semibold)).lineLimit(1).truncationMode(.middle)
+                Text(AttachmentPresentation.size(item.size))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .padding(Tokens.Space.s3)
+            Spacer(minLength: 0)
         }
-        .frame(height: Tokens.Space.s16 * 2)
+        // The collection places the file's native actions menu in this space.
+        .padding(.trailing, Tokens.Space.s10)
     }
 }
 
@@ -214,7 +206,6 @@ private struct AttachmentSenderAvatar: View {
 
 @MainActor enum AttachmentPresentation {
     private struct FilePresentation {
-        let type: UTType
         let tint: Color
         let icon: NSImage
     }
@@ -225,10 +216,6 @@ private struct AttachmentSenderAvatar: View {
     private static var files: [String: FilePresentation] = [:]
     private static var senders: [String: SenderPresentation] = [:]
 
-    static func fileType(_ item: AttachmentLibraryItem) -> UTType {
-        file(item).type
-    }
-
     static func icon(_ item: AttachmentLibraryItem) -> NSImage { file(item).icon }
     static func tint(_ item: AttachmentLibraryItem) -> Color { file(item).tint }
 
@@ -236,7 +223,7 @@ private struct AttachmentSenderAvatar: View {
         let key = item.fileExtension.lowercased() + ":" + item.mimeType.lowercased()
         if let stored = files[key] { return stored }
         let type = UTType(filenameExtension: item.fileExtension) ?? UTType(mimeType: item.mimeType) ?? .data
-        let prepared = FilePresentation(type: type, tint: tint(type), icon: NSWorkspace.shared.icon(for: type))
+        let prepared = FilePresentation(tint: tint(type), icon: NSWorkspace.shared.icon(for: type))
         // Native document icons are shared immutable AppKit assets. The small
         // catalog is bounded independently of the decoded contact-photo cache.
         if files.count >= 64 { files.removeAll(keepingCapacity: true) }

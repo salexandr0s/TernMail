@@ -47,14 +47,14 @@ struct GoogleTasksSidebar: View {
                         openGoogleButton.frame(maxWidth: .infinity)
                     }
                 }
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.top, Tokens.Space.s3)
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.top, Tokens.Space.s4)
                 .padding(.bottom, Tokens.Space.s5)
             }
             .scrollBounceBehavior(.basedOnSize)
             footer
         }
-        .background(Tokens.Surface.primary.overlay(Color.primary.opacity(Tokens.Opacity.hover)))
+        .background(Tokens.Surface.canvas)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-tasks-sidebar")
         .task(id: isActive) {
@@ -106,82 +106,86 @@ struct GoogleTasksSidebar: View {
     }
 
     private var header: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Label("Tasks", systemImage: "checklist")
-                .font(.headline).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-            if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Syncing tasks") }
-            taskIcon("Refresh Tasks", symbol: "arrow.clockwise") { Task { await model.refresh() } }
-                .disabled(model.isLoading)
-            if let onClose {
-                taskIcon("Close Tasks", symbol: "xmark", action: onClose).disabled(inlineEditor != nil)
+        TernPageHeader(title: "Tasks") {
+            HStack(spacing: Tokens.Space.s1) {
+                if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Syncing tasks") }
+                taskIcon("Refresh Tasks", symbol: "arrow.clockwise") { Task { await model.refresh() } }
+                    .disabled(model.isLoading)
+                if let onClose {
+                    taskIcon("Close Tasks", symbol: "xmark", action: onClose).disabled(inlineEditor != nil)
+                }
             }
         }
-        .padding(.leading, Tokens.Space.s5)
-        .padding(.trailing, Tokens.Space.s3)
-        .padding(.top, Tokens.Space.s2)
-        .padding(.bottom, Tokens.Space.s1)
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s3)
+        .accessibilityIdentifier("google-tasks-heading")
     }
 
     private var destinations: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack(spacing: 0) {
-                Menu {
-                    ForEach(model.accounts) { account in
-                        Button { model.selectAccount(account.id) } label: {
-                            if account.id == model.selectedAccountID { Label(account.email, systemImage: "checkmark") }
-                            else { Text(account.email) }
-                        }
-                    }
-                } label: {
-                    Label(model.selectedAccount?.email ?? "Choose account", systemImage: "person.crop.circle")
-                        .lineLimit(1).truncationMode(.middle)
-                }
-                .menuStyle(.borderlessButton)
-                .controlSize(.mini)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Tasks account")
-                .accessibilityIdentifier("google-tasks-account")
-                .disabled(inlineEditor != nil)
-                .help(model.selectedAccount?.email ?? "Choose account")
-                Spacer(minLength: 0)
-            }
             if !model.lists.isEmpty && !model.needsConnection {
                 HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                        Menu {
-                            ForEach(model.lists) { list in
-                                Button { model.selectList(list.id) } label: {
-                                    if list.id == model.selectedListID { Label(list.title, systemImage: "checkmark") }
-                                    else { Text(list.title) }
-                                }
-                            }
-                        } label: {
-                            Text(model.selectedList?.title ?? "Choose list").font(.title2.weight(.semibold))
-                                .lineLimit(1)
-                        }
-                        .menuStyle(.borderlessButton)
-                        .accessibilityLabel("Task list")
-                        .accessibilityIdentifier("google-tasks-list")
-                        .disabled(inlineEditor != nil)
-                        .help(model.selectedList?.title ?? "Choose list")
-                        HStack(spacing: Tokens.Space.s1_5) {
-                            Text("\(model.openTasks.count) to do")
-                            if !model.completedTasks.isEmpty {
-                                Text("·").accessibilityHidden(true)
-                                Text("\(model.completedTasks.count) completed")
-                            }
-                        }
-                        .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
                     completionRing
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                        listPicker
+                        accountPicker
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                Divider()
+                HStack(spacing: Tokens.Space.s2) {
+                    Text("\(model.openTasks.count) to do").font(.callout.bold())
+                    Spacer(minLength: 0)
+                    Text("\(model.completedTasks.count) completed").font(.callout).foregroundStyle(.secondary)
+                }
+            } else {
+                accountPicker
             }
         }
-        .padding(.horizontal, Tokens.Space.s5)
-        .padding(.bottom, Tokens.Space.s3)
+        .padding(Tokens.Space.s4)
+        .ternSurface()
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.bottom, Tokens.Space.s4)
+    }
+
+    private var accountPicker: some View {
+        Menu {
+            ForEach(model.accounts) { account in
+                Button { model.selectAccount(account.id) } label: {
+                    if account.id == model.selectedAccountID { Label(account.email, systemImage: "checkmark") }
+                    else { Text(account.email) }
+                }
+            }
+        } label: {
+            Label(model.selectedAccount?.email ?? "Choose account", systemImage: "person.crop.circle")
+                .lineLimit(1).truncationMode(.middle)
+        }
+        .menuStyle(.borderlessButton)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Tasks account")
+        .accessibilityIdentifier("google-tasks-account")
+        .disabled(inlineEditor != nil)
+        .help(model.selectedAccount?.email ?? "Choose account")
+    }
+
+    private var listPicker: some View {
+        Menu {
+            ForEach(model.lists) { list in
+                Button { model.selectList(list.id) } label: {
+                    if list.id == model.selectedListID { Label(list.title, systemImage: "checkmark") }
+                    else { Text(list.title) }
+                }
+            }
+        } label: {
+            Text(model.selectedList?.title ?? "Choose list").font(.title3.bold())
+                .lineLimit(2).multilineTextAlignment(.leading)
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("Task list")
+        .accessibilityIdentifier("google-tasks-list")
+        .disabled(inlineEditor != nil)
+        .help(model.selectedList?.title ?? "Choose list")
     }
 
     private var completionRing: some View {
@@ -193,9 +197,9 @@ struct GoogleTasksSidebar: View {
                 .stroke(Color.accentColor, style: StrokeStyle(lineWidth: Tokens.Border.focus, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Image(systemName: total > 0 && complete == total ? "checkmark" : "checklist")
-                .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
+                .font(.headline).foregroundStyle(Color.accentColor)
         }
-        .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
+        .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
         .padding(Tokens.Space.s0_5)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(complete) of \(total) tasks complete")
@@ -210,7 +214,7 @@ struct GoogleTasksSidebar: View {
                     Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Tokens.Status.error)
                     Text(text).fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.caption)
+                .font(.callout)
                 if !model.needsConnection {
                     Button("Refresh") { Task { await model.refresh() } }.buttonStyle(.link)
                 }
@@ -252,6 +256,7 @@ struct GoogleTasksSidebar: View {
                 detail: model.completedTasks.isEmpty ? "Add your first task above, or turn a line from an email into a task."
                     : "Everything in this list is complete. New tasks will appear here.", symbol: "checkmark.circle")
         } else {
+            Text("To do").font(.headline).padding(.horizontal, Tokens.Space.s1)
             LazyVStack(spacing: 0) {
                 if let pendingTask {
                     GoogleTaskRow(task: pendingTask, parentTitle: nil, isBusy: true, isPending: true,
@@ -271,20 +276,20 @@ struct GoogleTasksSidebar: View {
             .ternSurface(style: .grouped)
         }
         if !completed.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 Button { showsCompleted.toggle() } label: {
                     HStack(spacing: Tokens.Space.s2) {
-                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                        Image(systemName: "chevron.right").font(.callout.weight(.semibold))
                             .rotationEffect(.degrees(showsCompleted ? 90 : 0))
-                        Text("Completed").font(.caption.weight(.medium))
-                        Text("\(model.completedTasks.count)").font(.caption2.monospacedDigit())
+                        Text("Completed").font(.headline)
+                        Text("\(model.completedTasks.count)").font(.callout.monospacedDigit())
                             .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
                             .background(Color.primary.opacity(Tokens.Opacity.hover), in: Capsule())
                         Spacer(minLength: 0)
                     }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, Tokens.Space.s3)
-                    .frame(minHeight: Tokens.Control.iconButton)
+                    .frame(minHeight: Tokens.Space.s10)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -353,23 +358,24 @@ struct GoogleTasksSidebar: View {
         HStack(spacing: Tokens.Space.s2) {
             Image(systemName: "plus.circle.fill").font(.title3).foregroundStyle(Color.accentColor).accessibilityHidden(true)
             TextField("Add a task…", text: $newTitle)
-                .textFieldStyle(.plain).focused($entryFocused)
+                .font(.body).textFieldStyle(.plain).focused($entryFocused)
                 .onSubmit(addQuickTask)
                 .accessibilityIdentifier("google-tasks-new-title")
                 .help(model.canAdd ? "Press Return to add a task" : "Finish the pending task before adding another")
             if !newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button("Add", action: addQuickTask).buttonStyle(.borderedProminent).controlSize(.small)
+                Button("Add", action: addQuickTask).buttonStyle(.borderedProminent)
                     .disabled(!model.canAdd)
+                    .accessibilityIdentifier("google-tasks-add")
             } else {
                 taskIcon("Add task with details", symbol: "square.and.pencil") { editor = context(nil) }
                     .disabled(!model.canAdd || inlineEditor != nil)
             }
         }
         .padding(.horizontal, Tokens.Space.s3)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .ternOutline(radius: Tokens.Radius.md, focus: entryFocused ? .accentColor : nil)
-        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s4)
     }
 
     private var footer: some View {
@@ -386,9 +392,10 @@ struct GoogleTasksSidebar: View {
             Spacer(minLength: Tokens.Space.s2)
             openGoogleButton
         }
-        .font(.caption2).foregroundStyle(.secondary)
-        .padding(.horizontal, Tokens.Space.s5)
+        .font(.caption).foregroundStyle(.secondary)
+        .padding(.horizontal, Tokens.Space.s4)
         .padding(.vertical, Tokens.Space.s3)
+        .background(Tokens.Surface.muted)
     }
 
     private var openGoogleButton: some View {
@@ -398,7 +405,7 @@ struct GoogleTasksSidebar: View {
             guard let url = components?.url else { return }
             openURL(url)
         }
-        .buttonStyle(.plain).font(.caption2)
+        .buttonStyle(.plain).font(.caption).fixedSize()
         .help("Open Google Tasks in your browser")
     }
 
@@ -409,7 +416,7 @@ struct GoogleTasksSidebar: View {
                 .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: Circle())
                 .accessibilityHidden(true)
             Text(title).font(.headline)
-            Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
@@ -421,23 +428,23 @@ struct GoogleTasksSidebar: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             let uncertain = model.creationState(for: request) == .uncertain
             Label(uncertain ? "Addition not confirmed" : "Ready to add", systemImage: uncertain ? "questionmark.circle" : "envelope.badge")
-                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            Text(request.title).font(.callout).lineLimit(3).help(request.title)
-            if let source = request.source { Text(source.subject).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                .font(.callout.bold()).foregroundStyle(.secondary)
+            Text(request.title).font(.body.bold()).lineLimit(3).help(request.title)
+            if let source = request.source { Text(source.subject).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
             let accountID = request.source?.accountID ?? request.accountID
             if let accountID, accountID != model.selectedAccountID {
                 Button("Show Task Account") { model.selectAccount(accountID) }.controlSize(.small)
             } else if !model.needsConnection {
-                HStack {
-                    if model.creationState(for: request) == .uncertain {
-                        Button("Check Again") { Task { await model.add(request) } }
-                        Button("Add Again…") { confirmsRetry = true }
-                    } else {
-                        Button("Add Task") { Task { await model.add(request) } }
-                            .buttonStyle(.borderedProminent)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Tokens.Space.s2) {
+                        pendingPrimaryActions(request, uncertain: uncertain)
+                        Spacer(minLength: 0)
+                        dismissPendingButton
                     }
-                    Spacer(minLength: 0)
-                    Button("Dismiss") { model.dismissPendingCreation() }.buttonStyle(.borderless)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        pendingPrimaryActions(request, uncertain: uncertain)
+                        dismissPendingButton
+                    }
                 }
                 .controlSize(.small).disabled(model.isCreating)
             }
@@ -446,6 +453,20 @@ struct GoogleTasksSidebar: View {
         .ternSurface()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-tasks-pending-recovery")
+    }
+
+    @ViewBuilder private func pendingPrimaryActions(_ request: TaskCreationRequest, uncertain: Bool) -> some View {
+        if uncertain {
+            Button("Check Again") { Task { await model.add(request) } }.fixedSize()
+            Button("Add Again…") { confirmsRetry = true }.fixedSize()
+        } else {
+            Button("Add Task") { Task { await model.add(request) } }
+                .buttonStyle(.borderedProminent).fixedSize()
+        }
+    }
+
+    private var dismissPendingButton: some View {
+        Button("Dismiss") { model.dismissPendingCreation() }.buttonStyle(.borderless).fixedSize()
     }
 
     private func context(_ task: GoogleTask?) -> GoogleTaskEditorContext? {

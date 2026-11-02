@@ -117,7 +117,7 @@ final class AssistantModel {
         guard let snapshot = observedScope else { return selectedScope.title }
         let accounts = context().accounts.filter { snapshot.accountIDs.contains($0.id) }.map(\.email).joined(separator: ", ")
         if let threads = snapshot.threadIDs {
-            return "\(threads.count) selected conversations in \(accounts)"
+            return "\(threads.count) selected \(threads.count == 1 ? "conversation" : "conversations") in \(accounts)"
         }
         return accounts.isEmpty ? "Enabled calendars" : accounts
     }
