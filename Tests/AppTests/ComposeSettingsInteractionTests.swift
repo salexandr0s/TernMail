@@ -8,6 +8,58 @@ import Testing
 /// Drives only controls hosted by this test. No global keyboard or mouse events,
 /// Accessibility permission, account data, or UI-test automation service is used.
 @Suite(.serialized) @MainActor struct ComposeSettingsInteractionTests {
+    @Test func hiddenSuggestionsStayWithTheirSelectedAccount() async throws {
+        let store = try AccountStore.inMemory()
+        for id in ["first", "second"] {
+            try await store.save(AccountRecord(id: id, email: "\(id)@example.com", displayName: nil,
+                grantedScopes: [], addedAt: .now))
+            try await store.setSuggestionBlocked(true, address: "hidden@\(id).example.com", accountID: id)
+        }
+        let model = SuggestionBlocklistModel(store: store, accountID: "first")
+        await model.reload()
+        #expect(model.blocked == ["hidden@first.example.com"])
+        model.address = "unsaved@first.example.com"
+
+        model.selectAccount("second")
+        #expect(model.blocked.isEmpty)
+        #expect(model.address.isEmpty)
+        #expect(!model.canEdit)
+        await model.reload()
+        #expect(model.blocked == ["hidden@second.example.com"])
+
+        // An action queued by the old account must not write to the new one.
+        await model.change("hidden@first.example.com", blocked: false, accountID: "first")
+        #expect(try await store.blockedSuggestionAddresses(accountID: "first") == ["hidden@first.example.com"])
+        #expect(model.blocked == ["hidden@second.example.com"])
+        await model.change("hidden@second.example.com", blocked: false, accountID: "second")
+        #expect(model.blocked.isEmpty)
+        #expect(try await store.blockedSuggestionAddresses(accountID: "second").isEmpty)
+    }
+
+    @Test func failedSuggestionLoadClearsRowsAndCanRetry() async throws {
+        let store = try AccountStore.inMemory()
+        let account = AccountRecord(id: "account", email: "me@example.com", displayName: nil,
+            grantedScopes: [], addedAt: .now)
+        try await store.save(account)
+        try await store.setSuggestionBlocked(true, address: "hidden@example.com", accountID: account.id)
+        let model = SuggestionBlocklistModel(store: store, accountID: account.id)
+        await model.reload()
+        try #require(model.canEdit)
+        try await store.deleteAccount(id: account.id)
+        await model.reload()
+        #expect(model.blocked.isEmpty)
+        #expect(!model.hasLoaded)
+        #expect(!model.canEdit)
+        #expect(!model.isLoading)
+        #expect(model.error != nil)
+
+        try await store.save(account)
+        await model.reload()
+        #expect(model.canEdit)
+        #expect(model.blocked.isEmpty)
+        #expect(model.error == nil)
+    }
+
     @Test func newTemplatePreservesNativeEditsUntilDiscard() async throws {
         let store = try AccountStore.inMemory()
         let saved = ComposeTemplate(id: "saved", name: "Saved template",

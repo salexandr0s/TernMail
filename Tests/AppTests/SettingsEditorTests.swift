@@ -47,6 +47,31 @@ import Testing
         try await eventually { state.account == nil }
     }
 
+    @Test func replySignaturePreferenceReportsOnlyPersistedChanges() async throws {
+        let app = AppModel()
+        let missingStore = SettingsModel(accountID: "missing", app: app)
+        #expect(await missingStore.setSignatureOnReplies(true) == false)
+        #expect(missingStore.error != nil)
+
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
+        await app.start()
+        let accountID = try #require(app.mailbox?.account.id)
+        let model = SettingsModel(accountID: accountID, app: app)
+        #expect(await model.setSignatureOnReplies(true))
+        #expect(await model.signatureReplyPreference())
+        #expect(model.error == nil)
+        #expect(await model.setSignatureOnReplies(false))
+        #expect(await model.signatureReplyPreference() == false)
+
+        let missingAccount = SettingsModel(accountID: "missing", app: app)
+        #expect(await missingAccount.setSignatureOnReplies(true) == false)
+        #expect(missingAccount.error != nil)
+        #expect(await model.signatureReplyPreference() == false)
+        await app.prepareToQuit()
+        await app.mailbox?.stop()
+        app.accountPreferences?.stop()
+    }
+
     @Test func queueOverlayAppliesOfflineAndUndoRestoresServerSnapshot() async throws {
         let cache = try MailCache.inMemory()
         let original = GmailFilter(id: "old", criteria: .init(from: "sender@example.com"), action: .init(addLabelIds: ["STARRED"]))

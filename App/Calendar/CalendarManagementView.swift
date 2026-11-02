@@ -293,7 +293,7 @@ struct CalendarManagementView: View {
             Picker("Account", selection: $accountID) {
                 ForEach(model.accounts) { Text($0.title).tag($0.id) }
             }
-            SettingsControlRow("New Calendar") {
+            SettingsControlRow("New Calendar", expandsControl: true) {
                 HStack(spacing: Tokens.Space.s2) {
                     TextField("New calendar name", text: $newCalendarTitle)
                         .textFieldStyle(.roundedBorder)
@@ -308,7 +308,7 @@ struct CalendarManagementView: View {
                     .accessibilityLabel("Create calendar")
                 }
             }
-            SettingsControlRow("Calendar ID") {
+            SettingsControlRow("Calendar ID", expandsControl: true) {
                 HStack(spacing: Tokens.Space.s2) {
                     TextField("Google calendar ID", text: $subscriptionID)
                         .textFieldStyle(.roundedBorder)

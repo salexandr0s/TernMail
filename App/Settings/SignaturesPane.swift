@@ -13,8 +13,9 @@ struct SignaturesPane: View {
             header
             Section("Signature defaults") {
                 SettingsAsyncToggleRow("Include in replies and forwards", isOn: signatureOnReplies) { enabled in
-                    signatureOnReplies = enabled
-                    await model.setSignatureOnReplies(enabled)
+                    if await model.setSignatureOnReplies(enabled) {
+                        signatureOnReplies = enabled
+                    }
                 }
                 SettingsControlRow("From address") {
                     Picker("From address", selection: $selectedAddress) {

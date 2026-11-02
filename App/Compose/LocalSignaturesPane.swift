@@ -195,6 +195,12 @@ struct LocalSignaturesPane: View {
         do {
             try await store.deleteLocalSignature(id: selectedID)
             signatures.removeAll { $0.id == selectedID }
+            // The store clears references to the deleted signature. Keep both
+            // baselines in step without discarding other unsaved defaults.
+            if assignment.newMessages == .local(id: selectedID) { assignment.newMessages = .none }
+            if assignment.replies == .local(id: selectedID) { assignment.replies = .none }
+            if baselineAssignment.newMessages == .local(id: selectedID) { baselineAssignment.newMessages = .none }
+            if baselineAssignment.replies == .local(id: selectedID) { baselineAssignment.replies = .none }
             loadSignature(nil)
             error = nil
             NotificationCenter.default.post(name: .ternComposePreferencesChanged, object: nil)

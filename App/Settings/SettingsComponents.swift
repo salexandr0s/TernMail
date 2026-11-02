@@ -119,11 +119,14 @@ struct SettingsFooter<Content: View>: View {
 struct SettingsControlRow<Control: View>: View {
     let title: String
     let detail: String?
+    /// Editable fields use the available width; pickers and buttons stay compact.
+    let expandsControl: Bool
     @ViewBuilder let control: Control
 
-    init(_ title: String, detail: String? = nil, @ViewBuilder control: () -> Control) {
+    init(_ title: String, detail: String? = nil, expandsControl: Bool = false, @ViewBuilder control: () -> Control) {
         self.title = title
         self.detail = detail
+        self.expandsControl = expandsControl
         self.control = control()
     }
 
@@ -131,6 +134,9 @@ struct SettingsControlRow<Control: View>: View {
         LabeledContent {
             control
                 .labelsHidden()
+                // Shrink capped picker frames to their ideal width so the form
+                // aligns the visible controls at its trailing edge.
+                .fixedSize(horizontal: !expandsControl, vertical: false)
         } label: {
             Text(title)
                 .fixedSize(horizontal: false, vertical: true)

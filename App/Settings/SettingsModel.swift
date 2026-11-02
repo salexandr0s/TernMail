@@ -52,10 +52,18 @@ final class SettingsModel {
         return accounts.first(where: { $0.id == accountID })?.signatureOnReplies ?? false
     }
 
-    func setSignatureOnReplies(_ enabled: Bool) async {
+    func setSignatureOnReplies(_ enabled: Bool) async -> Bool {
         do {
-            _ = try await app?.settingsAccountStore?.updateAccount(id: accountID) { $0.signatureOnReplies = enabled }
-        } catch { self.error = "Couldn't save the reply signature preference." }
+            guard let _ = try await app?.settingsAccountStore?.updateAccount(id: accountID, { $0.signatureOnReplies = enabled }) else {
+                error = "Couldn't save the reply signature preference."
+                return false
+            }
+            error = nil
+            return true
+        } catch {
+            self.error = "Couldn't save the reply signature preference."
+            return false
+        }
     }
 
     func load() async {

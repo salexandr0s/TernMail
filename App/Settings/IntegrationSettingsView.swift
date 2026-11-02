@@ -106,7 +106,7 @@ struct GmailSettingsHeader: View {
 
     var body: some View {
         Section("Google account") {
-            LabeledContent {
+            SettingsControlRow("Account", detail: "Changes sync with Gmail.") {
                 HStack(spacing: Tokens.Space.s2) {
                     Picker("Account", selection: $selectedAccount) {
                         ForEach(accounts) { account in
@@ -122,9 +122,6 @@ struct GmailSettingsHeader: View {
                         .help("Refresh Gmail settings")
                         .disabled(model.isLoading || model.isSaving)
                 }
-            } label: {
-                Text("Account")
-                Text("Changes sync with Gmail.")
             }
             activity
             if let error = model.error { SettingsErrorLabel(error) }

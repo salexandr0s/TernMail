@@ -76,7 +76,7 @@ private struct AccountPreferenceEditor: View {
 
     var body: some View {
         Section("Appearance") {
-            SettingsControlRow("Nickname", detail: "How this account appears in Tern. Saves as you type.") {
+            SettingsControlRow("Nickname", detail: "How this account appears in Tern. Saves as you type.", expandsControl: true) {
                 HStack(spacing: Tokens.Space.s2) {
                     if nicknameWrite.isWaiting {
                         ProgressView().controlSize(.small).accessibilityLabel("Saving")
