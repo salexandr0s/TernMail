@@ -1,11 +1,50 @@
 import Foundation
 import GmailAPI
 import MailStore
+import Observation
 import SyncEngine
+import Synchronization
 import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test func cachedAndRefreshedCalendarsKeepTheirOrderAndUnchangedRows() async throws {
+        try await withFixture { fixture in
+            var primary = ModelCalendarService.entry
+            primary.primary = true
+            let sharedA = GoogleCalendarEntry(id: "a-shared", summary: "Shared", accessRole: "reader")
+            let sharedZ = GoogleCalendarEntry(id: "z-shared", summary: "Shared", accessRole: "reader")
+            let expected = [primary.id, sharedA.id, sharedZ.id]
+            func display(_ entries: [GoogleCalendarEntry]) -> [CalendarDisplayCalendar] {
+                entries.map { CalendarDisplayCalendar(entry: $0, accountID: fixture.accountID, accountName: "Synthetic account") }
+            }
+
+            for entries in [[primary, sharedZ, sharedA], [sharedA, sharedZ, primary], [sharedZ, primary, sharedA]] {
+                await fixture.service.setCalendars(entries)
+                let refreshed = try await fixture.engine.syncCalendars()
+                let cached = try await fixture.store.calendars(accountID: fixture.accountID)
+                #expect(cached.map(\.id) != refreshed.map(\.id), "Exercise different cache and provider orders")
+                fixture.model.publishCalendars(display(cached))
+                #expect(fixture.model.calendars.map(\.calendarID) == expected)
+                let changes = Mutex(0)
+                withObservationTracking { _ = fixture.model.calendars } onChange: {
+                    changes.withLock { $0 += 1 }
+                }
+                fixture.model.publishCalendars(display(refreshed))
+                #expect(fixture.model.calendars.map(\.calendarID) == expected)
+                #expect(changes.withLock { $0 } == 0, "An unchanged refresh must not republish the calendar rows")
+            }
+
+            var changed = display([sharedZ, sharedA, primary])
+            changed[0].isVisible = false
+            changed[0].entry.backgroundColor = "#123456"
+            fixture.model.publishCalendars(changed)
+            #expect(fixture.model.calendars.map(\.calendarID) == expected)
+            #expect(fixture.model.calendars.last?.isVisible == false)
+            #expect(fixture.model.calendars.last?.colorHex == "#123456")
+        }
+    }
+
     @Test(arguments: [false, true])
     func interruptedStartCannotInstallALateStore(cancel: Bool) async throws {
         let loader = SuspendedCalendarStoreLoader(store: try CalendarStore.inMemory())
@@ -709,6 +748,7 @@ import Testing
 
     private actor ModelCalendarService: CalendarService {
         static let entry = GoogleCalendarEntry(id: "work", summary: "Work", timeZone: "Europe/Vienna", accessRole: "owner")
+        private var calendars = [ModelCalendarService.entry]
         private var remote: [String: GoogleCalendarEvent] = [:]
         private var offline = false
         private var rangeFailure: GmailError?
@@ -719,6 +759,7 @@ import Testing
         private(set) var patchETags: [String?] = []
 
         func setOffline(_ value: Bool) { offline = value }
+        func setCalendars(_ value: [GoogleCalendarEntry]) { calendars = value }
         func setRangeFailure(_ value: GmailError?) { rangeFailure = value }
         func put(_ event: GoogleCalendarEvent) { remote[event.id] = event }
         var hasSuspendedRange: Bool { rangeContinuation != nil }
@@ -730,7 +771,7 @@ import Testing
 
         func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage {
             if offline { throw GmailError.transport(.notConnectedToInternet) }
-            return CalendarListPage(items: [Self.entry])
+            return CalendarListPage(items: calendars)
         }
 
         func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {

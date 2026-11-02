@@ -27,7 +27,7 @@ extension CalendarModel {
         do {
             let entries = try await engine.syncCalendars()
             let settings = try await store.preferences(accountID: "calendar-audit")
-            calendars = entries.map { entry in
+            let display = entries.map { entry in
                 let preference = settings.first { $0.calendarID == entry.id } ?? CalendarPreferences(accountID: "calendar-audit", calendarID: entry.id)
                 let key = CalendarDisplayCalendar.key(accountID: "calendar-audit", calendarID: entry.id)
                 preferences[key] = preference
@@ -36,6 +36,7 @@ extension CalendarModel {
                     useForScheduling: preference.includeInScheduling, canManage: true, canShare: true,
                     notificationsEnabled: false)
             }
+            publishCalendars(display)
             for entry in entries { try await engine.syncEvents(calendarID: entry.id) }
             try await engine.flush()
             await reloadOccurrences()

@@ -356,7 +356,7 @@ extension CalendarModel {
             }
         }
         guard lifecycle == lifecycleRevision else { return }
-        calendars = display
+        publishCalendars(display)
         await reloadOccurrences(refresh: false)
     }
 }

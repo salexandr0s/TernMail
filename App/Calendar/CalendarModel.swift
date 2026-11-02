@@ -354,7 +354,7 @@ final class CalendarModel {
                 await notifications.remove(accountID: previous.accountID, calendarID: previous.calendarID)
             }
             guard revision == lifecycleRevision else { return }
-            calendars = display
+            publishCalendars(display)
             connectionStates = connections
             if didLoadCalendars, oldAccess != newAccess { invalidateAssistantAccess() }
             if !didLoadCalendars {
@@ -389,6 +389,25 @@ final class CalendarModel {
             guard revision == lifecycleRevision, !Task.isCancelled, !(error is CancellationError) else { return }
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Cache reads use calendar IDs and provider responses can arrive in any
+    /// order. Publish the same account, primary-calendar and name order for both.
+    func publishCalendars(_ display: [CalendarDisplayCalendar]) {
+        let accountOrder = Dictionary(uniqueKeysWithValues: accounts.enumerated().map { ($0.element.id, $0.offset) })
+        let ordered = display.sorted { lhs, rhs in
+            if lhs.accountID != rhs.accountID {
+                let left = accountOrder[lhs.accountID, default: .max]
+                let right = accountOrder[rhs.accountID, default: .max]
+                return left == right ? lhs.accountID < rhs.accountID : left < right
+            }
+            let leftPrimary = lhs.entry.primary == true
+            let rightPrimary = rhs.entry.primary == true
+            if leftPrimary != rightPrimary { return leftPrimary }
+            let titleOrder = lhs.title.localizedStandardCompare(rhs.title)
+            return titleOrder == .orderedSame ? lhs.calendarID < rhs.calendarID : titleOrder == .orderedAscending
+        }
+        if calendars != ordered { calendars = ordered }
     }
 
     var displayInterval: DateInterval {
