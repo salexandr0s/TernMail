@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Toolbar changes leave the column closures unchanged. The descendants still
@@ -34,6 +35,8 @@ struct MailColumnsContent: View, Equatable {
     var body: some View {
         MailWorkspaceColumns(columnVisibility: $columnVisibility, showsReader: identity.showsReader) {
             SidebarView(mailbox: mailbox)
+                .scrollContentBackground(.hidden)
+                .background(SidebarMaterial())
                 // AppKit asserts when the system toggle, or any item over the sidebar
                 // column, meets a saved customizable toolbar or a second window, so
                 // the content toolbar carries its own sidebar button.
@@ -89,6 +92,20 @@ struct MailColumnsContent: View, Equatable {
                 .background(Tokens.Surface.canvas)
         }
     }
+}
+
+/// Explicit behind-window blending keeps navigation containers from replacing
+/// the sidebar's desktop tint. AppKit also handles Reduce Transparency.
+struct SidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 private struct MailDetailView: View {

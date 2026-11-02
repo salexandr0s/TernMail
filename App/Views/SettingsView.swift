@@ -32,7 +32,7 @@ struct SettingsView: View {
                 sidebar
             }
             .frame(width: Tokens.Settings.sidebarWidth)
-            .background(SettingsSidebarMaterial())
+            .background(SidebarMaterial())
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 if let subtitle = destination.subtitle {
@@ -196,19 +196,6 @@ struct SettingsView: View {
         case destination(SettingsDestination)
         case close(NSWindow)
     }
-}
-
-/// AppKit supplies the sidebar material and respects Reduce Transparency.
-private struct SettingsSidebarMaterial: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .sidebar
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 private struct SettingsSearchField: NSViewRepresentable {
