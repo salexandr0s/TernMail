@@ -346,54 +346,43 @@ import Testing
     }
 
     private func clickAssistantButton(in window: NSWindow) async throws {
-        // orderFront() only makes a window visible. sendEvent() bypasses the
-        // WindowServer activation that precedes a real click, so an inactive
-        // test host can discard both synthetic clicks as activation clicks.
-        // Establish their native input preconditions before testing the button.
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
-        window.makeMain()
-        // A hosted test process may need external activation. This preflight
-        // does not extend the separate three-second geometry deadline.
-        let focusDeadline = ContinuousClock.now.advanced(by: .seconds(30))
-        if !NSApp.isActive || !window.isKeyWindow || !window.isMainWindow {
-            print("SIDEBAR_FOCUS_WAIT: waiting for native test-host activation; pid \(ProcessInfo.processInfo.processIdentifier)")
-        }
-        while (!NSApp.isActive || !window.isKeyWindow || !window.isMainWindow), ContinuousClock.now < focusDeadline {
-            // External activation can choose the app's main scene instead of
-            // this fixture window. Reclaim focus once the app is active.
-            if NSApp.isActive, !window.isKeyWindow || !window.isMainWindow {
-                window.makeKeyAndOrderFront(nil)
-                window.makeMain()
-            }
-            try await settle()
-        }
-        try #require(NSApp.isActive && window.isKeyWindow && window.isMainWindow,
-            "The toolbar window must receive input: app active \(NSApp.isActive), key \(window.isKeyWindow), main \(window.isMainWindow)")
-        // After a resize the toolbar lays its items out a little later.
-        var target: NSPoint?
+        // Hosted tests cannot require foreground activation. Press the rendered
+        // button through AppKit accessibility after checking it can be hit.
+        var target: NSView?
         var seen = ""
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while target == nil, ContinuousClock.now < deadline {
-            let item = window.toolbar?.items.first { $0.itemIdentifier.rawValue.hasSuffix("workspace.assistant") }
+            let item = window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == "workspace.assistant" }
             if let item, let view = item.view, view.window === window {
                 let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
                 let hit = window.contentView?.superview?.hitTest(point)
-                if hit?.isDescendant(of: view) == true { target = point }
+                if hit?.isDescendant(of: view) == true { target = view }
                 seen = "visible \(item.isVisible) point \(point) hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")"
             } else {
                 seen = "visible \(item?.isVisible ?? false) view in window \(item?.view?.window === window)"
             }
             if target == nil { try await settle() }
         }
-        let point = try #require(target, "The assistant button can't be clicked: \(seen)")
-        // SwiftUI draws the button itself, so click the middle of its item.
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-            window.sendEvent(event)
+        let view = try #require(target, "The assistant button can't be clicked: \(seen)")
+        var visited: Set<ObjectIdentifier> = []
+        func press(_ value: Any) -> Bool {
+            guard let object = value as? NSObject,
+                  visited.insert(ObjectIdentifier(object)).inserted else { return false }
+            func property(_ key: String) -> Any? {
+                object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil
+            }
+            let selector = NSSelectorFromString("accessibilityPerformPress")
+            if property("accessibilityRole") as? String == NSAccessibility.Role.button.rawValue,
+               object.responds(to: selector), let implementation = object.method(for: selector) {
+                // SwiftUI AX nodes expose this public BOOL selector without
+                // declaring formal NSAccessibility protocol conformance.
+                typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+                if unsafeBitCast(implementation, to: Press.self)(object, selector) { return true }
+            }
+            let children = property("accessibilityChildren") as? [Any] ?? []
+            return (children + NSAccessibility.unignoredChildren(from: children)).contains(where: press)
         }
+        try #require(descendants(in: view).contains(where: press), "The rendered assistant button must support accessibility Press")
     }
 
     private func descendants(in view: NSView) -> [NSView] {
@@ -599,12 +588,14 @@ import Testing
         app.destination = .mail
         mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
 
+        // Window resizing can change the native sidebar width. Leading controls
+        // follow its edge; trailing controls retain their window positions.
         var sharedFrames: [Int: [String: NSRect]] = [:]
         func expectSharedPositions() async throws {
             try await settle()
             #expect(window.toolbar?.identifier == toolbarIdentifier, "Hosted toolbar state must stay separate from other windows")
             let width = Int(window.frame.width)
-            let identifiers = ["workspace.sidebar", "workspace.destination", "mail.compose", "workspace.search", "workspace.assistant"]
+            let identifiers = ["workspace.sidebar", "workspace.destination", "mail.compose", "workspace.search", "workspace.tasks", "workspace.assistant"]
             var frames: [String: NSRect] = [:]
             for identifier in identifiers {
                 let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier },
@@ -612,11 +603,20 @@ import Testing
                 let view = try #require(item.view)
                 let frame = view.convert(view.bounds, to: nil)
                 frames[identifier] = frame
-                if let expected = sharedFrames[width]?[identifier] {
-                    #expect(abs(frame.minX - expected.minX) <= 1 && abs(frame.maxX - expected.maxX) <= 1,
+                let followsSidebar = ["workspace.sidebar", "workspace.destination", "mail.compose"].contains(identifier)
+                if let baseline = sharedFrames[width], let expected = baseline[identifier] {
+                    let origin = followsSidebar ? try #require(frames["workspace.sidebar"]).minX : 0
+                    let expectedOrigin = followsSidebar ? try #require(baseline["workspace.sidebar"]).minX : 0
+                    #expect(abs((frame.minX - origin) - (expected.minX - expectedOrigin)) <= 1
+                        && abs((frame.maxX - origin) - (expected.maxX - expectedOrigin)) <= 1,
                         "\(identifier) moved from \(expected) to \(frame) when switching views at \(width) points")
                 }
             }
+            let split = try mailSplit(in: controller.view)
+            let sidebar = try #require(split.arrangedSubviews.first)
+            let sidebarEdge = split.isSubviewCollapsed(sidebar) ? 0 : sidebar.convert(sidebar.bounds, to: nil).maxX
+            #expect(try #require(frames["workspace.sidebar"]).minX >= sidebarEdge - 1,
+                "The leading toolbar controls must clear the current native sidebar")
             if sharedFrames[width] == nil { sharedFrames[width] = frames }
         }
 

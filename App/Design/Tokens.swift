@@ -180,8 +180,8 @@ enum Tokens {
         static let compactToolbarWidth: CGFloat = 1280
         /// Below this, an idle search field folds into a button.
         static let searchFoldWidth: CGFloat = 1080
-        /// Hide the title at the same width in every section.
-        static let toolbarTitleFoldWidth: CGFloat = 760
+        /// Fold the title with Search so Calendar leaves room for Tasks and Assistant.
+        static let toolbarTitleFoldWidth = searchFoldWidth
         /// An icon-only menu in the toolbar, with the gap after it.
         static let toolbarMenuWidth: CGFloat = 58
         static let sidebarMinWidth: CGFloat = 180
