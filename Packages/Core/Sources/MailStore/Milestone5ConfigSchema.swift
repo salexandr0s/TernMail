@@ -97,5 +97,22 @@ enum Milestone5ConfigSchema {
                 t.primaryKey(["accountID", "messageID"])
             }
         }
+        migrator.registerMigration("unread-favorite-v1") { db in
+            let favorites = try Row.fetchAll(db, sql: "SELECT id,kind,labelID,allAccounts FROM mailFavorite ORDER BY sortOrder,id")
+            let hasUnread = favorites.contains {
+                ($0["kind"] as String) == "mailbox" && ($0["labelID"] as String?) == "UNREAD" && ($0["allAccounts"] as Bool)
+            }
+            guard !hasUnread, let inboxIndex = favorites.firstIndex(where: {
+                ($0["kind"] as String) == "mailbox" && ($0["labelID"] as String?) == "INBOX" && ($0["allAccounts"] as Bool)
+            }) else { return }
+            var ids = favorites.map { $0["id"] as String }
+            guard !ids.contains("default:UNREAD") else { return }
+            ids.insert("default:UNREAD", at: inboxIndex + 1)
+            try db.execute(sql: "INSERT INTO mailFavorite (id,kind,labelID,allAccounts,sortOrder) VALUES ('default:UNREAD','mailbox','UNREAD',1,?)",
+                arguments: [inboxIndex + 1])
+            for (index, id) in ids.enumerated() {
+                try db.execute(sql: "UPDATE mailFavorite SET sortOrder = ? WHERE id = ?", arguments: [index, id])
+            }
+        }
     }
 }

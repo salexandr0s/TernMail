@@ -18,6 +18,46 @@ import Testing
         #expect(try await store.mailAlertWatermark(accountID: "a") == nil)
     }
 
+    @Test(arguments: [false, true])
+    func unreadFavoriteUpgradePreservesCustomFavoritesAndLaterRemoval(hasUnifiedUnread: Bool) async throws {
+        let queue = try DatabaseQueue()
+        try Schema.configMigrator.migrate(queue, upTo: "mail-alert-outbox-v1")
+        var legacyFavorites: [MailFavorite] = [
+            .init(id: "account-unread", target: .mailbox(labelID: SystemLabel.unread, scope: .accounts(["a"]))),
+            .init(id: "custom-inbox", target: .mailbox(labelID: SystemLabel.inbox, scope: .allAccounts)),
+            .init(id: "custom-label", target: .label(accountID: "a", labelID: "projects")),
+        ]
+        if hasUnifiedUnread {
+            legacyFavorites.append(.init(id: "custom-unread", target: .mailbox(labelID: SystemLabel.unread, scope: .allAccounts)))
+        }
+        let original = legacyFavorites.enumerated().map { index, favorite in
+            var favorite = favorite
+            favorite.sortOrder = index
+            return favorite
+        }
+        try await queue.write { db in
+            try AccountRecord(id: "a", email: "a@example.test", displayName: nil, grantedScopes: [], addedAt: .distantPast).insert(db)
+            try MailContentPreferencesSQL.saveFavorites(original, db: db)
+        }
+
+        let store = try AccountStore(writer: queue)
+        let upgraded = try await store.mailFavorites()
+        let unifiedUnread = MailFavoriteTarget.mailbox(labelID: SystemLabel.unread, scope: .allAccounts)
+        #expect(upgraded.filter { $0.target == unifiedUnread }.count == 1)
+        if hasUnifiedUnread {
+            #expect(upgraded == original)
+        } else {
+            #expect(upgraded.map(\.id) == ["account-unread", "custom-inbox", "default:UNREAD", "custom-label"])
+            #expect(upgraded.filter { $0.target != unifiedUnread }.map(\.target) == original.map(\.target))
+            #expect(upgraded.map(\.sortOrder) == [0, 1, 2, 3])
+        }
+
+        try await store.saveMailFavorites(upgraded.filter { $0.target != unifiedUnread })
+        let removed = try await store.mailFavorites()
+        let reopened = try AccountStore(writer: queue)
+        #expect(try await reopened.mailFavorites() == removed)
+    }
+
     @Test func concurrentPreferenceEditsAndProfileDeletionPreserveUnrelatedFields() async throws {
         let store = try await makeStore()
         try await store.saveMailProfile(MailProfile(id: "work", name: "Work"))

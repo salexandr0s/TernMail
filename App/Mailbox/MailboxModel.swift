@@ -624,8 +624,7 @@ final class MailboxModel {
         return selectedAccounts.first ?? presentedAccounts.first ?? defaultAccount
     }
 
-    /// The Go menu: a system mailbox across accounts, as the sidebar's top row
-    /// for it lists them, so ⌘1 to ⌘5 match the sidebar's first rows.
+    /// The Go menu opens a system mailbox across accounts, matching its sidebar row.
     func go(to labelID: String) {
         search.clear()
         if hasSeveralAccounts, SystemMailbox.all.contains(where: { $0.id == labelID }) {
@@ -1352,6 +1351,7 @@ struct SystemMailbox: Identifiable {
     /// In sidebar order. With several accounts each lists every account's mail.
     static let all = [
         SystemMailbox(id: SystemLabel.inbox, title: "Inbox", systemImage: "tray"),
+        SystemMailbox(id: SystemLabel.unread, title: "Unread", systemImage: "envelope.badge"),
         SystemMailbox(id: SystemLabel.starred, title: "Starred", systemImage: "star"),
         SystemMailbox(id: MailboxModel.snoozedID, title: "Snoozed", systemImage: "clock"),
         SystemMailbox(id: SystemLabel.sent, title: "Sent", systemImage: "paperplane"),
@@ -1362,7 +1362,7 @@ struct SystemMailbox: Identifiable {
     ]
 
     /// The mailboxes ⌘1 to ⌘5 open.
-    static let numbered = Array(all.prefix(5))
+    static let numbered = Array(all.filter { $0.id != SystemLabel.unread }.prefix(5))
 
     /// Listed after Drafts while it has items.
     static let outbox = SystemMailbox(id: MailboxModel.outboxID, title: "Outbox", systemImage: "tray.and.arrow.up")

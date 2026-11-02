@@ -122,7 +122,7 @@ public struct MailFavorite: Codable, Sendable, Equatable, Identifiable {
     }
 
     public static var defaults: [MailFavorite] {
-        [SystemLabel.inbox, SystemLabel.starred, "TERN_SNOOZED", SystemLabel.sent, SystemLabel.draft,
+        [SystemLabel.inbox, SystemLabel.unread, SystemLabel.starred, "TERN_SNOOZED", SystemLabel.sent, SystemLabel.draft,
          SystemLabel.allMail, SystemLabel.spam, SystemLabel.trash].enumerated().map {
             MailFavorite(id: "default:" + $0.element, target: .mailbox(labelID: $0.element, scope: .allAccounts), sortOrder: $0.offset)
         }

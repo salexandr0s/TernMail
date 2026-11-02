@@ -16,7 +16,7 @@ struct FavoriteFolderOption: Identifiable {
         let scope: MailSearchScope = accountID.map { .accounts([$0]) } ?? .allAccounts
         let primary = SystemMailbox.all + [.outbox]
         let primaryIDs = Set(primary.map(\.id))
-        let extraIDs = Set(labels.filter(\.isSystem).map(\.id)).subtracting(primaryIDs).subtracting([SystemLabel.unread])
+        let extraIDs = Set(labels.filter(\.isSystem).map(\.id)).subtracting(primaryIDs)
         let known = SystemMailbox.more.filter { extraIDs.contains($0.id) }
         let other = extraIDs.subtracting(known.map(\.id)).map(SystemMailbox.init(labelID:))
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }

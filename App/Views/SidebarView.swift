@@ -530,7 +530,7 @@ extension SystemMailbox {
     /// The sidebar symbol's color, the same in every account.
     var color: Color {
         switch id {
-        case SystemLabel.inbox: .blue
+        case SystemLabel.inbox, SystemLabel.unread: .blue
         case SystemLabel.starred: .yellow
         case MailboxModel.snoozedID: .purple
         case SystemLabel.sent: .green
