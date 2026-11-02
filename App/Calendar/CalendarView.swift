@@ -35,18 +35,24 @@ struct CalendarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // One split view at every width: crossing the compact width only adds or
-            // removes the sidebar, so the grid keeps its scroll position and drag state.
+            // One split view at every width keeps the grid mounted while the sidebar changes.
             HSplitView {
                 if sidebarState.showsSidebar {
                     sidebar.frame(minWidth: Tokens.Layout.sidebarWidth,
                                   idealWidth: Tokens.Calendar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                            if width > 0 { sidebarState.width = width }
+                        }
                 }
                 calendarPane(compact: sidebarState.isCompact)
                     .frame(minWidth: sidebarState.isCompact ? nil : Tokens.Calendar.contentMinWidth)
             }
             footer
         }
+        // Keep the native split inside the toolbar's safe area before clipping
+        // the sidebar material, which otherwise extends into the title bar.
+        .padding(.top, Tokens.Border.hairline)
+        .clipped()
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: {
             sidebarState.updateCompact($0)
         }

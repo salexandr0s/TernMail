@@ -54,7 +54,11 @@ import Testing
             let clip = scroll.contentView
             let documentHeight = scroll.documentView?.bounds.height ?? 0
             let y = min(120, max(0, documentHeight - clip.bounds.height))
-            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+            // Short lists begin at a negative origin when the toolbar reserves
+            // a top inset. Keep the initial position within AppKit's scroll bounds.
+            var bounds = clip.bounds
+            bounds.origin.y = y
+            clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
             scroll.reflectScrolledClipView(clip)
         }
         try await settle(controller.view, in: window)
@@ -107,7 +111,10 @@ import Testing
         let inactiveOffsets = scrolls.map { $0.contentView.bounds.origin }
         print("WORKSPACE_RETENTION: config=\(configuration), attached while inactive=\(attachedWhileInactive)/\(mailTables.count), offsets preserved=\(offsetsMatch(offsets, inactiveOffsets))")
         #expect(attachedWhileInactive == mailTables.count)
-        #expect(offsetsMatch(offsets, inactiveOffsets))
+        // Calendar temporarily changes the toolbar host's sidebar width, which
+        // changes the hidden list's horizontal origin. Its scroll position
+        // must stay fixed vertically; both axes are checked on return below.
+        #expect(zip(offsets, inactiveOffsets).allSatisfy { abs($0.y - $1.y) < 0.5 })
 
         app.destination = .mail
         try await waitFor(controller.view, in: window, expecting: "Initial return to Mail") {

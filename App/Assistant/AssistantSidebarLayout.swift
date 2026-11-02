@@ -52,6 +52,9 @@ final class AssistantMailPaneSizing {
     private var dividers: [Pane: SplitDivider] = [:]
     /// Divider positions from before the assistant opened, kept until restored.
     private var savedPositions: [Pane: CGFloat] = [:]
+    private var mailPositions: [Pane: CGFloat] = [:]
+    private var toolbarPositions: [Pane: CGFloat] = [:]
+    private var toolbarSidebarWidth: CGFloat?
     private var isPresented = false
     private var remainingAttempts = 0
     private var scheduled = false
@@ -74,22 +77,58 @@ final class AssistantMailPaneSizing {
         requestApply()
     }
 
+    /// Calendar temporarily uses this split to align the shared toolbar. Keep
+    /// its width changes separate from the positions saved for the assistant.
+    func setToolbarSidebarWidth(_ width: CGFloat?) {
+        guard toolbarSidebarWidth != width else { return }
+        let wasOverridden = toolbarSidebarWidth != nil
+        toolbarSidebarWidth = width
+        if !wasOverridden, width != nil {
+            if toolbarPositions.isEmpty {
+                // A native divider can move after the last probe layout. Read
+                // its current position before applying Calendar's constraints.
+                let current = dividers.compactMapValues { divider -> CGFloat? in
+                    guard let split = divider.split, let pane = divider.pane, split.window != nil,
+                          divider.index < split.arrangedSubviews.count - 1,
+                          split.arrangedSubviews[divider.index] === pane,
+                          !split.isSubviewCollapsed(pane), pane.frame.width > 0 else { return nil }
+                    return pane.frame.maxX
+                }
+                toolbarPositions = !isPresented && !savedPositions.isEmpty
+                    ? savedPositions : (current.isEmpty ? mailPositions : current)
+            }
+            remainingAttempts = 0
+        } else if wasOverridden, width == nil {
+            requestApply()
+        }
+    }
+
     func attach(_ divider: EnclosingSplitDivider, as role: Pane) {
         let old = dividers[role]
         dividers[role] = SplitDivider(split: divider.split, pane: divider.pane, index: divider.index)
+        // Cache ordinary Mail layout before a representable update changes the
+        // column constraints. Calendar's temporary geometry must not replace it.
+        if toolbarSidebarWidth == nil, toolbarPositions.isEmpty, remainingAttempts == 0 {
+            if divider.split.isSubviewCollapsed(divider.pane) {
+                mailPositions[role] = nil
+            } else {
+                mailPositions[role] = divider.pane.frame.maxX
+            }
+        }
         if old?.split !== divider.split || old?.pane !== divider.pane { requestApply() }
     }
 
     /// SwiftUI can apply column constraints after updating the representable.
     /// Retry only while layout is settling, with a fixed budget and no animation.
     func requestApply() {
-        guard !isPresented, !savedPositions.isEmpty else { return }
+        guard toolbarSidebarWidth == nil,
+              !toolbarPositions.isEmpty || (!isPresented && !savedPositions.isEmpty) else { return }
         remainingAttempts = 3
         schedulePendingApply()
     }
 
     func schedulePendingApply() {
-        guard !scheduled, remainingAttempts > 0 else { return }
+        guard toolbarSidebarWidth == nil, !scheduled, remainingAttempts > 0 else { return }
         scheduled = true
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -100,10 +139,14 @@ final class AssistantMailPaneSizing {
     }
 
     func apply() {
-        guard !isPresented, !savedPositions.isEmpty, remainingAttempts > 0 else { return }
+        let restoresToolbar = !toolbarPositions.isEmpty
+        let positions = restoresToolbar ? toolbarPositions : savedPositions
+        guard toolbarSidebarWidth == nil, restoresToolbar || !isPresented,
+              !positions.isEmpty, remainingAttempts > 0 else { return }
         var settled = true
         var outOfReach = false
-        for (role, position) in savedPositions {
+        for role in Pane.allCases {
+            guard let position = positions[role] else { continue }
             // Wait for a column that SwiftUI hasn't brought back yet.
             guard let divider = dividers[role], let split = divider.split, let pane = divider.pane,
                   divider.index < split.arrangedSubviews.count - 1,
@@ -124,7 +167,13 @@ final class AssistantMailPaneSizing {
         }
         if settled {
             remainingAttempts = 0
-            savedPositions = [:]
+            mailPositions = positions
+            if restoresToolbar {
+                toolbarPositions = [:]
+                requestApply()
+            } else {
+                savedPositions = [:]
+            }
         } else if !outOfReach {
             remainingAttempts -= 1
         }

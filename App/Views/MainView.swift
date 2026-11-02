@@ -209,11 +209,25 @@ struct MainView: View {
         .navigationSubtitle(section == .mail ? mailbox.selectedMailboxSubtitle : "")
     }
 
+    /// The retained Mail split owns the shared toolbar. While Calendar is visible,
+    /// its sidebar geometry sets the toolbar's leading boundary.
+    private var toolbarColumnVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding {
+            if !isActive, let calendarSidebarState {
+                return calendarSidebarState.showsSidebar ? .all : (hidesReader ? .detailOnly : .doubleColumn)
+            }
+            return columnVisibility
+        } set: { visibility in
+            if isActive { columnVisibility = visibility }
+        }
+    }
+
     private func mailContent(topInset: CGFloat) -> some View {
         MailColumnsContent(mailbox: mailbox,
-            identity: .init(columnVisibility: columnVisibility, showsReader: !hidesReader,
-                showsAssistant: showsPanel, topInset: topInset, outboxFocused: outboxFocused),
-            columnVisibility: $columnVisibility, sidebarColumnWidth: $sidebarColumnWidth,
+            identity: .init(columnVisibility: toolbarColumnVisibility.wrappedValue, showsReader: !hidesReader,
+                showsAssistant: showsPanel, topInset: topInset, outboxFocused: outboxFocused,
+                toolbarSidebarWidth: isActive ? nil : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 }),
+            columnVisibility: toolbarColumnVisibility, sidebarColumnWidth: $sidebarColumnWidth,
             outboxFocused: $outboxFocused, paneSizing: paneSizing, toolbarInset: toolbarInset)
         .equatable()
         .navigationSplitViewStyle(.balanced)

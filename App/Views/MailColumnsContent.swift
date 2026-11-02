@@ -9,6 +9,7 @@ struct MailColumnsContent: View, Equatable {
         let showsAssistant: Bool
         let topInset: CGFloat
         let outboxFocused: Bool
+        var toolbarSidebarWidth: CGFloat? = nil
     }
 
     let mailbox: MailboxModel
@@ -38,17 +39,22 @@ struct MailColumnsContent: View, Equatable {
                 // the content toolbar carries its own sidebar button.
                 .toolbar(removing: .sidebarToggle)
                 .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: identity.topInset) }
-                .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation, isPresented: identity.showsAssistant) }
+                .background {
+                    MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation,
+                        isPresented: identity.showsAssistant, toolbarSidebarWidth: identity.toolbarSidebarWidth)
+                }
                 .padding(.trailing, Tokens.Layout.columnGutter)
                 .overlay(alignment: .trailing) {
                     SplitDividerHandle()
                         .frame(width: Tokens.Layout.columnGutter)
                 }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if $0 > 0 { sidebarColumnWidth = $0 } }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    if $0 > 0, identity.toolbarSidebarWidth == nil { sidebarColumnWidth = $0 }
+                }
                 .navigationSplitViewColumnWidth(
-                    min: Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter,
-                    ideal: identity.showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter,
-                    max: identity.showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarMaxWidth + Tokens.Layout.columnGutter
+                    min: identity.toolbarSidebarWidth ?? (Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter),
+                    ideal: identity.toolbarSidebarWidth ?? (identity.showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter),
+                    max: identity.toolbarSidebarWidth ?? (identity.showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarMaxWidth + Tokens.Layout.columnGutter)
                 )
         } content: {
             Group {
@@ -59,7 +65,10 @@ struct MailColumnsContent: View, Equatable {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: identity.topInset) }
-            .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .list, isPresented: identity.showsAssistant) }
+            .background {
+                MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .list,
+                    isPresented: identity.showsAssistant, toolbarSidebarWidth: identity.toolbarSidebarWidth)
+            }
             .onChange(of: mailbox.search.listFocusRequest) {
                 outboxFocused = showsOutbox
             }

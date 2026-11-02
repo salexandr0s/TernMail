@@ -8,11 +8,13 @@ struct MailColumnProbe: NSViewRepresentable {
     let toolbarInset: ClippedSplitToolbarInset
     let pane: AssistantMailPaneSizing.Pane
     let isPresented: Bool
+    var toolbarSidebarWidth: CGFloat? = nil
 
     func makeNSView(context: Context) -> ProbeView { ProbeView() }
 
     func updateNSView(_ view: ProbeView, context: Context) {
         view.sizing = sizing; view.toolbarInset = toolbarInset; view.pane = pane
+        sizing.setToolbarSidebarWidth(toolbarSidebarWidth)
         view.attach()
         if view.isPresented != isPresented {
             view.isPresented = isPresented

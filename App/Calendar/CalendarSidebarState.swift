@@ -1,4 +1,5 @@
 import Observation
+import SwiftUI
 
 /// Calendar sidebar presentation shared by one window's toolbar and content.
 @MainActor @Observable
@@ -6,6 +7,7 @@ final class CalendarSidebarState {
     private(set) var isCompact = false
     private(set) var userShowsSidebar = true
     var isPopoverPresented = false
+    var width = Tokens.Calendar.sidebarWidth
 
     var showsSidebar: Bool { !isCompact && userShowsSidebar }
 

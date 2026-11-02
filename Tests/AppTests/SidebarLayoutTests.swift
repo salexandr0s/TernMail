@@ -5,6 +5,69 @@ import Testing
 @testable import Tern
 
 @Suite(.serialized) @MainActor struct SidebarLayoutTests {
+    @Test func calendarToolbarClearsSidebar() async throws {
+        let app = AppModel()
+        await app.start()
+        await app.calendar.seedCalendarAudit()
+        let mailbox = try #require(app.mailbox)
+        let suite = "CalendarToolbarBoundary.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        defer { settings.removePersistentDomain(forName: suite) }
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app)
+            .environment(\.workspaceToolbarID, workspaceToolbarIdentifier()).defaultAppStorage(settings))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unified
+        window.contentViewController = controller
+        window.orderBack(nil)
+        defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
+        app.destination = .calendar
+
+        func calendarSplit() throws -> NSSplitView {
+            let splits = descendants(in: controller.view).compactMap { $0 as? NSSplitView }.filter { split in
+                split.isVertical && !descendants(in: split).contains { $0 is MailColumnProbe.ProbeView }
+            }
+            try #require(splits.count == 1)
+            return try #require(splits.first)
+        }
+
+        func expectBoundary() async throws {
+            try await settle()
+            let split = try calendarSplit()
+            if window.frame.width < Tokens.Calendar.compactWidth {
+                #expect(split.arrangedSubviews.count == 1)
+                let content = try #require(split.arrangedSubviews.last)
+                #expect(abs(content.convert(content.bounds, to: nil).minX) <= 1)
+            } else {
+                try #require(split.arrangedSubviews.count == 2)
+                let sidebar = try #require(split.arrangedSubviews.first)
+                let frame = sidebar.convert(sidebar.bounds, to: nil)
+                for identifier in ["workspace.sidebar", "workspace.destination", "mail.compose"] {
+                    let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
+                    let view = try #require(item.view)
+                    #expect(view.convert(view.bounds, to: nil).minX >= frame.maxX - 1,
+                        "\(identifier) must remain outside Calendar's sidebar")
+                }
+                #expect(abs(frame.maxY - (window.contentLayoutRect.maxY - Tokens.Border.hairline)) <= 1,
+                    "Calendar's sidebar must start below the toolbar without an extra gap: \(frame)")
+            }
+        }
+
+        for width in [1_280, 960, 720, 1_280] {
+            window.setContentSize(NSSize(width: width, height: 760))
+            try await expectBoundary()
+        }
+        let split = try calendarSplit()
+        let sidebar = try #require(split.arrangedSubviews.first)
+        for width in [Tokens.Layout.sidebarMaxWidth, Tokens.Layout.sidebarWidth] {
+            split.setPosition(width, ofDividerAt: 0)
+            try await expectBoundary()
+            #expect(abs(sidebar.frame.width - width) <= 1, "Calendar's sidebar must remain resizable")
+        }
+        await app.signOut()
+    }
+
     @Test func workspaceKeepsFirstRowsAndMailSearchVisible() async throws {
         let app = AppModel()
         await app.start()

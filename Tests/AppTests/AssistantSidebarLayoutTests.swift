@@ -84,6 +84,62 @@ import Testing
         #expect(abs(fixture.navigation.frame.width - original) < 1)
     }
 
+    @Test(arguments: [false, true])
+    func calendarToolbarOverrideRestoresMailAndPreservesAssistantRestoration(assistantOpen: Bool) {
+        let fixture = Fixture(width: 1600)
+        defer { fixture.window.close() }
+        fixture.setPaneWidths(navigation: 232, list: 372)
+        let originalNavigation = fixture.navigation.frame.width
+        let originalList = fixture.list.frame.width
+        if assistantOpen {
+            fixture.sizing.beginPresentation()
+            fixture.show(AssistantSidebarLayout(availableWidth: 1600, preferredWidth: 380, isPresented: true))
+            fixture.compressAsColumnWidthsDo()
+        }
+        func observeLayout() {
+            for (role, pane) in [(AssistantMailPaneSizing.Pane.navigation, fixture.navigation), (.list, fixture.list)] {
+                EnclosingSplitDivider(of: pane).map { fixture.sizing.attach($0, as: role) }
+            }
+        }
+        observeLayout()
+        if !assistantOpen {
+            // Native resizing can finish after the probe's latest callback.
+            fixture.setPaneWidths(navigation: originalNavigation + 24, list: originalList + 16)
+        }
+        let mailNavigation = fixture.navigation.frame.width
+        let mailList = fixture.list.frame.width
+
+        fixture.sizing.setToolbarSidebarWidth(320)
+        fixture.setPaneWidths(navigation: 320, list: 448)
+        observeLayout()
+        fixture.sizing.requestApply()
+        fixture.sizing.apply()
+        #expect(abs(fixture.navigation.frame.width - 320) < 1)
+        #expect(abs(fixture.list.frame.width - 448) < 1)
+
+        // Hiding Calendar's sidebar does not end the temporary toolbar layout.
+        fixture.sizing.setToolbarSidebarWidth(0)
+        fixture.controller.splitViewItems[0].isCollapsed = true
+        fixture.split.layoutSubtreeIfNeeded()
+        observeLayout()
+        fixture.sizing.setToolbarSidebarWidth(248)
+        fixture.controller.splitViewItems[0].isCollapsed = false
+        fixture.setPaneWidths(navigation: 248, list: 420)
+        observeLayout()
+        fixture.sizing.setToolbarSidebarWidth(nil)
+        fixture.sizing.apply()
+        #expect(abs(fixture.navigation.frame.width - mailNavigation) < 1)
+        #expect(abs(fixture.list.frame.width - mailList) < 1)
+
+        if assistantOpen {
+            fixture.hide()
+            fixture.sizing.endPresentation()
+            fixture.sizing.apply()
+            #expect(abs(fixture.navigation.frame.width - originalNavigation) < 1)
+            #expect(abs(fixture.list.frame.width - originalList) < 1)
+        }
+    }
+
     @MainActor private final class Fixture {
         let window: NSWindow
         let container: NSView
