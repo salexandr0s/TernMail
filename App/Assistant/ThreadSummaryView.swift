@@ -2,7 +2,7 @@ import MailStore
 import MessageContent
 import SwiftUI
 
-/// A quiet reading aid between the event cards and the original conversation.
+/// A reading aid between the event cards and the original conversation.
 struct ThreadSummaryView: View {
     let key: ThreadKey
     let detail: ThreadDetail
@@ -12,74 +12,64 @@ struct ThreadSummaryView: View {
 
     @State private var model = ThreadSummaryModel()
     @State private var loadedIdentity: LoadIdentity?
-    @State private var isExpanded = false
+    @State private var displayed: ThreadSummaryDisplayState?
     @State private var showsSettings = false
     @State private var attempt = 0
     @State private var handledAttempt = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
 
     private struct LoadIdentity: Equatable {
-        let revision: String
-        let access: Int
+        let source: ThreadSummaryDisplayState.Source
         let attempt: Int
         let isActive: Bool
     }
 
     private var identity: LoadIdentity {
-        LoadIdentity(revision: ThreadSummaryModel.revision(for: detail),
-            access: assistant.summaryAccessRevision, attempt: attempt, isActive: isActive)
+        LoadIdentity(source: .init(revision: ThreadSummaryModel.revision(for: detail),
+            access: assistant.summaryAccessRevision), attempt: attempt, isActive: isActive)
     }
 
     var body: some View {
         let availability = assistant.summaryAvailability(for: key)
         if Self.isOffered(availability, isRestoring: assistant.connection.isRestoring) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                if availability == .loading {
-                    status("Getting summary ready…", isLoading: true)
-                } else if loadedIdentity == identity, let report = model.report {
-                    content(report)
-                } else if loadedIdentity == identity, let error = model.errorMessage {
-                    status(error, isLoading: false) {
-                        Button("Retry") { attempt += 1 }.buttonStyle(.link)
-                    }
+            // Keep task and disappearance ownership stable when loading gives way
+            // to content; Group would distribute those modifiers to each child.
+            VStack(alignment: .leading, spacing: 0) {
+                if availability == .ready, isActive, let report = displayed?.report(for: identity.source) {
+                    ThreadSummaryContent(report: report, detail: detail,
+                        isRefreshing: loadedIdentity != identity,
+                        refreshError: loadedIdentity == identity ? model.errorMessage : nil,
+                        onOpenSource: onOpenSource, onRefresh: { attempt += 1 },
+                        onSettings: { showsSettings = true })
+                        .id(identity.source)
                 } else {
-                    status("Summarizing…", isLoading: true)
+                    let error = loadedIdentity == identity ? model.errorMessage : nil
+                    SummaryStatus(text: error ?? (availability == .loading ? "Getting summary ready…" : "Summarizing…"),
+                        isLoading: error == nil, onRetry: error == nil ? nil : { attempt += 1 })
+                        .modifier(SummarySurface())
                 }
-            }
-            .padding(Tokens.Space.s3)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
-                in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                    .strokeBorder(contrast == .increased ? Tokens.Surface.border : Tokens.ConversationHeader.border,
-                        lineWidth: Tokens.Border.hairline)
-                    .allowsHitTesting(false)
             }
             .task(id: identity) {
                 let requested = identity
                 loadedIdentity = nil
-                isExpanded = false
-                guard requested.isActive else { model.clear(); return }
+                if displayed?.source != requested.source { displayed = nil }
+                guard requested.isActive else { model.clear(); displayed = nil; return }
                 let forceRefresh = requested.attempt != handledAttempt
                 handledAttempt = requested.attempt
-                await model.load(key: key, revision: requested.revision, assistant: assistant,
+                await model.load(key: key, revision: requested.source.revision, assistant: assistant,
                     forceRefresh: forceRefresh, expectedMessageIDs: Set(detail.messages.map(\.id)))
                 guard !Task.isCancelled, requested == identity else { return }
+                if let report = model.report {
+                    displayed = .init(source: requested.source, value: report)
+                }
                 loadedIdentity = requested
             }
-            .onDisappear { model.clear(); loadedIdentity = nil }
+            .onDisappear { model.clear(); loadedIdentity = nil; displayed = nil }
             .sheet(isPresented: $showsSettings) {
                 AssistantSettingsView(model: assistant, isSheet: true, showsMailScope: true)
             }
         }
     }
 
-    /// The card waits until the assistant is set up for this conversation;
-    /// until then the assistant panel shows the one setup prompt. While a
-    /// saved connection is restoring, nobody knows yet.
     private static func isOffered(_ availability: ThreadSummaryAvailability, isRestoring: Bool) -> Bool {
         switch availability {
         case .ready: true
@@ -87,45 +77,83 @@ struct ThreadSummaryView: View {
         case .unavailable: false
         }
     }
+}
 
-    private var heading: some View {
-        Label("AI summary", systemImage: "sparkles")
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
+/// Retain the visible summary during Refresh, but never across content or access changes.
+struct ThreadSummaryDisplayState {
+    struct Source: Hashable {
+        let revision: String
+        let access: Int
     }
 
-    private func content(_ report: ThreadSummaryReport) -> some View {
+    let source: Source
+    let value: ThreadSummaryReport
+
+    func report(for current: Source) -> ThreadSummaryReport? {
+        source == current ? value : nil
+    }
+}
+
+/// The same summary presentation is used by the reader and native audit fixtures.
+struct ThreadSummaryContent: View {
+    let report: ThreadSummaryReport
+    let detail: ThreadDetail
+    var isRefreshing = false
+    var refreshError: String? = nil
+    let onOpenSource: (AssistantSource) -> Void
+    let onRefresh: () -> Void
+    let onSettings: () -> Void
+
+    @State private var isExpanded = false
+    @State private var fullTextHeight: CGFloat = 0
+    @State private var collapsedTextHeight: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var hasDetails: Bool {
+        !report.summary.decisions.isEmpty || !report.summary.openTasks.isEmpty
+            || fullTextHeight > collapsedTextHeight + Tokens.Border.hairline
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s2) {
-                heading
+                SummaryHeading()
+                if isRefreshing {
+                    ProgressView().controlSize(.mini).accessibilityLabel("Refreshing summary")
+                }
                 Spacer(minLength: Tokens.Space.s2)
-                Button {
-                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) { isExpanded.toggle() }
-                } label: {
-                    Label(isExpanded ? "Collapse" : "Details", systemImage: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(isExpanded ? "Collapse AI summary" : "Show summary details")
+                sourceMenu(sources: report.sources, title: "Sources", accessibilityID: "summary-sources")
                 Menu {
-                    Button("Refresh Summary", systemImage: "arrow.clockwise") { attempt += 1 }
-                    Button("Assistant Settings…", systemImage: "gearshape") { showsSettings = true }
+                    Button("Refresh Summary", systemImage: "arrow.clockwise", action: onRefresh)
+                        .disabled(isRefreshing)
+                    Button("Assistant Settings…", systemImage: "gearshape", action: onSettings)
                 } label: {
-                    Label("Summary Options", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly).frame(width: Tokens.Space.s4, height: Tokens.Space.s4)
+                    Label("Summary options", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
                 .fixedSize()
-                .accessibilityLabel("Summary Options")
-                .help("Summary Options")
+                .accessibilityLabel("Summary options")
+                .accessibilityIdentifier("summary-options")
+                .help("Summary options")
             }
-            Text(report.summary.summary)
-                .font(.callout)
-                .lineLimit(isExpanded ? nil : 3)
+
+            summaryText
+                .lineLimit(isExpanded ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+                .background(alignment: .topLeading) {
+                    // Measure both variants at the actual reading width. An empty Details
+                    // control is unnecessary, but clipped summaries must remain expandable.
+                    summaryText.lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedTextHeight = $0 }
+                        .hidden().accessibilityHidden(true)
+                    summaryText.fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullTextHeight = $0 }
+                        .hidden().accessibilityHidden(true)
+                }
 
             if report.hasPartialCoverage {
                 Label("Based on partial message content", systemImage: "info.circle")
@@ -133,62 +161,103 @@ struct ThreadSummaryView: View {
                     .help("Some messages, attachments, or longer passages could not be included.")
             }
 
+            if let refreshError {
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                    Text(refreshError).foregroundStyle(.secondary)
+                    Button("Retry", action: onRefresh).buttonStyle(.link)
+                }
+                .font(.caption)
+            }
+
             if isExpanded {
-                if !report.summary.decisions.isEmpty {
-                    sectionLabel("Decisions")
-                    ForEach(report.summary.decisions.indices, id: \.self) { index in
-                        let decision = report.summary.decisions[index]
-                        evidenceRow(decision.text, ids: decision.sourceIDs, report: report)
+                details
+            }
+            if hasDetails || isExpanded {
+                Button {
+                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) { isExpanded.toggle() }
+                } label: {
+                    Label(isExpanded ? "Show less" : "Show details", systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .padding(.vertical, Tokens.Space.s0_5)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel(isExpanded ? "Show less summary detail" : "Show summary details")
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityIdentifier("summary-details")
+            }
+        }
+        .modifier(SummarySurface())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("thread-summary")
+    }
+
+    private var summaryText: some View {
+        Text(report.summary.summary)
+            .font(.callout)
+            .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
+    }
+
+    @ViewBuilder private var details: some View {
+        if !report.summary.decisions.isEmpty || !report.summary.openTasks.isEmpty {
+            Divider().padding(.vertical, Tokens.Space.s1)
+        }
+        if !report.summary.decisions.isEmpty {
+            sectionLabel("Decisions")
+            ForEach(report.summary.decisions.indices, id: \.self) { index in
+                let decision = report.summary.decisions[index]
+                evidenceRow(decision.text, ids: decision.sourceIDs, accessibilityID: "summary-decision-sources-\(index)")
+            }
+        }
+        if !report.summary.openTasks.isEmpty {
+            sectionLabel("Open tasks")
+            ForEach(report.summary.openTasks.indices, id: \.self) { index in
+                let task = report.summary.openTasks[index]
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    evidenceRow(task.description, ids: task.sourceIDs, accessibilityID: "summary-task-sources-\(index)")
+                    let metadata = [task.owner, task.dueDate.map { "Due \($0)" }].compactMap { $0 }
+                    if !metadata.isEmpty {
+                        Text(metadata.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                 }
-                if !report.summary.openTasks.isEmpty {
-                    sectionLabel("Open tasks")
-                    ForEach(report.summary.openTasks.indices, id: \.self) { index in
-                        let task = report.summary.openTasks[index]
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                            evidenceRow(task.description, ids: task.sourceIDs, report: report)
-                            let metadata = [task.owner, task.dueDate.map { "Due \($0)" }].compactMap { $0 }
-                            if !metadata.isEmpty {
-                                Text(metadata.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                        }
-                    }
-                }
-                sourceMenu(ids: report.summary.sourceIDs, report: report, title: "Summary sources")
-                    .padding(.top, Tokens.Space.s1)
             }
         }
     }
 
     private func sectionLabel(_ title: String) -> some View {
         Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            .padding(.top, Tokens.Space.s1)
     }
 
-    private func evidenceRow(_ text: String, ids: [String], report: ThreadSummaryReport) -> some View {
+    private func evidenceRow(_ text: String, ids: [String], accessibilityID: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
             Text(text).font(.callout).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             Spacer(minLength: 0)
-            sourceMenu(ids: ids, report: report, title: "Sources", iconOnly: true)
+            sourceMenu(sources: report.sources.filter { ids.contains($0.id) }, title: "Sources", iconOnly: true,
+                accessibilityID: accessibilityID)
         }
     }
 
-    private func sourceMenu(ids: [String], report: ThreadSummaryReport, title: String, iconOnly: Bool = false) -> some View {
-        Menu {
-            ForEach(report.sources.filter { ids.contains($0.id) }) { source in
-                Button(sourceLabel(source)) { onOpenSource(source) }
+    @ViewBuilder private func sourceMenu(sources: [AssistantSource], title: String, iconOnly: Bool = false,
+                                        accessibilityID: String) -> some View {
+        if !sources.isEmpty {
+            Menu {
+                ForEach(sources) { source in
+                    Button(sourceLabel(source)) { onOpenSource(source) }
+                }
+            } label: {
+                if iconOnly { Label(title, systemImage: "text.quote").labelStyle(.iconOnly) }
+                else { Text(title) }
             }
-        } label: {
-            if iconOnly { Label(title, systemImage: "text.quote").labelStyle(.iconOnly) }
-            else { Label(title, systemImage: "text.quote") }
+            .font(.caption)
+            .controlSize(.small)
+            .foregroundStyle(.secondary)
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel(iconOnly ? "Sources for this item" : "Summary sources")
+            .accessibilityIdentifier(accessibilityID)
+            .help("Open supporting messages")
         }
-        .font(.caption)
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel(title)
-        .help("Open supporting messages")
     }
 
     private func sourceLabel(_ source: AssistantSource) -> String {
@@ -197,19 +266,49 @@ struct ThreadSummaryView: View {
         let name = sender?.name ?? sender?.address ?? message.record.sender
         return "\(name) · \(message.record.date.formatted(date: .abbreviated, time: .shortened))"
     }
+}
 
-    private func status<Actions: View>(_ text: String, isLoading: Bool, @ViewBuilder actions: () -> Actions) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            heading
-            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-                if isLoading { ProgressView().controlSize(.mini).accessibilityLabel(text) }
-                Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                actions().font(.caption).fixedSize()
-            }
-        }
+private struct SummaryHeading: View {
+    var body: some View {
+        Label("AI summary", systemImage: "sparkles")
+            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
     }
+}
 
-    private func status(_ text: String, isLoading: Bool) -> some View {
-        status(text, isLoading: isLoading) { EmptyView() }
+private struct SummaryStatus: View {
+    let text: String
+    let isLoading: Bool
+    let onRetry: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            SummaryHeading()
+            if isLoading { ProgressView().controlSize(.mini).accessibilityLabel(text) }
+            Text(text).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let onRetry { Button("Retry", action: onRetry).font(.caption).buttonStyle(.link) }
+        }
+        .frame(minHeight: Tokens.Space.s6, alignment: .leading)
+    }
+}
+
+private struct SummarySurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, Tokens.Space.s3)
+            .padding(.vertical, Tokens.Space.s2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
+                in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .overlay {
+                if contrast == .increased {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                        .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 }

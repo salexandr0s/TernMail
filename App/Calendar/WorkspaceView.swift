@@ -25,6 +25,7 @@ struct WorkspaceView: View {
                 .opacity(app.destination == .mail ? 1 : 0)
                 .allowsHitTesting(app.destination == .mail)
                 .accessibilityHidden(app.destination != .mail)
+                .zIndex(app.destination == .mail ? 1 : 0)
                 .background {
                     MailWorkspacePerformance(mailbox: mailbox, isActive: app.destination == .mail)
                 }
@@ -54,6 +55,7 @@ struct WorkspaceView: View {
             .opacity(app.destination == .calendar ? 1 : 0)
             .allowsHitTesting(app.destination == .calendar)
             .accessibilityHidden(app.destination != .calendar)
+            .zIndex(app.destination == .calendar ? 1 : 0)
             .background {
                 CalendarWorkspacePerformance(model: app.calendar, isActive: app.destination == .calendar)
             }

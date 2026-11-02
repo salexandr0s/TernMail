@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import MailStore
+import SwiftUI
 import Testing
 import TernAI
 @testable import Tern
@@ -7,6 +9,63 @@ import TernAI
 @Suite @MainActor struct ThreadSummaryTests {
     private static let key = ThreadKey(accountID: "a", threadID: "t")
     private static let source = AssistantSource(accountID: "a", threadID: "t", messageID: "m", partID: nil, title: "Proposal")
+
+    @Test func hostedSummaryKeepsItsReportAfterLoadingContentAppears() async throws {
+        let provider = SummaryProvider(replies: [nil])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let cache = try MailCache.inMemory()
+        let record = MessageRecord(accountID: "a", id: "m", threadID: "t", historyID: 1,
+            date: .distantPast, snippet: "Please review.", sender: "sender@example.invalid",
+            recipients: "a@example.invalid", cc: nil, subject: "Proposal", sizeEstimate: 100)
+        try await cache.write {
+            _ = try $0.upsertMessages([.init(record: record, labelIDs: [SystemLabel.inbox])])
+            try $0.rebuildThreads(["t"], accountID: "a")
+        }
+        var iterator = cache.thread(accountID: "a", threadID: "t").makeAsyncIterator()
+        let first = try await iterator.next()
+        let detail = try #require(first ?? nil)
+        let controller = NSHostingController(rootView: ThreadSummaryView(key: Self.key, detail: detail,
+            assistant: fixture.model, isActive: true, onOpenSource: { _ in }).environment(fixture.app))
+        controller.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 20, y: 20, width: 600, height: 200),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderFront(nil)
+        defer { window.close() }
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while await provider.requests.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try #require(await provider.requests.count == 1)
+        let summary = "A proposal needs review."
+        await provider.release(0, response: try Self.response(summary))
+        let displayDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !Self.accessibilityContains(summary, in: controller.view), ContinuousClock.now < displayDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try #require(Self.accessibilityContains(summary, in: controller.view))
+        // Switching from the status child to content must not run the owner's
+        // disappearance cleanup and discard the newly displayed report.
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(Self.accessibilityContains(summary, in: controller.view))
+        #expect(await provider.requests.count == 1)
+    }
+
+    @Test func visibleSummarySurvivesRefreshOnlyForTheSameContentAndAccess() throws {
+        let response = try Self.response("A proposal needs review.")
+        let summary = try AssistantSummary.decode(Data(response.text.utf8), allowedSourceIDs: [Self.source.id])
+        let report = ThreadSummaryReport(summary: summary, sources: [Self.source], hasPartialCoverage: true)
+        let displayed = ThreadSummaryDisplayState(source: .init(revision: "original", access: 1), value: report)
+
+        // A refresh can keep its visible evidence while the new request is pending or fails.
+        #expect(displayed.report(for: .init(revision: "original", access: 1)) == report)
+        // Source updates and access revocation must hide that fallback immediately.
+        #expect(displayed.report(for: .init(revision: "new message", access: 1)) == nil)
+        #expect(displayed.report(for: .init(revision: "original", access: 2)) == nil)
+    }
 
     @Test func revisionIgnoresPresentationChangesButTracksContentAndDrafts() async throws {
         let cache = try MailCache.inMemory()
@@ -215,6 +274,22 @@ import TernAI
         let refreshed = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
         #expect(refreshed.summary.summary == "New fast summary")
         #expect(await provider.requests.map(\.model) == ["gpt-6-luna", "gpt-6-luna", "test", "gpt-6-luna"])
+    }
+
+    private static func accessibilityContains(_ text: String, in root: NSView) -> Bool {
+        var seen: Set<ObjectIdentifier> = []
+        func visit(_ item: Any) -> Bool {
+            guard let object = item as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return false }
+            func value(_ key: String) -> Any? {
+                object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil
+            }
+            if [value("accessibilityValue"), value("accessibilityLabel")].contains(where: { $0 as? String == text }) { return true }
+            let children = value("accessibilityChildren") as? [Any] ?? []
+            let views = (object as? NSView)?.subviews ?? []
+            return (children + NSAccessibility.unignoredChildren(from: children)).contains(where: visit)
+                || views.contains(where: visit)
+        }
+        return visit(root)
     }
 
     private static func response(_ text: String) throws -> AIResponse {

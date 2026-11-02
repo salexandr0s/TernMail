@@ -130,7 +130,7 @@ struct ThreadView: View {
         }
     }
 
-    private func messageRow(_ message: MessageDetail, in detail: ThreadDetail) -> some View {
+    private func messageRow(_ message: MessageDetail, in detail: ThreadDetail, scroll: ScrollViewProxy) -> some View {
         MessageView(
             message: message,
             blocker: blocker,
@@ -175,8 +175,17 @@ struct ThreadView: View {
                                    accountID: key.accountID)
             }
         ) {
+            focusedMessageID = message.id
+            readerFocused = true
             if expanded.contains(message.id) {
                 expanded.remove(message.id)
+                Task { @MainActor in
+                    await Task.yield()
+                    guard !expanded.contains(message.id) else { return }
+                    // Keep the collapsed header reachable when removing a tall body
+                    // makes AppKit clamp the scroll position near the conversation's end.
+                    scroll.scrollTo(message.id)
+                }
             } else {
                 expanded.insert(message.id)
             }
@@ -191,7 +200,8 @@ struct ThreadView: View {
                     let messages = orderedMessages(detail)
                     ScrollView {
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                            ThreadHeading(detail: detail, key: key, mailbox: mailbox, messageID: selectedMessageID)
+                            ThreadHeading(detail: detail, key: key, mailbox: mailbox,
+                                          messageID: selectedMessageID, actions: readerActions)
                             EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar, accountID: key.accountID,
                                 onReview: { item in
                                     if item.kind == .cancelled { cancellationReview = item }
@@ -234,11 +244,12 @@ struct ThreadView: View {
                             }
                             LazyVStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                                 ForEach(messages) { message in
-                                    messageRow(message, in: detail)
+                                    messageRow(message, in: detail, scroll: scroll)
                                 }
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .padding(Tokens.Space.s4)
                         .background(PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive))
                     }
@@ -556,6 +567,7 @@ private struct ThreadHeading: View {
     let key: ThreadKey
     let mailbox: MailboxModel
     var messageID: String? = nil
+    var actions: ReaderActions? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -568,18 +580,23 @@ private struct ThreadHeading: View {
                     .accessibilityAddTraits(.isHeader)
                 let canPrint = !detail.messages.contains { $0.body == nil }
                 Menu {
-                    Button("Print Conversation…") { printConversation() }
-                    Button("Export Conversation as PDF…") { printConversation(pdf: true) }
+                    if let actions {
+                        Button("Expand All Messages", action: actions.expandAll).disabled(!actions.canExpand)
+                        Button("Collapse All Messages", action: actions.collapseAll).disabled(!actions.canCollapse)
+                        Divider()
+                    }
+                    Button("Print Conversation…") { printConversation() }.disabled(!canPrint)
+                    Button("Export Conversation as PDF…") { printConversation(pdf: true) }.disabled(!canPrint)
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    Image(systemName: "ellipsis")
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
                 .fixedSize()
+                .ternHover()
                 .accessibilityLabel("Conversation actions")
-                .disabled(!canPrint)
-                .help(canPrint ? "Print or export the conversation" : "Print after all message bodies have loaded")
+                .help("Conversation actions")
             }
             if !chips.isEmpty {
                 FlowLayout(spacing: Tokens.Space.s1_5) {
@@ -669,526 +686,16 @@ private struct LabelChip: View {
                 .accessibilityLabel("\(removeHelp): \(name)")
             }
         }
-        .frame(minHeight: Tokens.Space.s6)
+        .frame(minHeight: Tokens.Space.s5)
         .font(.caption.weight(.medium))
         .foregroundStyle(.primary)
         .padding(.leading, Tokens.Space.s2)
         .padding(.trailing, showsRemoveButton ? Tokens.Space.s0_5 : Tokens.Space.s2)
-        .background(Tokens.Surface.primary, in: Capsule())
-        .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .ternOutline(radius: Tokens.Radius.sm, style: .contrastOnly)
         .contextMenu {
             Button(removeHelp, action: onRemove)
             Button(showTitle, action: onShow)
         }
     }
-}
-
-private struct MessageView: View {
-    let message: MessageDetail
-    let blocker: WKContentRuleList?
-    let isExpanded: Bool
-    /// Keyboard navigation in the reader rests on this message.
-    let isFocused: Bool
-    let isReaderActive: Bool
-    let retainsHiddenBody: Bool
-    let bodyLoadFailed: Bool
-    let requiredNetwork: Bool
-    let bodyAvailableAt: ContinuousClock.Instant?
-    let mailbox: MailboxModel
-    let finder: ReaderFindModel
-    let onVisible: () -> Void
-    let onReadable: (NavigationCacheTier, ContinuousClock.Instant?) -> Void
-    let compose: (MailboxModel.ComposeStart) -> Void
-    let onRetry: () -> Void
-    let reportSelection: (String) -> Void
-    let onHoverLink: (String?) -> Void
-    let onMarkUnreadFromHere: () -> Void
-    let onToggle: () -> Void
-
-    @State private var rendered: RenderedMessage?
-    @State private var hasNoText = false
-    @State private var hasShownNoText = false
-    @State private var height: CGFloat = 0
-    @State private var contentHeight: CGFloat = 0
-    @State private var inlineResources = InlineResourceMap()
-    /// Load Images was chosen for this message.
-    @State private var loadsImages = false
-    @State private var allowsSenderImages = false
-    @State private var selectedText = ""
-    @State private var activeBlocker: WKContentRuleList?
-    @State private var resourceSnapshot: ReadingResourceSnapshot?
-    @State private var resourcesAvailableAt: ContinuousClock.Instant?
-    @State private var isInViewport = true
-    @State private var preparationTier: NavigationCacheTier = .local
-    @State private var requiredContentReadyAt: ContinuousClock.Instant?
-    @Environment(AppModel.self) private var app
-    @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(ReadingPreferences.blockImagesKey) private var blocksImages = true
-    @AppStorage(ReadingPreferences.adaptDarkKey) private var adaptsDark = true
-    @AppStorage(ReadingPreferences.lightBackgroundSendersKey) private var lightBackgroundSenders = ""
-    @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
-    @AppStorage(ReadingPreferences.sizeKey) private var showsSize = false
-
-    private struct RenderIdentity: Equatable {
-        let accountID: String
-        let messageID: String
-        let body: ReaderBodyVersion?
-        let resourceRevision: Int?
-        let allowsImages: Bool
-        let showsLight: Bool
-        let adaptsDark: Bool
-        let textScale: Double
-        let isExpanded: Bool
-        let isActive: Bool
-        let isRealized: Bool
-    }
-
-    private var allowsImages: Bool { loadsImages || allowsSenderImages || !blocksImages }
-    private var isRealized: Bool {
-        isExpanded && ((isReaderActive && (isInViewport || finder.requestedMessageID == message.id)) || retainsHiddenBody)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s2)
-
-            if isExpanded {
-                Divider()
-                    .padding(.horizontal, Tokens.Space.s3)
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    content
-                    if !message.attachments.isEmpty {
-                        ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox)
-                    }
-                }
-                .padding(.horizontal, Tokens.Space.s4)
-                .padding(.vertical, Tokens.Space.s3)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .ternSurface()
-        .overlay {
-            if isFocused {
-                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                    .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
-                    .allowsHitTesting(false)
-            }
-        }
-        .ternAnimation(value: isExpanded)
-        .onScrollVisibilityChange(threshold: 0) { visible in
-            isInViewport = visible
-            if visible { onVisible() }
-        }
-        .task(id: isReaderActive && isRealized) {
-            guard isReaderActive, isRealized else { return }
-            let token = TernSignposts.begin(.readerResources)
-            var received = false
-            defer { if !received { TernSignposts.cancel(token) } }
-            do {
-                for try await snapshot in mailbox.cache.readingResources(messageID: message.id, accountID: message.record.accountID) {
-                    guard !Task.isCancelled else { return }
-                    if !received { TernSignposts.end(token); received = true }
-                    resourcesAvailableAt = .now
-                    resourceSnapshot = snapshot
-                }
-            } catch { /* Keep the last safely prepared body on a transient store error. */ }
-        }
-        .task(id: RenderIdentity(accountID: message.record.accountID, messageID: message.id, body: message.body.map(ReaderBodyVersion.init),
-            resourceRevision: resourceSnapshot?.revision, allowsImages: allowsImages, showsLight: showsLightBackground, adaptsDark: adaptsDark,
-            textScale: textScale, isExpanded: isExpanded, isActive: isReaderActive, isRealized: isRealized)) {
-            await render()
-        }
-        .task(id: message.record.sender) {
-            let allowed = try? await mailbox.accountStore?.allowedImageSenders(accountID: message.record.accountID)
-            guard !Task.isCancelled else { return }
-            allowsSenderImages = allowed?.contains(senderAddress.lowercased()) == true
-        }
-        .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; onHoverLink(nil) } }
-        .onChange(of: isRealized) { _, realized in
-            if !realized {
-                rendered = nil; resourceSnapshot = nil
-                inlineResources = InlineResourceMap()
-            }
-        }
-        .onChange(of: selectedText) { _, text in reportSelection(text) }
-        .onDisappear { reportSelection(""); onHoverLink(nil) }
-        .onChange(of: allowsImages) { _, _ in
-            rendered = nil; selectedText = ""; onHoverLink(nil)
-            ReaderPreparedCache.shared.invalidate(accountID: message.record.accountID, messageID: message.id)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
-            guard change.userInfo?["account"] as? String == message.record.accountID,
-                  change.userInfo?["sender"] as? String == senderAddress.lowercased(),
-                  let allowed = change.userInfo?["allowed"] as? Bool else { return }
-            allowsSenderImages = allowed
-            // Blocking the sender's images ends Load Images too.
-            if !allowed { loadsImages = false }
-        }
-    }
-
-    /// Collapsed, one line: the sender, the start of the body and the time.
-    /// Open, the time and actions share the name line and the recipients
-    /// follow. A collapsed header opens on a click anywhere; its controls keep
-    /// their own clicks.
-    private var header: some View {
-        HStack(alignment: isExpanded ? .top : .center, spacing: Tokens.Space.s2) {
-            Button(action: onToggle) {
-                ContactAvatar(accountID: message.record.accountID, address: senderAddress, name: senderName,
-                    cache: mailbox.cache, accounts: mailbox.accountStore)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
-            .help(message.record.sender)
-            ViewThatFits(in: .horizontal) {
-                headerLines(isNarrow: false)
-                headerLines(isNarrow: true)
-            }
-        }
-        // The chevron is the only disclosure mark; names open their menus without one.
-        .menuIndicator(.hidden)
-        .contentShape(Rectangle())
-        .onTapGesture { if !isExpanded { onToggle() } }
-        .contextMenu {
-            MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText,
-                             markUnreadFromHere: onMarkUnreadFromHere, showsStar: true)
-            senderMenuItems
-        }
-    }
-
-    /// Without room for `senderMinWidth` of name beside the time and actions,
-    /// those move to the second line, so the header keeps the same height.
-    private func headerLines(isNarrow: Bool) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-            if isNarrow {
-                nameAndChevron
-                HStack(spacing: Tokens.Space.s2) {
-                    Group {
-                        if isExpanded { recipients("To:", message.record.recipients) } else { snippet }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    messageMetadata
-                }
-                if isExpanded, let cc = message.record.cc, !cc.isEmpty {
-                    recipients("Cc:", cc)
-                }
-            } else {
-                HStack(spacing: Tokens.Space.s2) {
-                    HStack(spacing: Tokens.Space.s2) {
-                        nameAndChevron.layoutPriority(1)
-                        if !isExpanded { snippet }
-                    }
-                    .frame(minWidth: Tokens.Layout.senderMinWidth, idealWidth: Tokens.Layout.senderMinWidth,
-                           maxWidth: .infinity, alignment: .leading)
-                    messageMetadata
-                }
-                if isExpanded {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                        recipients("To:", message.record.recipients)
-                        if let cc = message.record.cc, !cc.isEmpty {
-                            recipients("Cc:", cc)
-                        }
-                    }
-                    // Only the name line decides whether this layout fits.
-                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-
-    /// The name opens the sender's address menu; the chevron opens or
-    /// collapses the message.
-    private var nameAndChevron: some View {
-        HStack(spacing: Tokens.Space.s1) {
-            MessageAddressMenu(address: .init(name: senderName, address: senderAddress), accountID: message.record.accountID, mailbox: mailbox)
-                .font(.body.weight(.semibold))
-            Button(action: onToggle) {
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
-            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        }
-    }
-
-    private var snippet: some View {
-        Text(message.record.snippet)
-            .font(.callout).foregroundStyle(.secondary).lineLimit(1)
-    }
-
-    /// The time, then the actions while open or the star while collapsed. An
-    /// open message shows blocked trackers and, if chosen, its size first.
-    private var messageMetadata: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            if isExpanded, let trackers = rendered?.blockedTrackers, trackers > 0 {
-                TrackerIndicator(count: trackers)
-            }
-            if isExpanded, showsSize {
-                Text(ByteCountFormatter.string(fromByteCount: Int64(message.record.sizeEstimate), countStyle: .file))
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            Text(ThreadDate.short(message.record.date))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .help(Self.dateFormatter.string(from: message.record.date))
-            if isExpanded {
-                MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose) {
-                    senderMenuItems
-                }
-            } else if message.isStarred {
-                Image(systemName: "star.fill")
-                    .imageScale(.small)
-                    .foregroundStyle(Tokens.Status.star)
-                    .accessibilityLabel("Starred")
-            }
-        }
-        .fixedSize()
-    }
-
-    private func recipients(_ title: String, _ header: String) -> some View {
-        HStack(spacing: Tokens.Space.s1) {
-            Text(title).foregroundStyle(.secondary)
-            ForEach(Array(EmailAddress.parseList(header).enumerated()), id: \.offset) { _, address in
-                MessageAddressMenu(address: address, accountID: message.record.accountID, mailbox: mailbox)
-            }
-        }
-            .font(.subheadline)
-            .lineLimit(1)
-            .help(header)
-    }
-
-    /// "Today at 10:35", "Yesterday at 18:02", or the date and time.
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        formatter.doesRelativeDateFormatting = true
-        return formatter
-    }()
-
-    @ViewBuilder
-    private var content: some View {
-        if !isRealized {
-            Color.clear.frame(height: max(contentHeight, height, Tokens.Space.s5))
-                .accessibilityHidden(true)
-        } else if let rendered {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                if rendered.blockedRemoteImages > 0 {
-                    RemoteImagesBar(sender: message.parsedSenderAddress, onLoad: { loadsImages = true }) {
-                        mailbox.setImageSenderAllowed(true, address: senderAddress, accountID: message.record.accountID)
-                    }
-                }
-                MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
-                    adaptsDarkMode: adaptsDark && !showsLightBackground,
-                    forcesLightAppearance: showsLightBackground,
-                    isActive: isReaderActive,
-                    onReadable: { retained in
-                        finder.didBecomeReadable(message.id)
-                        guard isReaderActive, isInViewport else { return }
-                        onReadable(retained ? .retained : preparationTier, retained ? nil : requiredContentReadyAt)
-                    },
-                    onHover: onHoverLink, onSelectionChange: { selectedText = $0 },
-                    onOpenMailLink: { app.mailURLs.receive($0) },
-                    onCreate: { finder.register($0, for: message.id) },
-                    onDismantle: { finder.unregister($0) })
-                    .id(inlineResources.scope + ":\(showsLightBackground):\(adaptsDark)")
-                    .frame(height: max(height, Tokens.Space.s5))
-                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                    .accessibilityLabel("Message from \(senderName)")
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { newHeight in
-                if newHeight > 0, abs(contentHeight - newHeight) >= 1 { contentHeight = newHeight }
-            }
-        } else if hasNoText {
-            Text("This message has no text.")
-                .foregroundStyle(.secondary)
-                .onChange(of: isReaderActive, initial: true) { _, active in
-                    if active, isInViewport {
-                        onReadable(hasShownNoText ? .retained : preparationTier, hasShownNoText ? nil : requiredContentReadyAt)
-                        hasShownNoText = true
-                    }
-                }
-        } else if message.body == nil, bodyLoadFailed {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                Label("Couldn't load this message", systemImage: "exclamationmark.bubble")
-                    .foregroundStyle(.secondary)
-                Button("Try Again", action: onRetry)
-                    .buttonStyle(.bordered)
-            }
-        } else {
-            ProgressView("Loading message…")
-                .controlSize(.small)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: max(contentHeight, height))
-        }
-    }
-
-    private var senderName: String {
-        let sender = message.record.sender
-        guard let open = sender.firstIndex(of: "<") else { return sender }
-        let name = sender[..<open].trimmingCharacters(in: CharacterSet(charactersIn: "\" ").union(.whitespaces))
-        return name.isEmpty ? sender : name
-    }
-
-    private var senderAddress: String { message.senderAddress }
-
-    /// Light mail already reads as the sender made it; the choice matters in
-    /// Dark. It's kept by address, so a sender without one isn't offered it.
-    private var offersLightBackground: Bool { adaptsDark && colorScheme == .dark && message.parsedSenderAddress != nil }
-
-    private var showsLightBackground: Bool {
-        offersLightBackground && LightBackgroundSenders(storage: lightBackgroundSenders).contains(senderAddress)
-    }
-
-    /// The sender's reading choices, after the message commands.
-    @ViewBuilder private var senderMenuItems: some View {
-        if offersLightBackground || allowsSenderImages { Divider() }
-        if offersLightBackground {
-            Toggle("Show with Light Background", isOn: Binding(showsLightBackground) { isOn in
-                var senders = LightBackgroundSenders(storage: lightBackgroundSenders)
-                senders.set(isOn, for: senderAddress)
-                lightBackgroundSenders = senders.storage
-            })
-        }
-        if allowsSenderImages {
-            Button("Block Images from Sender") {
-                mailbox.setImageSenderAllowed(false, address: senderAddress, accountID: message.record.accountID)
-            }
-        }
-    }
-
-    /// Sanitizing can take a moment on large mail, so it runs off the main actor.
-    /// Without the rule list that blocks remote loads, only text is shown.
-    private func render() async {
-        guard isReaderActive, isRealized else { return }
-        guard let body = message.body else {
-            rendered = nil
-            hasNoText = false
-            height = 0
-            return
-        }
-        guard let snapshot = resourceSnapshot, let owner = mailbox.account(id: message.record.accountID) else { return }
-        let readyAt = max(bodyAvailableAt ?? .now, resourcesAvailableAt ?? .now)
-        let rules = await RemoteContentBlocker.ruleList(allowsRemoteImages: allowsImages)
-        guard !Task.isCancelled else { return }
-        activeBlocker = rules
-        let key = ReaderPreparationKey(accountID: message.record.accountID, owner: ObjectIdentifier(owner), messageID: message.id,
-            body: ReaderBodyVersion(body), resourcesRevision: snapshot.revision, allowsImages: allowsImages,
-            textOnly: rules == nil, textScale: ReadingPreferences.textScale(textScale))
-        let cache = ReaderPreparedCache.shared
-        while !Task.isCancelled {
-          let cached = cache.value(for: key)
-          do {
-            let result: PreparedReaderDocument
-            if let cached { result = cached }
-            else { result = try await cache.prepare(key: key, body: body, resources: snapshot.resources) }
-            guard !Task.isCancelled else { return }
-            requiredContentReadyAt = readyAt
-            preparationTier = requiredNetwork ? .network : (cached == nil ? .local : .prepared)
-            inlineResources = result.resources
-            rendered = result.rendered
-            if !hasNoText { hasShownNoText = false }
-            hasNoText = result.rendered == nil
-            finder.setSearchableText(result.searchableText, for: message.id)
-            return
-          } catch is CancellationError {
-            // Another window can revoke this message while our policy stays
-            // unchanged. A live consumer retries; cancelled selections exit.
-            guard !Task.isCancelled, mailbox.account(id: message.record.accountID) === owner else { return }
-            await Task.yield()
-          } catch { return }
-        }
-    }
-}
-
-private extension MessageDetail {
-    /// The address that the sender's image and background choices are kept under.
-    var senderAddress: String { parsedSenderAddress ?? record.sender }
-
-    /// The From header's address, when it has one.
-    var parsedSenderAddress: String? { EmailAddress.parseList(record.sender).first?.address }
-}
-
-/// Sits above a message body while the message has remote images blocked.
-/// Load Images shows them in this message; Always Load keeps them on for the
-/// sender.
-private struct RemoteImagesBar: View {
-    /// The sender's address, when the From header has one.
-    let sender: String?
-    let onLoad: () -> Void
-    let onAlwaysLoad: () -> Void
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Tokens.Space.s3) {
-                summary
-                Spacer(minLength: 0)
-                actions
-            }
-            .padding(.vertical, Tokens.Space.s1_5)
-            .padding(.leading, Tokens.Space.s3)
-            .padding(.trailing, Tokens.Space.s1_5)
-            // A narrow reader puts the buttons under the summary.
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                summary
-                HStack(spacing: Tokens.Space.s2) { actions }
-            }
-            .padding(Tokens.Space.s3)
-        }
-        .controlSize(.small)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
-    }
-
-    private var summary: some View {
-        Label("Remote images blocked", systemImage: "eye.slash")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder private var actions: some View {
-        Button("Load Images", action: onLoad)
-        if let sender {
-            Button("Always Load from Sender", action: onAlwaysLoad)
-                .help("Always load images from \(sender)")
-        }
-    }
-}
-
-/// Beside an open message's time when tracking images were blocked. They
-/// stay blocked after Load Images, so it explains rather than offers an action.
-private struct TrackerIndicator: View {
-    let count: Int
-    @State private var showsDetails = false
-
-    var body: some View {
-        Button { showsDetails.toggle() } label: {
-            Label { summary } icon: { Image(systemName: "hand.raised") }
-                .labelStyle(.iconOnly)
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-        }
-        .buttonStyle(.borderless)
-        // Smaller than the action buttons beside it, since it reports rather than acts.
-        .imageScale(.small)
-        .foregroundStyle(.secondary)
-        .help(summary)
-        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                summary.font(.headline)
-                Text("Tracking images can tell the sender when you open a message. Tern blocks them even when you load images.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(Tokens.Space.s4)
-            .frame(width: Tokens.Popover.width, alignment: .leading)
-        }
-    }
-
-    private var summary: Text { Text("^[\(count) tracking image](inflect: true) blocked") }
 }

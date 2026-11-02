@@ -21,6 +21,7 @@
 		0515E838EFE8D4204FDBE12E /* ReaderPreparationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C631868E5BE1F731DF1C9FC /* ReaderPreparationTests.swift */; };
 		0525AB762C11278ED22B20F3 /* DomainLogoAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00F8480DB2992699AB141C17 /* DomainLogoAvatar.swift */; };
 		05F0CC6DB19236C30864F97D /* ShortcutMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD4C19226784FEDAB30FCAB /* ShortcutMonitorTests.swift */; };
+		06DA8AC164B046090BC2F9A4 /* MessageHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9B317CB831175945671B9D6 /* MessageHeader.swift */; };
 		07073AF8859012972375BDA0 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 969FF5980D41DC77A747FDB9 /* KeychainStore.swift */; };
 		0804BB24C1D8EE0EADDB9FF2 /* GoogleAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */; };
 		08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */; };
@@ -54,6 +55,7 @@
 		1A801654E5A0E3D8AE2C52E1 /* CalendarManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E29A0B0B690F25D229A8C9B8 /* CalendarManagementView.swift */; };
 		1A83D898D548471315EB7094 /* AccountsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4297592C028D1762FD28480 /* AccountsSettings.swift */; };
 		1BE83A4C7652FFEB2974E6EA /* MailToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6E763B99120FDE987E6302E /* MailToolbar.swift */; };
+		1D6EB634B1B67ED1E7DBB923 /* MessageHeaderInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65B90B4BC013E096DB133BA2 /* MessageHeaderInteractionTests.swift */; };
 		1D9533B01C204A2EBC8AF535 /* TriageControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBCB320012A0F94BB95991B /* TriageControls.swift */; };
 		1DA0EA3A9CB0810E593D6325 /* WorkspaceSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB31A42ACD68CED567F7AE15 /* WorkspaceSearch.swift */; };
 		1E91F99C60039185B4A78181 /* AccountProfileImagesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE2ACE54F3ADDBC509D9753 /* AccountProfileImagesTests.swift */; };
@@ -185,6 +187,7 @@
 		6D1CFE14CB6414ECAE3DB5A0 /* AssistantWritingStyleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F97600EEF9D23D7785AE4A /* AssistantWritingStyleStore.swift */; };
 		6D7B2DDD2E1E5E2EBCA6DF04 /* ConversationDropTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A52AE528B44E2366BDD8FC05 /* ConversationDropTarget.swift */; };
 		6E14A37E0304843643EC3E78 /* CalendarModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9D4EBA728A21DC19F434C87 /* CalendarModelTests.swift */; };
+		6E702AD7C3267D8D0C453ED4 /* MessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FD73A1D7434A2EF2FBCD4C /* MessageView.swift */; };
 		6EE44A599A7948CB78C1D9C6 /* LabelPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7614291A9BBAB3D4EA6F54B3 /* LabelPickerView.swift */; };
 		6F112199ECD48ADBA5680073 /* MessageActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2712B79FFB5BAFF5FEEF516A /* MessageActions.swift */; };
 		70626CB461B86C33BB92E870 /* SelectedMailQuote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841CBFC3C4AA6EB2D4C66C79 /* SelectedMailQuote.swift */; };
@@ -269,6 +272,7 @@
 		9C6BF23B0C9161F30BDE4A77 /* SwatchPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B19D08B1E7974E9D52A622E /* SwatchPicker.swift */; };
 		9C833D67144E414955B2C340 /* AttachmentStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CAD881F5F6678BF14AC6CB /* AttachmentStrip.swift */; };
 		9D5F4A849C2383F3D9D792B0 /* CalendarRecurrenceControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEF87EC4ED6C530488EF4225 /* CalendarRecurrenceControl.swift */; };
+		9D83366C9410D1A023CADDE2 /* MessageHeaderInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73385B09A673AC6AEFA8AF5 /* MessageHeaderInteraction.swift */; };
 		9E2E9146DCA243D964E7B579 /* SyncActivityGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 792BA8B8FE273C5F8CD53721 /* SyncActivityGuard.swift */; };
 		9EAA024E551B7BF6C214D189 /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57378F029EEBF791E78C1170 /* ComposeView.swift */; };
 		9FB8EDDD9835D1A99B9D0586 /* MailSpotlightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96E31A21C3D2E56308D570D5 /* MailSpotlightTests.swift */; };
@@ -582,6 +586,7 @@
 		648E619EA8F67283649EE413 /* DefaultMailApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultMailApp.swift; sourceTree = "<group>"; };
 		64B1090617F5F697D040AB0C /* CalendarTimeZonePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimeZonePicker.swift; sourceTree = "<group>"; };
 		65AA112E1A6F6C156C2E8FD8 /* OnboardingWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindowPresentation.swift; sourceTree = "<group>"; };
+		65B90B4BC013E096DB133BA2 /* MessageHeaderInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageHeaderInteractionTests.swift; sourceTree = "<group>"; };
 		6777C9CE29FF391731A79152 /* ComposeAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeAssistantView.swift; sourceTree = "<group>"; };
 		67C40023DEACCD9496AF732D /* MailboxModel+Drop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Drop.swift"; sourceTree = "<group>"; };
 		682BE50A97AB9CAD17D6F129 /* CalendarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarModel.swift; sourceTree = "<group>"; };
@@ -754,6 +759,7 @@
 		C5CCACB4E202DBA913F46E36 /* CalendarShareList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarShareList.swift; sourceTree = "<group>"; };
 		C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeModelTests.swift; sourceTree = "<group>"; };
 		C6B1962F97D1AE340138E9E8 /* Tern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tern.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C6FD73A1D7434A2EF2FBCD4C /* MessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageView.swift; sourceTree = "<group>"; };
 		C7933280D38A1A0D09A09D81 /* AssistantLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantLauncher.swift; sourceTree = "<group>"; };
 		C7B0EB5313F474DF18231F04 /* EmailCalendarExtractionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCalendarExtractionService.swift; sourceTree = "<group>"; };
 		C7DE9AAD9D06173604D49D32 /* EnclosingSplitDivider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnclosingSplitDivider.swift; sourceTree = "<group>"; };
@@ -811,6 +817,7 @@
 		E7A186C0363F91FF748B71A9 /* AssistantCalendarBindings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCalendarBindings.swift; sourceTree = "<group>"; };
 		E96634180E4EC48612BC55EB /* AttachmentAuditFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentAuditFixtures.swift; sourceTree = "<group>"; };
 		E971AFB5DDB0E8F88D6CCE9E /* OnboardingChatGPTStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingChatGPTStep.swift; sourceTree = "<group>"; };
+		E9B317CB831175945671B9D6 /* MessageHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageHeader.swift; sourceTree = "<group>"; };
 		EBA235831D99907D2840860A /* CalendarEventMenuItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMenuItems.swift; sourceTree = "<group>"; };
 		EBB8E313E484591248110FD3 /* AssistantCalendarActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCalendarActionsView.swift; sourceTree = "<group>"; };
 		EBC065B40FE60E04F167878A /* AccountProfileImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileImages.swift; sourceTree = "<group>"; };
@@ -832,6 +839,7 @@
 		F64778B3C87C76090C4808C8 /* AssistantWritingStyleCleanupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleCleanupTests.swift; sourceTree = "<group>"; };
 		F6523A63E501239DD864B657 /* AccountAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAppearance.swift; sourceTree = "<group>"; };
 		F6E763B99120FDE987E6302E /* MailToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailToolbar.swift; sourceTree = "<group>"; };
+		F73385B09A673AC6AEFA8AF5 /* MessageHeaderInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageHeaderInteraction.swift; sourceTree = "<group>"; };
 		F7A33D285AD73FE67BF707B7 /* AssistantComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantComposer.swift; sourceTree = "<group>"; };
 		F9134F1A220315EF6DFB5B89 /* AssistantWritingStyleCleanup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantWritingStyleCleanup.swift; sourceTree = "<group>"; };
 		FAA7CC885F3A6C23AE46C631 /* Tern.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tern.entitlements; sourceTree = "<group>"; };
@@ -986,9 +994,12 @@
 				0E8F3C0381240F67DC8DAA44 /* MailToolbarActions.swift */,
 				4F78C5270B0AE64BD13220AD /* MainView.swift */,
 				2712B79FFB5BAFF5FEEF516A /* MessageActions.swift */,
+				E9B317CB831175945671B9D6 /* MessageHeader.swift */,
+				F73385B09A673AC6AEFA8AF5 /* MessageHeaderInteraction.swift */,
 				DC15FBA92C4C43F3FF31B932 /* MessageListHeader.swift */,
 				D4CEE39609A5EF3263B4CFB8 /* MessageListRow.swift */,
 				AE48E8F1578CB0B12C3174CE /* MessageListSettingsView.swift */,
+				C6FD73A1D7434A2EF2FBCD4C /* MessageView.swift */,
 				96214EE63FDC52A0940F4105 /* MessageWebView.swift */,
 				CDBA3A70D386B9B21E8AA2E9 /* MessageWebViewWarmup.swift */,
 				F07C7F388D831253FD5749C5 /* NoticeView.swift */,
@@ -1118,6 +1129,7 @@
 				96E31A21C3D2E56308D570D5 /* MailSpotlightTests.swift */,
 				4E87256E2D24113BE2D1FBC7 /* MailToolbarObservationTests.swift */,
 				B6AB2DB7E75C1B7F5380F194 /* MailUserActivityTests.swift */,
+				65B90B4BC013E096DB133BA2 /* MessageHeaderInteractionTests.swift */,
 				23ED6704E2327332CF95D7E8 /* MessageListTests.swift */,
 				211CCB052F53DE7A1CC9E260 /* MessagePrefetchTests.swift */,
 				AE2664304C0271DB6260097A /* MessageWebViewTests.swift */,
@@ -1654,6 +1666,7 @@
 				9C1D4A2B411C0FF371063602 /* MailToolbarObservationTests.swift in Sources */,
 				7A3B4D67D679E5D69435F8EE /* MailUserActivityTests.swift in Sources */,
 				C425E04473701AD8E199ADDF /* MailboxModelTests.swift in Sources */,
+				1D6EB634B1B67ED1E7DBB923 /* MessageHeaderInteractionTests.swift in Sources */,
 				E9382CA307E5728772B59654 /* MessageListTests.swift in Sources */,
 				2C89D8CC4D0AA8E180253506 /* MessagePrefetchTests.swift in Sources */,
 				4D98D8B04ADE002F58A188E1 /* MessageWebViewTests.swift in Sources */,
@@ -1905,12 +1918,15 @@
 				28A770F2C6AA4314EEBEBFD5 /* MaintenanceSettingsView.swift in Sources */,
 				B143F8673CEDB091A00C8193 /* ManagedAttachmentFiles.swift in Sources */,
 				6F112199ECD48ADBA5680073 /* MessageActions.swift in Sources */,
+				06DA8AC164B046090BC2F9A4 /* MessageHeader.swift in Sources */,
+				9D83366C9410D1A023CADDE2 /* MessageHeaderInteraction.swift in Sources */,
 				E004E01E6B9D6CA8BB5C8DE4 /* MessageListHeader.swift in Sources */,
 				94FC0BF2A2519CA66D5A71EF /* MessageListItem.swift in Sources */,
 				9094EE96735D683EBBC5FD4E /* MessageListPreferences.swift in Sources */,
 				E3D99DCB9F2721B000C307E6 /* MessageListRow.swift in Sources */,
 				73F5E8F08DC4545F5200E52D /* MessageListSettingsView.swift in Sources */,
 				ABD192041FE184BDEDED14F4 /* MessagePrefetch.swift in Sources */,
+				6E702AD7C3267D8D0C453ED4 /* MessageView.swift in Sources */,
 				22D1AC51F77E0C8210652146 /* MessageWebView.swift in Sources */,
 				DBEBD0B6A369151867CBC5C5 /* MessageWebViewWarmup.swift in Sources */,
 				AF93F6AA794F801A101ED115 /* NSPasteboard+Text.swift in Sources */,
