@@ -13,6 +13,7 @@ extension MailboxModel {
 
     func markConversationRead(_ key: ThreadKey, messageID: String? = nil) async {
         guard let owner = account(id: key.accountID) else { return }
+        retainUnreadRowsForReading(key, messageID: messageID)
         do {
             let unread = try await cache.read { tx in
                 try tx.currentLabels(threadID: key.threadID, accountID: key.accountID).contains {

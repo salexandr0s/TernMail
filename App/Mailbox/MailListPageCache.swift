@@ -110,6 +110,7 @@ final class MailListPageCache {
         let accountIDs: [String]
         let labelID: String
         let limit: Int
+        var retainedReadRows: Set<MailListRowID> = []
     }
 
     private final class Entry {
@@ -144,7 +145,10 @@ final class MailListPageCache {
         let entry = Entry()
         entries[key] = entry
         while recent.count > capacity { remove(recent.removeFirst()) }
-        let stream = cache.listPage(accountIDs: key.accountIDs, labelID: key.labelID, limit: key.limit)
+        let retained = Dictionary(grouping: key.retainedReadRows, by: \.accountID)
+            .mapValues { Set($0.compactMap(\.messageID)) }
+        let stream = cache.listPage(.mailbox(accountIDs: key.accountIDs, labelID: key.labelID, limit: key.limit,
+            retainingReadMessageIDs: retained))
         entry.task = Task { [weak self, weak entry] in
             do {
                 for try await page in stream {
