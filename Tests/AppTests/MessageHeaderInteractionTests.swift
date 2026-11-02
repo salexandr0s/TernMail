@@ -220,56 +220,103 @@ import WebKit
                     onOpenSource: { _ in state.sourceActions += 1 }, onRefresh: {}, onSettings: {})
                 Spacer(minLength: 0)
             }.padding(Tokens.Space.s4).background(Tokens.Surface.canvas)
-            let window = makeWindow(root, width: variant == "long" ? 420 : 760, height: variant == "tasks" ? 560 : 300)
+            let window = makeWindow(root, width: variant == "long" ? 420 : 760, height: variant == "tasks" ? 480 : 300)
             defer { window.close() }
-            try await settle()
-            if element(id: "summary-sources", in: window) == nil {
-                try capture(window, name: "summary-\(variant)-initial.png")
-                print("Summary accessible controls: \(elements(in: window).map { ($0.id ?? "none") + ":" + ($0.role ?? "none") }.joined(separator: ", "))")
+            func activate(_ id: String) throws {
+                let control = try #require(element(id: id, in: window))
+                try #require(control.press())
             }
-            try await eventually { self.element(id: "summary-sources", in: window) != nil }
-            let details = element(id: "summary-details", in: window)
-            if variant == "short" {
-                #expect(details == nil, "A complete short summary must not offer an empty disclosure")
+            try await eventually { self.element(id: "summary-disclosure", in: window)?.value == "Expanded" }
+            try await settle()
+            #expect(element(id: "summary-task-sources-0", in: window) == nil)
+            #expect(element(id: "summary-decision-sources-0", in: window) == nil)
+            if variant == "long" {
+                try await eventually { self.element(id: "summary-details", in: window) != nil }
+                try activate("summary-details")
+                try await eventually { self.element(id: "summary-details", in: window)?.value == "Expanded" }
+                try activate("summary-details")
+                try await eventually { self.element(id: "summary-details", in: window)?.value == "Collapsed" }
             } else {
-                try #require(details != nil, "Clipped text and tasks must remain expandable")
-                if variant == "tasks" {
-                    #expect(details?.label?.contains("3 open tasks · 2 decisions") == true)
-                    #expect(elements(in: window).contains {
-                        $0.label == "Based on partial message content" || $0.value == "Based on partial message content"
-                    })
-                } else if variant == "decisions" {
-                    #expect(details?.label?.contains("1 decision") == true)
-                }
+                #expect(element(id: "summary-details", in: window) == nil,
+                    "A complete overview must not offer an empty Read more control")
+            }
+            if variant == "tasks" {
+                #expect(element(id: "summary-tasks-toggle", in: window)?.value == "Collapsed")
+                #expect(element(id: "summary-decisions-toggle", in: window)?.value == "Collapsed")
+            } else if variant == "decisions" {
+                #expect(element(id: "summary-tasks-toggle", in: window) == nil)
+                #expect(element(id: "summary-decisions-toggle", in: window)?.value == "Collapsed")
             }
             for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                 window.appearance = NSAppearance(named: appearance)
                 try await settle()
-                try capture(window, name: "summary-\(variant)-\(name).png")
+                try capture(window, name: "summary-\(variant)-compact-\(name).png")
             }
             let sources = try #require(element(id: "summary-sources", in: window))
-            let titles = try await menuTitles(open: { try clickControl(sources, in: window) }, selectingFirst: true)
-            #expect(!titles.isEmpty)
-            #expect(state.sourceActions == 1, "A source must remain usable without expanding the summary")
-            if let details {
-                try #require(details.press())
-                try await eventually { self.element(id: "summary-details", in: window)?.value == "Expanded" }
-                if variant == "tasks" {
-                    try await eventually {
-                        guard let taskSource = self.element(id: "summary-task-sources-0", in: window) else { return false }
-                        return !taskSource.frame.isEmpty
-                    }
-                }
-                // Accessibility state changes before the disclosure animation finishes.
+            _ = try await menuTitles(open: { try clickControl(sources, in: window) }, selectingFirst: true)
+            #expect(state.sourceActions == 1)
+            #expect(element(id: "summary-disclosure", in: window)?.value == "Expanded")
+
+            // Each section opens independently; the main disclosure restores that choice.
+            if variant == "tasks" {
+                try activate("summary-tasks-toggle")
+                try await eventually { self.element(id: "summary-task-sources-0", in: window) != nil }
+                #expect(element(id: "summary-decisions-toggle", in: window)?.value == "Collapsed")
+                #expect(element(id: "summary-decision-sources-0", in: window) == nil)
                 try await Task.sleep(for: .seconds(Tokens.Motion.base))
                 try await settle()
+                try capture(window, name: "summary-tasks-only.png")
+            }
+            try activate("summary-disclosure")
+            try await eventually { self.element(id: "summary-overview", in: window) == nil }
+            try await eventually { self.element(id: "summary-tasks-toggle", in: window) == nil }
+            #expect(element(id: "summary-disclosure", in: window)?.value == "Collapsed")
+            if variant == "tasks" {
+                #expect(elements(in: window).contains { $0.label == "Based on partial message content" })
+                window.setContentSize(NSSize(width: 420, height: 480))
+            }
+            try await Task.sleep(for: .seconds(Tokens.Motion.base))
+            try await settle()
+            try capture(window, name: "summary-\(variant)-minimised.png")
+            let minimisedSources = try #require(element(id: "summary-sources", in: window))
+            _ = try await menuTitles(open: { try clickControl(minimisedSources, in: window) }, selectingFirst: true)
+            #expect(state.sourceActions == 2)
+            #expect(element(id: "summary-disclosure", in: window)?.value == "Collapsed",
+                "Opening a source must not expand the summary")
+            try activate("summary-disclosure")
+            try await eventually { self.element(id: "summary-overview", in: window) != nil }
+            if variant == "tasks" {
+                #expect(element(id: "summary-tasks-toggle", in: window)?.value == "Expanded")
+                #expect(element(id: "summary-decisions-toggle", in: window)?.value == "Collapsed")
+                try activate("summary-tasks-toggle")
+                try await eventually { self.element(id: "summary-task-sources-0", in: window) == nil }
+                try activate("summary-decisions-toggle")
+                try await eventually { self.element(id: "summary-decision-sources-0", in: window) != nil }
+                #expect(element(id: "summary-tasks-toggle", in: window)?.value == "Collapsed")
+            }
+
+            if variant != "short" {
+                // Expand All must also open the shell from its minimised state.
+                try activate("summary-disclosure")
+                try await eventually { self.element(id: "summary-disclosure", in: window)?.value == "Collapsed" }
+                try activate("summary-expand-all")
+                try await eventually { self.element(id: "summary-disclosure", in: window)?.value == "Expanded" }
+                if variant == "long" {
+                    try await eventually { self.element(id: "summary-details", in: window)?.value == "Expanded" }
+                } else {
+                    try await eventually { self.element(id: "summary-decisions-toggle", in: window)?.value == "Expanded" }
+                    if variant == "tasks" {
+                        #expect(element(id: "summary-tasks-toggle", in: window)?.value == "Expanded")
+                    }
+                }
+                try await Task.sleep(for: .seconds(Tokens.Motion.base))
                 for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                     window.appearance = NSAppearance(named: appearance)
-                    if variant == "tasks" { window.setContentSize(NSSize(width: 760, height: 560)) }
+                    if variant == "tasks" { window.setContentSize(NSSize(width: 760, height: 480)) }
                     try await settle()
                     try capture(window, name: "summary-\(variant)-expanded-\(name).png")
                     if variant == "tasks" {
-                        window.setContentSize(NSSize(width: 420, height: 740))
+                        window.setContentSize(NSSize(width: 420, height: 600))
                         try await settle()
                         try capture(window, name: "summary-tasks-narrow-\(name).png")
                         let lastTaskSource = try #require(element(id: "summary-task-sources-2", in: window))
@@ -281,18 +328,30 @@ import WebKit
                 if variant == "tasks" {
                     let taskSource = try #require(element(id: "summary-task-sources-1", in: window))
                     _ = try await menuTitles(open: { try clickControl(taskSource, in: window) }, selectingFirst: true)
-                    #expect(state.sourceActions == 2)
                     let decisionSource = try #require(element(id: "summary-decision-sources-0", in: window))
                     _ = try await menuTitles(open: { try clickControl(decisionSource, in: window) }, selectingFirst: true)
-                    #expect(state.sourceActions == 3)
-                    window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
-                    try await settle()
-                    try capture(window, name: "summary-tasks-increased-contrast.png")
+                    #expect(state.sourceActions == 4)
+                    #expect(element(id: "summary-tasks-toggle", in: window)?.value == "Expanded")
+                    #expect(element(id: "summary-decisions-toggle", in: window)?.value == "Expanded")
                 }
-                let collapse = try #require(element(id: "summary-details", in: window))
-                try #require(collapse.press())
-                try await eventually { self.element(id: "summary-details", in: window)?.value == "Collapsed" }
+                try activate("summary-expand-all")
                 try await eventually { self.element(id: "summary-task-sources-0", in: window) == nil }
+                try await eventually { self.element(id: "summary-decision-sources-0", in: window) == nil }
+                if variant == "long" {
+                    #expect(element(id: "summary-details", in: window)?.value == "Collapsed")
+                }
+                #expect(element(id: "summary-disclosure", in: window)?.value == "Expanded",
+                    "Collapse All keeps the summary overview visible")
+                // Mixed-state Expand All opens only what is closed, without hiding open content.
+                if variant == "tasks" {
+                    try activate("summary-tasks-toggle")
+                    try await eventually { self.element(id: "summary-tasks-toggle", in: window)?.value == "Expanded" }
+                    try activate("summary-expand-all")
+                    try await eventually { self.element(id: "summary-decisions-toggle", in: window)?.value == "Expanded" }
+                    #expect(element(id: "summary-tasks-toggle", in: window)?.value == "Expanded")
+                }
+            } else {
+                #expect(element(id: "summary-expand-all", in: window) == nil)
             }
             window.close()
         }

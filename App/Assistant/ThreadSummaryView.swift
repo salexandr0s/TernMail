@@ -105,74 +105,54 @@ struct ThreadSummaryContent: View {
     let onRefresh: () -> Void
     let onSettings: () -> Void
 
-    @State private var isExpanded = false
+    private enum Section: String, Hashable { case tasks, decisions }
+
+    @State private var isExpanded = true
+    @State private var isOverviewExpanded = false
+    @State private var expandedSections: Set<Section> = []
     @State private var fullTextHeight: CGFloat = 0
     @State private var collapsedTextHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.locale) private var locale
 
-    private var hasDetails: Bool {
-        !report.summary.decisions.isEmpty || !report.summary.openTasks.isEmpty
-            || fullTextHeight > collapsedTextHeight + Tokens.Border.hairline
+    private var hasClippedOverview: Bool {
+        fullTextHeight > collapsedTextHeight + Tokens.Border.hairline
     }
 
-    private var disclosureTitle: String {
-        if isExpanded { return "Show less" }
+    private var availableSections: Set<Section> {
+        var sections: Set<Section> = []
+        if !report.summary.openTasks.isEmpty { sections.insert(.tasks) }
+        if !report.summary.decisions.isEmpty { sections.insert(.decisions) }
+        return sections
+    }
+
+    private var isFullyExpanded: Bool {
+        isExpanded && availableSections.isSubset(of: expandedSections)
+            && (!hasClippedOverview || isOverviewExpanded)
+    }
+
+    private var countsDescription: String {
         let tasks = report.summary.openTasks.count
         let decisions = report.summary.decisions.count
         let counts = [
             tasks > 0 ? "\(tasks) open \(tasks == 1 ? "task" : "tasks")" : nil,
             decisions > 0 ? "\(decisions) \(decisions == 1 ? "decision" : "decisions")" : nil,
         ].compactMap { $0 }
-        return counts.isEmpty ? "Show details" : counts.joined(separator: " · ")
+        return counts.joined(separator: " · ")
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            HStack(spacing: Tokens.Space.s2) {
-                SummaryHeading()
-                if isRefreshing {
-                    ProgressView().controlSize(.mini).accessibilityLabel("Refreshing summary")
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            header
+            if isExpanded {
+                overview
+                if report.hasPartialCoverage {
+                    Label("Based on partial message content", systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .help("Some messages, attachments, or longer passages could not be included.")
                 }
-                Spacer(minLength: Tokens.Space.s2)
-                sourceMenu(sources: report.sources, title: "Sources", accessibilityID: "summary-sources")
-                Menu {
-                    Button("Refresh Summary", systemImage: "arrow.clockwise", action: onRefresh)
-                        .disabled(isRefreshing)
-                    Button("Assistant Settings…", systemImage: "gearshape", action: onSettings)
-                } label: {
-                    Label("Summary options", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                        .frame(width: Tokens.Control.iconButton, height: Tokens.Space.s6)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden)
-                .fixedSize()
-                .accessibilityLabel("Summary options")
-                .accessibilityIdentifier("summary-options")
-                .help("Summary options")
-            }
-
-            summaryText
-                .lineLimit(isExpanded ? nil : 2)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .background(alignment: .topLeading) {
-                    // Measure both variants at the actual reading width. An empty Details
-                    // control is unnecessary, but clipped summaries must remain expandable.
-                    summaryText.lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedTextHeight = $0 }
-                        .hidden().accessibilityHidden(true)
-                    summaryText.fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullTextHeight = $0 }
-                        .hidden().accessibilityHidden(true)
-                }
-
-            if report.hasPartialCoverage {
-                Label("Based on partial message content", systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .help("Some messages, attachments, or longer passages could not be included.")
+                details
             }
 
             if let refreshError {
@@ -182,28 +162,110 @@ struct ThreadSummaryContent: View {
                 }
                 .font(.caption)
             }
-
-            if isExpanded {
-                details
-            }
-            if hasDetails || isExpanded {
-                Button {
-                    withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) { isExpanded.toggle() }
-                } label: {
-                    Label(disclosureTitle, systemImage: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.weight(.medium))
-                        .padding(.vertical, Tokens.Space.s1)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .accessibilityLabel(isExpanded ? "Show less summary detail" : "Show summary details: \(disclosureTitle)")
-                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-                .accessibilityIdentifier("summary-details")
-            }
         }
         .modifier(SummarySurface())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("thread-summary")
+    }
+
+    private var header: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            Button {
+                animate { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: Tokens.Space.s1_5) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    SummaryHeading().fixedSize()
+                    if !isExpanded, !countsDescription.isEmpty {
+                        Text(countsDescription).font(.caption).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: Tokens.Space.s6, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .accessibilityLabel(isExpanded ? "Minimise AI summary" : "Expand AI summary")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("summary-disclosure")
+            .accessibilityHint(countsDescription)
+            .help(isExpanded ? "Minimise summary" : "Expand summary")
+
+            if isRefreshing { ProgressView().controlSize(.mini).accessibilityLabel("Refreshing summary") }
+            if !isExpanded, report.hasPartialCoverage {
+                Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    .accessibilityLabel("Based on partial message content")
+                    .help("Based on partial message content")
+            }
+            if !availableSections.isEmpty || hasClippedOverview {
+                Button {
+                    animate {
+                        if isFullyExpanded {
+                            expandedSections = []
+                            isOverviewExpanded = false
+                        } else {
+                            isExpanded = true
+                            expandedSections = availableSections
+                            isOverviewExpanded = true
+                        }
+                    }
+                } label: {
+                    Label(isFullyExpanded ? "Collapse all sections" : "Expand all sections",
+                          systemImage: isFullyExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .labelStyle(.iconOnly)
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityIdentifier("summary-expand-all")
+                .help(isFullyExpanded ? "Collapse all sections" : "Expand all sections")
+                .ternHover(radius: Tokens.Radius.sm)
+            }
+            sourceMenu(sources: report.sources, title: "Summary sources", accessibilityID: "summary-sources")
+            Menu {
+                Button("Refresh Summary", systemImage: "arrow.clockwise", action: onRefresh).disabled(isRefreshing)
+                Button("Assistant Settings…", systemImage: "gearshape", action: onSettings)
+            } label: {
+                Label("Summary options", systemImage: "ellipsis").labelStyle(.iconOnly)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6).contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .accessibilityLabel("Summary options").accessibilityIdentifier("summary-options")
+            .help("Summary options")
+        }
+    }
+
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+            summaryText
+                .lineLimit(isOverviewExpanded ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("summary-overview")
+                .background(alignment: .topLeading) {
+                    summaryText.lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedTextHeight = $0 }
+                        .hidden().accessibilityHidden(true)
+                    summaryText.fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullTextHeight = $0 }
+                        .hidden().accessibilityHidden(true)
+                }
+            if hasClippedOverview {
+                Button(isOverviewExpanded ? "Show less" : "Read more") {
+                    animate { isOverviewExpanded.toggle() }
+                }
+                .font(.caption).buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel(isOverviewExpanded ? "Collapse summary overview" : "Read full summary overview")
+                .accessibilityValue(isOverviewExpanded ? "Expanded" : "Collapsed")
+                .accessibilityIdentifier("summary-details")
+            }
+        }
+    }
+
+    private func animate(_ changes: () -> Void) {
+        withAnimation(reduceMotion ? nil : Tokens.Motion.standard(), changes)
     }
 
     private var summaryText: some View {
@@ -214,35 +276,20 @@ struct ThreadSummaryContent: View {
 
     @ViewBuilder private var details: some View {
         if !report.summary.openTasks.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                sectionHeading("Open tasks", symbol: "list.bullet", count: report.summary.openTasks.count)
-                VStack(spacing: 0) {
-                    ForEach(report.summary.openTasks.indices, id: \.self) { index in
-                        if index > 0 {
-                            Divider().padding(.leading, Tokens.Space.s12)
-                        }
-                        taskRow(report.summary.openTasks[index], index: index)
-                    }
-                }
-                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay {
-                    if contrast == .increased {
-                        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                            .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
-                            .allowsHitTesting(false)
-                    }
+            disclosureSection(.tasks, title: "Open tasks", count: report.summary.openTasks.count) {
+                ForEach(report.summary.openTasks.indices, id: \.self) { index in
+                    if index > 0 { Divider().padding(.leading, Tokens.Space.s8) }
+                    taskRow(report.summary.openTasks[index], index: index)
                 }
             }
-            .padding(.top, Tokens.Space.s2)
         }
         if !report.summary.decisions.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                sectionHeading("Decisions", symbol: "checkmark.bubble", count: report.summary.decisions.count)
+            disclosureSection(.decisions, title: "Decisions", count: report.summary.decisions.count) {
                 ForEach(report.summary.decisions.indices, id: \.self) { index in
                     let decision = report.summary.decisions[index]
                     HStack(alignment: .top, spacing: Tokens.Space.s2) {
                         Text("•").foregroundStyle(.secondary)
-                            .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                            .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
                             .accessibilityHidden(true)
                         Text(decision.text).font(.callout)
                             .fixedSize(horizontal: false, vertical: true)
@@ -250,36 +297,64 @@ struct ThreadSummaryContent: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, Tokens.Space.s1)
                         sourceMenu(sources: report.sources.filter { decision.sourceIDs.contains($0.id) },
-                            title: "Sources for decision \(index + 1)", iconOnly: true,
+                            title: "Sources for decision \(index + 1)",
                             accessibilityID: "summary-decision-sources-\(index)")
                     }
+                    .padding(.horizontal, Tokens.Space.s2)
+                    .padding(.vertical, Tokens.Space.s1)
                 }
             }
-            .padding(.top, Tokens.Space.s2)
         }
     }
 
-    private func sectionHeading(_ title: String, symbol: String, count: Int) -> some View {
-        HStack(spacing: Tokens.Space.s1_5) {
-            Label(title, systemImage: symbol).font(.caption.weight(.semibold))
-            Text("\(count)").font(.caption.monospacedDigit())
-                .padding(.horizontal, Tokens.Space.s1_5)
+    private func disclosureSection<Content: View>(_ section: Section, title: String, count: Int,
+                                                   @ViewBuilder content: () -> Content) -> some View {
+        let isOpen = expandedSections.contains(section)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                animate {
+                    if isOpen { expandedSections.remove(section) }
+                    else { expandedSections.insert(section) }
+                }
+            } label: {
+                HStack(spacing: Tokens.Space.s1_5) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Text(title).font(.caption.weight(.semibold))
+                    Text("\(count)").font(.caption.monospacedDigit())
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: Tokens.Space.s6, alignment: .leading)
+                .padding(.horizontal, Tokens.Space.s2)
                 .padding(.vertical, Tokens.Space.s0_5)
-                .background(Color.primary.opacity(Tokens.Opacity.hover), in: Capsule())
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .accessibilityLabel("\(isOpen ? "Collapse" : "Expand") \(title), \(count)")
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("summary-\(section.rawValue)-toggle")
+            .ternHover(radius: Tokens.Radius.sm)
+            if isOpen { content() }
         }
-        .foregroundStyle(.secondary)
-        .accessibilityElement(children: .combine)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .overlay {
+            if contrast == .increased {
+                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                    .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func taskRow(_ task: AssistantSummary.OpenTask, index: Int) -> some View {
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
             Text("\(index + 1)").font(.caption.weight(.medium).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
                 .accessibilityLabel("Task \(index + 1)")
-            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                Text(task.description).font(.callout.weight(.medium))
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(task.description).font(.callout)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     .padding(.top, Tokens.Space.s1)
                 if task.owner != nil || task.dueDate != nil {
@@ -293,10 +368,11 @@ struct ThreadSummaryContent: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             sourceMenu(sources: report.sources.filter { task.sourceIDs.contains($0.id) },
-                title: "Sources for task \(index + 1)", iconOnly: true,
+                title: "Sources for task \(index + 1)",
                 accessibilityID: "summary-task-sources-\(index)")
         }
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1_5)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("summary-task-\(index)")
     }
@@ -314,7 +390,7 @@ struct ThreadSummaryContent: View {
         }
     }
 
-    @ViewBuilder private func sourceMenu(sources: [AssistantSource], title: String, iconOnly: Bool = false,
+    @ViewBuilder private func sourceMenu(sources: [AssistantSource], title: String,
                                         accessibilityID: String) -> some View {
         if !sources.isEmpty {
             Menu {
@@ -322,19 +398,16 @@ struct ThreadSummaryContent: View {
                     Button(sourceLabel(source)) { onOpenSource(source) }
                 }
             } label: {
-                if iconOnly {
-                    Label(title, systemImage: "text.quote").labelStyle(.iconOnly)
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                        .contentShape(Rectangle())
-                }
-                else { Text(title) }
+                Label(title, systemImage: "text.quote").labelStyle(.iconOnly)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(Rectangle())
             }
             .font(.caption)
             .controlSize(.small)
             .foregroundStyle(.secondary)
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .fixedSize()
-            .accessibilityLabel(iconOnly ? title : "Summary sources")
+            .accessibilityLabel(title)
             .accessibilityIdentifier(accessibilityID)
             .help("Open supporting messages")
         }

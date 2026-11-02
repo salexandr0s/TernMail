@@ -29,11 +29,11 @@ The header uses AppKit click counts, which follow the system double-click settin
 
 ## Summary
 
-- Use a lightly shaded compact surface with a small AI summary label and two lines of summary text.
-- Keep Sources visible. Show details only for clipped summary text, decisions, or tasks.
-- Show task and decision counts in the collapsed disclosure. Expanded summaries put numbered task rows first, with wrapping descriptions, owner labels, and localized due dates. Due dates stay on their original calendar day in every time zone.
-- Group tasks on one inset surface with separators; show decisions as a separate bullet list. Each item keeps its own source control and contextual accessibility label. Task numbers indicate list order and do not imply priority or completion state.
-- Keep partial-coverage qualifications visible when collapsed.
+- Start with two lines of overview text and compact Tasks/Decisions disclosure rows. Each populated section has a full-width toggle and count; empty sections are omitted. The overview has its own Read more control only when clipped.
+- The AI summary heading minimises the whole card to one bar. Reopening restores the chosen sections. A separate Expand All/Collapse All control handles every available section and the full overview; Collapse All leaves the overview visible.
+- Keep source and options controls in the header, including when minimised. Partial coverage remains visible as a labelled info icon in the minimised header and a caption in the open summary.
+- Expanded tasks use compact numbered rows with wrapping descriptions, owner labels, and localized due dates. Due dates stay on their original calendar day in every time zone. Number badges and extra row padding are removed.
+- Group tasks with separators; use a separate collapsible bullet list for decisions. Each item retains its own source control and contextual accessibility label. Task numbers indicate list order and do not imply priority or completion state.
 - Retain the current report while refreshing the same content and access identity; show refresh errors beside it. Discard it immediately when that identity changes.
 - Keep asynchronous lifecycle ownership on a stable container when switching between loading and content.
 - Ask for one or two sentences, about 45 words at most. Omit routine no-action endings while preserving material explicit instructions not to reply or act.
