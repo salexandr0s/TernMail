@@ -122,7 +122,6 @@ struct ThreadSummaryContent: View {
     @State private var fullTextHeight: CGFloat = 0
     @State private var collapsedTextHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.locale) private var locale
 
     private var hasClippedOverview: Bool {
@@ -152,7 +151,7 @@ struct ThreadSummaryContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             header
             if isExpanded {
                 overview
@@ -186,16 +185,17 @@ struct ThreadSummaryContent: View {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .foregroundStyle(.secondary)
                     SummaryHeading().fixedSize()
                     if !isExpanded, !countsDescription.isEmpty {
-                        Text(countsDescription).font(.caption).lineLimit(1)
+                        Text(countsDescription).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, minHeight: Tokens.Space.s6, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .buttonStyle(.plain)
             .accessibilityLabel(isExpanded ? "Minimise AI summary" : "Expand AI summary")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("summary-disclosure")
@@ -249,12 +249,12 @@ struct ThreadSummaryContent: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
             summaryText
-                .lineLimit(isOverviewExpanded ? nil : 2)
+                .lineLimit(isOverviewExpanded ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("summary-overview")
                 .background(alignment: .topLeading) {
-                    summaryText.lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    summaryText.lineLimit(3).fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedTextHeight = $0 }
                         .hidden().accessibilityHidden(true)
                     summaryText.fixedSize(horizontal: false, vertical: true)
@@ -262,10 +262,19 @@ struct ThreadSummaryContent: View {
                         .hidden().accessibilityHidden(true)
                 }
             if hasClippedOverview {
-                Button(isOverviewExpanded ? "Show less" : "Read more") {
+                Button {
                     animate { isOverviewExpanded.toggle() }
+                } label: {
+                    HStack(spacing: Tokens.Space.s1) {
+                        Text(isOverviewExpanded ? "Show less" : "Read more")
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.medium))
+                            .rotationEffect(.degrees(isOverviewExpanded ? 180 : 0))
+                    }
+                    .frame(minHeight: Tokens.Space.s6, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .font(.caption).buttonStyle(.plain).foregroundStyle(.secondary)
+                .font(.caption).buttonStyle(.plain).foregroundStyle(Color.accentColor)
                 .accessibilityLabel(isOverviewExpanded ? "Collapse summary overview" : "Read full summary overview")
                 .accessibilityValue(isOverviewExpanded ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("summary-details")
@@ -280,27 +289,27 @@ struct ThreadSummaryContent: View {
     private var summaryText: some View {
         Text(report.summary.summary)
             .font(.callout)
+            .lineSpacing(Tokens.Space.s0_5)
             .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
     }
 
     @ViewBuilder private var details: some View {
         if !report.summary.openTasks.isEmpty {
-            disclosureSection(.tasks, title: "Open tasks", count: report.summary.openTasks.count) {
+            disclosureSection(.tasks, title: "Open tasks", symbol: "checklist", count: report.summary.openTasks.count) {
                 ForEach(report.summary.openTasks.indices, id: \.self) { index in
-                    if index > 0 { Divider().padding(.horizontal, Tokens.Space.s3) }
+                    if index > 0 { Divider() }
                     taskRow(report.summary.openTasks[index], index: index)
                 }
             }
         }
         if !report.summary.decisions.isEmpty {
-            disclosureSection(.decisions, title: "Decisions", count: report.summary.decisions.count) {
+            disclosureSection(.decisions, title: "Decisions", symbol: "checkmark.bubble", count: report.summary.decisions.count) {
                 ForEach(report.summary.decisions.indices, id: \.self) { index in
                     let decision = report.summary.decisions[index]
+                    if index > 0 { Divider() }
                     HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                        Text("•").foregroundStyle(.secondary)
-                            .frame(width: Tokens.Space.s4, height: Tokens.Space.s6)
-                            .accessibilityHidden(true)
                         Text(decision.text).font(.callout)
+                            .lineSpacing(Tokens.Space.s0_5)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -309,34 +318,40 @@ struct ThreadSummaryContent: View {
                             title: "Sources for decision \(index + 1)",
                             accessibilityID: "summary-decision-sources-\(index)")
                     }
-                    .padding(.horizontal, Tokens.Space.s2)
-                    .padding(.vertical, Tokens.Space.s1)
+                    .padding(.vertical, Tokens.Space.s2)
                 }
             }
         }
     }
 
-    private func disclosureSection<Content: View>(_ section: Section, title: String, count: Int,
+    private func disclosureSection<Content: View>(_ section: Section, title: String, symbol: String, count: Int,
                                                    @ViewBuilder content: () -> Content) -> some View {
         let isOpen = expandedSections.contains(section)
         return VStack(alignment: .leading, spacing: 0) {
+            Divider().padding(.bottom, Tokens.Space.s2)
             Button {
                 animate {
                     if isOpen { expandedSections.remove(section) }
                     else { expandedSections.insert(section) }
                 }
             } label: {
-                HStack(spacing: Tokens.Space.s1_5) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                    Text(title).font(.caption.weight(.semibold))
-                    Text("\(count)").font(.caption.monospacedDigit())
+                HStack(spacing: Tokens.Space.s2) {
+                    Image(systemName: symbol)
+                        .font(.caption)
+                        .frame(width: Tokens.Space.s4)
+                        .accessibilityHidden(true)
+                    Text(title).font(.caption.weight(.medium))
+                    Text("\(count)").font(.caption2.monospacedDigit())
+                        .padding(.horizontal, Tokens.Space.s1_5)
+                        .padding(.vertical, Tokens.Space.s0_5)
+                        .background(Color.primary.opacity(Tokens.Opacity.hover), in: Capsule())
                     Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.medium))
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .frame(width: Tokens.Space.s6)
                 }
                 .frame(maxWidth: .infinity, minHeight: Tokens.Space.s6, alignment: .leading)
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.vertical, Tokens.Space.s0_5)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -344,24 +359,20 @@ struct ThreadSummaryContent: View {
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("summary-\(section.rawValue)-toggle")
             .ternHover(radius: Tokens.Radius.sm)
-            if isOpen { content() }
-        }
-        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay {
-            if contrast == .increased {
-                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                    .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
-                    .allowsHitTesting(false)
+            if isOpen {
+                VStack(alignment: .leading, spacing: 0, content: content)
+                    .padding(.top, Tokens.Space.s1)
             }
         }
     }
 
     private func taskRow(_ task: AssistantSummary.OpenTask, index: Int) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
             VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                Text(task.description).font(.callout.weight(.medium))
+                Text(task.description).font(.callout)
+                    .lineSpacing(Tokens.Space.s0_5)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    .padding(.top, Tokens.Space.s1_5)
+                    .padding(.top, Tokens.Space.s1)
                 if task.owner != nil || task.dueDate != nil {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: Tokens.Space.s3) { taskMetadata(task) }
@@ -372,19 +383,17 @@ struct ThreadSummaryContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: Tokens.Space.s0_5) {
+            HStack(spacing: Tokens.Space.s1) {
                 sourceMenu(sources: report.sources.filter { task.sourceIDs.contains($0.id) },
                     title: "Sources for task \(index + 1)",
                     accessibilityID: "summary-task-sources-\(index)")
-                    .frame(height: Tokens.Control.iconButton)
                 if let tasks, let onAddTask {
                     EmailTaskAddButton(request: EmailTaskRequest.suggestion(task, report: report,
-                        detail: detail, accountEmail: taskAccountEmail), model: tasks, onAdd: onAddTask)
+                        detail: detail, accountEmail: taskAccountEmail), model: tasks, onAdd: onAddTask, isCompact: true)
                         .accessibilityIdentifier("summary-task-add-\(index)")
                 }
             }
         }
-        .padding(.horizontal, Tokens.Space.s3)
         .padding(.vertical, Tokens.Space.s2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("summary-task-\(index)")
@@ -399,9 +408,6 @@ struct ThreadSummaryContent: View {
         if let date = task.dueDate {
             Label("Due \(SummaryDueDate.formatted(date, locale: locale))", systemImage: "calendar")
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                .padding(.horizontal, Tokens.Space.s1_5)
-                .padding(.vertical, Tokens.Space.s0_5)
-                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .help(date)
         }
     }
@@ -426,6 +432,7 @@ struct ThreadSummaryContent: View {
             .accessibilityLabel(title)
             .accessibilityIdentifier(accessibilityID)
             .help("Open supporting messages")
+            .ternHover(radius: Tokens.Radius.sm)
         }
     }
 
@@ -459,8 +466,16 @@ enum SummaryDueDate {
 
 private struct SummaryHeading: View {
     var body: some View {
-        Label("AI summary", systemImage: "sparkles")
-            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        HStack(spacing: Tokens.Space.s2) {
+            Image(systemName: "sparkles")
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                    in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .accessibilityHidden(true)
+            Text("AI summary").font(.caption.weight(.semibold))
+        }
     }
 }
 
@@ -487,17 +502,15 @@ private struct SummarySurface: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, Tokens.Space.s3)
-            .padding(.vertical, Tokens.Space.s2)
+            .padding(Tokens.Space.s4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
-                in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .overlay {
-                if contrast == .increased {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
-                        .allowsHitTesting(false)
-                }
+                RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                    .strokeBorder(contrast == .increased ? Tokens.Surface.border : Tokens.ConversationHeader.border,
+                        lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
             }
     }
 }

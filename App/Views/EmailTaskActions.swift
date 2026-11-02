@@ -60,6 +60,7 @@ struct EmailTaskAddButton: View {
     let request: TaskCreationRequest
     let model: GoogleTasksModel
     let onAdd: (TaskCreationRequest) -> Void
+    var isCompact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -89,17 +90,19 @@ struct EmailTaskAddButton: View {
                 if state == .adding { ProgressView().controlSize(.mini).tint(tint) }
                 else {
                     Image(systemName: state == .added ? "checkmark" : state == .uncertain ? "arrow.clockwise" : "plus")
-                        .font(.body.weight(.semibold))
+                        .font(isCompact ? .callout.weight(.medium) : .body.weight(.semibold))
                         .foregroundStyle(tint)
                 }
             }
-            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+            .frame(width: dimension, height: dimension)
             .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                    .strokeBorder(tint.opacity(contrast == .increased ? Tokens.Opacity.outline : Tokens.Opacity.tint),
-                        lineWidth: Tokens.Border.hairline)
-                    .allowsHitTesting(false)
+                if !isCompact || contrast == .increased {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                        .strokeBorder(tint.opacity(contrast == .increased ? Tokens.Opacity.outline : Tokens.Opacity.tint),
+                            lineWidth: Tokens.Border.hairline)
+                        .allowsHitTesting(false)
+                }
             }
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
@@ -110,6 +113,8 @@ struct EmailTaskAddButton: View {
         .help(actionLabel)
         .accessibilityLabel("\(actionLabel): \(request.title)")
     }
+
+    private var dimension: CGFloat { isCompact ? Tokens.Space.s6 : Tokens.Control.iconButton }
 }
 
 private struct EmailTaskAddStyle: ButtonStyle {
