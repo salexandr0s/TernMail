@@ -47,6 +47,8 @@ struct ContactPhotoCacheKey: Hashable, Sendable {
 /// PNG bytes. Access and photo-version checks remain the caller's responsibility.
 @MainActor
 final class ContactThumbnailCache {
+    typealias Decode = @Sendable (Data) async throws -> PreparedContactThumbnail
+
     static let shared = ContactThumbnailCache()
     let capacity: Int
     private(set) var cost = 0
@@ -54,6 +56,7 @@ final class ContactThumbnailCache {
     private var sequence = 0
     private var entries: [ContactPhotoCacheKey: Entry] = [:]
     private var pending: [ContactPhotoCacheKey: Pending] = [:]
+    private let decode: Decode
     private var pressure: (any DispatchSourceMemoryPressure)?
 
     private struct Entry {
@@ -64,10 +67,13 @@ final class ContactThumbnailCache {
     private struct Pending {
         let id: UUID
         let task: Task<PreparedContactThumbnail, any Error>
+        var waiters: Set<UUID>
     }
 
-    init(capacity: Int = 32 * 1_024 * 1_024, monitorsPressure: Bool = true) {
+    init(capacity: Int = 32 * 1_024 * 1_024, monitorsPressure: Bool = true,
+         decode: @escaping Decode = ContactThumbnailCache.prepare) {
         self.capacity = max(0, capacity)
+        self.decode = decode
         if monitorsPressure {
             let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
             source.setEventHandler { [weak self] in
@@ -91,26 +97,32 @@ final class ContactThumbnailCache {
     }
 
     func image(for key: ContactPhotoCacheKey, data: Data) async throws -> NSImage {
+        try Task.checkCancellation()
         if let image = image(for: key) { return image }
+        let waiter = UUID()
         let work: Pending
-        if let existing = pending[key] { work = existing }
-        else {
-            let task = Task { try await ContactThumbnailDecoder.shared.decode(data) }
-            work = Pending(id: UUID(), task: task)
+        if var existing = pending[key] {
+            existing.waiters.insert(waiter)
+            pending[key] = existing
+            work = existing
+        } else {
+            let decode = decode
+            let task = Task { try await decode(data) }
+            work = Pending(id: UUID(), task: task, waiters: [waiter])
             pending[key] = work
             decodeCount += 1
         }
-        let decoded: PreparedContactThumbnail
-        do { decoded = try await work.task.value }
-        catch {
-            if pending[key]?.id == work.id { pending[key] = nil }
-            throw error
+        let id = work.id
+        defer { release(key: key, id: id, waiter: waiter) }
+        let decoded = try await withTaskCancellationHandler {
+            try await work.task.value
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.release(key: key, id: id, waiter: waiter) }
         }
         try Task.checkCancellation()
-        if let image = image(for: key) { return image }
         // An account removal or pressure purge must also reject late decoding.
-        guard pending[key]?.id == work.id else { throw CancellationError() }
-        pending[key] = nil
+        guard pending[key]?.id == id else { throw CancellationError() }
+        if let image = image(for: key) { return image }
         let image = NSImage(cgImage: decoded.pixels,
             size: NSSize(width: decoded.pixels.width, height: decoded.pixels.height))
         if decoded.cost <= capacity {
@@ -123,6 +135,25 @@ final class ContactThumbnailCache {
             cost += decoded.cost
         }
         return image
+    }
+
+    var pendingCount: Int { pending.count }
+
+    func waiterCount(for key: ContactPhotoCacheKey) -> Int { pending[key]?.waiters.count ?? 0 }
+
+    nonisolated private static func prepare(_ data: Data) async throws -> PreparedContactThumbnail {
+        try await ContactThumbnailDecoder.shared.decode(data)
+    }
+
+    // Pending work belongs to all its callers, including when the result exceeds
+    // the resident budget and therefore cannot be reused from entries.
+    private func release(key: ContactPhotoCacheKey, id: UUID, waiter: UUID) {
+        guard var work = pending[key], work.id == id else { return }
+        work.waiters.remove(waiter)
+        if work.waiters.isEmpty {
+            pending[key] = nil
+            work.task.cancel()
+        } else { pending[key] = work }
     }
 
     func remove(accountID: String) {

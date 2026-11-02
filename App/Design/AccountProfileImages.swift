@@ -3,6 +3,12 @@ import GmailAPI
 import ImageIO
 import Observation
 
+/// The CGImage is immutable and decoded off-main; only the receiving main actor
+/// wraps it in an NSImage, so no mutable AppKit object crosses executors.
+struct PreparedAccountProfileImage: @unchecked Sendable {
+    let pixels: CGImage
+}
+
 /// Optional Google profile photos. Mail and sign-in do not wait for them.
 @MainActor
 @Observable
@@ -13,16 +19,23 @@ final class AccountProfileImages {
     }
 
     typealias Loader = @Sendable (String, any AccessTokenProvider) async throws -> Photo?
+    typealias Decoder = @Sendable (Data) async throws -> PreparedAccountProfileImage?
 
     static let shared = AccountProfileImages()
 
     private var images: [String: NSImage] = [:]
     @ObservationIgnored private let load: Loader
+    @ObservationIgnored private let decode: Decoder
     @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var generations: [String: UUID] = [:]
     @ObservationIgnored private var cachedURLs: [String: Set<URL>] = [:]
 
-    init(load: @escaping Loader = AccountProfileImages.loadGooglePhoto) {
+    convenience init(load: @escaping Loader = AccountProfileImages.loadGooglePhoto) {
+        self.init(decode: AccountProfileImages.prepare, load: load)
+    }
+
+    init(decode: @escaping Decoder, load: @escaping Loader) {
+        self.decode = decode
         self.load = load
     }
 
@@ -34,6 +47,7 @@ final class AccountProfileImages {
         let generation = UUID()
         generations[accountID] = generation
         let load = load
+        let decode = decode
         let task = Task { [weak self] in
             do {
                 let photo = try await load(accountID, tokens)
@@ -41,14 +55,16 @@ final class AccountProfileImages {
                     Self.evict(photo?.cacheURLs ?? [])
                     return
                 }
-                defer { tasks[accountID] = nil }
+                defer { if generations[accountID] == generation { tasks[accountID] = nil } }
                 guard let photo else {
                     images[accountID] = nil
                     return
                 }
                 cachedURLs[accountID, default: []].formUnion(photo.cacheURLs)
-                guard let image = Self.decode(photo.data) else { return }
-                images[accountID] = image
+                let prepared = try await decode(photo.data)
+                guard generations[accountID] == generation, !Task.isCancelled, let prepared else { return }
+                images[accountID] = NSImage(cgImage: prepared.pixels,
+                    size: NSSize(width: prepared.pixels.width, height: prepared.pixels.height))
             } catch {
                 // A failed refresh keeps the last photo, or the UI's initials.
                 guard let self, generations[accountID] == generation else { return }
@@ -81,17 +97,8 @@ final class AccountProfileImages {
     }
 #endif
 
-    private static func decode(_ data: Data) -> NSImage? {
-        guard data.count <= 5 * 1_024 * 1_024,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 128,
-                kCGImageSourceShouldCacheImmediately: true
-              ] as CFDictionary)
-        else { return nil }
-        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    nonisolated private static func prepare(_ data: Data) async throws -> PreparedAccountProfileImage? {
+        try await AccountProfileImageDecoder.shared.decode(data)
     }
 
     // MARK: Google profile
@@ -174,6 +181,26 @@ final class AccountProfileImages {
 
     nonisolated private static func evict(_ urls: [URL]) {
         for url in urls { pictureCache.removeCachedResponse(for: URLRequest(url: url)) }
+    }
+}
+
+/// One serial worker bounds image preparation across account refreshes.
+private actor AccountProfileImageDecoder {
+    static let shared = AccountProfileImageDecoder()
+
+    func decode(_ data: Data) throws -> PreparedAccountProfileImage? {
+        try Task.checkCancellation()
+        guard data.count <= 5 * 1_024 * 1_024,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 128,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary)
+        else { return nil }
+        try Task.checkCancellation()
+        return PreparedAccountProfileImage(pixels: image)
     }
 }
 

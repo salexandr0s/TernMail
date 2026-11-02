@@ -86,15 +86,85 @@ import Testing
         #expect(images.image(for: "a") === current)
     }
 
-    private func photoData() throws -> Data {
+    @Test func backgroundPreparationKeepsImageBoundsAndRejectsOversizedData() async throws {
+        let loader = ProfileLoader(result: .success(.init(data: try photoData(width: 512, height: 256))))
+        let images = AccountProfileImages { _, _ in try await loader.load() }
+        await images.refresh(accountID: "a", tokens: ProfileTokens()).value
+        let original = try #require(images.image(for: "a"))
+        #expect(original.size == NSSize(width: 128, height: 64))
+        await loader.set(.success(.init(data: Data(repeating: 0, count: 5 * 1_024 * 1_024 + 1))))
+        await images.refresh(accountID: "a", tokens: ProfileTokens()).value
+        #expect(images.image(for: "a") === original)
+    }
+
+    @Test func cancellationDuringDecodeCannotRestorePhotoOrDiscardReplacementTask() async throws {
+        let photo = AccountProfileImages.Photo(data: try photoData())
+        let bitmap = try #require(NSBitmapImageRep(data: photo.data))
+        let decoder = PendingProfileDecode(result: PreparedAccountProfileImage(pixels: try #require(bitmap.cgImage)))
+        let images = AccountProfileImages(decode: { await decoder.decode($0) }, load: { _, _ in photo })
+        let first = images.refresh(accountID: "a", tokens: ProfileTokens())
+        await decoder.waitForRequests(1)
+        images.remove(accountID: "a")
+        await decoder.finish(1)
+        await first.value
+        #expect(first.isCancelled)
+        #expect(images.image(for: "a") == nil)
+
+        let old = images.refresh(accountID: "a", tokens: ProfileTokens())
+        await decoder.waitForRequests(2)
+        let replacement = images.refresh(accountID: "a", tokens: ProfileTokens())
+        await decoder.waitForRequests(3)
+        await decoder.finish(2)
+        await old.value
+        #expect(images.image(for: "a") == nil, "A superseded decode must not publish its pixels")
+        images.remove(accountID: "a")
+        #expect(replacement.isCancelled, "The old task's cleanup must leave the replacement cancellable")
+        await decoder.finish(3)
+        await replacement.value
+        #expect(images.image(for: "a") == nil)
+
+        let current = images.refresh(accountID: "a", tokens: ProfileTokens())
+        await decoder.waitForRequests(4)
+        await decoder.finish(4)
+        await current.value
+        #expect(images.image(for: "a") != nil)
+    }
+
+    private func photoData(width: Int = 2, height: Int = 2) throws -> Data {
         let pixels = try #require(NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32
+            colorSpaceName: .deviceRGB, bytesPerRow: width * 4, bitsPerPixel: 32
         ))
         for x in 0..<2 { for y in 0..<2 { pixels.setColor(.systemBlue, atX: x, y: y) } }
         return try #require(pixels.representation(using: .png, properties: [:]))
     }
+}
+
+/// Returns prepared pixels after cancellation to exercise the publication gate.
+private actor PendingProfileDecode {
+    private let result: PreparedAccountProfileImage
+    private var count = 0
+    private var requests: [Int: CheckedContinuation<PreparedAccountProfileImage?, Never>] = [:]
+    private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(result: PreparedAccountProfileImage) { self.result = result }
+
+    func decode(_ data: Data) async -> PreparedAccountProfileImage? {
+        await withCheckedContinuation { continuation in
+            count += 1
+            requests[count] = continuation
+            for (required, waiter) in waiters where count >= required { waiter.resume() }
+            waiters.removeAll { count >= $0.0 }
+        }
+    }
+
+    func waitForRequests(_ required: Int) async {
+        guard count < required else { return }
+        await withCheckedContinuation { waiters.append((required, $0)) }
+    }
+
+    func finish(_ id: Int) { requests.removeValue(forKey: id)?.resume(returning: result) }
 }
 
 private struct ProfileTokens: AccessTokenProvider {

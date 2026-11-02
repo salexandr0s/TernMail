@@ -56,6 +56,53 @@ import Testing
         }
         canceled.cancel()
         await #expect(throws: CancellationError.self) { try await canceled.value }
+        #expect(cache.decodeCount == 1, "An already cancelled caller must not start another decode")
+        #expect(cache.pendingCount == 0)
+    }
+
+    @Test(arguments: PhotoDecodeInvalidation.allCases)
+    func abandonedDecodesReleasePendingPixelsAndRejectLateResults(_ invalidation: PhotoDecodeInvalidation) async throws {
+        let data = try png(width: 20, height: 20)
+        let gate = PendingContactDecode(result: try prepared(data))
+        let cache = ContactThumbnailCache(monitorsPressure: false, decode: { await gate.decode($0) })
+        let key = try photoKey()
+        let request = Task { try await cache.image(for: key, data: data) }
+        await gate.waitUntilStarted()
+        #expect(cache.pendingCount == 1)
+        switch invalidation {
+        case .caller: request.cancel()
+        case .account: cache.remove(accountID: key.accountID)
+        case .pressure: cache.removeAll()
+        }
+        #expect(await waitForWaiters(0, key: key, cache: cache))
+        await gate.finish()
+        await #expect(throws: CancellationError.self) { try await request.value }
+        #expect(cache.pendingCount == 0)
+        #expect(cache.image(for: key) == nil)
+        #expect(cache.cost == 0)
+    }
+
+    @Test(arguments: [0, 1, 32 * 1_024 * 1_024])
+    func sharedDecodeSurvivesOneCancellationEvenWhenPixelsCannotBeCached(_ capacity: Int) async throws {
+        let data = try png(width: 20, height: 20)
+        let gate = PendingContactDecode(result: try prepared(data))
+        let cache = ContactThumbnailCache(capacity: capacity, monitorsPressure: false, decode: { await gate.decode($0) })
+        let key = try photoKey()
+        let canceled = Task { try await cache.image(for: key, data: data) }
+        await gate.waitUntilStarted()
+        let first = Task { try await cache.image(for: key, data: data) }
+        let second = Task { try await cache.image(for: key, data: data) }
+        #expect(await waitForWaiters(3, key: key, cache: cache))
+        canceled.cancel()
+        #expect(await waitForWaiters(2, key: key, cache: cache))
+        await gate.finish()
+        await #expect(throws: CancellationError.self) { try await canceled.value }
+        let images = try await (first.value, second.value)
+        #expect(images.0.size == NSSize(width: 20, height: 20))
+        #expect(images.1.size == images.0.size)
+        #expect(cache.decodeCount == 1)
+        #expect(cache.pendingCount == 0)
+        #expect(cache.cost <= capacity)
     }
 
     @Test func decodedPhotosReusePixelsAndSeparateLifetimesAndVersions() async throws {
@@ -112,6 +159,55 @@ import Testing
         CGImageDestinationAddImage(destination, image, nil)
         #expect(CGImageDestinationFinalize(destination))
         return data as Data
+    }
+
+    private func photoKey() throws -> ContactPhotoCacheKey {
+        let url = try #require(URL(string: "https://lh3.googleusercontent.com/person"))
+        return ContactPhotoCacheKey(ContactPhotoRecord(accountID: "a", source: .connection,
+            resourceName: "people/1", url: url), contextID: "pending-test")
+    }
+
+    private func prepared(_ data: Data) throws -> PreparedContactThumbnail {
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        return PreparedContactThumbnail(pixels: try #require(CGImageSourceCreateImageAtIndex(source, 0, nil)))
+    }
+
+    private func waitForWaiters(_ count: Int, key: ContactPhotoCacheKey, cache: ContactThumbnailCache) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while cache.waiterCount(for: key) != count, ContinuousClock.now < deadline { await Task.yield() }
+        return cache.waiterCount(for: key) == count
+    }
+}
+
+enum PhotoDecodeInvalidation: CaseIterable { case caller, account, pressure }
+
+/// Keeps the decode pending until every caller is installed; ignores cancellation
+/// so the cache must reject a late pixel result after its final waiter leaves.
+private actor PendingContactDecode {
+    private let result: PreparedContactThumbnail
+    private var continuation: CheckedContinuation<PreparedContactThumbnail, Never>?
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(result: PreparedContactThumbnail) { self.result = result }
+
+    func decode(_ data: Data) async -> PreparedContactThumbnail {
+        await withCheckedContinuation {
+            continuation = $0
+            started = true
+            startWaiters.forEach { $0.resume() }
+            startWaiters.removeAll()
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func finish() {
+        continuation?.resume(returning: result)
+        continuation = nil
     }
 }
 
