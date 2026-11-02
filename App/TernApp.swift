@@ -40,6 +40,14 @@ struct TernApp: App {
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .commandsRemoved()
 
+        WindowGroup("Analytics", id: MailAnalyticsWindow.sceneID, for: MailAnalyticsRoute.self) { $route in
+            MailAnalyticsWindow(route: route).environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
+        }
+        .defaultSize(width: Tokens.Analytics.windowWidth, height: Tokens.Analytics.windowHeight)
+        .windowResizability(.contentMinSize)
+        .commandsRemoved()
+
         WindowGroup("Original Message", id: OriginalMessageWindow.sceneID, for: MailLink.self) { $link in
             OriginalMessageWindow(link: link).environment(model)
         }

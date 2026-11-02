@@ -706,29 +706,32 @@ struct ComposeView: View {
             .help("Attach Files")
             .disabled(!model.isEditable)
         }
-        if model.canSendAndArchive || !model.templates.isEmpty {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    if !model.templates.isEmpty {
-                        Menu("Insert Template", systemImage: "doc.text") {
-                            ForEach(model.templates) { template in
-                                Button(template.name) { model.insertTemplate(template) }
-                            }
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                Toggle("Request Read Receipt", isOn: $model.content.requestsReadReceipt)
+                Text("Receipts depend on the recipient's email app and settings.")
+                if !model.templates.isEmpty || model.canSendAndArchive { Divider() }
+                if !model.templates.isEmpty {
+                    Menu("Insert Template", systemImage: "doc.text") {
+                        ForEach(model.templates) { template in
+                            Button(template.name) { model.insertTemplate(template) }
                         }
                     }
-                    if model.canSendAndArchive {
-                        if !model.templates.isEmpty { Divider() }
-                        Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
-                    }
-                } label: {
-                    Label("More", systemImage: "ellipsis")
                 }
-                .labelStyle(.iconOnly)
-                .menuIndicator(.hidden)
-                .help("More compose actions")
-                .accessibilityLabel("More Compose Actions")
-                .disabled(!model.isEditable)
+                if model.canSendAndArchive {
+                    if !model.templates.isEmpty { Divider() }
+                    Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis")
+                    .foregroundStyle(model.content.requestsReadReceipt ? Color.accentColor : .primary)
             }
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .help(model.content.requestsReadReceipt ? "Read receipt requested. More compose actions" : "More compose actions")
+            .accessibilityLabel("More Compose Actions")
+            .accessibilityValue(model.content.requestsReadReceipt ? "Read receipt requested" : "")
+            .disabled(!model.isEditable)
         }
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {

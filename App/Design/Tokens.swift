@@ -127,6 +127,16 @@ enum Tokens {
         static let liveApplyDelay: Duration = .milliseconds(750)
     }
 
+    enum Analytics {
+        static let windowWidth = Layout.readableWidth
+        static let windowHeight = Layout.shortcutsHeight
+        static let minWidth = Layout.conversationMinWidth
+        static let minHeight = Layout.windowMinHeight
+        static let popoverWidth = Sheet.smallWidth
+        static let popoverMaxHeight = Settings.editorMaxContentHeight
+        static let chartHeight = Settings.pickerWidth
+    }
+
     /// Native controls use the contract's compact dimensions.
     enum Control {
         static let icon = Space.s4

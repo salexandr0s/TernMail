@@ -347,6 +347,12 @@ struct MailCommands: Commands {
                 .keyboardShortcut(ShortcutCatalog.goToLabel.shortcut)
                 .disabled(focusedMailbox == nil)
             Divider()
+            Button("Analytics", systemImage: "chart.bar.xaxis") {
+                openWindow(id: MailAnalyticsWindow.sceneID, value: MailAnalyticsRoute())
+            }
+            .labelStyle(.titleAndIcon)
+            .disabled(mailbox == nil)
+            Divider()
             ForEach(Array(zip(SystemMailbox.numbered, ShortcutCatalog.mailboxes)), id: \.0.id) { box, command in
                 Button(box.title, systemImage: box.systemImage) { focusedMailbox?.go(to: box.id) }
                     .labelStyle(.titleAndIcon)

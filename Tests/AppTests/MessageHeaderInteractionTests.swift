@@ -100,6 +100,16 @@ import WebKit
         #expect(state.transitions == transitionsBeforeDetails, "Opening recipient details must not toggle the header")
         try closePopover(in: window)
 
+        let profile = try #require(element(id: "sender-profile-\(message.id)", in: window))
+        try assertControlHitIsNotHeader(profile, in: window)
+        try #require(profile.press())
+        try await eventually {
+            NSApp.windows.contains { $0.isVisible && element(id: "sender-view-analytics", in: $0) != nil }
+        }
+        #expect(state.expanded)
+        #expect(state.transitions == transitionsBeforeDetails, "Opening the sender card must not toggle the header")
+        try closePopover(in: window)
+
         for id in ["message-star-\(message.id)", "message-reply-\(message.id)"] {
             try assertControlHitIsNotHeader(try #require(element(id: id, in: window)), in: window)
         }

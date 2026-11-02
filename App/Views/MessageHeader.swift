@@ -15,6 +15,7 @@ struct MessageHeader<SenderItems: View>: View {
     let onToggle: () -> Void
     @ViewBuilder let senderItems: SenderItems
     @State private var showsDetails = false
+    @State private var showsSender = false
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
@@ -34,9 +35,19 @@ struct MessageHeader<SenderItems: View>: View {
             .accessibilityIdentifier("message-disclosure-\(message.id)")
             .messageHeaderControl()
 
-            ContactAvatar(accountID: message.record.accountID, address: message.senderAddress,
-                          name: message.senderDisplayName, cache: mailbox.cache, accounts: mailbox.accountStore)
-                .allowsHitTesting(false)
+            Button { showsSender = true } label: {
+                ContactAvatar(accountID: message.record.accountID, address: message.senderAddress,
+                              name: message.senderDisplayName, cache: mailbox.cache, accounts: mailbox.accountStore)
+            }
+            .buttonStyle(.plain)
+            .help("Show sender details")
+            .accessibilityLabel("Show details for \(message.senderDisplayName)")
+            .accessibilityIdentifier("sender-profile-\(message.id)")
+            .messageHeaderControl()
+            .popover(isPresented: $showsSender, arrowEdge: .bottom) {
+                SenderProfilePopover(accountID: message.record.accountID, address: message.senderAddress,
+                                     name: message.senderDisplayName, mailbox: mailbox)
+            }
 
             ViewThatFits(in: .horizontal) {
                 lines(isNarrow: false)
@@ -108,6 +119,10 @@ struct MessageHeader<SenderItems: View>: View {
                     Spacer(minLength: 0)
                 }
                 .font(.caption).foregroundStyle(.secondary)
+                if message.labels.contains(SystemLabel.sent), let messageID = message.record.rfcMessageID {
+                    ReadReceiptBadge(accountID: message.record.accountID, rfcMessageID: messageID, cache: mailbox.cache)
+                        .messageHeaderControl()
+                }
             } else {
                 Text(MessagePreview.text(for: message))
                     .font(.callout).foregroundStyle(.secondary)
