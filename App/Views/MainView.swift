@@ -8,6 +8,7 @@ struct MainView: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workspaceToolbarID) private var toolbarIdentifier
+    @Environment(\.workspaceWindowWidth) private var windowWidth
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var mailWidth: CGFloat = 0
@@ -93,16 +94,7 @@ struct MainView: View {
     }
 
     private func show(_ section: WorkspaceSection) {
-        switch section {
-        case .mail:
-            app.destination = .mail
-            if showsLibrary { mailbox.go(to: SystemLabel.inbox) }
-        case .calendar:
-            app.destination = .calendar
-        case .attachments:
-            app.destination = .mail
-            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
-        }
+        section.select(in: app, mailbox: mailbox)
     }
 
     var body: some View {
@@ -169,6 +161,7 @@ struct MainView: View {
             }
         }
         .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
+        .preference(key: WorkspaceMinimumWidth.self, value: minimumWidth)
         .focusedSceneValue(\.mailboxModel, focusedMailbox)
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
@@ -202,7 +195,7 @@ struct MainView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { workspaceWidth = $0 }
         .toolbar(id: toolbarIdentifier) {
             WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
-                accounts: app.accountPreferences, section: section, width: workspaceWidth, sidebar: sidebarToggle,
+                accounts: app.accountPreferences, section: section, width: windowWidth ?? workspaceWidth, sidebar: sidebarToggle,
                 onSelect: show, onNewMessage: newMessage, onReply: reply,
                 isAssistantPresented: section == .attachments ? false : (isActive ? utilityPanel : calendarPanel) == .assistant,
                 isAssistantAvailable: section != .attachments && (isActive || onCalendarPanelToggle != nil),
@@ -211,7 +204,7 @@ struct MainView: View {
                 onToggleTasks: { if isActive { togglePanel(.tasks) } else { onCalendarPanelToggle?(.tasks) } })
         }
         .toolbar(removing: .sidebarToggle)
-        .toolbar(removing: workspaceWidth < Tokens.Layout.toolbarTitleFoldWidth ? .title : nil)
+        .toolbar(removing: (windowWidth ?? workspaceWidth) < Tokens.Layout.toolbarTitleFoldWidth ? .title : nil)
         .navigationTitle(section == .calendar ? "Calendar" : showsLibrary ? "Attachments" : mailbox.selectedLabelTitle)
         .navigationSubtitle(section == .mail ? mailbox.selectedMailboxSubtitle : "")
     }

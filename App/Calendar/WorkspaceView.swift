@@ -13,11 +13,33 @@ struct WorkspaceView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var calendarPanel: WorkspacePanel?
     @State private var calendarSidebar = CalendarSidebarState()
+    @State private var minimumWidth = Tokens.Layout.windowMinWidth
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     let mailbox: MailboxModel
 
     var body: some View {
+        GeometryReader { geometry in
+            let showsRail = geometry.size.width >= Tokens.Workspace.railBreakpoint
+            HStack(spacing: 0) {
+                if showsRail {
+                    WorkspaceNavigationRail(section: section) { $0.select(in: app, mailbox: mailbox) }
+                }
+                workspace
+            }
+            .environment(\.showsWorkspaceRail, showsRail)
+            .environment(\.workspaceWindowWidth, geometry.size.width)
+        }
+        .onPreferenceChange(WorkspaceMinimumWidth.self) { minimumWidth = $0 }
+        .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
+    }
+
+    private var section: WorkspaceSection {
+        if app.destination == .calendar { return .calendar }
+        return mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? .attachments : .mail
+    }
+
+    private var workspace: some View {
         ZStack {
             MainView(mailbox: mailbox, isActive: app.destination == .mail,
                 calendarPanel: calendarPanel,

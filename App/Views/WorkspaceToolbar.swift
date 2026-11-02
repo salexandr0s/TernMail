@@ -37,12 +37,12 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             }
             .help(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar")
             .disabled(sidebar == nil)
+            .frame(width: Tokens.Control.iconButton)
             .popover(isPresented: Binding(
                 get: { section == .attachments && library.isCompact && library.isPopoverPresented },
                 set: { library.isPopoverPresented = $0 }
             ), arrowEdge: .top) {
-                SidebarView(mailbox: mailbox)
-                    .frame(width: Tokens.Layout.sidebarWidth, height: Tokens.Layout.windowMinHeight)
+                AttachmentLibrarySidebarPopover(toolbar: library)
             }
         }
         .customizationBehavior(.disabled)
@@ -61,6 +61,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             .disabled(section == .calendar && !calendar.calendars.contains(where: \.canWrite))
         }
         .customizationBehavior(.disabled)
+        .mailToolbarVisible(section != .calendar)
 
         ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(id: "mail.profile", placement: .primaryAction) {

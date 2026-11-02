@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The section switcher after the sidebar button, in the same place in Mail,
-/// Calendar and Attachments, with all sections visible at every window width.
+/// Compact windows keep global destinations in the native toolbar.
 struct WorkspaceSectionToolbar: CustomizableToolbarContent {
+    @Environment(\.showsWorkspaceRail) private var showsRail
     let section: WorkspaceSection
     let onSelect: (WorkspaceSection) -> Void
 
@@ -11,6 +11,7 @@ struct WorkspaceSectionToolbar: CustomizableToolbarContent {
             picker
         }
         .customizationBehavior(.disabled)
+        .mailToolbarVisible(!showsRail)
     }
 
     // Keep the accessibility label on the picker itself.
