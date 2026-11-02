@@ -67,6 +67,13 @@ struct WorkspaceView: View {
                 CalendarWorkspacePerformance(model: app.calendar, isActive: app.destination == .calendar)
             }
         }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Tokens.Surface.border)
+                .frame(height: Tokens.Border.hairline)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .toolbar(removing: .sidebarToggle)
         .task { await app.calendar.start() }
         .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
