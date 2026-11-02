@@ -181,7 +181,14 @@ private struct TernAnimation<Value: Equatable>: ViewModifier {
     let duration: Double
 
     func body(content: Content) -> some View {
-        content.animation(reduceMotion ? nil : Tokens.Motion.standard(duration: duration), value: value)
+        content
+            .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: duration), value: value)
+            .transaction { transaction in
+                if reduceMotion {
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            }
     }
 }
 

@@ -87,6 +87,11 @@ import Testing
         let root = controller.view
         try press(item.thread.isStarred ? "Remove Star" : "Star", in: root, rowSubject: item.thread.subject)
         try await until { mailbox.listItems.first { $0.id == item.id }?.thread.isStarred == !item.thread.isStarred }
+        let archive = try #require(mailbox.perform(.archive, on: [item.id.threadKey]))
+        await archive.value
+        try await until { !mailbox.listItems.contains { $0.id == item.id } && mailbox.notice?.undo != nil }
+        try press("Undo", in: root)
+        try await until { mailbox.listItems.contains { $0.id == item.id } && mailbox.notice == nil }
         mailbox.notice = .init(message: "Conversation archived", duration: .milliseconds(180))
         try await Task.sleep(for: .milliseconds(40))
         try capture(root, name: "notice-arrival-40ms")
@@ -101,6 +106,107 @@ import Testing
         }
         try press("Dismiss", in: root)
         try await until { mailbox.notice == nil }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.arguments.contains("--reduce-motion-audit")),
+          .timeLimit(.minutes(5)))
+    func realReduceMotionBlocksInheritedAnimationAndKeepsActionsUsable() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
+        try #require(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                     "Enable the real macOS Reduce Motion setting before this audit")
+        let state = RuntimeMotionProbeState()
+        let controller = NSHostingController(rootView: RuntimeMotionProbe(state: state))
+        controller.sizingOptions = []
+        let window = NSWindow(contentViewController: controller)
+        window.isReleasedWhenClosed = false
+        window.setContentSize(NSSize(width: 480, height: 120))
+        window.orderFront(nil)
+        defer { window.close(); window.contentViewController = nil }
+
+        try await until { state.observedReduceMotion == true }
+        try await verifyInheritedAnimation(state, reducesMotion: true)
+        try await composerDisclosuresKeepFocusAndAttachmentActions()
+        try await replyQuoteDisclosureKeepsQuotedContent()
+        try await mailActionsAndNoticeReplacementStayUsable()
+        print("TERN_REDUCE_MOTION_AUDIT reduced-actions-passed")
+
+        if ProcessInfo.processInfo.arguments.contains("--reduce-motion-live") {
+            print("TERN_REDUCE_MOTION_AUDIT waiting-for-off")
+            try await waitForLiveSetting(false, state: state)
+            try await verifyInheritedAnimation(state, reducesMotion: false)
+            print("TERN_REDUCE_MOTION_AUDIT waiting-for-on")
+            try await waitForLiveSetting(true, state: state)
+            try await verifyInheritedAnimation(state, reducesMotion: true)
+            print("TERN_REDUCE_MOTION_AUDIT live-settings-passed")
+        }
+    }
+
+    private func verifyInheritedAnimation(_ state: RuntimeMotionProbeState, reducesMotion: Bool) async throws {
+        let previousOffset = state.offset
+        let nextOffset = previousOffset + 48
+        state.renderedOffsets.removeAll()
+        withAnimation(Tokens.Motion.standard(duration: 1)) { state.offset = nextOffset }
+        try await until { state.samples.contains { $0.offset == nextOffset } }
+        let sample = try #require(state.samples.last { $0.offset == nextOffset })
+        try #require(sample.reducesMotion == reducesMotion)
+        print("TERN_REDUCE_MOTION_AUDIT reduce=\(sample.reducesMotion) inherited-animation=\(sample.hasAnimation) disables-animations=\(sample.disablesAnimations)")
+        try await Task.sleep(for: .milliseconds(120))
+        let intermediateCount = state.renderedOffsets.filter {
+            $0 > previousOffset + 0.01 && $0 < nextOffset - 0.01
+        }.count
+        if reducesMotion {
+            try #require(state.renderedOffsets.contains { abs($0 - nextOffset) < 0.01 },
+                         "The reduced-motion update must render its final position")
+        }
+        print("TERN_REDUCE_MOTION_AUDIT reduce=\(reducesMotion) intermediate-offsets=\(intermediateCount)")
+        try #require(reducesMotion ? intermediateCount == 0 : intermediateCount > 0,
+                     "The rendered offset must jump under Reduce Motion and interpolate with motion enabled")
+        try #require(sample.hasAnimation == !reducesMotion,
+                     "Reduce Motion must clear inherited animation even when ternAnimation's watched value is unchanged")
+        if !reducesMotion { try await Task.sleep(for: .seconds(1)) }
+    }
+
+    private func replyQuoteDisclosureKeepsQuotedContent() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        try await until { mailbox.hasSyncedOnce }
+        // AuditGmail's first account contains m1, the synthetic Field notes message.
+        let id = try #require(await mailbox.startCompose(.reply(.reply, messageID: "m1", accountID: "ui-audit")))
+        let closer = ComposeWindowCloser()
+        let controller = NSHostingController(rootView: ComposeView(localDraftID: id, mailbox: mailbox,
+            isEdited: .constant(false), closer: closer, onMove: { _ in }).environment(app))
+        controller.sizingOptions = []
+        let window = NSWindow(contentViewController: controller)
+        window.isReleasedWhenClosed = false
+        window.setContentSize(NSSize(width: 640, height: 720))
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close(); window.contentViewController = nil }
+        try await until { closer.model?.phase == .open }
+        let model = try #require(closer.model)
+        let quote = try #require(model.draft?.quotedPlainText)
+        try #require(!quote.isEmpty)
+        let root = controller.view
+        try press("Show Quoted Text", in: root)
+        try await Task.sleep(for: .milliseconds(40))
+        try capture(root, name: "reply-quote-expanded-40ms")
+        // The opposite action is exposed only after the production disclosure changes state.
+        try press("Hide Quoted Text", in: root)
+        try await Task.sleep(for: .milliseconds(40))
+        try capture(root, name: "reply-quote-collapsed-40ms")
+        #expect(model.draft?.quotedPlainText == quote)
+        print("TERN_REDUCE_MOTION_AUDIT quote-disclosure-passed")
+    }
+
+    private func waitForLiveSetting(_ enabled: Bool, state: RuntimeMotionProbeState) async throws {
+        let deadline = ContinuousClock.now + .seconds(90)
+        while (NSWorkspace.shared.accessibilityDisplayShouldReduceMotion != enabled
+               || state.observedReduceMotion != enabled), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try #require(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion == enabled)
+        try #require(state.observedReduceMotion == enabled,
+                     "The existing SwiftUI host must observe the live system setting")
     }
 
     private func until(sourceLocation: SourceLocation = #_sourceLocation, _ predicate: () -> Bool) async throws {
@@ -166,5 +272,65 @@ import Testing
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
         Attachment.record(Array(data), named: name + ".png")
+    }
+}
+
+@MainActor
+private final class RuntimeMotionProbeState: ObservableObject {
+    struct Sample {
+        let offset: CGFloat
+        let reducesMotion: Bool
+        let hasAnimation: Bool
+        let disablesAnimations: Bool
+    }
+
+    @Published var offset: CGFloat = 0
+    var observedReduceMotion: Bool?
+    var samples: [Sample] = []
+    var renderedOffsets: [CGFloat] = []
+}
+
+private struct RuntimeMotionProbe: View {
+    @ObservedObject var state: RuntimeMotionProbeState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary)
+            .frame(width: 80, height: 40)
+            .background(RuntimeMotionTransactionView(state: state, offset: state.offset, reducesMotion: reduceMotion))
+            .modifier(RuntimeMotionOffset(offset: state.offset, state: state))
+            // An unrelated outer animation must also respect the real setting.
+            .ternAnimation(value: false)
+    }
+}
+
+private struct RuntimeMotionTransactionView: NSViewRepresentable {
+    let state: RuntimeMotionProbeState
+    let offset: CGFloat
+    let reducesMotion: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        state.observedReduceMotion = reducesMotion
+        state.samples.append(.init(offset: offset, reducesMotion: reducesMotion,
+                                   hasAnimation: context.transaction.animation != nil,
+                                   disablesAnimations: context.transaction.disablesAnimations))
+    }
+}
+
+private struct RuntimeMotionOffset: AnimatableModifier {
+    nonisolated var offset: CGFloat
+    let state: RuntimeMotionProbeState
+
+    nonisolated var animatableData: CGFloat {
+        get { offset }
+        set { offset = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        state.renderedOffsets.append(offset)
+        return content.offset(x: offset)
     }
 }
