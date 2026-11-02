@@ -30,19 +30,26 @@ import Testing
 
     @Test func changesMadeWhileTheSignInIsRejectedGoTogetherAfterSignIn() async throws {
         let (engine, cache, gmail, _) = try await makeEngine(sendsAutomatically: true)
-        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
-        await gmail.failNextChange(with: .unauthorized)
-        try await engine.perform(.archive, threadIDs: ["t1"])
-        try await waitUntil { await engine.waitsForSignIn }
-        try await engine.perform(.archive, threadIDs: ["t2"])
-        // The sender wakes for the new change and goes back to waiting.
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await gmail.changes == [archive("t1")])
+        try await withEngineStopped(engine) {
+            try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
+            await gmail.failNextChange(with: .unauthorized)
+            try await engine.perform(.archive, threadIDs: ["t1"])
+            try await waitForSyncCondition { await engine.laneWaiters[.labels] != nil }
+            let previousWait = try #require(await engine.laneWaiters[.labels]?.generation)
+            #expect(await engine.waitsForSignIn)
 
-        await engine.resumeAfterSignIn()
-        try await waitUntil { await gmail.changes.count == 2 }
-        #expect(await gmail.changes.last == archive("t1", "t2"))
-        await engine.stop()
+            try await engine.perform(.archive, threadIDs: ["t2"])
+            // Observe the sender process the wake and return to waiting for sign-in.
+            try await waitForSyncCondition {
+                guard let generation = await engine.laneWaiters[.labels]?.generation else { return false }
+                return generation != previousWait
+            }
+            #expect(await gmail.changes == [archive("t1")])
+
+            await engine.resumeAfterSignIn()
+            try await waitForSyncCondition { try await actions(cache).map(\.state) == [.sent, .sent] }
+            #expect(await gmail.changes == [archive("t1"), archive("t1", "t2")])
+        }
     }
 
     @Test func signingInEndsABackoffButNotAnUndoHold() async throws {
@@ -98,10 +105,16 @@ import Testing
         try await engine.perform(.archive, threadIDs: ["t1"])
         await gmail.holdNextChange()
         let first = Task { await engine.sendDueActions() }
-        while await !gmail.isHolding { await Task.yield() }
-
-        #expect(await engine.sendDueActions() == 0)
-        #expect(try await actions(cache).map(\.state) == [.sending])
+        do {
+            try await waitForSyncCondition { await gmail.isHolding }
+            #expect(await engine.sendDueActions() == 0)
+            #expect(try await actions(cache).map(\.state) == [.sending])
+        } catch {
+            first.cancel()
+            await gmail.release()
+            _ = await first.value
+            throw error
+        }
         await gmail.release()
         #expect(await first.value == 1)
         #expect(try await actions(cache).map(\.state) == [.sent])
@@ -180,15 +193,4 @@ private func refuseSentRows(_ cache: MailCache) async throws {
 
 private func allowSentRows(_ cache: MailCache) async throws {
     try await cache.write { tx in try tx.db.execute(sql: "DROP TRIGGER IF EXISTS temp.refuseSentRow") }
-}
-
-private func waitUntil(_ condition: () async throws -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
-    while try await !condition() {
-        guard ContinuousClock.now < deadline else {
-            Issue.record("The condition didn't hold within 2 seconds.")
-            return
-        }
-        try await Task.sleep(for: .milliseconds(5))
-    }
 }

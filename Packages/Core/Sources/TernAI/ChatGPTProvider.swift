@@ -5,10 +5,19 @@ public struct ChatGPTProvider: AIProvider {
     private let accessToken: @Sendable () async throws -> String
     private let transport: AIHTTPTransport
     private let requestTimeout: Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
 
     public init(accessToken: @escaping @Sendable () async throws -> String,
                 transport: AIHTTPTransport = .live, requestTimeout: Duration = .seconds(120)) {
+        self.init(accessToken: accessToken, transport: transport, requestTimeout: requestTimeout,
+                  sleep: { try await Task.sleep(for: $0) })
+    }
+
+    init(accessToken: @escaping @Sendable () async throws -> String,
+         transport: AIHTTPTransport, requestTimeout: Duration,
+         sleep: @escaping @Sendable (Duration) async throws -> Void) {
         self.accessToken = accessToken; self.transport = transport; self.requestTimeout = requestTimeout
+        self.sleep = sleep
     }
 
     public func models() async throws -> [AIModel] {
@@ -279,7 +288,7 @@ public struct ChatGPTProvider: AIProvider {
     private func deadline<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await operation() }
-            group.addTask { try await Task.sleep(for: requestTimeout); throw AIProviderError.timedOut }
+            group.addTask { try await sleep(requestTimeout); throw AIProviderError.timedOut }
             defer { group.cancelAll() }
             guard let result = try await group.next() else { throw CancellationError() }
             return result

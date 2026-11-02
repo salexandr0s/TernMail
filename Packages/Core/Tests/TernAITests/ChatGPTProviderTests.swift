@@ -276,34 +276,50 @@ import Testing
         #expect(events == [.textDelta("Partial")])
     }
 
-    @Test func wholeStreamDeadlineCancelsTransport() async throws {
-        let stopped = AsyncStream<Void>.makeStream()
-        let provider = ChatGPTProvider(accessToken: { "token" }, transport: AIHTTPTransport { _ in
-            AIHTTPResponse(status: 200, contentType: "text/event-stream", body: AsyncThrowingStream { _ in },
-                           cancel: { stopped.continuation.yield(()) })
-        }, requestTimeout: .milliseconds(20))
-        await #expect(throws: AIProviderError.timedOut) { try await Self.collect(provider.respond(Self.request())) }
-        var stop = stopped.stream.makeAsyncIterator()
-        #expect(await stop.next() != nil)
-        stopped.continuation.finish()
+    @Test(.timeLimit(.minutes(1))) func wholeStreamDeadlineCancelsTransport() async throws {
+        let started = AsyncStream<Void>.makeStream()
+        let deadline = AsyncStream<Void>.makeStream()
+        defer { started.continuation.finish(); deadline.continuation.finish() }
+        await confirmation("The deadline closes the active response") { stopped in
+            let provider = ChatGPTProvider(accessToken: { "token" }, transport: AIHTTPTransport { _ in
+                started.continuation.yield(())
+                return AIHTTPResponse(status: 200, contentType: "text/event-stream", body: AsyncThrowingStream { _ in },
+                                      cancel: { stopped() })
+            }, requestTimeout: .seconds(120), sleep: { duration in
+                #expect(duration == .seconds(120))
+                var expiration = deadline.stream.makeAsyncIterator()
+                _ = await expiration.next()
+                try Task.checkCancellation()
+            })
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await #expect(throws: AIProviderError.timedOut) { try await Self.collect(provider.respond(Self.request())) }
+                }
+                var start = started.stream.makeAsyncIterator()
+                #expect(await start.next() != nil)
+                deadline.continuation.yield(())
+                await group.waitForAll()
+            }
+        }
     }
 
-    @Test func consumerCancellationStopsActiveTransport() async throws {
+    @Test(.timeLimit(.minutes(1))) func consumerCancellationStopsActiveTransport() async throws {
         let started = AsyncStream<Void>.makeStream()
         let stopped = AsyncStream<Void>.makeStream()
+        defer { started.continuation.finish(); stopped.continuation.finish() }
         let provider = ChatGPTProvider(accessToken: { "token" }, transport: AIHTTPTransport { _ in
             started.continuation.yield(())
             return AIHTTPResponse(status: 200, contentType: "text/event-stream", body: AsyncThrowingStream { _ in },
                                   cancel: { stopped.continuation.yield(()) })
         })
         let task = Task { try await Self.collect(provider.respond(Self.request())) }
+        defer { task.cancel() }
         var start = started.stream.makeAsyncIterator()
-        _ = await start.next()
+        #expect(await start.next() != nil)
         task.cancel()
         _ = await task.result
         var stop = stopped.stream.makeAsyncIterator()
         #expect(await stop.next() != nil)
-        started.continuation.finish(); stopped.continuation.finish()
     }
 
     private static func request(tools: [AIToolDefinition] = []) -> AIRequest {

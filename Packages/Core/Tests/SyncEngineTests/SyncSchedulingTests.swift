@@ -5,94 +5,125 @@ import os
 import Testing
 @testable import SyncEngine
 
-@Suite struct SyncSchedulingTests {
+@Suite(.timeLimit(.minutes(1))) struct SyncSchedulingTests {
     @Test func pollingFollowsTheActivityAndIMAP() async throws {
         let clock = SchedulerClock()
         let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
-        try await seed(cache, [], cursor: 100)
-        await engine.start()
-        // The first pass runs at once; the next waits 15 seconds while the app is in front.
-        if let passes = await engine.requestedPasses { await passes.value }
-        #expect(await clock.parked() == [SyncSchedule.activeInterval])
-        #expect(await gmail.historyCalls == 1)
-        #expect(await gmail.labelListRequests == 1)
+        try await withEngineStopped(engine) {
+            try await seed(cache, [], cursor: 100)
+            await engine.start()
+            // The first pass runs at once; the next waits 15 seconds while the app is in front.
+            if let passes = await engine.requestedPasses { await passes.value }
+            #expect(try await clock.parked() == [SyncSchedule.activeInterval])
+            #expect(await gmail.historyCalls == 1)
+            #expect(await gmail.labelListRequests == 1)
 
-        await engine.setActivity(.inactive)
-        #expect(await clock.parked() == [SyncSchedule.inactiveInterval])
-        await engine.setPushAvailable(true)
-        #expect(await clock.parked() == [SyncSchedule.pushInterval])
-        await engine.setActivity(.suspended)
-        #expect(await clock.parked() == [SyncSchedule.suspendedCheck])
-        #expect(await gmail.historyCalls == 1)
+            await engine.setActivity(.inactive)
+            #expect(try await clock.parked() == [SyncSchedule.inactiveInterval])
+            await engine.setPushAvailable(true)
+            #expect(try await clock.parked() == [SyncSchedule.pushInterval])
+            await engine.setActivity(.suspended)
+            #expect(try await clock.parked() == [SyncSchedule.suspendedCheck])
+            #expect(await gmail.historyCalls == 1)
 
-        // Back in front 10 seconds later: a pass runs at once and lists every
-        // label again, and polling counts from its end.
-        clock.advance(10)
-        await engine.setActivity(.active)
-        if let passes = await engine.requestedPasses { await passes.value }
-        #expect(await gmail.historyCalls == 2)
-        #expect(await gmail.labelListRequests == 2)
-        #expect(await clock.parked() == [SyncSchedule.pushInterval])
+            // Back in front 10 seconds later: a pass runs at once and lists every
+            // label again, and polling counts from its end.
+            clock.advance(10)
+            await engine.setActivity(.active)
+            if let passes = await engine.requestedPasses { await passes.value }
+            #expect(await gmail.historyCalls == 2)
+            #expect(await gmail.labelListRequests == 2)
+            #expect(try await clock.parked() == [SyncSchedule.pushInterval])
 
-        // The timer runs out: a pass, then the timer again.
-        clock.wake()
-        #expect(await clock.parked() == [SyncSchedule.pushInterval])
-        #expect(await gmail.historyCalls == 3)
-        await engine.stop()
+            // The timer runs out: a pass, then the timer again.
+            clock.wake()
+            #expect(try await clock.parked() == [SyncSchedule.pushInterval])
+            #expect(await gmail.historyCalls == 3)
+        }
     }
 
     @Test func anActivationWithinFiveSecondsOfAPassIsAlreadyServed() async throws {
         let clock = SchedulerClock()
         let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
-        try await seed(cache, [], cursor: 100)
-        try await engine.sync()
-        #expect(await gmail.historyCalls == 1)
+        try await withEngineStopped(engine) {
+            try await seed(cache, [], cursor: 100)
+            try await engine.sync()
+            #expect(await gmail.historyCalls == 1)
 
-        clock.advance(4)
-        await engine.requestSync(reason: .activation)
-        #expect(await engine.requestedPasses == nil)
-        #expect(await gmail.historyCalls == 1)
+            clock.advance(4)
+            await engine.requestSync(reason: .activation)
+            #expect(await engine.requestedPasses == nil)
+            #expect(await gmail.historyCalls == 1)
 
-        clock.advance(2)
-        await engine.requestSync(reason: .activation)
-        if let passes = await engine.requestedPasses { await passes.value }
-        #expect(await gmail.historyCalls == 2)
-        await engine.stop()
+            clock.advance(2)
+            await engine.requestSync(reason: .activation)
+            if let passes = await engine.requestedPasses { await passes.value }
+            #expect(await gmail.historyCalls == 2)
+        }
     }
 
     @Test func deliveredChangesShareOnePassHalfASecondAfterTheLast() async throws {
         let clock = SchedulerClock()
         let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
-        try await seed(cache, [], cursor: 100)
+        try await withEngineStopped(engine) {
+            try await seed(cache, [], cursor: 100)
 
-        await engine.requestSync(reason: .afterAction)
-        #expect(await clock.parked() == [SyncSchedule.afterActionDebounce])
-        // The second change starts the wait over.
-        await engine.requestSync(reason: .afterAction)
-        #expect(await clock.parked() == [SyncSchedule.afterActionDebounce])
-        #expect(await gmail.historyCalls == 0)
+            await engine.requestSync(reason: .afterAction)
+            #expect(try await clock.parked() == [SyncSchedule.afterActionDebounce])
+            // The second change starts the wait over.
+            await engine.requestSync(reason: .afterAction)
+            #expect(try await clock.parked() == [SyncSchedule.afterActionDebounce])
+            #expect(await gmail.historyCalls == 0)
 
-        let debounce = await engine.afterActionTask
-        clock.wake()
-        await debounce?.value
-        if let passes = await engine.requestedPasses { await passes.value }
-        #expect(await gmail.historyCalls == 1)
-        #expect(clock.parkedNow().isEmpty)
-        await engine.stop()
+            let debounce = await engine.afterActionTask
+            clock.wake()
+            await debounce?.value
+            if let passes = await engine.requestedPasses { await passes.value }
+            #expect(await gmail.historyCalls == 1)
+            #expect(clock.parkedNow().isEmpty)
+        }
     }
 
     @Test func aRequestDuringARetryWaitRunsAtOnce() async throws {
         let clock = SchedulerClock()
         let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
-        try await seed(cache, [], cursor: 100)
-        await engine.requestSync(reason: .inboxSignal)
-        #expect(await clock.parked() == [.seconds(1)])
-        let passes = await engine.requestedPasses
-        await engine.requestSync(reason: .manual)
-        await passes?.value
-        #expect(await gmail.historyCalls == 2)
-        #expect(clock.parkedNow().isEmpty)
-        await engine.stop()
+        try await withEngineStopped(engine) {
+            try await seed(cache, [], cursor: 100)
+            await engine.requestSync(reason: .inboxSignal)
+            #expect(try await clock.parked() == [.seconds(1)])
+            let passes = await engine.requestedPasses
+            await engine.requestSync(reason: .manual)
+            await passes?.value
+            #expect(await gmail.historyCalls == 2)
+            #expect(clock.parkedNow().isEmpty)
+        }
+    }
+
+    @Test(arguments: [SyncReason.afterAction, .inboxSignal])
+    func stoppingCancelsPendingPasses(reason: SyncReason) async throws {
+        let clock = SchedulerClock()
+        let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
+        try await withEngineStopped(engine) {
+            try await seed(cache, [], cursor: 100)
+            await engine.requestSync(reason: reason)
+            let waiting = try await clock.parked()
+            switch reason {
+            case .afterAction: #expect(waiting == [SyncSchedule.afterActionDebounce])
+            case .inboxSignal: #expect(waiting == [SyncSchedule.inboxSignalRetries[0]])
+            default: Issue.record("Unexpected request reason")
+            }
+            let callsBeforeStop = await gmail.historyCalls
+
+            await engine.stop()
+            #expect(clock.parkedNow().isEmpty)
+            #expect(await engine.requestedPasses == nil)
+            #expect(await engine.afterActionTask == nil)
+            #expect(await gmail.historyCalls == callsBeforeStop)
+
+            await engine.requestSync(reason: reason)
+            #expect(await engine.requestedPasses == nil)
+            #expect(await engine.afterActionTask == nil)
+        }
     }
 }
 
@@ -108,7 +139,7 @@ final class SchedulerClock: Sendable {
 
     private struct State {
         var parked: [UUID: Parked] = [:]
-        var watchers: [CheckedContinuation<Void, Never>] = []
+        var watchers: [UUID: CheckedContinuation<Void, any Error>] = [:]
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -118,16 +149,23 @@ final class SchedulerClock: Sendable {
     func advance(_ seconds: TimeInterval) { time.advance(seconds) }
 
     /// The sleeps under way, shortest first, once there is one.
-    func parked() async -> [Duration] {
+    func parked() async throws -> [Duration] {
         while true {
+            try Task.checkCancellation()
             if let durations = parkedNow().nonEmpty { return durations }
-            await withCheckedContinuation { continuation in
-                let waiting = state.withLock { state in
-                    guard state.parked.isEmpty else { return false }
-                    state.watchers.append(continuation)
-                    return true
+            let id = UUID()
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                    let waiting = state.withLock { state in
+                        guard !Task.isCancelled, state.parked.isEmpty else { return false }
+                        state.watchers[id] = continuation
+                        return true
+                    }
+                    if !waiting { continuation.resume() }
                 }
-                if !waiting { continuation.resume() }
+            } onCancel: {
+                let watcher = state.withLock { $0.watchers.removeValue(forKey: id) }
+                watcher?.resume(throwing: CancellationError())
             }
         }
     }
@@ -151,11 +189,11 @@ final class SchedulerClock: Sendable {
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let (cancelled, watchers) = state.withLock { state -> (Bool, [CheckedContinuation<Void, Never>]) in
+                let (cancelled, watchers) = state.withLock { state -> (Bool, [CheckedContinuation<Void, any Error>]) in
                     if Task.isCancelled { return (true, []) }
                     state.parked[id] = Parked(duration: duration, continuation: continuation)
-                    let watchers = state.watchers
-                    state.watchers = []
+                    let watchers = Array(state.watchers.values)
+                    state.watchers = [:]
                     return (false, watchers)
                 }
                 if cancelled { continuation.resume(throwing: CancellationError()) }

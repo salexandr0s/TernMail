@@ -102,29 +102,34 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await engine.perform(.markRead, target: .messages(["m9"])) != nil)
     }
 
-    @Test func aQueueChangeWakesTheSenderBeforeItsTimerEnds() async throws {
-        let (engine, cache, gmail, clock) = try await makeEngine(undoHolds: .uniform(30), sendsAutomatically: true)
-        try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
-        try await engine.perform(.archive, threadIDs: ["t1"])
-        let second = try #require(try await engine.perform(.archive, threadIDs: ["t2"]))
-        // The sender sleeps until the hold ends, on a timer of 30 real seconds.
-        // The test clock moves past the hold; only a wake lets the sender see it.
-        clock.advance(31)
-        try await engine.undo(second)
-        let deadline = ContinuousClock.now + .seconds(2)
-        while await gmail.changes.isEmpty, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+    @Test(.timeLimit(.minutes(1))) func aQueueChangeWakesTheSenderBeforeItsTimerEnds() async throws {
+        let clock = SchedulerClock()
+        let (engine, cache, gmail, _) = try await makeEngine(
+            undoHolds: .uniform(30), sendsAutomatically: true, clock: clock.time, sleep: clock.sleep
+        )
+        try await withEngineStopped(engine) {
+            try await seed(cache, [("m1", "t1", [SystemLabel.inbox]), ("m2", "t2", [SystemLabel.inbox])], cursor: 100)
+            try await engine.perform(.archive, threadIDs: ["t1"])
+            try await waitForSyncCondition { await engine.laneWaiters[.labels] != nil }
+            let previousWait = try #require(await engine.laneWaiters[.labels]?.generation)
+            let second = try #require(try await engine.perform(.archive, threadIDs: ["t2"]))
+            try await waitForSyncCondition {
+                guard let generation = await engine.laneWaiters[.labels]?.generation else { return false }
+                return generation != previousWait
+            }
+            // Both changes are waiting on the real 30-second timer. Undo must wake it.
+            clock.advance(31)
+            try await engine.undo(second)
+            try await waitForSyncCondition { await gmail.changes.count == 1 }
+            #expect(try await clock.parked() == [SyncSchedule.afterActionDebounce])
+            #expect(await gmail.changes == [Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox])])
+
+            let debounce = try #require(await engine.afterActionTask)
+            clock.wake()
+            await debounce.value
+            if let passes = await engine.requestedPasses { await passes.value }
+            #expect(await gmail.historyCalls == 1)
         }
-        #expect(await gmail.changes == [Change("modifyThreads", ["t1"], remove: [SystemLabel.inbox])])
-        // A sent change asks for a pass, so Gmail's own record of it comes in.
-        let syncStarted = Task { () -> Bool in
-            for await event in engine.events where event == .syncStarted { return true }
-            return false
-        }
-        let timeout = Task { try? await Task.sleep(for: .seconds(2)); syncStarted.cancel() }
-        #expect(await syncStarted.value)
-        timeout.cancel()
-        await engine.stop()
     }
 
     @Test func undoTrashKeepsMessagesThatWereAlreadyInTrash() async throws {
@@ -589,7 +594,7 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(try await cache.read { tx in try tx.draft(messageID: "old-draft", accountID: account) }?.id == "D9")
     }
 
-    @Test func stopWaitsForDatabaseWritesAlreadyInFlight() async throws {
+    @Test(.timeLimit(.minutes(1))) func stopWaitsForDatabaseWritesAlreadyInFlight() async throws {
         let (engine, cache, _, _) = try await makeEngine()
         let (entered, signal) = AsyncStream.makeStream(of: Void.self)
         let release = DispatchSemaphore(value: 0)
@@ -601,13 +606,23 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
                 try tx.saveCursor(historyID: 100, accountID: account)
             }
         }
-        for await _ in entered { break }
-        let stopping = Task { await engine.stop(); didStop.withLock { $0 = true } }
-        try await Task.sleep(for: .milliseconds(25))
-        #expect(!didStop.withLock { $0 })
-        release.signal()
-        try await writing.value
-        await stopping.value
+        var stopping: Task<Void, Never>?
+        do {
+            var entries = entered.makeAsyncIterator()
+            try #require(await entries.next() != nil)
+            stopping = Task { await engine.stop(recordingCompletionIn: didStop) }
+            try await waitForSyncCondition { await engine.isStopped }
+            #expect(didStop.withLock { $0 } == false)
+            release.signal()
+            try await writing.value
+            await stopping?.value
+        } catch {
+            writing.cancel()
+            release.signal()
+            _ = try? await writing.value
+            await stopping?.value
+            throw error
+        }
         #expect(try await cache.syncState(accountID: account)?.historyID == 100)
     }
 
@@ -1400,6 +1415,15 @@ private func makeDraft() -> LocalDraft {
     )
 }
 
+private extension SyncEngine {
+    func stop(recordingCompletionIn completion: OSAllocatedUnfairLock<Bool>) async {
+        await stop()
+        // Keep the completion on the engine actor so observing isStopped cannot
+        // race with a separate task resuming after an incorrectly early return.
+        completion.withLock { $0 = true }
+    }
+}
+
 struct Change: Equatable, CustomStringConvertible {
     let kind: String
     let ids: [String]
@@ -1510,6 +1534,7 @@ actor FakeGmail: GmailService {
     func holdNextChange() { holdsNextChange = true }
     var isHolding: Bool { held != nil }
     func release() {
+        holdsNextChange = false
         held?.resume()
         held = nil
     }
