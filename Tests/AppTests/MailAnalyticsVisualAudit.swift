@@ -7,9 +7,12 @@ import Testing
 @testable import Tern
 
 /// Opt-in captures use synthetic data and attach the shipped views to the test result.
-@Suite @MainActor struct MailAnalyticsVisualAudit {
+@Suite(.serialized) @MainActor struct MailAnalyticsVisualAudit {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TERN_ANALYTICS_VISUAL_AUDIT_DIR"] != nil))
     func renderAnalyticsAndSenderCard() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"), "Analytics captures require synthetic accounts")
+        let directory = try #require(ProcessInfo.processInfo.environment["TERN_ANALYTICS_VISUAL_AUDIT_DIR"])
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let cache = try MailCache.inMemory()
         let now = Date.now
         let updates = Self.messages(now: now)
@@ -38,9 +41,27 @@ import Testing
         for (name, width, scheme) in [("wide-light", 880.0, ColorScheme.light),
                                       ("breakpoint-light", 760.0, .light), ("narrow-dark", 560.0, .dark)] {
             try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox),
-                size: NSSize(width: width, height: 950), scheme: scheme, waitFor: "Emails over time",
+                size: NSSize(width: width, height: 800), scheme: scheme, waitFor: "Chart",
                 name: "analytics-\(name)", captureBottom: true)
         }
+        let sections: [(String, MailAnalyticsSection, String)] = [
+            ("contacts", .people, "Alex Morgan"),
+            ("receipts", .receipts, "Receipt received"),
+            ("history-paused", .history, "Mail sync is paused")
+        ]
+        for (name, section, expected) in sections {
+            try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox, section: section),
+                size: NSSize(width: 880, height: 800), scheme: .light, waitFor: expected,
+                name: "analytics-\(name)-wide-light", captureBottom: true)
+            try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox, section: section),
+                size: NSSize(width: 560, height: 480), scheme: .dark, waitFor: expected,
+                name: "analytics-\(name)-narrow-dark", captureBottom: true)
+        }
+        try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
+            address: "alex@example.invalid", name: "Alex Morgan"), mailbox: mailbox, section: .people),
+            size: NSSize(width: 560, height: 680), scheme: .dark, waitFor: "linkedin.com/in/alex-morgan-example",
+            name: "sender-profile-narrow-dark", captureBottom: true)
+
         let previousYear = try #require(Calendar.current.date(byAdding: .year, value: -1, to: now))
         let olderMessage = MailAnalyticsMessage(accountID: account.id, messageID: "older", threadID: "t0",
             date: previousYear, subject: "Planning the next project phase",
@@ -60,25 +81,25 @@ import Testing
             name: "metrics-large-counts-narrow", captureBottom: false)
         let selected = snapshot.buckets.first(where: { $0.receivedCount > 0 })?.date
         try await capture(AnalyticsActivityChart(snapshot: snapshot, selectedDate: selected).padding(Tokens.Space.s6),
-            size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Emails over time",
+            size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Chart",
             name: "chart-selected-month", captureBottom: false)
         try await capture(AnalyticsActivityChart(snapshot: largeSnapshot, selectedDate: selected).padding(Tokens.Space.s6),
-            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Emails over time",
+            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Chart",
             name: "chart-selected-narrow", captureBottom: false)
         try await capture(AnalyticsActivityChart(snapshot: snapshot, showsTable: true).padding(Tokens.Space.s6),
-            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Show activity chart",
+            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Values",
             name: "chart-values-month", captureBottom: true)
         let daily = Self.chartSnapshot(now: now, days: 90, sparse: false)
         try await capture(AnalyticsActivityChart(snapshot: daily, selectedDate: daily.buckets[42].date).padding(Tokens.Space.s6),
-            size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Emails over time",
+            size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Chart",
             name: "chart-dense-daily", captureBottom: false)
         let sparse = Self.chartSnapshot(now: now, days: 30, sparse: true)
         try await capture(AnalyticsActivityChart(snapshot: sparse).padding(Tokens.Space.s6),
-            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Emails over time",
+            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Chart",
             name: "chart-sparse-daily", captureBottom: false)
         try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
                 address: "alex@example.invalid", name: "Alex Morgan"), mailbox: mailbox),
-            size: NSSize(width: 880, height: 950), scheme: .light, waitFor: "Emails over time",
+            size: NSSize(width: 880, height: 950), scheme: .light, waitFor: "Chart",
             name: "sender-analytics", captureBottom: true)
         for scheme in [ColorScheme.light, .dark] {
             try await capture(SenderProfilePopover(accountID: account.id, address: "alex@example.invalid",
@@ -92,8 +113,50 @@ import Testing
         }
         try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
                 address: "new-contact@example.invalid", name: "New contact"), mailbox: mailbox),
-            size: NSSize(width: 560, height: 950), scheme: .light, waitFor: "No indexed email",
+            size: NSSize(width: 560, height: 950), scheme: .light, waitFor: "No email in this period",
             name: "analytics-empty-narrow", captureBottom: true)
+        let emptySections: [(String, MailAnalyticsSection, String)] = [
+            ("profile", .people, "No links in available signatures"),
+            ("receipts", .receipts, "No receipt requests yet"),
+            ("history", .history, "No indexed email yet")
+        ]
+        for (name, section, expected) in emptySections {
+            try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
+                address: "new-contact@example.invalid", name: "New contact"), mailbox: mailbox, section: section),
+                size: NSSize(width: 560, height: 680), scheme: .light, waitFor: expected,
+                name: "analytics-empty-\(name)", captureBottom: true)
+        }
+        let emptyMailbox = MailboxModel(account: account, cache: try MailCache.inMemory(), gmail: AuditGmail(),
+            outgoingDirectory: .temporaryDirectory, syncEnabled: false)
+        try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: emptyMailbox, section: .people),
+            size: NSSize(width: 560, height: 480), scheme: .dark, waitFor: "No contacts in this period",
+            name: "analytics-empty-contacts", captureBottom: false)
+        await emptyMailbox.stop()
+
+        try await cache.write { tx in
+            let state = try tx.beginAnalyticsHistory(accountID: account.id)
+            _ = try tx.commitAnalyticsHistoryPage(state, updates: updates, missing: [], nextPageToken: nil, loadedAt: now)
+        }
+        try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox, section: .history),
+            size: NSSize(width: 560, height: 680), scheme: .dark, waitFor: "History scanned",
+            name: "analytics-history-scanned", captureBottom: false)
+        let loadingMailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(),
+            outgoingDirectory: .temporaryDirectory)
+        let historyModel = MailAnalyticsModel { owner, _ in
+            try await Task.sleep(for: .seconds(30))
+            return MailAnalyticsCoverage(accountID: owner.account.id, indexedMessageCount: 0, isComplete: true)
+        }
+        defer { historyModel.stop() }
+        try await capture(AnalyticsHistoryView(snapshot: snapshot, model: historyModel, owners: loadingMailbox.accounts)
+            .padding(Tokens.Space.s6), size: NSSize(width: 560, height: 440), scheme: .light,
+            waitFor: "Partial history", name: "analytics-history-partial", captureBottom: false)
+        historyModel.loadHistory(accounts: loadingMailbox.accounts, restart: false)
+        try await capture(AnalyticsHistoryView(snapshot: snapshot, model: historyModel, owners: loadingMailbox.accounts)
+            .padding(Tokens.Space.s6), size: NSSize(width: 560, height: 440), scheme: .dark,
+            waitFor: "Loading mail history", name: "analytics-history-loading", captureBottom: false)
+        historyModel.stop()
+        await loadingMailbox.stop()
+
         let receipt = ReadReceiptStatus(accountID: account.id, rfcMessageID: "<large-receipt@example.invalid>",
             messageID: nil, threadID: nil, subject: "Project review", sentAt: now,
             recipients: (1...18).map { index in
@@ -138,7 +201,12 @@ import Testing
 
     private func capture<Content: View>(_ content: Content, size: NSSize, scheme: ColorScheme, waitFor: String,
                                        name: String, captureBottom: Bool) async throws {
+        let suite = "MailAnalyticsVisualAudit.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.set(false, forKey: DomainLogoImages.preferenceKey)
+        defer { defaults.removePersistentDomain(forName: suite) }
         let controller = NSHostingController(rootView: content
+            .defaultAppStorage(defaults)
             .frame(width: size.width, height: size.height)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, scheme))
@@ -148,6 +216,7 @@ import Testing
         window.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         window.contentViewController = controller
         window.setContentSize(size)
+        window.center()
         window.orderFront(nil)
         defer { window.close() }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -156,21 +225,22 @@ import Testing
             try await Task.sleep(for: .milliseconds(30))
         }
         controller.view.layoutSubtreeIfNeeded()
-        try attach(controller.view, name: name + ".png")
+        try await attach(window, name: name + ".png")
         #expect(contains(waitFor, in: controller.view), "Expected content did not appear; inspect the attached capture.")
         if captureBottom, let scroll = firstScrollView(in: controller.view), let document = scroll.documentView {
             scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
             scroll.reflectScrolledClipView(scroll.contentView)
             try await Task.sleep(for: .milliseconds(100))
             controller.view.layoutSubtreeIfNeeded()
-            try attach(controller.view, name: name + "-bottom.png")
+            try await attach(window, name: name + "-bottom.png")
         }
     }
 
-    private func attach(_ view: NSView, name: String) throws {
-        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+    private func attach(_ window: NSWindow, name: String) async throws {
+        try await Task.sleep(for: .milliseconds(80))
+        let data = try await NativeWindowCapture.png(of: window)
+        let directory = try #require(ProcessInfo.processInfo.environment["TERN_ANALYTICS_VISUAL_AUDIT_DIR"])
+        try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
         Attachment.record(Array(data), named: name)
     }
 

@@ -7,6 +7,71 @@ import WebKit
 @testable import Tern
 
 @Suite(.serialized) @MainActor struct ReaderViewportTests {
+    @Test(.timeLimit(.minutes(1))) func wideningReaderBeyondReadableWidthRetainsItsWebViewAndSelection() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"), "Hosted reader tests require isolated synthetic accounts")
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox), cache = try #require(app.cache)
+        try await waitUntil { mailbox.hasSyncedOnce }
+        let key = ThreadKey(accountID: "ui-audit", threadID: "reader-width-\(UUID().uuidString)")
+        try await seed(cache, key: key, count: 1,
+                       text: String(repeating: "The same synthetic message fills the available reader width. ", count: 30))
+        let suite = "ReaderViewportTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
+        let state = ReaderViewportState(key: key)
+        let window = makeWindow(ReaderViewportHarness(state: state, mailbox: mailbox)
+            .environment(app).defaultAppStorage(settings))
+        defer { window.close(); settings.removePersistentDomain(forName: suite) }
+        try await waitUntil {
+            self.messageViews(in: window.contentView).contains { !$0.isLoading && $0.bounds.height > 40 }
+        }
+        let original = try #require(messageViews(in: window.contentView).first)
+        let selectedText = try #require(try await original.evaluateJavaScript("""
+            (() => {
+                const paragraph = document.querySelector('p');
+                if (!paragraph) return null;
+                document.body.dataset.readerResizeIdentity = 'retained';
+                const range = document.createRange();
+                range.selectNodeContents(paragraph);
+                const selection = getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                return selection.toString();
+            })()
+            """, in: nil, contentWorld: .defaultClient) as? String)
+        #expect(selectedText == "Viewport message 0.")
+        let initialWindowWidth = window.contentLayoutRect.width
+        let initialBodyWidth = original.bounds.width
+        #expect(initialBodyWidth > 600)
+
+        for width in [CGFloat(760), 880, 1_000, 1_280, 1_600, 420, 760] {
+            window.setContentSize(NSSize(width: width, height: 520))
+            let expectedBodyWidth = initialBodyWidth + width - initialWindowWidth
+            try await waitUntil {
+                window.contentView?.layoutSubtreeIfNeeded()
+                return abs(window.contentLayoutRect.width - width) <= 1
+                    && abs(original.bounds.width - expectedBodyWidth) <= 2
+            }
+            let rendered = messageViews(in: window.contentView)
+            #expect(rendered.count == 1)
+            #expect(rendered.first === original, "Resizing must keep the same native message renderer")
+            #expect(original.window === window)
+            #expect(!original.isLoading)
+            let marker = try await original.evaluateJavaScript("document.body.dataset.readerResizeIdentity",
+                in: nil, contentWorld: .defaultClient) as? String
+            let selection = try await original.evaluateJavaScript("getSelection()?.toString()",
+                in: nil, contentWorld: .defaultClient) as? String
+            #expect(marker == "retained", "A width change must reflow the existing document without reloading it")
+            #expect(selection == selectedText, "Native text selection must survive narrow and wide reader layouts")
+            if width == 1_600 {
+                #expect(original.bounds.width > 1_400, "The reader must expand beyond the former 880-point cap")
+            }
+        }
+        window.close()
+        await app.signOut()
+    }
+
     @Test(.timeLimit(.minutes(1))) func retainedHiddenReaderDoesNotMarkReadOrReinterpretWhenCalendarContextChanges() async throws {
         try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"), "Hosted reader tests require isolated synthetic accounts")
         let app = AppModel()

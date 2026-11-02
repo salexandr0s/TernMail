@@ -26,6 +26,7 @@ import Testing
         try await waitFor(root) {
             self.nameField(in: root) != nil && self.messageEditor(in: root) != nil
                 && self.element("compose-template-new", in: root) != nil
+                && self.element("compose-template-selection." + saved.id, in: root) != nil
         }
         let name = try #require(nameField(in: root))
         let body = try #require(messageEditor(in: root))
@@ -45,12 +46,9 @@ import Testing
 
         func requestNavigation() throws {
             if selectSaved {
-                let popup = try #require(descendants(in: root).compactMap { $0 as? NSPopUpButton }
-                    .first { $0.itemTitles.contains(saved.name) },
-                    "This host does not expose the template picker as an actionable native popup.")
-                popup.selectItem(withTitle: saved.name)
-                let action = try #require(popup.action)
-                try #require(NSApp.sendAction(action, to: popup.target, from: popup))
+                let savedRow = try #require(element("compose-template-selection." + saved.id, in: root),
+                    "The saved template must expose its library action.")
+                try #require(press(savedRow))
             } else {
                 let button = try #require(element("compose-template-new", in: root))
                 try #require(press(button))

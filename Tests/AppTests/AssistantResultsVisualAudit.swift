@@ -10,6 +10,7 @@ import Testing
 @Suite @MainActor struct AssistantResultsVisualAudit {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TERN_ASSISTANT_RESULTS_AUDIT_DIR"] != nil))
     func renderTaskAndEventResults() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
         for (width, scheme) in [(320.0, ColorScheme.dark), (380.0, .light), (720.0, .light)] {
             let name = "\(Int(width))-\(scheme == .dark ? "dark" : "light")"
             try await capture(ScrollView {
@@ -52,8 +53,8 @@ import Testing
         await model.refreshAccounts()
         for scheme in [ColorScheme.light, .dark] {
             try await capture(AssistantTaskReview(request: Self.task.request, model: model, isAuthorized: { true }),
-                size: NSSize(width: Tokens.Sheet.smallWidth, height: 700), scheme: scheme,
-                name: "task-review-\(scheme == .dark ? "dark" : "light")", waitFor: "alex@studio.example")
+                size: NSSize(width: Tokens.Sheet.smallWidth, height: 480), scheme: scheme,
+                name: "task-review-\(scheme == .dark ? "dark" : "light")", captureBottom: true, waitFor: "alex@studio.example")
         }
     }
 
@@ -134,20 +135,18 @@ import Testing
             try await Task.sleep(for: .milliseconds(150))
         }
         controller.view.layoutSubtreeIfNeeded()
-        try attach(controller.view, name: name)
+        try await attach(window, name: name)
         if captureBottom, let scroll = scrollView(in: controller.view), let document = scroll.documentView {
             scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
             scroll.reflectScrolledClipView(scroll.contentView)
             try await Task.sleep(for: .milliseconds(100))
             controller.view.layoutSubtreeIfNeeded()
-            try attach(controller.view, name: name + "-bottom")
+            try await attach(window, name: name + "-bottom")
         }
     }
 
-    private func attach(_ view: NSView, name: String) throws {
-        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+    private func attach(_ window: NSWindow, name: String) async throws {
+        let data = try await NativeWindowCapture.png(of: window)
         Attachment.record(Array(data), named: name + ".png")
         let directory = try #require(ProcessInfo.processInfo.environment["TERN_ASSISTANT_RESULTS_AUDIT_DIR"])
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)

@@ -284,10 +284,20 @@ import Testing
 
     private func toolbarShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
         let visibleIDs = visibleToolbarItems(in: window).map { $0.itemIdentifier.rawValue }
-        let expected = destination == .mail ? "mail.archive" : "calendar.today"
-        let inactive = destination == .mail ? "calendar.today" : "mail.archive"
-        // Create keeps its identifier while changing from New Message to New Event.
-        return visibleIDs.contains("mail.compose") && visibleIDs.contains(expected) && !visibleIDs.contains(inactive)
+        guard visibleIDs.contains("workspace.search"),
+              !visibleIDs.contains(where: { $0.hasPrefix("calendar.") }) else { return false }
+        if destination == .mail {
+            return visibleIDs.contains("mail.compose") && visibleIDs.contains("mail.archive")
+        }
+        guard !visibleIDs.contains("mail.compose"), !visibleIDs.contains("mail.archive"),
+              let root = window.contentView else { return false }
+        let controls = WorkspaceAuditAccessibility.elements(in: root).filter { $0.isVisible(in: window) }
+        let buttonsReady = ["calendar.today", "calendar.goToDate", "calendar.newEvent"].allSatisfy { identifier in
+            controls.contains { $0.identifier == identifier && $0.supportsPress && $0.hasHitTarget(in: window) }
+        }
+        return buttonsReady && controls.contains {
+            $0.identifier == "calendar.viewMode" && $0.hasHitTarget(in: window)
+        }
     }
 
     private struct NativeLayout {

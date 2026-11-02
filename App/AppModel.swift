@@ -405,7 +405,18 @@ final class AppModel {
 
     var settingsAccountStore: AccountStore? { accounts }
 
+#if DEBUG || TERN_PERFORMANCE
+    /// Native design fixtures supply a local transport for synthetic accounts.
+    @ObservationIgnored var settingsClientForAudit: ((String) -> GmailClient?)?
+#endif
+
     func settingsClient(for accountID: String) -> GmailClient? {
+#if DEBUG || TERN_PERFORMANCE
+        if ProcessInfo.processInfo.arguments.contains("--ui-audit"),
+           mailbox?.account(id: accountID) != nil, let makeClient = settingsClientForAudit {
+            return makeClient(accountID)
+        }
+#endif
         guard mailbox?.account(id: accountID) != nil,
               let session = sessions[accountID], session.isSignedIn,
               !accountsNeedingSignIn.contains(accountID) else { return nil }

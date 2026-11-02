@@ -164,7 +164,9 @@ import Testing
                 ?? object.accessibilityAttributeValue(.title) as? String
         }
         var value: String? {
+            // SwiftUI list nodes can expose their spoken value through valueDescription.
             property("accessibilityValue") as? String ?? object.accessibilityAttributeValue(.value) as? String
+                ?? property("accessibilityValueDescription") as? String
         }
     }
 

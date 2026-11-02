@@ -11,6 +11,8 @@ import Testing
 @Suite(.serialized) @MainActor struct CalendarRecoveryVisualAudit {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TERN_CALENDAR_RECOVERY_AUDIT_DIR"] != nil))
     func renderRecovery() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"),
+            "Calendar recovery captures require the isolated UI audit environment")
         let directory = try #require(ProcessInfo.processInfo.environment["TERN_CALENDAR_RECOVERY_AUDIT_DIR"])
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let suite = "CalendarRecoveryVisualAudit-" + UUID().uuidString
@@ -36,27 +38,65 @@ import Testing
                 #expect(!review.canEdit && !review.canDiscard)
             }
             for (name, width, scheme) in [("wide-light", 760.0, ColorScheme.light), ("narrow-dark", 620.0, .dark)] {
-                let controller = NSHostingController(rootView: CalendarRecoveryView(model: model, operation: operation)
-                    .frame(width: width, height: 620).environment(\.colorScheme, scheme))
-                controller.sizingOptions = []
-                let window = NSWindow(contentViewController: controller)
-                window.isReleasedWhenClosed = false
-                window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
-                window.setContentSize(NSSize(width: width, height: 620))
-                window.makeKeyAndOrderFront(nil)
-                NSApp.activate()
-                try await Task.sleep(for: .milliseconds(350))
-                controller.view.layoutSubtreeIfNeeded()
-                let bitmap = try #require(controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds))
-                controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
-                let data = try #require(bitmap.representation(using: .png, properties: [:]))
-                let filename = operation.id + "-" + name + ".png"
-                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(filename))
-                Attachment.record(Array(data), named: filename)
-                window.close()
+                let bottom = scheme == .dark
+                try await capture(CalendarRecoveryView(model: model, operation: operation),
+                    name: operation.id + "-" + name + (bottom ? "-bottom" : ""),
+                    size: NSSize(width: width, height: 620), scheme: scheme, directory: directory,
+                    readyIdentifier: "calendar.recovery.resume", bottom: bottom)
             }
         }
+        model.operations = RecoveryAuditCalendarService.activityOperations
+        try await capture(CalendarActivityView(model: model), name: "activity-mixed-760-light",
+            size: NSSize(width: 760, height: 800), scheme: .light, directory: directory)
+        try await capture(CalendarImportReview(events: RecoveryAuditCalendarService.importItems,
+            calendars: model.calendars) { _, _ in
+                Issue.record("The visual audit must not submit an import")
+            }, name: "import-review-620-dark", size: NSSize(width: 620, height: 620),
+            scheme: .dark, directory: directory, readyIdentifier: "calendar.import.save")
         await engine.stop()
+    }
+
+    private func capture<Content: View>(_ content: Content, name: String, size: NSSize,
+                                       scheme: ColorScheme, directory: String,
+                                       readyIdentifier: String? = nil, bottom: Bool = false) async throws {
+        let controller = NSHostingController(rootView: content.frame(width: size.width, height: size.height)
+            .environment(\.colorScheme, scheme))
+        controller.sizingOptions = []
+        let window = NSWindow(contentViewController: controller)
+        window.isReleasedWhenClosed = false
+        defer { window.close(); window.contentViewController = nil }
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        window.setContentSize(size)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        let deadline = ContinuousClock.now + .seconds(8)
+        repeat {
+            window.layoutIfNeeded()
+            controller.view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(100))
+        } while readyIdentifier.map({ WorkspaceAuditAccessibility.matching($0, in: window).isEmpty }) == true
+            && ContinuousClock.now < deadline
+        if let readyIdentifier {
+            try #require(!WorkspaceAuditAccessibility.matching(readyIdentifier, in: window).isEmpty,
+                "The requested Calendar view must finish loading before capture")
+        }
+        if bottom {
+            let scroll = try #require(Self.descendants(controller.view).compactMap { $0 as? NSScrollView }.first {
+                ($0.documentView?.bounds.height ?? 0) > $0.contentView.bounds.height
+            })
+            let document = try #require(scroll.documentView)
+            let y = document.isFlipped ? max(0, document.bounds.height - scroll.contentView.bounds.height) : 0
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        let data = try await NativeWindowCapture.png(of: window)
+        try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+        Attachment.record(Array(data), named: name + ".png")
+    }
+
+    private static func descendants(_ view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap { descendants($0) }
     }
 
     @Test func aReviewedUpdateDraftCombinesLocalFieldsWithTheCurrentRemoteEvent() async throws {
@@ -129,6 +169,31 @@ private actor RecoveryAuditCalendarService: CalendarService {
         split.preparedRecurrence = ["RRULE:FREQ=WEEKLY;UNTIL=20261109T085959Z"]
         split.preparedMutation = .create(following); split.affectedEventVersions = ["exception": "old"]
         return [update, split]
+    }
+
+    static var activityOperations: [CalendarOperation] {
+        let date = original.startDate ?? .distantPast
+        var saved = CalendarOperation(id: "saved-event", accountID: "audit", calendarID: "team",
+            mutation: .create(original), status: .completed, createdAt: date)
+        saved.resultEvent = original
+        let queued = CalendarOperation(id: "queued-event", accountID: "audit", calendarID: "team",
+            mutation: .create(original), status: .queued, createdAt: date)
+        let proposal = CalendarOperation(id: "proposed-event", accountID: "audit", calendarID: "team",
+            mutation: .create(original), status: .proposed, createdAt: date)
+        return [saved, queued, proposal] + operations.prefix(1)
+    }
+
+    static var importItems: [CalendarImportItem] {
+        var series = original
+        series.id = "import-series"; series.summary = "Weekly design review"
+        series.recurrence = ["RRULE:FREQ=WEEKLY;COUNT=5"]
+        var exception = original
+        exception.id = "import-exception"; exception.recurringEventId = series.id
+        exception.originalStartTime = series.start
+        exception.summary = "Design review with the research team"
+        var cancelled = original
+        cancelled.id = "cancelled-import"; cancelled.summary = "Cancelled planning session"; cancelled.status = "cancelled"
+        return [.init(event: original), .init(event: series, exceptions: [exception]), .init(event: cancelled)]
     }
 
     func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage { .init(items: [Self.entry]) }

@@ -67,7 +67,7 @@ import Testing
             window.layoutIfNeeded()
             controller.view.layoutSubtreeIfNeeded()
             let elements = self.elements(in: window)
-            return elements.contains { $0.id == "account.reconnect" && $0.label?.contains("audit@example.invalid") == true }
+            return elements.contains { $0.isReconnectButton(for: mailbox.defaultAccount.account.email) }
                 && elements.contains { $0.label?.hasPrefix("Inbox") == true && $0.value == "2 unread" }
                 && elements.contains { $0.label?.contains("Field notes") == true || $0.value?.contains("Field notes") == true }
         }
@@ -81,8 +81,15 @@ import Testing
             window.layoutIfNeeded()
             controller.view.layoutSubtreeIfNeeded()
             let elements = self.elements(in: window)
-            return elements.contains { $0.label == "Conversation actions" }
-                && elements.contains { $0.id == "account.reconnect" }
+            let messageHeader = self.descendants(controller.view).compactMap { $0 as? MessageHeaderClickView }
+                .contains { header in
+                    header.messageID == "m1" && header.window === window && !header.isHiddenOrHasHiddenAncestor
+                        && header.bounds.width > 0 && header.bounds.height > 0
+                        && header.convert(header.bounds, to: controller.view).intersects(controller.view.bounds)
+                }
+            return elements.contains { $0.role == "AXHeading" && $0.label == "Field notes" }
+                && messageHeader
+                && elements.contains { $0.isReconnectButton(for: mailbox.defaultAccount.account.email) }
         }
         #expect(mailbox.selectedThreadIDs == [thread.key])
         #expect(app.accountsNeedingSignIn == [accountID])
@@ -129,7 +136,17 @@ import Testing
         var children: [Any] { property("accessibilityChildren") as? [Any] ?? object.accessibilityAttributeValue(.children) as? [Any] ?? [] }
         var id: String? { property("accessibilityIdentifier") as? String ?? object.accessibilityAttributeValue(.identifier) as? String }
         var label: String? { property("accessibilityLabel") as? String ?? object.accessibilityAttributeValue(.description) as? String ?? object.accessibilityAttributeValue(.title) as? String }
-        var value: String? { property("accessibilityValue") as? String ?? object.accessibilityAttributeValue(.value) as? String }
+        var value: String? {
+            property("accessibilityValue") as? String ?? object.accessibilityAttributeValue(.value) as? String
+                ?? property("accessibilityValueDescription") as? String
+        }
+        var role: String? { property("accessibilityRole") as? String ?? object.accessibilityAttributeValue(.role) as? String }
+
+        func isReconnectButton(for email: String) -> Bool {
+            // SwiftUI exports the banner identifier on its account-specific button.
+            id == "account.reauthentication" && role == NSAccessibility.Role.button.rawValue
+                && label == "Sign in again to \(email)"
+        }
     }
 
     private func capture(_ view: NSView, directory: String) throws {
