@@ -317,9 +317,14 @@ struct RootView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var windowPresentation = OnboardingWindowPresentation.Controller()
 
     var body: some View {
         content
+            .background(OnboardingWindowPresentation(isPresented: model.onboarding.isPresented,
+                                                     reduceMotion: reduceMotion, controller: windowPresentation,
+                                                     isReady: windowRouteIsReady))
             .onAppear {
                 model.openMainWindow = {
                     NSApp.activate()
@@ -328,17 +333,27 @@ struct RootView: View {
             }
     }
 
+    private var windowRouteIsReady: Bool {
+        // A startup failure must remain visible even before accounts are loaded.
+        if case .failed = model.phase { return true }
+        return model.onboarding.isResolved
+    }
+
     @ViewBuilder private var content: some View {
         switch model.phase {
         case .loading:
             openingState
-        case .signedOut, .signInRequired:
-            SignInView()
-        case .signedIn:
-            if let mailbox = model.mailbox {
-                WorkspaceView(mailbox: mailbox)
+        case .signedOut, .signInRequired, .signedIn:
+            if model.onboarding.isPresented {
+                OnboardingView()
+            } else if case .signedIn = model.phase {
+                if let mailbox = model.mailbox {
+                    WorkspaceView(mailbox: mailbox)
+                } else {
+                    openingState
+                }
             } else {
-                openingState
+                SignInView()
             }
         case .failed(let message):
             TernEmptyState(

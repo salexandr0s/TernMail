@@ -1,6 +1,15 @@
 {
-  "originHash" : "821464c538c3e5796be34cb5ee045f82b9be38488fb997ea14c896d19ff6889a",
+  "originHash" : "db7fbc4b1aef3880cc8395733e2b350689a6c2bfe0cf779d5e0b152896092065",
   "pins" : [
+    {
+      "identity" : "appauth-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/openid/AppAuth-iOS",
+      "state" : {
+        "revision" : "a972daac82d449d58ab119e91c68153e29ddac33",
+        "version" : "3.0.0"
+      }
+    },
     {
       "identity" : "grdb.swift",
       "kind" : "remoteSourceControl",

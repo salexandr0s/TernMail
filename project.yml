@@ -92,7 +92,7 @@ targets:
         com.apple.security.files.downloads.read-write: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.onboarding-window-check
         PRODUCT_NAME: Tern
         COMBINE_HIDPI_IMAGES: YES
     dependencies:
@@ -119,12 +119,23 @@ targets:
       - Tests/AppTests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail.tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.onboarding-window-check.tests
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Tern
       - package: Core
         product: MailStore
+  TernUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - Tests/UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.onboarding-window-check.uitests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Tern
 schemes:
   Tern:
     build:
@@ -135,3 +146,4 @@ schemes:
         --ui-audit: true
       targets:
         - TernTests
+        - TernUITests
