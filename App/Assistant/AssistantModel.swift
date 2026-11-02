@@ -79,10 +79,12 @@ final class AssistantModel {
          writingStyle: AssistantWritingStyleModel? = nil) {
         let persistence: UserDefaults?
         if let defaults { persistence = defaults }
-        else if AssistantRuntimeEnvironment.isTestHost { persistence = nil }
+        else if AssistantRuntimeEnvironment.isTestHost
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit")
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") { persistence = nil }
         else { persistence = .standard }
-        // A hosted view with synthetic accounts must never read or prune the
-        // user's preferences. Without persistence, these values stay in memory.
+        // Hosted tests and audit previews with synthetic accounts must never read
+        // or prune the user's preferences. These values stay in memory instead.
         self.app = app; self.connection = connection; self.defaults = persistence
         self.contextOverride = context; self.toolFactory = makeTools
         let activeProvider = provider ?? ChatGPTProvider(accessToken: { [weak connection] in

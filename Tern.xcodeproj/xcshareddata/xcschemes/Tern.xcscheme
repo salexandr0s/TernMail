@@ -50,6 +50,17 @@
                ReferencedContainer = "container:Tern.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "5F66345A77AAF303B26E0720"
+               BuildableName = "TernUITests.xctest"
+               BlueprintName = "TernUITests"
+               ReferencedContainer = "container:Tern.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
          <CommandLineArgument

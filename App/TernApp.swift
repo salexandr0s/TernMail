@@ -332,13 +332,17 @@ struct RootView: View {
         switch model.phase {
         case .loading:
             openingState
-        case .signedOut, .signInRequired:
-            SignInView()
-        case .signedIn:
-            if let mailbox = model.mailbox {
-                WorkspaceView(mailbox: mailbox)
+        case .signedOut, .signInRequired, .signedIn:
+            if model.onboarding.isPresented {
+                OnboardingView()
+            } else if case .signedIn = model.phase {
+                if let mailbox = model.mailbox {
+                    WorkspaceView(mailbox: mailbox)
+                } else {
+                    openingState
+                }
             } else {
-                openingState
+                SignInView()
             }
         case .failed(let message):
             TernEmptyState(

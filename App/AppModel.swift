@@ -21,6 +21,7 @@ final class AppModel {
     }
 
     private(set) var phase: Phase = .loading
+    let onboarding = OnboardingState.appState()
     private(set) var isSigningIn = false
     private(set) var signInError: String?
     /// The open mailbox. It stays open while the session has expired, so
@@ -412,12 +413,24 @@ final class AppModel {
             if ProcessInfo.processInfo.arguments.contains("--ui-audit") || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
                 let cache = try MailCache.inMemory()
                 let accounts = try AccountStore.inMemory()
+                let arguments = ProcessInfo.processInfo.arguments
+                let onboardingAudit = arguments.contains("--ui-audit")
+                    && (arguments.contains("--ui-audit-onboarding") || arguments.contains("--ui-audit-onboarding-connected"))
+                let emptyOnboarding = onboardingAudit && !arguments.contains("--ui-audit-onboarding-connected")
+                onboarding.resolve(hasExistingAccounts: !onboardingAudit)
+                if onboardingAudit {
+                    let requested = arguments.first { $0.hasPrefix("--ui-audit-onboarding-step=") }
+                        .flatMap { OnboardingState.Step(rawValue: String($0.dropFirst("--ui-audit-onboarding-step=".count))) }
+                    onboarding.step = requested ?? (emptyOnboarding ? .welcome : .google)
+                }
                 let account = AccountRecord(id: "ui-audit", email: "audit@example.invalid", displayName: "UI Audit", grantedScopes: [], addedAt: .now)
                 // A second account with other mail under the same thread,
                 // message and label IDs.
                 let second = AccountRecord(id: "ui-audit-2", email: "second@example.invalid", displayName: "Second Audit", grantedScopes: [], addedAt: .now)
-                try await accounts.save(account)
-                try await accounts.save(second)
+                if !emptyOnboarding {
+                    try await accounts.save(account)
+                    try await accounts.save(second)
+                }
                 self.cache = cache
                 self.accounts = accounts
                 await startMailPreferences(store: accounts, cache: cache)
@@ -425,6 +438,10 @@ final class AppModel {
                 let outgoing = auditDirectory.appending(path: "Outgoing", directoryHint: .isDirectory)
                 cacheDownloadDirectory = auditDirectory.appending(path: "Attachments", directoryHint: .isDirectory)
                 self.outgoingDirectory = outgoing
+                if emptyOnboarding {
+                    phase = .signedOut
+                    return
+                }
                 let mailbox = MailboxModel(
                     account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: outgoing,
                     downloadsDirectory: cacheDownloadDirectory, snoozeStore: accounts
@@ -461,6 +478,7 @@ final class AppModel {
             if let cache { await startMailPreferences(store: accounts, cache: cache) }
 
             let stored = try await accounts.accounts()
+            onboarding.resolve(hasExistingAccounts: !stored.isEmpty)
             try await removeLeftovers(keeping: Set(stored.map(\.id)))
             for account in stored {
                 let session = await AccountSession.restore(accountID: account.id)
@@ -477,11 +495,11 @@ final class AppModel {
                 }
             }
             let expired = signedIn.filter { sessions[$0.id]?.isSignedIn != true }
+            accountsNeedingSignIn = Set(expired.map(\.id))
             if signedIn.count == 1, !expired.isEmpty {
                 phase = .signInRequired(first)
                 return
             }
-            accountsNeedingSignIn = Set(expired.map(\.id))
             await openMailbox(for: signedIn)
         } catch {
             phase = .failed(error.localizedDescription)
