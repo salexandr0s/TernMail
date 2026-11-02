@@ -6,13 +6,15 @@ struct SidebarView: View {
     @Bindable var mailbox: MailboxModel
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
+    @AppStorage("sidebarFavoritesCollapsed") private var favoritesCollapsed = false
+    @State private var isAddingFavorite = false
 
     var body: some View {
         // Calendar and Attachments live in the toolbar's section switcher, so
         // the sidebar starts with Favorites. During a search it shows no
         // selection, since results can come from outside the selected mailbox.
         List(selection: $mailbox.sidebarSelection) {
-            FavoritesView(mailbox: mailbox)
+            FavoritesView(mailbox: mailbox, isCollapsed: $favoritesCollapsed, isAddingFavorite: $isAddingFavorite)
             SavedSearchRows(mailbox: mailbox)
             if mailbox.presentedAccounts.count > 1 {
                 let colors = accountColors
@@ -73,6 +75,10 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .contentMargins(.horizontal, 0, for: .scrollContent)
+        // A Section can apply its sheet to every row, queuing repeated presentations.
+        .sheet(isPresented: $isAddingFavorite) {
+            AddFavoriteView(mailbox: mailbox) { favoritesCollapsed = false }
+        }
         .sheet(isPresented: Bindable(mailbox.navigation).isShowingSwitcher) {
             MailboxSwitcher(mailbox: mailbox)
         }

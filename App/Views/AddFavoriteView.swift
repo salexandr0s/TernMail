@@ -144,13 +144,14 @@ struct AddFavoriteView: View {
             Picker("Account", selection: $selectedAccount) {
                 Label("All Accounts (Unified)", systemImage: "person.2").tag("")
                 ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
-                    Text(mailbox.accountTitle(owner.account)).tag(owner.account.id)
+                    SenderAccountLabel(account: owner.account, address: mailbox.accountTitle(owner.account))
+                        .tag(owner.account.id)
                 }
             }
             .labelsHidden()
             .pickerStyle(.menu)
             .controlSize(.large)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .trailing)
             .accessibilityIdentifier("favorites.accountPicker")
         }
     }

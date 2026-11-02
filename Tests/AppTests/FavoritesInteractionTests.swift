@@ -82,6 +82,7 @@ import Testing
             let sheet = try #require(window.attachedSheet)
             let sheetView = try #require(sheet.contentView)
             try await eventually { self.element(id: "favorites.confirmAdd", in: sheetView) != nil }
+            #expect(window.sheets.count == 1, "One Add Favorite action must present exactly one sheet")
             try capture(controller.view, name: "tern-favorites-header-controls.png")
             let confirm = try #require(element(id: "favorites.confirmAdd", in: sheetView))
             #expect(!confirm.isAccessibilityEnabled())
@@ -127,12 +128,31 @@ import Testing
             let cancelledSheet = try #require(window.attachedSheet)
             let cancelledView = try #require(cancelledSheet.contentView)
             try await eventually { self.element(id: "favorites.confirmAdd", in: cancelledView) != nil }
+            #expect(window.sheets.count == 1, "Expanded Favorites must not queue a sheet for every row")
             #expect(element(id: "favorites.confirmAdd", in: cancelledView)?.isAccessibilityEnabled() == false)
             let cancel = try #require(elements(in: cancelledView).first {
                 $0.accessibilityRole() == .button && $0.accessibilityLabel() == "Cancel"
             })
             try #require(cancel.accessibilityPerformPress())
             try await eventually { window.attachedSheet == nil }
+            try await Task.sleep(for: .seconds(1))
+            #expect(window.attachedSheet == nil, "Cancel must keep the sheet dismissed")
+            #expect(window.sheets.isEmpty, "Cancel must leave no queued sheets to reopen")
+
+            try performHeaderAction("Add Favorite", in: controller.view)
+            try await eventually { window.attachedSheet != nil }
+            let escapedSheet = try #require(window.attachedSheet)
+            let escapedView = try #require(escapedSheet.contentView)
+            try await eventually { self.element(id: "favorites.confirmAdd", in: escapedView) != nil }
+            #expect(window.sheets.count == 1)
+            let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: escapedSheet.windowNumber,
+                context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+            escapedSheet.sendEvent(escape)
+            try await eventually { window.attachedSheet == nil }
+            try await Task.sleep(for: .seconds(1))
+            #expect(window.attachedSheet == nil, "Escape must keep the sheet dismissed")
+            #expect(window.sheets.isEmpty, "Escape must leave no queued sheets to reopen")
             #expect(try await store.mailFavorites() == saved)
             #expect(mailbox.selectedMailbox == originalSelection)
         } catch {

@@ -6,10 +6,10 @@ struct FavoritesView: View {
     let mailbox: MailboxModel
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
-    @AppStorage("sidebarFavoritesCollapsed") private var isCollapsed = false
+    @Binding var isCollapsed: Bool
+    @Binding var isAddingFavorite: Bool
     @State private var hoveredBox: MailboxID?
     @State private var isHeaderHovered = false
-    @State private var isAddingFavorite = false
     @FocusState private var focusedControl: HeaderControl?
     @AccessibilityFocusState private var isHeaderAccessibilityFocused: Bool
 
@@ -33,9 +33,6 @@ struct FavoritesView: View {
             }
         } header: {
             header
-        }
-        .sheet(isPresented: $isAddingFavorite) {
-            AddFavoriteView(mailbox: mailbox) { isCollapsed = false }
         }
     }
 
