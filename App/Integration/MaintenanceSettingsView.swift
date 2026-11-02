@@ -39,7 +39,7 @@ struct MaintenanceSettingsView: View {
                             .disabled(app.maintenance.isRefreshing)
                         Button("Trim Now…") { trimRequest = .manual }
                             .fixedSize()
-                            .disabled(app.maintenance.readiness?.canReset != true)
+                            .disabled(app.maintenance.readiness == nil)
                     }
                     .disabled(app.maintenance.isTrimming || app.isResettingCache)
                 } label: {

@@ -17,6 +17,7 @@ extension UserDefaults {
 /// index calls run off the main actor.
 @MainActor
 final class MailSpotlightIndexer {
+    let removal: MailSpotlightRemoval
     /// The `UserDefaults` key behind the Settings toggle. Off by default.
     nonisolated static let enabledKey = "showsMailInSpotlight"
     /// Conversations listed per account: the Inbox first, then the most recent.
@@ -36,6 +37,8 @@ final class MailSpotlightIndexer {
 
     private weak var app: AppModel?
     private let defaults: UserDefaults
+    private let allowsIndexing: Bool
+    private let reindex: @Sendable (String, MailCache, [String: Int]) async throws -> [String: Int]
     private var observation: NSKeyValueObservation?
     private var isEnabled: Bool
     /// What each account's last finished pass indexed: thread ID to a hash of its fields.
@@ -46,10 +49,19 @@ final class MailSpotlightIndexer {
     private var generation = 0
     private var tail: Task<Void, Never>?
 
-    init(app: AppModel, defaults: UserDefaults = .standard) {
+    init(app: AppModel, defaults: UserDefaults = .standard,
+         removal: MailSpotlightRemoval? = nil, allowsIndexing: Bool = true,
+         reindex: @escaping @Sendable (String, MailCache, [String: Int]) async throws -> [String: Int] = {
+             try await MailSpotlightIndexer.reindex(accountID: $0, cache: $1, known: $2)
+         }) {
         self.app = app
         self.defaults = defaults
+        self.removal = removal ?? MailSpotlightRemoval(defaults: defaults)
+        self.allowsIndexing = allowsIndexing
+        self.reindex = reindex
         isEnabled = defaults.bool(forKey: Self.enabledKey)
+        // Also cleans up content left by versions that did not persist failures.
+        if !isEnabled { self.removal.requestAll() }
         observation = defaults.observe(\.showsMailInSpotlight) { @Sendable [weak self] _, _ in
             Task { @MainActor [weak self] in self?.preferenceChanged() }
         }
@@ -58,14 +70,14 @@ final class MailSpotlightIndexer {
     /// Rebuilds the index from the open mailbox's cache. Items an earlier
     /// launch left behind go first, since the cache may have changed since.
     func start() {
-        guard isEnabled, CSSearchableIndex.isIndexingAvailable() else { return }
+        guard allowsIndexing, isEnabled, CSSearchableIndex.isIndexingAvailable() else { retryRemoval(); return }
         generation += 1
         queued = []
         let current = generation
+        removal.requestAll()
         enqueue { [weak self] in
             guard let self, current == generation, isEnabled else { return }
-            indexed = [:]
-            do { try await Self.removeEverything() } catch { return }
+            guard await finishPendingRemoval() else { return }
             for accountID in app?.mailbox?.accounts.map(\.account.id) ?? [] {
                 guard current == generation, isEnabled else { return }
                 await update(accountID)
@@ -75,7 +87,7 @@ final class MailSpotlightIndexer {
 
     /// A sync finished for `accountID`: index what changed and remove what left.
     func mailSynced(accountID: String) {
-        guard isEnabled, queued.insert(accountID).inserted else { return }
+        guard allowsIndexing, isEnabled, queued.insert(accountID).inserted else { return }
         let current = generation
         enqueue { [weak self] in
             guard let self, current == generation else { return }
@@ -87,17 +99,16 @@ final class MailSpotlightIndexer {
 
     /// Removes the accounts' items, after sign-out or when their cached mail is deleted.
     func remove(accountIDs: Set<String>) {
-        guard isEnabled, !accountIDs.isEmpty else { return }
+        guard !accountIDs.isEmpty else { return }
         queued.subtract(accountIDs)
+        removal.request(accounts: accountIDs)
         enqueue { [weak self] in
-            for accountID in accountIDs { self?.indexed.removeValue(forKey: accountID) }
-            try? await Self.remove(domains: Array(accountIDs))
+            _ = await self?.finishPendingRemoval()
         }
     }
 
     /// Removes every item, as a cache reset or signing out of every account needs.
     func removeAll() {
-        guard isEnabled else { return }
         clear()
     }
 
@@ -111,9 +122,27 @@ final class MailSpotlightIndexer {
     private func clear() {
         generation += 1
         queued = []
+        removal.requestAll()
         enqueue { [weak self] in
-            self?.indexed = [:]
-            try? await Self.removeEverything()
+            _ = await self?.finishPendingRemoval()
+        }
+    }
+
+    /// Runs at launch even when indexing is off, and from Reading settings.
+    func retryRemoval() {
+        enqueue { [weak self] in
+            _ = await self?.finishPendingRemoval()
+        }
+    }
+
+    private func finishPendingRemoval() async -> Bool {
+        guard removal.hasPendingRemoval else { return true }
+        return await removal.performPending { [self] accounts in
+            if let accounts {
+                for accountID in accounts { indexed[accountID] = nil }
+            } else {
+                indexed = [:]
+            }
         }
     }
 
@@ -127,10 +156,11 @@ final class MailSpotlightIndexer {
     }
 
     private func update(_ accountID: String) async {
+        guard await finishPendingRemoval(), isEnabled else { return }
         guard let cache = app?.cache, app?.mailbox?.account(id: accountID) != nil else { return }
         let known = indexed[accountID] ?? [:]
         do {
-            indexed[accountID] = try await Self.reindex(accountID: accountID, cache: cache, known: known)
+            indexed[accountID] = try await reindex(accountID, cache, known)
         } catch {
             // The next sync compares against the last finished pass again.
         }
@@ -206,14 +236,6 @@ final class MailSpotlightIndexer {
         hasher.combine(thread.lastDate)
         hasher.combine(thread.messageCount)
         return hasher.finalize()
-    }
-
-    nonisolated private static func removeEverything() async throws {
-        try await CSSearchableIndex.default().deleteAllSearchableItems()
-    }
-
-    nonisolated private static func remove(domains: [String]) async throws {
-        try await CSSearchableIndex.default().deleteSearchableItems(withDomainIdentifiers: domains)
     }
 
     // MARK: Items

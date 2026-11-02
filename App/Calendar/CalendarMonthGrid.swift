@@ -45,14 +45,14 @@ struct CalendarMonthGrid: View {
                             cell(day, height: cellHeight)
                         }
                     }
-                    .background(frameReader(.content))
-                    .background(CalendarDragAutoScroll(direction: scrollDirection))
-                    .background(PerformanceScrollSurfaceMarker(name: "calendar", isActive: true))
+                    .background { frameReader(.content) }
+                    .background { CalendarDragAutoScroll(direction: scrollDirection) }
+                    .background { PerformanceScrollSurfaceMarker(name: "calendar", isActive: true) }
                 }
-                .background(frameReader(.viewport))
+                .background { frameReader(.viewport) }
             }
         }
-        .coordinateSpace(name: canvas)
+        .coordinateSpace(.named(canvas))
         .dropDestination(for: ConversationDragItem.self) { items, location in
             guard let item = items.first, let day = day(at: location) else { return false }
             dropMail(item.link, dayRange(day))
@@ -62,7 +62,7 @@ struct CalendarMonthGrid: View {
             frames = value
             if let drag { updateDrag(at: drag.pointer) }
         }
-        .background(CalendarDragCancellation(isActive: drag != nil) { cancelDrag() })
+        .background { CalendarDragCancellation(isActive: drag != nil) { cancelDrag() } }
         .onExitCommand { cancelDrag() }
         .onChange(of: pointerIsDown) { _, down in
             if !down { drag = nil; cancelled = false }

@@ -52,7 +52,7 @@ struct AssistantConversationView<Welcome: View>: View {
                     }
                 }
         }
-        .coordinateSpace(name: "assistant-scroll")
+        .coordinateSpace(.named("assistant-scroll"))
         .onPreferenceChange(AssistantScrollFrameKey.self) { frame in
             scrollTracking.update(frame: frame, viewportHeight: viewportHeight)
         }
@@ -61,8 +61,10 @@ struct AssistantConversationView<Welcome: View>: View {
     private var transcript: some View {
         LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if model.messages.isEmpty { welcome().id("assistant-welcome") }
-            ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                messageRow(message, at: index)
+            ForEach(model.messages.enumerated(), id: \.element.id) { index, message in
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    messageRow(message, at: index)
+                }
             }
             if let error = model.errorMessage, error != model.messages.last?.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")

@@ -44,10 +44,18 @@ enum SignatureSource: String, CaseIterable, Identifiable, Sendable {
 /// Signatures stored by Tern and the ones saved in Gmail, behind one source control.
 struct SignaturesSettingsPane: View {
     @AppStorage(SignatureSource.storageKey) private var source = SignatureSource.local
+    @Environment(SettingsUnsavedChanges.self) private var unsaved
+
+    private var sourceSelection: Binding<SignatureSource> {
+        Binding(get: { source }, set: { requested in
+            guard requested != source else { return }
+            unsaved.request { source = requested }
+        })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Signature source", selection: $source) {
+            Picker("Signature source", selection: sourceSelection) {
                 ForEach(SignatureSource.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)

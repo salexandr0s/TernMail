@@ -516,7 +516,7 @@ extension CacheTransaction {
         guard let draft = try localDraft(id: localDraftID), draft.state != .editing else { return false }
         let kind: PendingAction.Kind = draft.state == .sending ? .sendDraft : .discardDraft
         guard let row = try composeRows(localDraftID: localDraftID).first(where: { $0.kind == kind }),
-              row.state == .queued, row.attempts == 0
+              draft.canCancelPendingExit(row)
         else { return false }
         _ = try row.delete(db)
         try returnToEditing(localDraftID: localDraftID)

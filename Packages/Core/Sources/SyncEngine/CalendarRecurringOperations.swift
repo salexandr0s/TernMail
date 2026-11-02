@@ -24,6 +24,10 @@ extension CalendarSyncEngine {
                 var fields = exception.writableFields
                 for key in ["id", "iCalUID", "recurrence", "attendees", "organizer", "creator"] { fields.removeValue(forKey: key) }
                 if exception.isCancelled { fields = ["status": .string("cancelled")] }
+                if !operation.affectedEventVersions.isEmpty {
+                    guard let reviewed = operation.affectedEventVersions[instance.id] else { throw CalendarEngineError.conflict }
+                    try Self.checkETag(reviewed, current: instance)
+                }
                 operation.preparedMutation = .update(eventID: instance.id, fields: fields, etag: instance.etag)
                 try await store.saveOperation(operation)
             }

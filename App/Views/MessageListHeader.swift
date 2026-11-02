@@ -9,7 +9,7 @@ struct MessageListHeader: View {
                 SearchScopeBar(mailbox: mailbox)
                     .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
             }
-            if mailbox.listPreferences.showsQuickFilters || showsDestructiveHeader {
+            if mailbox.listPreferences.presentsQuickFilters || showsDestructiveHeader {
                 actionHeader
                     .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
             }
@@ -24,7 +24,7 @@ struct MessageListHeader: View {
 
     private var actionHeader: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            if mailbox.listPreferences.showsQuickFilters {
+            if mailbox.listPreferences.presentsQuickFilters {
                 HStack(spacing: Tokens.Space.s2) {
                     ViewThatFits(in: .horizontal) {
                         quickFilters.labelStyle(.titleAndIcon).fixedSize()

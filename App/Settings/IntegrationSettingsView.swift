@@ -6,7 +6,18 @@ enum IntegrationSettingsPane { case signatures, filters, blocked, vacation }
 struct IntegrationSettingsView: View {
     let pane: IntegrationSettingsPane
     @Environment(AppModel.self) private var app
+    @Environment(SettingsUnsavedChanges.self) private var unsaved
     @State private var selectedAccount = ""
+
+    private var accountSelection: Binding<String> {
+        Binding(get: { selectedAccount }, set: { requested in
+            guard requested != selectedAccount else { return }
+            unsaved.request {
+                guard app.mailbox?.account(id: requested) != nil else { return }
+                selectedAccount = requested
+            }
+        })
+    }
 
     var body: some View {
         // A real container: modifiers on an empty Group never fire, so the
@@ -15,7 +26,7 @@ struct IntegrationSettingsView: View {
             if let accounts = app.mailbox?.accounts, let first = accounts.first {
                 let owner = accounts.first(where: { $0.account.id == selectedAccount }) ?? first
                 IntegrationSettingsContent(accountID: owner.account.id, pane: pane, app: app,
-                    accounts: accounts.map(\.account), selectedAccount: $selectedAccount)
+                    accounts: accounts.map(\.account), selectedAccount: accountSelection)
                     .id(owner.account.id)
             } else {
                 ContentUnavailableView("No Accounts", systemImage: "person.crop.circle.badge.plus",

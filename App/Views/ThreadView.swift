@@ -9,6 +9,7 @@ struct ThreadView: View {
     let key: ThreadKey
     let mailbox: MailboxModel
     var selectedMessageID: String? = nil
+    var selectedAttachmentPartID: String? = nil
     var isReaderActive = true
     var retainsHiddenBody = false
     var retainsSourceSnapshot = true
@@ -133,6 +134,7 @@ struct ThreadView: View {
     private func messageRow(_ message: MessageDetail, in detail: ThreadDetail, scroll: ScrollViewProxy) -> some View {
         MessageView(
             message: message,
+            selectedAttachmentPartID: message.id == selectedMessageID ? selectedAttachmentPartID : nil,
             blocker: blocker,
             isExpanded: expanded.contains(message.id),
             isFocused: readerFocused && focusedMessageID == message.id,

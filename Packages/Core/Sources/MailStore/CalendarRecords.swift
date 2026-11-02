@@ -60,6 +60,8 @@ public struct CalendarOperation: Codable, Sendable, Equatable, Identifiable {
     public var createdAt: Date
     public var updatedAt: Date
     public var attempts: Int
+    /// Nil on older receipts; treat those attempted writes as uncertain.
+    public var hasUncertainOutcome: Bool?
     public var errorMessage: String?
     public var resultEvent: GoogleCalendarEvent?
     public var beforeEvent: GoogleCalendarEvent?
@@ -77,7 +79,7 @@ public struct CalendarOperation: Codable, Sendable, Equatable, Identifiable {
                 createdAt: Date = .now, sourceSuggestionID: String? = nil) {
         self.id = id; self.accountID = accountID; self.calendarID = calendarID
         self.mutation = mutation; self.sendUpdates = sendUpdates; self.status = status
-        self.createdAt = createdAt; self.updatedAt = createdAt; attempts = 0; completedStep = 0
+        self.createdAt = createdAt; self.updatedAt = createdAt; attempts = 0; completedStep = 0; hasUncertainOutcome = false
         affectedEventVersions = [:]
         self.sourceSuggestionID = sourceSuggestionID
     }

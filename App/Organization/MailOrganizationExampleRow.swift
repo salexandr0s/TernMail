@@ -4,6 +4,7 @@ import SyncEngine
 /// Uses only metadata already included in the review, without loading a message.
 struct MailOrganizationExampleRow: View {
     let message: MailOrganizationSample
+    var onOpen: (() -> Void)? = nil
 
     private var preview: String {
         message.snippet.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -34,7 +35,7 @@ struct MailOrganizationExampleRow: View {
                     .help(counterpart)
                 Spacer(minLength: 0)
                 if let date = message.date {
-                    Text(date, format: .dateTime.month(.abbreviated).day())
+                    Text(date, format: .dateTime.year().month(.abbreviated).day())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize()
@@ -51,9 +52,14 @@ struct MailOrganizationExampleRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            if let onOpen {
+                Button("Open Message", systemImage: "envelope.open", action: onOpen)
+                    .buttonStyle(.link).font(.caption)
+                    .accessibilityLabel("Open \(message.subject.isEmpty ? "message" : message.subject)")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }

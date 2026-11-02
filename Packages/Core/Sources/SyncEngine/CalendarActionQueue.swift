@@ -110,6 +110,7 @@ extension CalendarSyncEngine {
                 try await store.finishOperation(operation, event: result, deletedEventID: deleted)
             } catch {
                 try checkpoint(epoch)
+                operation.hasUncertainOutcome = (operation.hasUncertainOutcome ?? true) || !Self.isDefiniteRejection(error)
                 let conflict = error as? CalendarEngineError == .conflict || Self.httpStatus(error) == 412
                 operation.status = conflict ? .conflicted : (Self.isOffline(error) ? .queued : .failed)
                 operation.errorMessage = Self.message(for: error)
@@ -163,7 +164,8 @@ extension CalendarSyncEngine {
             ], etag: etag, marker: operation.id, sendUpdates: operation.sendUpdates, epoch: epoch)
         case .move(let eventID, let destination, let etag):
             guard try await calendar(destination).canWrite else { throw CalendarEngineError.permissionDenied }
-            if operation.attempts > 1, let old = operation.resultEvent {
+            let source = try await optionalFetch(calendarID: operation.calendarID, eventID: eventID, epoch: epoch)
+            if operation.attempts > 1, let old = operation.resultEvent, source == nil || source?.isCancelled == true {
                 if let moved = try await optionalFetch(calendarID: destination, eventID: eventID, epoch: epoch), moved.iCalUID == old.iCalUID { return moved }
                 if let uid = old.iCalUID {
                     let candidates = try await collectEvents(calendarID: destination, query: .init(iCalUID: uid), epoch: epoch).events
@@ -171,7 +173,7 @@ extension CalendarSyncEngine {
                     if candidates.count == 1 { return candidates[0] }
                 }
             }
-            let current = try await fetch(calendarID: operation.calendarID, eventID: eventID, epoch: epoch)
+            guard let current = source else { throw CalendarEngineError.conflict }
             try Self.checkETag(etag, current: current)
             operation.resultEvent = current
             try await store.saveOperation(operation)
@@ -300,6 +302,13 @@ extension CalendarSyncEngine {
         guard let start = event.start, let end = event.end, start.isAllDay == end.isAllDay,
               let a = start.resolvedDate(), let b = end.resolvedDate(), b > a else { throw CalendarEngineError.invalidEvent }
     }
+    private static func isDefiniteRejection(_ error: any Error) -> Bool {
+        if let code = httpStatus(error), [400, 401, 403, 404, 409, 410, 412, 422].contains(code) { return true }
+        if error is CalendarEngineError { return true }
+        if case .invalidRequest = error as? GmailError { return true }
+        return false
+    }
+
     static func httpStatus(_ error: any Error) -> Int? {
         if case .http(let status, _) = error as? GmailError { return status }
         return nil

@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MailStore
 import MessageContent
 import Observation
@@ -41,6 +42,13 @@ final class MailAnalyticsModel {
     @ObservationIgnored private var historyTask: Task<Void, Never>?
     @ObservationIgnored private var receiptTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var receiptsByAccount: [String: [ReadReceiptStatus]] = [:]
+    @ObservationIgnored private let historyPage: @MainActor (AccountMailbox, Bool) async throws -> MailAnalyticsCoverage
+
+    init(historyPage: @escaping @MainActor (AccountMailbox, Bool) async throws -> MailAnalyticsCoverage = {
+        try await $0.engine.loadAnalyticsHistoryPage(restart: $1)
+    }) {
+        self.historyPage = historyPage
+    }
 
     func observe(cache: MailCache, query: MailAnalyticsQuery) async {
         stop()
@@ -93,30 +101,48 @@ final class MailAnalyticsModel {
                     historyTask = nil
                 }
             }
-            do {
-                for owner in accounts {
-                    guard owner.syncEnabled else {
-                        historyError = "Mail sync is paused for one of these accounts. Enable sync to load its history."
-                        continue
-                    }
-                    historyAccountName = owner.account.email
+            var failures: [String] = []
+            for owner in accounts {
+                guard revision == request, !Task.isCancelled else { return }
+                guard owner.syncEnabled else {
+                    failures.append("\(owner.account.email): Mail sync is paused. Enable Sync Mail in Settings to load its history.")
+                    historyError = failures.joined(separator: "\n")
+                    continue
+                }
+                historyAccountName = owner.account.email
+                do {
                     var firstPage = true
                     while true {
                         try Task.checkCancellation()
                         guard revision == request else { return }
-                        let coverage = try await owner.engine.loadAnalyticsHistoryPage(restart: restart && firstPage)
+                        let coverage = try await historyPage(owner, restart && firstPage)
                         guard revision == request, !Task.isCancelled else { return }
                         historyPagesLoaded += 1
                         firstPage = false
                         if coverage.isComplete { break }
                     }
+                } catch is CancellationError {
+                    // Completed pages remain available; cancellation stops every account.
+                    return
+                } catch {
+                    guard revision == request, !Task.isCancelled else { return }
+                    failures.append("\(owner.account.email): \(Self.historyFailureMessage(error))")
+                    historyError = failures.joined(separator: "\n")
                 }
-            } catch is CancellationError {
-                // Completed pages remain available; the next load resumes them.
-            } catch {
-                guard revision == request, !Task.isCancelled else { return }
-                historyError = "Couldn't finish loading history. The pages already loaded are saved. Try again to continue."
             }
+        }
+    }
+
+    private static func historyFailureMessage(_ error: any Error) -> String {
+        switch error {
+        case GmailError.unauthorized:
+            "Sign in again to continue loading history."
+        case let gmail as GmailError where gmail.isMissingScope:
+            "Sign in again to restore permission to read mail history."
+        case GmailError.rateLimited:
+            "Gmail is limiting requests. Wait a moment, then try again."
+        default:
+            "Couldn't finish loading history. Loaded pages are saved. Try again to continue."
         }
     }
 

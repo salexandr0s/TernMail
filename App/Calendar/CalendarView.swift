@@ -119,6 +119,9 @@ struct CalendarView: View {
                 try await model.save(edited)
             }
         }
+        .sheet(item: $model.recoveryOperation) { operation in
+            CalendarRecoveryView(model: model, operation: operation)
+        }
         .sheet(isPresented: $showActivity) { CalendarActivityView(model: model) }
         .sheet(isPresented: $showImportReview) {
             CalendarImportReview(events: importEvents, calendars: model.calendars) { events, calendarKey in
@@ -172,7 +175,7 @@ struct CalendarView: View {
 
     /// Calendar settings live in the Settings window; this lands on its pane.
     private func manageCalendars() {
-        UserDefaults.standard.set("calendar", forKey: SettingsDestination.storageKey)
+        SettingsNavigationRequests.shared.request(.calendar)
         openSettings()
     }
 

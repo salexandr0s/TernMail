@@ -67,14 +67,23 @@ final class AttachmentLibraryModel {
     @ObservationIgnored private var presentationRevision = UUID()
     @ObservationIgnored private var lastFilter: AttachmentLibraryQuery?
     @ObservationIgnored private var lastAction: Action?
+    @ObservationIgnored private let pasteboard: NSPasteboard
+    @ObservationIgnored private let openWithFile: @MainActor (URL) async throws -> Void
     /// Copies this window saved, or opened in Downloads, for Show in Finder.
     private var savedFiles: [AttachmentLibraryItem.ID: URL] = [:]
     private enum Action {
-        case preview(AttachmentLibraryItem), open(AttachmentLibraryItem), source(AttachmentLibraryItem), save(AttachmentLibraryItem), saveSelection
+        case preview(AttachmentLibraryItem, [AttachmentLibraryItem]), open([AttachmentLibraryItem])
+        case source(AttachmentLibraryItem), save(AttachmentLibraryItem)
+        case saveSelection([AttachmentLibraryItem]), copy([AttachmentLibraryItem]), openWith(AttachmentLibraryItem)
         case category(AttachmentCategory, AttachmentLibraryItem), indexing
     }
 
-    init(mailbox: MailboxModel) { self.mailbox = mailbox }
+    init(mailbox: MailboxModel, pasteboard: NSPasteboard = .general,
+         openWithFile: @escaping @MainActor (URL) async throws -> Void = AttachmentActions.openWith) {
+        self.mailbox = mailbox
+        self.pasteboard = pasteboard
+        self.openWithFile = openWithFile
+    }
 
     var availableAccounts: [AccountRecord] { mailbox.accounts.map(\.account) }
     var availableLabels: [LabelRecord] { mailbox.accounts.flatMap(\.labels) }
@@ -170,8 +179,7 @@ final class AttachmentLibraryModel {
         } catch {
             guard !Task.isCancelled, coverageRevision == revision,
                   availableAccounts.map(\.id) == accountIDs else { return }
-            lastAction = nil
-            errorMessage = "Couldn't read indexing progress. Try again."
+            reportObservationError("Couldn't read indexing progress. Try again.")
         }
     }
 
@@ -197,6 +205,14 @@ final class AttachmentLibraryModel {
             guard observationRevision == revision, query == request else { return }
             for try await page in mailbox.cache.observeAttachmentLibrary(query: request) {
                 guard !Task.isCancelled, observationRevision == revision, query == request else { return }
+                let lastOffset = max(0, (page.totalCount - 1) / request.limit * request.limit)
+                if request.offset > lastOffset {
+                    // Changing the observation key starts the last remaining page in SwiftUI.
+                    isLoading = true
+                    selection.removeAll()
+                    pageOffset = lastOffset
+                    return
+                }
                 if loadedPage != page || loadedQuery != request {
                     if loadedPage != page { loadedPage = page }
                     if loadedQuery != request { loadedQuery = request }
@@ -209,8 +225,7 @@ final class AttachmentLibraryModel {
         } catch {
             guard !Task.isCancelled, observationRevision == revision, query == request else { return }
             isLoading = false
-            lastAction = nil
-            errorMessage = "Couldn't load attachments. Try again."
+            reportObservationError("Couldn't load attachments. Try again.")
         }
     }
 
@@ -218,12 +233,15 @@ final class AttachmentLibraryModel {
     func previousPage() { selection.removeAll(); pageOffset = max(0, pageOffset - 100) }
 
     func retryLastAction() async {
+        guard !isWorking else { return }
         switch lastAction {
-        case .preview(let item): await preview(item)
-        case .open(let item): await openFile(item)
+        case .preview(let item, let group): await preview(item, in: group)
+        case .open(let items): await openFiles(items)
+        case .openWith(let item): await openWith(item)
+        case .copy(let items): await copyFiles(items)
         case .source(let item): await openSource(item)
         case .save(let item): await save(item)
-        case .saveSelection: await saveSelection()
+        case .saveSelection(let items): await saveFiles(items)
         case .category(let category, let item): await setCategory(category, for: item)
         case .indexing: await retryIndexing()
         case nil: errorMessage = nil; reloadRevision += 1
@@ -231,10 +249,11 @@ final class AttachmentLibraryModel {
     }
 
     func retryIndexing() async {
-        errorMessage = nil
-        lastAction = .indexing
+        guard begin(.indexing) else { return }
+        defer { isWorking = false }
         for owner in mailbox.accounts where owner.syncEnabled && !unavailableAccountIDs.contains(owner.account.id) {
             do { _ = try await owner.engine.indexAttachments(retryNow: true) }
+            catch is CancellationError { lastAction = nil; return }
             catch { errorMessage = Self.message(for: error) }
         }
         if errorMessage == nil { lastAction = nil }
@@ -252,8 +271,8 @@ final class AttachmentLibraryModel {
 
     func setCategory(_ category: AttachmentCategory, for item: AttachmentLibraryItem) async {
         guard mailbox.account(id: item.accountID) != nil else { return }
-        errorMessage = nil
-        lastAction = .category(category, item)
+        guard begin(.category(category, item)) else { return }
+        defer { isWorking = false }
         do {
             if let accounts = mailbox.accountStore {
                 let saved = try await accounts.saveAttachmentCategoryOverride(.init(accountID: item.accountID,
@@ -265,7 +284,8 @@ final class AttachmentLibraryModel {
                 }
             }
             lastAction = nil
-        } catch { errorMessage = "Couldn't save the document category. Try again." }
+        } catch is CancellationError { lastAction = nil }
+        catch { errorMessage = "Couldn't save the document category. Try again." }
     }
 
     /// The files a command on `item` acts on, in list order: the whole
@@ -278,10 +298,12 @@ final class AttachmentLibraryModel {
     /// Quick Look opens on `item` and pages through the rest of the selection,
     /// so those files download first. One that fails to download is left out.
     func preview(_ item: AttachmentLibraryItem) async {
+        await preview(item, in: selectedItems(with: item))
+    }
+
+    private func preview(_ item: AttachmentLibraryItem, in group: [AttachmentLibraryItem]) async {
         let revision = presentationRevision
-        lastAction = .preview(item)
-        let group = selectedItems(with: item)
-        await perform {
+        await perform(.preview(item, group)) {
             var urls: [URL] = []
             var shown: URL?
             for candidate in group {
@@ -300,19 +322,20 @@ final class AttachmentLibraryModel {
     }
 
     func openFile(_ item: AttachmentLibraryItem) async {
-        lastAction = .open(item)
-        await perform {
-            let url = try await file(for: item)
-            let opened = try await AttachmentActions.open(url)
-            if opened != url { savedFiles[item.id] = opened }
-        }
+        await openFiles([item])
     }
 
     /// Opens each file in turn and stops at the first one that fails.
     func openFiles(_ items: [AttachmentLibraryItem]) async {
-        for item in items {
-            await openFile(item)
-            if errorMessage != nil { return }
+        guard !items.isEmpty else { return }
+        await perform(.open(items)) {
+            for (index, item) in items.enumerated() {
+                // Retry starts at the failed file, without reopening completed files.
+                lastAction = .open(Array(items[index...]))
+                let url = try await file(for: item)
+                let opened = try await AttachmentActions.open(url)
+                if opened != url { savedFiles[item.id] = opened }
+            }
         }
     }
 
@@ -325,32 +348,51 @@ final class AttachmentLibraryModel {
     }
 
     func openWith(_ item: AttachmentLibraryItem) async {
-        await perform { try await AttachmentActions.openWith(file(for: item)) }
+        await perform(.openWith(item)) { try await openWithFile(file(for: item)) }
     }
 
     func copyFile(_ item: AttachmentLibraryItem) async {
-        await perform { AttachmentActions.copy(try await file(for: item)) }
+        await copyFiles([item])
+    }
+
+    func copyFiles(_ items: [AttachmentLibraryItem]) async {
+        guard !items.isEmpty, begin(.copy(items)) else { return }
+        defer { isWorking = false }
+        var urls: [URL] = []
+        var firstFailure: (any Error)?
+        for item in items {
+            do { urls.append(try await file(for: item)) }
+            catch is CancellationError { lastAction = nil; return }
+            catch { if firstFailure == nil { firstFailure = error } }
+        }
+        if !urls.isEmpty, !AttachmentActions.copy(urls, to: pasteboard) {
+            errorMessage = "Couldn't copy the files to the clipboard. Try again."
+        } else if let firstFailure {
+            let detail = Self.message(for: firstFailure)
+            errorMessage = items.count == 1 ? detail
+                : "Copied \(urls.count) of \(items.count) files. \(detail) Try again to copy the full selection."
+        } else {
+            lastAction = nil
+        }
     }
 
     /// Loads the email the file came from, which may be older than the
     /// cached mail, then asks the library to open it in a window.
     @discardableResult
     func openSource(_ item: AttachmentLibraryItem) async -> Bool {
-        guard !isWorking else { return false }
+        guard begin(.source(item)) else { return false }
         let revision = presentationRevision
-        errorMessage = nil
-        lastAction = .source(item)
-        isWorking = true
         defer { isWorking = false }
         do {
             let owner = try owner(for: item)
             try await owner.engine.loadAttachmentSource(item.threadID)
             guard try self.owner(for: item) === owner else { throw AttachmentActionError.accountUnavailable }
-            guard presentationRevision == revision else { return false }
+            guard presentationRevision == revision else { lastAction = nil; return false }
             sourceLink = MailLink(accountID: item.accountID, threadID: item.threadID, messageID: item.messageID)
             lastAction = nil
             return true
-        } catch { errorMessage = Self.message(for: error); return false }
+        } catch is CancellationError { lastAction = nil; return false }
+        catch { errorMessage = Self.message(for: error); return false }
     }
 
     func dismissPresentation() {
@@ -361,14 +403,12 @@ final class AttachmentLibraryModel {
     }
 
     func save(_ item: AttachmentLibraryItem) async {
-        guard !isWorking else { return }
-        lastAction = .save(item)
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = AttachmentFileExport.safeFilename(item.filename)
-        panel.canCreateDirectories = true
-        let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
-        guard response == .OK, let destination = panel.url else { return }
-        await perform {
+        await perform(.save(item)) {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = AttachmentFileExport.safeFilename(item.filename)
+            panel.canCreateDirectories = true
+            let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
+            guard response == .OK, let destination = panel.url else { return }
             let source = try await file(for: item)
             try await AttachmentFileExport.save(source, to: destination)
             savedFiles[item.id] = destination
@@ -376,30 +416,33 @@ final class AttachmentLibraryModel {
     }
 
     func saveSelection() async {
-        let selected = items.filter { selection.contains($0.id) }
-        guard !selected.isEmpty, !isWorking else { return }
+        await saveFiles(items.filter { selection.contains($0.id) })
+    }
+
+    private func saveFiles(_ selected: [AttachmentLibraryItem]) async {
+        guard !selected.isEmpty else { return }
         if selected.count == 1, let item = selected.first { await save(item); return }
+        guard begin(.saveSelection(selected)) else { return }
+        defer { isWorking = false }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.prompt = "Save Attachments"
         let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
-        guard response == .OK, let directory = panel.url else { return }
-        lastAction = .saveSelection
-        isWorking = true
-        defer { isWorking = false }
+        guard response == .OK, let directory = panel.url else { lastAction = nil; return }
         var failedIDs: Set<String> = []
         for item in selected {
             do {
                 let source = try await file(for: item)
                 savedFiles[item.id] = try await AttachmentFileExport.copyWithoutReplacing(source, to: directory)
-            } catch { failedIDs.insert(item.id) }
+            } catch is CancellationError { lastAction = nil; return }
+            catch { failedIDs.insert(item.id) }
         }
         let failures = failedIDs.count
         if failures > 0 { selection = failedIDs }
         errorMessage = failures == 0 ? nil : "Saved \(selected.count - failures) of \(selected.count) files. \(failures) couldn't be saved. Check account access and folder permissions, then retry the failed files."
-        if failures == 0 { lastAction = nil }
+        lastAction = failures == 0 ? nil : .saveSelection(selected.filter { failedIDs.contains($0.id) })
     }
 
     private func owner(for item: AttachmentLibraryItem) throws -> AccountMailbox {
@@ -418,13 +461,26 @@ final class AttachmentLibraryModel {
         return file
     }
 
-    private func perform(_ operation: () async throws -> Void) async {
-        guard !isWorking else { return }
+    /// Admission and retry identity change together, before any suspension or panel.
+    private func begin(_ action: Action) -> Bool {
+        guard !isWorking else { return false }
         isWorking = true
         errorMessage = nil
+        lastAction = action
+        return true
+    }
+
+    private func perform(_ action: Action, _ operation: () async throws -> Void) async {
+        guard begin(action) else { return }
         defer { isWorking = false }
         do { try await operation(); lastAction = nil }
-        catch { if !(error is CancellationError) { errorMessage = Self.message(for: error) } }
+        catch is CancellationError { lastAction = nil }
+        catch { errorMessage = Self.message(for: error) }
+    }
+
+    private func reportObservationError(_ message: String) {
+        guard !isWorking, case nil = lastAction else { return }
+        errorMessage = message
     }
 
     static func message(for error: any Error) -> String {

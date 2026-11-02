@@ -77,7 +77,7 @@ struct CalendarEventEditor: View {
                         }
                     }
                     TextField("Location", text: $location, prompt: Text("Add a place or address"))
-                }.disabled(draft.isDeletion)
+                }.disabled(!editable || draft.isDeletion)
                 Section("Date & Time") {
                     Toggle("All-day", isOn: $allDay)
                         .onChange(of: allDay) { _, value in
@@ -93,7 +93,7 @@ struct CalendarEventEditor: View {
                         CalendarTimeZonePicker(title: "Time Zone", identifier: $zoneID)
                             .disabled(preservesImportedDates)
                     }
-                }.disabled(draft.isDeletion)
+                }.disabled(!editable || draft.isDeletion)
                 if isRecurring {
                     Section("Apply Changes To") {
                         Picker("Events", selection: $draft.editScope) {
@@ -101,6 +101,7 @@ struct CalendarEventEditor: View {
                                 Text(scope.title).tag(scope).disabled(scope != .occurrence && draft.seriesMaster == nil)
                             }
                         }
+                        .disabled(draft.recovery != nil)
                         if draft.seriesMaster == nil {
                             Text("Series details are unavailable. Refresh before editing all or following events.")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -111,7 +112,7 @@ struct CalendarEventEditor: View {
                                 .font(.caption).foregroundStyle(.secondary)
                             Toggle("I have reviewed the change to following events", isOn: $draft.acknowledgesFollowingReset)
                         }
-                    }
+                    }.disabled(!editable)
                 }
                 Section("Repeat") {
                     CalendarRecurrenceControl(rules: $recurrence, allDay: allDay, timeZone: eventZone)
@@ -122,7 +123,7 @@ struct CalendarEventEditor: View {
                         Text("Dates and repeat rules are preserved with those occurrences. You can edit them after import.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                }.disabled(draft.isDeletion)
+                }.disabled(!editable || draft.isDeletion)
                 Section("Guests") {
                     if attendees.isEmpty {
                         Label("No guests added", systemImage: "person.2")
@@ -152,19 +153,20 @@ struct CalendarEventEditor: View {
                             .font(.caption).foregroundStyle(.secondary)
                         Toggle(draft.isDeletion ? "Send cancellations to these guests" : "Send invitations or updates to these guests", isOn: $confirmedNotifications)
                     }
-                }
+                }.disabled(!editable)
                 Section("Video Call") {
                     if let link = draft.event.hangoutLink ?? draft.event.conferenceData?.entryPoints?.first(where: { $0.entryPointType == "video" })?.uri,
                        let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                         Link(destination: url) { Label("Join Meeting", systemImage: "video") }
                             .buttonStyle(.bordered)
                     } else {
-                        Toggle("Add Google Meet", isOn: $draft.createMeet).disabled(selectedCalendar?.entry.supportsGoogleMeet != true)
+                        Toggle("Add Google Meet", isOn: $draft.createMeet)
+                            .disabled(!editable || draft.isDeletion || selectedCalendar?.entry.supportsGoogleMeet != true)
                         if selectedCalendar?.entry.supportsGoogleMeet != true {
                             Text("This calendar does not support Google Meet.").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                }.disabled(draft.isDeletion)
+                }
                 Section("Alerts") {
                     Toggle("Use Calendar Defaults", isOn: $useDefaultAlerts)
                     if !useDefaultAlerts {
@@ -181,30 +183,31 @@ struct CalendarEventEditor: View {
                         }
                         Button("Add Alert") { reminders.append(EditableReminder(reminder: CalendarReminder(minutes: 10))) }.disabled(reminders.count >= 5)
                     }
-                }.disabled(draft.isDeletion)
+                }.disabled(!editable || draft.isDeletion)
                 Section {
-                    Picker("Show as", selection: $draft.event.transparency.or("opaque")) {
-                        Text("Busy").tag("opaque"); Text("Free").tag("transparent")
-                    }
-                    Picker("Visibility", selection: $draft.event.visibility.or("default")) {
-                        Text("Calendar Default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
-                    }
-                    TextField("URL", text: $eventURL)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        Text("Notes").font(.callout).foregroundStyle(.secondary)
-                        TextEditor(text: $notes)
-                            .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4)
-                            .accessibilityLabel("Event notes")
-                    }
+                    Group {
+                        Picker("Show as", selection: $draft.event.transparency.or("opaque")) {
+                            Text("Busy").tag("opaque"); Text("Free").tag("transparent")
+                        }
+                        Picker("Visibility", selection: $draft.event.visibility.or("default")) {
+                            Text("Calendar Default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
+                        }
+                        TextField("URL", text: $eventURL)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Text("Notes").font(.callout).foregroundStyle(.secondary)
+                            TextEditor(text: $notes)
+                                .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4)
+                                .accessibilityLabel("Event notes")
+                        }
+                    }.disabled(!editable || draft.isDeletion)
                     ForEach(draft.event.attachments ?? []) { attachment in
                         if let url = URL(string: attachment.fileUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                             Link(attachment.title ?? "Attachment", destination: url)
                         }
                     }
                 } header: { Text("Details") }
-                    .disabled(draft.isDeletion)
             }
-            .formStyle(.grouped).disabled(!editable || isSaving)
+            .formStyle(.grouped).disabled(isSaving)
             .environment(\.timeZone, eventZone)
             Divider()
             VStack(spacing: Tokens.Space.s3) {

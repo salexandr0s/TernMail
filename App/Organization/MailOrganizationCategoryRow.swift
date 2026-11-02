@@ -7,6 +7,7 @@ struct MailOrganizationCategoryRow: View {
     let canCreateFilters: Bool
     var isEditable = true
     var isApplied = false
+    var onOpenMessage: ((MailOrganizationSample) -> Void)? = nil
     @State private var isExpanded = false
     @State private var visibleExampleCount = 4
 
@@ -34,7 +35,11 @@ struct MailOrganizationCategoryRow: View {
     }
 
     private var hasRecurringSenders: Bool {
-        category.proposal.kind == .topic && !category.proposal.ruleSenders.isEmpty
+        category.proposal.kind == .topic && !eligibleRuleSenders.isEmpty
+    }
+
+    private var eligibleRuleSenders: [String] {
+        samples.eligibleRuleSenders(category.proposal.ruleSenders, selectedMessageIDs: category.selectedMessageIDs)
     }
 
     private var labelState: String {
@@ -102,7 +107,7 @@ struct MailOrganizationCategoryRow: View {
                             .lineLimit(2)
                             .help(displayName)
                         Spacer(minLength: 0)
-                        TernBadge(text: "\(examples.count)")
+                        TernBadge(text: "\(category.selectedMessageIDs.count)")
                             .accessibilityHidden(true)
                     }
                     Text(category.proposal.explanation)
@@ -131,7 +136,7 @@ struct MailOrganizationCategoryRow: View {
         }
         .buttonStyle(.plain)
         .ternHover()
-        .accessibilityLabel("\(displayName), \(examples.count) \(examples.count == 1 ? "message" : "messages"), \(labelState), \(includesFutureMail ? "future mail filter" : "recent mail only")")
+        .accessibilityLabel("\(displayName), \(category.selectedMessageIDs.count) messages selected, \(labelState), \(includesFutureMail ? "future mail filter" : "recent mail only")")
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint("\(category.proposal.explanation) \(isExpanded ? "Hide" : "Show") examples and label details.")
         .accessibilityIdentifier("organization.category.\(category.id).disclosure")
@@ -152,7 +157,7 @@ struct MailOrganizationCategoryRow: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .disabled(!isEditable || !category.isSelected || !canCreateFilters)
-                Text(category.proposal.ruleSenders.joined(separator: ", "))
+                Text(eligibleRuleSenders.joined(separator: ", "))
                     .font(.caption).foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -164,6 +169,9 @@ struct MailOrganizationCategoryRow: View {
                 SettingsNote("These labels do not clear automatically when a reply arrives.")
             } else {
                 SettingsNote("This label applies to the reviewed messages. A future rule needs recurring mail from a consistent mailing-list or automated sender.")
+            }
+            if category.selectedMessageIDs != Set(category.proposal.messageIDs) {
+                SettingsNote("Message choices changed. Future filters are turned off; you can enable a filter again only for senders whose examples are all included.")
             }
         }
     }
@@ -180,7 +188,7 @@ struct MailOrganizationCategoryRow: View {
                 Text(includesFutureMail ? "Recent messages and future incoming mail" : "Recent messages only")
                     .font(.callout)
                 if includesFutureMail {
-                    Text("Incoming mail from \(category.proposal.ruleSenders.joined(separator: ", "))")
+                    Text("Incoming mail from \(eligibleRuleSenders.joined(separator: ", "))")
                         .font(.caption).foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -193,17 +201,26 @@ struct MailOrganizationCategoryRow: View {
     }
 
     private var exampleList: some View {
-        let shown = Array(examples.prefix(visibleExampleCount))
+        let available = isEditable ? examples : examples.filter { category.selectedMessageIDs.contains($0.messageID) }
+        let shown = Array(available.prefix(visibleExampleCount))
         return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Examples").font(.subheadline.weight(.semibold))
+                Text(isEditable ? "Messages to label" : "Included messages").font(.subheadline.weight(.semibold))
                 Spacer(minLength: Tokens.Space.s2)
-                Text("\(shown.count) of \(examples.count)").font(.caption).foregroundStyle(.secondary)
+                Text("\(shown.count) of \(available.count)").font(.caption).foregroundStyle(.secondary)
             }
             VStack(spacing: 0) {
                 ForEach(shown, id: \.messageID) { message in
-                    MailOrganizationExampleRow(message: message)
-                        .padding(Tokens.Space.s3)
+                    HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                        if isEditable {
+                            Toggle("Include \(message.subject)", isOn: $category.selectedMessageIDs.contains(message.messageID))
+                                .toggleStyle(.checkbox).labelsHidden()
+                                .disabled(!category.isSelected)
+                        }
+                        MailOrganizationExampleRow(message: message,
+                            onOpen: onOpenMessage.map { open in { open(message) } })
+                    }
+                    .padding(Tokens.Space.s3)
                     if message.messageID != shown.last?.messageID {
                         Divider().padding(.horizontal, Tokens.Space.s3)
                     }
@@ -211,10 +228,10 @@ struct MailOrganizationCategoryRow: View {
             }
             .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
-            if examples.count > 4 {
+            if available.count > 4 {
                 HStack(spacing: Tokens.Space.s3) {
-                    if shown.count < examples.count {
-                        Button("Show \(min(4, examples.count - shown.count)) More") { visibleExampleCount += 4 }
+                    if shown.count < available.count {
+                        Button("Show \(min(4, available.count - shown.count)) More") { visibleExampleCount += 4 }
                             .accessibilityIdentifier("organization.category.\(category.id).showMore")
                     }
                     if visibleExampleCount > 4 {

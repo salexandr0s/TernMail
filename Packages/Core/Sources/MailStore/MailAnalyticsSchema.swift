@@ -1,4 +1,6 @@
+import Foundation
 import GRDB
+import MessageContent
 
 enum MailAnalyticsSchema {
     static func register(in migrator: inout DatabaseMigrator) {
@@ -36,8 +38,26 @@ enum MailAnalyticsSchema {
             let tx = CacheTransaction(db: db)
             let cursor = try MessageRecord.fetchCursor(db)
             while let message = try cursor.next() {
+                if LocalSend.isProvisional(message.id) { continue }
                 let labels = try tx.messageLabelIDs(messageID: message.id, accountID: message.accountID)
-                try tx.upsertAnalyticsMessages([.init(record: message, labelIDs: Array(labels))])
+                // Keep this historical migration independent of later record columns.
+                let sent = labels.contains(SystemLabel.sent)
+                let included = labels.isDisjoint(with: [SystemLabel.draft, SystemLabel.spam, SystemLabel.trash, LocalSend.label])
+                let sender = EmailAddress.parseList(message.sender).first?.normalized ?? ""
+                let encodedLabels = String(decoding: try JSONEncoder().encode(labels.sorted()), as: UTF8.self)
+                try db.execute(sql: """
+                    INSERT INTO mailAnalyticsMessage
+                    (accountID,messageID,threadID,historyID,date,subject,sender,senderAddress,recipients,cc,labelIDs,direction,isIncluded)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, arguments: [message.accountID, message.id, message.threadID, message.historyID, message.date,
+                        message.subject, message.sender, sender, message.recipients, message.cc, encodedLabels,
+                        sent ? "sent" : "received", included])
+                let contacts = sent ? EmailAddress.parseList(message.recipients) + EmailAddress.parseList(message.cc ?? "")
+                    : EmailAddress.parseList(message.sender)
+                for address in contacts where address.isValid {
+                    try db.execute(sql: "INSERT OR IGNORE INTO mailAnalyticsContact (accountID,messageID,address,name) VALUES (?,?,?,?)",
+                        arguments: [message.accountID, message.id, address.normalized, address.name])
+                }
             }
         }
     }

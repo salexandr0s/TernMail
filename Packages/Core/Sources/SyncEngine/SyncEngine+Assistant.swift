@@ -24,6 +24,26 @@ extension SyncEngine {
         try checkAssistantAccess()
     }
 
+    /// Fetches MIME metadata for a cited file, without downloading its bytes.
+    public func assistantLoadAttachmentSource(threadID: String, messageID: String, partID: String) async throws {
+        try checkAssistantAccess()
+        let response = try await gmail.attachmentMetadata(ids: [messageID])
+        try checkAssistantAccess()
+        guard let result = response[messageID] else { throw AssistantMailError.unavailable }
+        let message = try result.get()
+        guard message.id == messageID, message.threadId == threadID else { throw AssistantMailError.invalidTarget }
+        let attachments = Mapping.attachments(message, accountID: accountID)
+        guard attachments.contains(where: { $0.partID == partID }) else { throw AssistantMailError.invalidTarget }
+        let accountID = accountID
+        try await write { tx in
+            guard try tx.message(id: messageID, accountID: accountID)?.threadID == threadID else {
+                throw AssistantMailError.invalidTarget
+            }
+            try tx.replaceAttachments(attachments, messageID: messageID, accountID: accountID)
+        }
+        try checkAssistantAccess()
+    }
+
     /// Reads full content directly, including uncached threads. It does not mark
     /// mail read, change selection, or ingest a partial thread into the cache.
     public func assistantReadThread(_ threadID: String) async throws -> AssistantThread {

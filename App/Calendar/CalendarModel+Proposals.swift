@@ -108,15 +108,21 @@ extension CalendarModel {
         }
     }
 
-    func openEvent(accountID: String, calendarID: String, eventID: String) async {
+    func openEvent(accountID: String, calendarID: String, eventID: String,
+                   isAuthorized: @escaping @MainActor () -> Bool = { true }) async {
+        guard !Task.isCancelled, isAuthorized() else { return }
         do {
             let event = try await readEvent(accountID: accountID, calendarID: calendarID, eventID: eventID)
-            guard let owner = calendars.first(where: { $0.accountID == accountID && $0.calendarID == calendarID }) else { return }
+            guard !Task.isCancelled, isAuthorized(), let owner = calendars.first(where: { $0.accountID == accountID && $0.calendarID == calendarID }) else { return }
             date = event.start?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? date
             app?.showCalendar()
             edit(CalendarDisplayEvent(event: event, accountID: accountID, calendarID: calendarID,
-                colorHex: owner.colorHex, canEdit: owner.canWrite, fallbackTimeZoneID: calendar.timeZone.identifier))
-        } catch { errorMessage = error.localizedDescription }
+                colorHex: owner.colorHex, canEdit: owner.canWrite, fallbackTimeZoneID: calendar.timeZone.identifier),
+                proposedEvent: nil, isAuthorized: isAuthorized)
+        } catch {
+            guard !Task.isCancelled, isAuthorized() else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 
     func exportCalendar(_ owner: CalendarDisplayCalendar) async throws -> [GoogleCalendarEvent] {
@@ -128,6 +134,11 @@ extension CalendarModel {
     }
 
     func reviewOperation(_ operation: CalendarOperation) {
+        if operation.status == .failed || operation.status == .conflicted {
+            recoveryOperation = operation
+            app?.showCalendar()
+            return
+        }
         guard let owner = calendars.first(where: { $0.accountID == operation.accountID && $0.calendarID == operation.calendarID }) else { return }
         // Proposed assistant content is unavailable when its calendar permission
         // has been revoked, including proposals retained across launches.
@@ -182,7 +193,7 @@ extension CalendarModel {
 
     func retryOperation(_ operation: CalendarOperation) async {
         guard let engine = engines[operation.accountID] else { return }
-        if operation.status == .conflicted { reviewOperation(operation); return }
+        if operation.status == .failed || operation.status == .conflicted { reviewOperation(operation); return }
         do { try await engine.retry(operationID: operation.id); try await engine.flush() }
         catch { errorMessage = error.localizedDescription }
         await reloadOperations(); await reloadOccurrences(); await refreshNotifications()

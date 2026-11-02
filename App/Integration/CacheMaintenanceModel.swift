@@ -93,11 +93,6 @@ final class CacheMaintenanceModel {
         do {
             try await measure(cache)
             guard canContinue, totalBytes > budgetBytes else { status = "Cache is within its budget."; return }
-            guard readiness?.canReset == true else {
-                protectedBudgetLimit = true
-                status = "Finish or discard drafts and queued changes before trimming."
-                return
-            }
             let initialProtection = try await protectedThreads()
             let candidates = try await cache.evictionCandidates(keeping: initialProtection, now: now())
             let batch = try await actionableBatch(from: candidates, in: cache)
@@ -106,8 +101,6 @@ final class CacheMaintenanceModel {
             // Content and managed files go first, in last-opened order.
             for candidate in batch {
                 guard canContinue, estimated > budgetBytes else { break }
-                let currentReadiness = try await cache.cacheResetReadiness()
-                guard currentReadiness.canReset else { readiness = currentReadiness; break }
                 let records = try await attachments(for: candidate.thread, in: cache)
                 let protection = try await protectedThreads()
                 let result = try await cache.evictContent(for: [candidate.thread], keeping: protection, now: now())
@@ -133,8 +126,6 @@ final class CacheMaintenanceModel {
             if canContinue, estimated > budgetBytes {
                 for candidate in batch where candidate.canEvictMetadata {
                     guard canContinue else { break }
-                    let currentReadiness = try await cache.cacheResetReadiness()
-                    guard currentReadiness.canReset else { readiness = currentReadiness; break }
                     let records = try await attachments(for: candidate.thread, in: cache)
                     let folders = ManagedAttachmentFiles.folders(for: records, in: attachmentDirectory)
                     guard folders.allSatisfy({ !FileManager.default.fileExists(atPath: $0.path)

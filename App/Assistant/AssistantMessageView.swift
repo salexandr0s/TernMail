@@ -206,22 +206,7 @@ struct AssistantMessageView: View {
     }
 
     private var copyText: String {
-        guard !message.isUser else { return message.text }
-        var parts = message.text.isEmpty ? [] : [message.text]
-        if !message.taskResults.isEmpty {
-            let rows = message.taskResults.map { task in
-                let due = task.dueDate.map { " (due \($0))" } ?? ""
-                return "- [ ] \(task.title)\(due)\n  Source: \(task.source.title)"
-            }
-            parts.append("## Tasks\n\n" + rows.joined(separator: "\n"))
-        }
-        if !message.eventResults.isEmpty {
-            let rows = message.eventResults.map { event in
-                "- \(event.title): \(event.presentation(calendar: .current).dateLine)\n  Source: \(event.source.title)"
-            }
-            parts.append("## Events\n\n" + rows.joined(separator: "\n"))
-        }
-        return parts.joined(separator: "\n\n")
+        AssistantResultExport.markdown(message)
     }
 
     private var messageDate: String {

@@ -290,6 +290,9 @@ public struct CalendarStore: Sendable {
             guard var operation = try Self.decodeRows(CalendarOperation.self, db: db,
                 sql: "SELECT payload FROM calendarOperation WHERE accountID = ? AND id = ?", arguments: [accountID, id]).first,
                   operation.status == .queued || operation.status == .running else { return nil }
+            // A previous process may have died after sending this write but
+            // before recording its response. A later rejection cannot clear it.
+            if operation.status == .running { operation.hasUncertainOutcome = true }
             operation.status = .running; operation.attempts += 1; operation.updatedAt = .now
             try Self.putOperation(operation, db: db)
             return operation
@@ -334,22 +337,51 @@ public struct CalendarStore: Sendable {
         }
     }
 
+    /// A reviewed recovery changes the existing receipt, never replacing an
+    /// uncertain mutation with a new identity. Reject an out-of-date review.
+    public func recoverOperation(expected: CalendarOperation, with recovery: CalendarOperation) async throws {
+        try await writer.write { db in
+            guard recovery.id == expected.id, recovery.accountID == expected.accountID,
+                  recovery.calendarID == expected.calendarID, recovery.attempts == expected.attempts,
+                  [.failed, .conflicted].contains(expected.status),
+                  [.queued, .completed, .cancelled].contains(recovery.status),
+                  let current = try Self.decodeRows(CalendarOperation.self, db: db,
+                    sql: "SELECT payload FROM calendarOperation WHERE accountID = ? AND id = ?",
+                    arguments: [expected.accountID, expected.id]).first, current == expected else {
+                throw CalendarStoreError.invalidRecord
+            }
+            if recovery.status == .completed {
+                let deleted: String?
+                switch recovery.mutation {
+                case .delete(let id, _), .move(let id, _, _): deleted = id
+                case .deleteFollowing(let id, _, _) where recovery.completedStep == -1: deleted = id
+                default: deleted = nil
+                }
+                try Self.finishOperation(recovery, event: recovery.resultEvent, deletedEventID: deleted, db: db)
+            } else { try Self.putOperation(recovery, db: db) }
+        }
+    }
+
     /// The event response and operation receipt commit together, so a crash
     /// cannot show an unsent operation after caching its successful response.
     public func finishOperation(_ operation: CalendarOperation, event: GoogleCalendarEvent?, deletedEventID: String? = nil) async throws {
         try await writer.write { db in
-            let calendarID: String
-            if case .move(_, let destination, _) = operation.mutation { calendarID = destination }
-            else { calendarID = operation.calendarID }
-            if let event { try Self.putEvent(event, accountID: operation.accountID, calendarID: calendarID, db: db) }
-            if let deletedEventID {
-                try db.execute(sql: "DELETE FROM calendarEvent WHERE accountID = ? AND calendarID = ? AND eventID = ?",
-                               arguments: [operation.accountID, operation.calendarID, deletedEventID])
-            }
-            try Self.bumpRevision(db, accountID: operation.accountID, calendarID: operation.calendarID)
-            if calendarID != operation.calendarID { try Self.bumpRevision(db, accountID: operation.accountID, calendarID: calendarID) }
-            try Self.putOperation(operation, db: db)
+            try Self.finishOperation(operation, event: event, deletedEventID: deletedEventID, db: db)
         }
+    }
+
+    private static func finishOperation(_ operation: CalendarOperation, event: GoogleCalendarEvent?, deletedEventID: String?, db: Database) throws {
+        let calendarID: String
+        if case .move(_, let destination, _) = operation.mutation { calendarID = destination }
+        else { calendarID = operation.calendarID }
+        if let event { try putEvent(event, accountID: operation.accountID, calendarID: calendarID, db: db) }
+        if let deletedEventID {
+            try db.execute(sql: "DELETE FROM calendarEvent WHERE accountID = ? AND calendarID = ? AND eventID = ?",
+                           arguments: [operation.accountID, operation.calendarID, deletedEventID])
+        }
+        try bumpRevision(db, accountID: operation.accountID, calendarID: operation.calendarID)
+        if calendarID != operation.calendarID { try bumpRevision(db, accountID: operation.accountID, calendarID: calendarID) }
+        try putOperation(operation, db: db)
     }
 
     public func sourceLinks(accountID: String, calendarID: String? = nil, eventID: String? = nil) async throws -> [CalendarSourceLink] {

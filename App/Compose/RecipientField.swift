@@ -8,7 +8,7 @@ import SwiftUI
 struct RecipientField: NSViewRepresentable {
     let label: String
     @AppStorage(ComposePreferences.fullAddressesKey) private var showsFullAddresses = false
-    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @Binding var addresses: [EmailAddress]
     /// Set to move the cursor here. The field clears it once it has the cursor.
     @Binding var requestsFocus: Bool
@@ -19,6 +19,7 @@ struct RecipientField: NSViewRepresentable {
     var directorySuggestions: @MainActor (String) async -> [EmailAddress] = { _ in [] }
     var groupSuggestions: @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] }
     var expandGroup: @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil }
+    var groupExpansionChanged: @MainActor (Bool) -> Void = { _ in }
     /// Keeps an address out of future suggestions; from a token's menu.
     var blockSuggestion: @MainActor (EmailAddress) async -> Void = { _ in }
     let suggestions: @MainActor (String) async -> [EmailAddress]
@@ -29,12 +30,14 @@ struct RecipientField: NSViewRepresentable {
          directorySuggestions: @escaping @MainActor (String) async -> [EmailAddress] = { _ in [] },
          groupSuggestions: @escaping @MainActor (String) async -> [ContactGroupSuggestion] = { _ in [] },
          expandGroup: @escaping @MainActor (ContactGroupSuggestion) async -> [EmailAddress]? = { _ in nil },
+         groupExpansionChanged: @escaping @MainActor (Bool) -> Void = { _ in },
          blockSuggestion: @escaping @MainActor (EmailAddress) async -> Void = { _ in },
          suggestions: @escaping @MainActor (String) async -> [EmailAddress]) {
         self.label = label; self._addresses = addresses; self._requestsFocus = requestsFocus; self.isEditable = isEditable
         self.accountID = accountID; self.avatarContext = avatarContext
         self.onFocusChange = onFocusChange; self.directorySuggestions = directorySuggestions
         self.groupSuggestions = groupSuggestions; self.expandGroup = expandGroup
+        self.groupExpansionChanged = groupExpansionChanged
         self.blockSuggestion = blockSuggestion; self.suggestions = suggestions
     }
 
@@ -387,7 +390,12 @@ struct RecipientField: NSViewRepresentable {
                 let group = token.group
                 guard groupTasks[group.id] == nil else { continue }
                 let expansion = parent.expandGroup
+                let changed = parent.groupExpansionChanged
+                // Reserve the pending edit before removing its token. Close,
+                // Send or a sender change can be requested before Task starts.
+                changed(true)
                 groupTasks[group.id] = Task { [weak self] in
+                    defer { changed(false) }
                     let addresses = await expansion(group)
                     guard let self else { return }
                     defer { groupTasks[group.id] = nil }

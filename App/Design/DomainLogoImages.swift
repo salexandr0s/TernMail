@@ -6,7 +6,7 @@ import os
 
 /// Website icons are optional, shared by domain, and separate from account/contact data.
 actor DomainLogoImages {
-    nonisolated static let preferenceKey = "showCompanyLogos"
+    nonisolated static let preferenceKey = DomainLogoPreferences.key
     static let shared = DomainLogoImages()
     nonisolated static let maximumBytes = 1_048_576
     typealias Fetch = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)

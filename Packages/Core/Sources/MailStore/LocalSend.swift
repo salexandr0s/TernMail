@@ -81,7 +81,8 @@ extension CacheTransaction {
             sizeEstimate: (rendering.html?.utf8.count ?? 0) + rendering.plainText.utf8.count + attachmentBytes,
             rfcMessageID: draft.rfcMessageID,
             inReplyTo: draft.inReplyTo,
-            referencesHeader: draft.references.isEmpty ? nil : draft.references.joined(separator: " ")
+            referencesHeader: draft.references.isEmpty ? nil : draft.references.joined(separator: " "),
+            bcc: LocalSend.header(draft.bcc.filter(\.isValid))
         )
         try upsertMessages([MessageUpdate(record: record, labelIDs: [SystemLabel.sent, LocalSend.label])])
         try saveBodies([MessageBodyRecord(

@@ -5,6 +5,64 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct GoogleTaskEditingSessionTests {
+    @Test func conflictReviewKeepsLocalEditsAndUsesOnlyTheReviewedVersion() async throws {
+        let fixture = try EditingSessionFixture()
+        defer { fixture.clean() }
+        let original = GoogleTask(id: "task", title: "Original", notes: "Original notes", due: "2026-11-03", etag: "v1")
+        let service = EditingTasksService(task: original)
+        let session = await fixture.session(task: original, services: ["a": service])
+        session.title = "My edited title"
+        var remote = original
+        remote.notes = "Notes changed in Google"
+        remote.due = "2026-11-05"
+        remote.etag = "v2"
+        await service.replaceTask(remote)
+
+        #expect(await session.save() == false)
+        #expect(session.title == "My edited title")
+        #expect(session.notes == "Original notes")
+        #expect(session.needsConflictReview)
+        #expect(session.latestTask == remote)
+        #expect(!session.canSave)
+        #expect(await service.updates.count == 1)
+        #expect(await session.save() == false)
+        #expect(await service.updates.count == 1)
+
+        session.keepMyChanges()
+        #expect(session.title == "My edited title")
+        #expect(session.notes == remote.notes)
+        #expect(GoogleTaskDateCoding.string(session.dueDate) == remote.dueDay)
+        #expect(session.canSave)
+        #expect(await session.save())
+        let saved = try #require(await service.updates.last)
+        #expect(saved.etag == "v2")
+        #expect(saved.update == GoogleTaskUpdate(title: "My edited title"))
+        #expect(session.model.tasks.first?.notes == remote.notes)
+    }
+
+    @Test func anotherRemoteChangeRequiresAnotherReviewAndGoogleVersionCanReplaceTheDraft() async throws {
+        let fixture = try EditingSessionFixture()
+        defer { fixture.clean() }
+        let original = GoogleTask(id: "task", title: "Original", etag: "v1")
+        let service = EditingTasksService(task: original)
+        let session = await fixture.session(task: original, services: ["a": service])
+        session.title = "Local"
+        var remote = original
+        remote.title = "Google v2"; remote.etag = "v2"
+        await service.replaceTask(remote)
+        #expect(await session.save() == false)
+        session.keepMyChanges()
+        remote.title = "Google v3"; remote.etag = "v3"
+        await service.replaceTask(remote)
+        #expect(await session.save() == false)
+        #expect(session.title == "Local")
+        #expect(session.latestTask?.etag == "v3")
+        session.useGoogleVersion()
+        #expect(session.title == "Google v3")
+        #expect(await session.save())
+        #expect(await service.updates.count == 2)
+    }
+
     @Test func editedFieldsKeepTheirCapturedDestinationVersionAndFooter() async throws {
         let fixture = try EditingSessionFixture()
         defer { fixture.clean() }
@@ -191,6 +249,7 @@ private actor EditingTasksService: TasksService {
     func failUpdates(_ error: GmailError?) { updateFailure = error }
     func failInsert(_ error: GmailError?) { insertFailure = error }
     func removeTasks() { values = [:] }
+    func replaceTask(_ task: GoogleTask) { values["list"] = [task] }
     func pauseUpdate() { pausesUpdate = true }
     func waitUntilUpdating() async {
         guard updateContinuation == nil else { return }
@@ -222,6 +281,7 @@ private actor EditingTasksService: TasksService {
         guard let index = values[listID]?.firstIndex(where: { $0.id == taskID }), var task = values[listID]?[index] else {
             throw GmailError.notFound
         }
+        if let etag, etag != task.etag { throw GmailError.http(status: 412, reason: nil) }
         if let title = update.title { task.title = title }
         if let notes = update.notes { task.notes = notes }
         switch update.due { case .set(let day): task.due = day; case .clear: task.due = nil; case .unchanged: break }

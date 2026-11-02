@@ -44,8 +44,14 @@ enum AttachmentActions {
     }
 
     static func copy(_ source: URL) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([source as NSURL])
+        _ = copy([source], to: .general)
+    }
+
+    /// One pasteboard write keeps every successfully downloaded file in the selection.
+    static func copy(_ sources: [URL], to pasteboard: NSPasteboard) -> Bool {
+        guard !sources.isEmpty else { return false }
+        pasteboard.clearContents()
+        return pasteboard.writeObjects(sources.map { $0 as NSURL })
     }
 
     /// Returns where the file went, or nil when the panel was cancelled.

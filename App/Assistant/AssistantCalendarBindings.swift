@@ -13,6 +13,19 @@ extension CalendarModel {
         return AssistantCalendarScope(access: access, revision: accessRevision)
     }
 
+    /// A citation's permission cannot be revived by revoking and regranting it
+    /// while its event or recurring master is loading.
+    func openAssistantEvent(accountID: String, calendarID: String, eventID: String) async {
+        let key = AssistantCalendarKey(accountID: accountID, calendarID: calendarID)
+        let scope = assistantScope
+        guard scope.allows(key, details: true) else { return }
+        await openEvent(accountID: accountID, calendarID: calendarID, eventID: eventID, isAuthorized: { [weak self] in
+            guard let self else { return false }
+            let current = assistantScope
+            return current.revision == scope.revision && current.allows(key, details: true)
+        })
+    }
+
     var assistantBindings: CalendarAssistantBindings {
         CalendarAssistantBindings(
             calendars: { [weak self] in

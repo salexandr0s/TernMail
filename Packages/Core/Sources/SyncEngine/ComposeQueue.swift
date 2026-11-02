@@ -124,20 +124,21 @@ extension SyncEngine {
     /// keeps it if the original moves. Returns nil when the draft no longer takes edits.
     public func attachFile(at url: URL, to localDraftID: String) async throws -> OutgoingAttachment? {
         let name = url.lastPathComponent
-        // Files chosen in an open panel or dropped on a window are readable only inside this scope.
-        let isScoped = url.startAccessingSecurityScopedResource()
-        defer { if isScoped { url.stopAccessingSecurityScopedResource() } }
-        if try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true { throw ComposeError.folder(name) }
+        let size = try await OutgoingAttachmentIO.shared.size(of: url)
+        let capacity = try await remainingAttachmentCapacity(localDraftID)
+        guard size <= capacity else { throw ComposeError.fileTooLarge(name) }
         let mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
         return try await attach(name: name, mimeType: mimeType, to: localDraftID) { destination in
-            try FileManager.default.copyItem(at: url, to: destination)
+            try await OutgoingAttachmentIO.shared.copy(url, to: destination, maximumBytes: capacity)
         }
     }
 
     /// Attaches pasted data, such as an image, under `filename`.
     public func attachData(_ data: Data, filename: String, mimeType: String, to localDraftID: String) async throws -> OutgoingAttachment? {
-        try await attach(name: filename, mimeType: mimeType, to: localDraftID) { destination in
-            try data.write(to: destination)
+        let capacity = try await remainingAttachmentCapacity(localDraftID)
+        guard data.count <= capacity else { throw ComposeError.fileTooLarge(filename) }
+        return try await attach(name: filename, mimeType: mimeType, to: localDraftID) { destination in
+            try await OutgoingAttachmentIO.shared.write(data, to: destination, maximumBytes: capacity, filename: filename)
         }
     }
 
@@ -187,30 +188,69 @@ extension SyncEngine {
         return false
     }
 
-    private func attach(
-        name: String, mimeType: String, to localDraftID: String, copy: (URL) throws -> Void
+    func attach(
+        name: String, mimeType: String, to localDraftID: String,
+        copy: @Sendable (URL) async throws -> Int
     ) async throws -> OutgoingAttachment? {
         let path = Self.outgoingPath(for: localDraftID, filename: name)
         let url = outgoingDirectory.appending(path: path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try copy(url)
-        do {
-            let size = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.size] as? Int ?? 0
-            let attachment = OutgoingAttachment(localDraftID: localDraftID, filename: name, mimeType: mimeType, size: size, path: path)
-            let now = now()
-            let added = try await write { tx -> OutgoingAttachment? in
-                let total = try tx.outgoingAttachments(localDraftID: localDraftID).reduce(size) { $0 + $1.size }
-                // A draft that can't be uploaded would fail every save, so refuse the file now.
-                guard Self.encodedSize(total) <= Self.maxMessageSize else { throw ComposeError.fileTooLarge(name) }
-                return try tx.addOutgoingAttachment(attachment, now: now)
+        // Account teardown must wait for both copying and cleanup, including
+        // a copy whose database write is refused after stop() begins.
+        return try await gated {
+            do {
+                let size = try await copy(url)
+                let attachment = OutgoingAttachment(localDraftID: localDraftID, filename: name, mimeType: mimeType, size: size, path: path)
+                let now = now()
+                let added = try await write { tx -> OutgoingAttachment? in
+                    guard let draft = try tx.localDraft(id: localDraftID), draft.state == .editing else { return nil }
+                    let total = Self.includedAttachmentBytes(try tx.outgoingAttachments(localDraftID: localDraftID), draft: draft)
+                    // Recheck inside the write: another attachment or an Undo may
+                    // have changed the message while the file was being copied.
+                    guard size <= Self.attachmentByteLimit - total else { throw ComposeError.fileTooLarge(name) }
+                    return try tx.addOutgoingAttachment(attachment, now: now)
+                }
+                if added == nil { await OutgoingAttachmentIO.shared.remove(url) }
+                return added
+            } catch {
+                await OutgoingAttachmentIO.shared.remove(url)
+                throw error
             }
-            if added == nil { try? FileManager.default.removeItem(at: url) }
-            return added
-        } catch {
-            try? FileManager.default.removeItem(at: url)
-            throw error
         }
     }
+
+    private func remainingAttachmentCapacity(_ localDraftID: String) async throws -> Int {
+        let accountID = accountID
+        return try await cache.read { tx in
+            guard let draft = try tx.localDraft(id: localDraftID), draft.accountID == accountID,
+                  draft.state == .editing else { throw ComposeError.draftGone }
+            let used = Self.includedAttachmentBytes(try tx.outgoingAttachments(localDraftID: localDraftID), draft: draft)
+            return max(0, Self.attachmentByteLimit - used)
+        }
+    }
+
+    static func referencedInlineIDs(in draft: LocalDraft) -> Set<String> {
+        Set(draft.body.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })
+            .union(HTMLImporter.inlineImageContentIDs(in: draft.quotedHTML ?? ""))
+    }
+
+    static func includedAttachmentBytes(_ attachments: [OutgoingAttachment], draft: LocalDraft) -> Int {
+        let referenced = referencedInlineIDs(in: draft)
+        return attachments.reduce(0) { total, attachment in
+            guard attachment.contentID.map(referenced.contains) ?? true else { return total }
+            return total + attachment.size
+        }
+    }
+
+    /// Largest raw attachment total that fits the MIME base64 budget.
+    static let attachmentByteLimit: Int = {
+        var lower = 0, upper = maxMessageSize
+        while lower < upper {
+            let middle = lower + (upper - lower + 1) / 2
+            if encodedSize(middle) <= maxMessageSize { lower = middle }
+            else { upper = middle - 1 }
+        }
+        return lower
+    }()
 
     /// A new file's path under `outgoingDirectory`: one folder per draft,
     /// and a unique name that keeps the file's extension.
@@ -382,7 +422,7 @@ extension SyncEngine {
         let identity = try await outgoingIdentity(for: draft)
         let calendar = try Self.outgoingCalendar(for: draft)
         let authoredInlineIDs = Set(draft.body.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })
-        let inlineIDs = authoredInlineIDs.union(HTMLImporter.inlineImageContentIDs(in: draft.quotedHTML ?? ""))
+        let inlineIDs = Self.referencedInlineIDs(in: draft)
         let storedIDs = Set(attachments.compactMap(\.contentID))
         guard authoredInlineIDs.isSubset(of: storedIDs) else { throw ComposeError.missingAttachment("Inline Image") }
         var files: [MIMEMessage.Attachment] = []

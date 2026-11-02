@@ -19,20 +19,22 @@ struct AssistantView: View {
     @State private var responderAtAppear: ObjectIdentifier?
     @State private var showsSettings = false
     @State private var scrollRequest = UUID()
+    @State private var confirmsNewChat = false
 
     var body: some View {
         VStack(spacing: 0) {
             if !isDetached { header }
             AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
                                       onOpenDraft: { openWindow(id: ComposeWindow.sceneID, value: $0) }) {
-                AssistantWelcomeView(model: model, setup: setupPrompt, onSettings: { showsSettings = true }) { suggestion in
+                AssistantWelcomeView(model: model, setup: setupPrompt, onSettings: performSetupAction) { suggestion in
                     scrollRequest = UUID()
                     model.run(suggestion)
                     isComposerFocused = true
                 }
             }
+            AssistantScopeNotice(model: model)
             AssistantComposer(model: model, setup: setupPrompt, canSubmit: canSubmit, isFocused: $isComposerFocused,
-                              onSubmit: submit, onSettings: { showsSettings = true })
+                              onSubmit: submit, onSettings: { showsSettings = true }, onSetup: performSetupAction)
                 .padding(Tokens.Space.s3)
                 .frame(maxWidth: Tokens.Assistant.contentWidth)
                 .frame(maxWidth: .infinity)
@@ -59,6 +61,12 @@ struct AssistantView: View {
         .onChange(of: model.availableAccounts.map(\.id)) { model.refreshAccess() }
         .sheet(isPresented: $showsSettings) {
             AssistantSettingsView(model: model, isSheet: true)
+        }
+        .confirmationDialog("Start a new chat?", isPresented: $confirmsNewChat, titleVisibility: .visible) {
+            Button("Start New Chat", role: .destructive, action: confirmNewChat)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears the current conversation and stops any response. Your unfinished message will be kept.")
         }
         .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: "ChatGPT",
                                          onNewChat: startNewChat, onSettings: { showsSettings = true }))
@@ -100,14 +108,17 @@ struct AssistantView: View {
         if !model.hasAssistantDataAccess {
             return .init(title: "Choose what to share", detail: "Enable a mail account or calendar in assistant settings.", action: "Manage access", systemImage: "slider.horizontal.3")
         }
-        if model.selectedModelID.isEmpty {
-            return .init(title: "Choose a model", detail: "Select a ChatGPT model in assistant settings to start a conversation.", action: "Choose model", systemImage: "sparkle")
+        if !model.isModelReady {
+            return .init(title: model.isLoadingModels ? "Loading models" : "Models unavailable",
+                         detail: model.modelErrorMessage ?? "Tern needs an available ChatGPT model to start a conversation.",
+                         action: model.isLoadingModels ? "Loading models…" : "Retry loading models", systemImage: "sparkle")
         }
         return nil
     }
 
     private var canSubmit: Bool {
-        setupPrompt == nil && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        setupPrompt == nil && !model.hasPendingScopeChange
+            && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// The composer takes focus once, as soon as it can be used.
@@ -143,9 +154,21 @@ struct AssistantView: View {
     }
 
     private func startNewChat() {
-        model.newChat()
+        if !model.messages.isEmpty || model.isRunning { confirmsNewChat = true }
+        else { confirmNewChat() }
+    }
+
+    private func confirmNewChat() {
+        model.startChatWithCurrentScope()
         scrollRequest = UUID()
         isComposerFocused = true
+    }
+
+    private func performSetupAction() {
+        if model.connection.canUsePlan, model.hasAssistantDataAccess, !model.isModelReady {
+            guard !model.isLoadingModels else { return }
+            Task { await model.refreshConnection() }
+        } else { showsSettings = true }
     }
 
     private func openSource(_ source: AssistantSource) {

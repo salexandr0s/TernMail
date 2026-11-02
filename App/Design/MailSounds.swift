@@ -2,7 +2,7 @@ import AppKit
 import SyncEngine
 
 @MainActor enum MailSounds {
-    enum Event { case archive, trash, send, newMail }
+    enum Event { case archive, trash, send }
     nonisolated static let enabledKey = "mailSoundsEnabled"
 
     static func event(for action: MailAction) -> Event? {
@@ -23,7 +23,6 @@ import SyncEngine
         case .archive: "Tink"
         case .trash: "Pop"
         case .send: "Glass"
-        case .newMail: "Ping"
         }
         NSSound(named: NSSound.Name(name))?.play()
     }

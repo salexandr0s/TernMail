@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 struct ReceivedAttachmentsView: View {
     let attachments: [AttachmentRecord]
     let mailbox: MailboxModel
+    var selectedPartID: String? = nil
 
     /// A second request for a file waits for its download instead of starting another.
     @State private var downloads = InFlightTasks<String, URL?>()
@@ -54,6 +55,14 @@ struct ReceivedAttachmentsView: View {
                         .help("Save \(attachment.filename)")
                         .accessibilityLabel("Save \(attachment.filename)")
                     }
+                    .overlay {
+                        if attachment.partID == selectedPartID {
+                            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                                .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .accessibilityHint(attachment.partID == selectedPartID ? "Cited attachment. Open to preview this file." : "Open to preview this file.")
                     .draggable(AttachmentFileItem(attachment: attachment, mailbox: mailbox))
                     .contextMenu {
                         Button("Open", systemImage: "arrow.up.forward.app") { act(attachment) { try await AttachmentActions.open($0) } }

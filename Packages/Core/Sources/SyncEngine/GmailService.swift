@@ -94,7 +94,8 @@ enum Mapping {
             inReplyTo: message.header("In-Reply-To").flatMap { OriginalMessage.messageIDs(in: $0).first },
             referencesHeader: message.header("References"),
             replyTo: message.header("Reply-To"),
-            dateHeaderOffset: message.dateHeaderOffset
+            dateHeaderOffset: message.dateHeaderOffset,
+            bcc: message.header("Bcc") ?? ""
         )
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }

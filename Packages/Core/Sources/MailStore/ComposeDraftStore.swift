@@ -16,8 +16,9 @@ extension CacheTransaction {
 
     public func replaceDraftQuote(id: String, text: String, now: Date) throws {
         guard var draft = try localDraft(id: id), draft.state == .editing else { return }
-        draft.quotedPlainText = text
-        draft.quotedHTML = "<blockquote>" + ComposeDocument(plainText: text).html() + "</blockquote>"
+        let isEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        draft.quotedPlainText = isEmpty ? nil : text
+        draft.quotedHTML = isEmpty ? nil : "<blockquote>" + ComposeDocument(plainText: text).html() + "</blockquote>"
         draft.revision += 1; draft.updatedAt = now
         try draft.update(db)
     }

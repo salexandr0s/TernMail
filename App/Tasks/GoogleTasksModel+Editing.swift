@@ -58,8 +58,11 @@ extension GoogleTasksModel {
             let destination = availableLists.first(where: { $0.id == preferredList })
                 ?? (request.listID == nil ? availableLists.first : nil)
             pendingCreation?.listID = request.listID ?? destination?.id
-            // Search every list: a task may have been moved in Google's app.
-            for list in availableLists {
+            // Stable mail references and previous requests may have moved lists.
+            // A never-sent quick task has a new UUID and cannot already exist.
+            let needsReconciliation = wasUncertain || request.source != nil || request.deduplicationKey != nil
+                || confirmedTasks[request.reference] != nil
+            for list in needsReconciliation ? availableLists : [] {
                 let existing = try await client.allTasks(listID: list.id)
                 guard checkAuthorization(), validAccount(accountID, access: access) else { return false }
                 if existing.contains(where: { ($0.notes ?? "").components(separatedBy: .newlines).contains(request.marker) }) {
@@ -124,7 +127,8 @@ extension GoogleTasksModel {
     }
 
     @discardableResult
-    func update(_ task: GoogleTask, update: GoogleTaskUpdate, location: GoogleTaskLocation? = nil) async -> Bool {
+    func update(_ task: GoogleTask, update: GoogleTaskUpdate, location: GoogleTaskLocation? = nil,
+                onConflict: (@MainActor () -> Void)? = nil) async -> Bool {
         guard let target = location ?? selectedLocation else { return false }
         let accountID = target.accountID, listID = target.listID
         let key = busyKey(task.id, location: target)
@@ -142,12 +146,22 @@ extension GoogleTasksModel {
             await refresh()
             return true
         } catch {
-            guard validAccount(accountID, access: access), selectedAccountID == accountID, selectedListID == listID else { return false }
+            guard validAccount(accountID, access: access) else { return false }
+            if GoogleTasksIssue(error) == .conflict { onConflict?() }
+            guard selectedAccountID == accountID, selectedListID == listID else { return false }
             errorMessage = "Couldn't confirm the change. \(GoogleTasksIssue(error).message)"
             issue = GoogleTasksIssue(error)
             await refresh(clearError: false)
             return false
         }
+    }
+
+    func taskForReview(id: String, location: GoogleTaskLocation) async throws -> GoogleTask {
+        guard let client = authorizedService(for: location.accountID), !stopped else { throw GoogleTasksModelError.unavailable }
+        let access = accountVersions[location.accountID, default: 0]
+        let task = try await client.task(listID: location.listID, taskID: id)
+        guard validAccount(location.accountID, access: access), task.deleted != true else { throw GoogleTasksModelError.unavailable }
+        return task
     }
 
     @discardableResult

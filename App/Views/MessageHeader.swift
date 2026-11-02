@@ -137,7 +137,7 @@ struct MessageHeader<SenderItems: View>: View {
         let names = recipients.prefix(2).map { address in
             address.normalized == own ? "me" : (address.name ?? address.address)
         }
-        let extra = max(0, recipients.count - names.count) + EmailAddress.parseList(message.record.cc ?? "").count
+        let extra = max(0, recipients.count - names.count) + EmailAddress.parseList(message.record.cc ?? "").count + EmailAddress.parseList(message.record.bcc ?? "").count
         let base = names.isEmpty ? "Recipients" : "To: " + names.joined(separator: ", ")
         return extra > 0 ? base + " · +\(extra)" : base
     }
@@ -156,6 +156,7 @@ struct MessageDetailsView: View {
                 addresses("From", message.record.sender)
                 addresses("To", message.record.recipients)
                 if let cc = message.record.cc, !cc.isEmpty { addresses("Cc", cc) }
+                if let bcc = message.record.bcc, !bcc.isEmpty { addresses("Bcc", bcc) }
                 if let replyTo = message.record.replyTo, !replyTo.isEmpty { addresses("Reply to", replyTo) }
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     caption("Date")

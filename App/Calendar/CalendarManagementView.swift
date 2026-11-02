@@ -11,7 +11,6 @@ struct CalendarManagementView: View {
 
     @Environment(AppModel.self) private var app
     @Environment(SettingsUnsavedChanges.self) private var unsaved
-    @AppStorage(SettingsDestination.storageKey) private var settingsDestination = SettingsDestination.calendar.rawValue
     @Bindable var model: CalendarModel
     @State private var selectedID: String?
     @State private var accountID = ""
@@ -126,7 +125,7 @@ struct CalendarManagementView: View {
         } else {
             Section {
                 SettingsNote("Add an account and enable Calendar in Connections to see its calendars.", systemImage: "calendar.badge.plus")
-                Button("Open Connections") { settingsDestination = SettingsDestination.connections.rawValue }
+                Button("Open Connections") { SettingsNavigationRequests.shared.request(.connections) }
                     .buttonStyle(.link)
             }
         }

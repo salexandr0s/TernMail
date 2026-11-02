@@ -183,6 +183,7 @@ struct MailAnalyticsRecord: Codable, Sendable, Equatable, FetchableRecord, Persi
     var senderAddress: String
     var recipients: String
     var cc: String?
+    var bcc: String?
     var labelIDs: [String]
     var direction: MailAnalyticsDirection
     var isIncluded: Bool

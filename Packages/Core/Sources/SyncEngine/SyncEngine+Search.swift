@@ -31,7 +31,7 @@ extension SyncEngine {
             try await listAndHold(
                 query: query.gmailQuery(timeZone: timeZone), labelIDs: [],
                 includeSpamTrash: query.includesSpamAndTrash, pageToken: pageToken
-            )
+            ).page
         }
     }
 
@@ -78,15 +78,29 @@ extension SyncEngine {
             nextPageToken: page.nextPageToken, messageIDs: ids.filter { found.contains($0) })
     }
 
-    /// One page of a label's conversations for "Load older conversations",
-    /// stored and held like search results. `before` skips the newer
-    /// conversations the list already shows, which Gmail would otherwise
-    /// return first; keep it the same for every page of one listing.
-    public func loadOlder(labelID: String, before: Date? = nil, pageToken: String? = nil) async throws -> GmailResultPage {
+    /// Browse from Gmail's first page: the oldest locally cached conversation
+    /// is not a coverage boundary. A cache can contain isolated older threads.
+    /// Skip up to ten already-cached pages per request, retaining Gmail's cursor
+    /// so large inboxes remain cancellable and can continue on the next request.
+    public func loadOlder(labelID: String, pageToken: String? = nil) async throws -> GmailResultPage {
         let spamOrTrash = labelID == SystemLabel.spam || labelID == SystemLabel.trash
-        let query = before.map { "before:\(Int($0.timeIntervalSince1970.rounded(.up)))" }
+        let labelIDs = labelID == SystemLabel.allMail ? [] : [labelID]
         return try await GmailRequestBudget.$priority.withValue(.interactive) {
-            try await listAndHold(query: query, labelIDs: [labelID], includeSpamTrash: spamOrTrash, pageToken: pageToken)
+            var token = pageToken
+            var seenTokens = Set<String>()
+            var found: [String] = []
+            for _ in 0..<10 {
+                let result = try await listAndHold(query: nil, labelIDs: labelIDs,
+                    includeSpamTrash: spamOrTrash, pageToken: token, refreshCached: true)
+                found += result.page.threadIDs
+                let next = result.page.nextPageToken
+                if let next, next == token || !seenTokens.insert(next).inserted {
+                    throw GmailError.decoding("Repeated mailbox page token")
+                }
+                token = next
+                if result.addedMessages || token == nil { break }
+            }
+            return GmailResultPage(threadIDs: found, nextPageToken: token)
         }
     }
 
@@ -109,8 +123,8 @@ extension SyncEngine {
     }
 
     private func listAndHold(
-        query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?
-    ) async throws -> GmailResultPage {
+        query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, refreshCached: Bool = false
+    ) async throws -> (page: GmailResultPage, addedMessages: Bool) {
         if isStopped || Task.isCancelled { throw CancellationError() }
         let page = try await gmail.listThreads(
             query: query, labelIDs: labelIDs, includeSpamTrash: includeSpamTrash,
@@ -123,7 +137,9 @@ extension SyncEngine {
             try listed.filter { try tx.messages(threadID: $0, accountID: accountID).isEmpty }
         }
         let deleted = deletedMessageIDs
-        var wanted = uncached
+        // A cached thread may be partial after the initial message limit.
+        // Browsing must discover older siblings before claiming full coverage.
+        var wanted = refreshCached ? listed : uncached
         var fetched = Set<String>()
         var updates: [CacheTransaction.MessageUpdate] = []
         var gone = Set<String>()
@@ -138,16 +154,19 @@ extension SyncEngine {
             // Messages and holds land together, so no prune runs between them.
             // A release during the fetch may have pruned conversations that
             // were cached when read; those are fetched before anything lands.
-            let pruned = try await write { [updates, fetched] tx -> [String] in
+            let (pruned, addedMessages) = try await write { [updates, fetched] tx -> ([String], Bool) in
                 let pruned = try found.filter { try !fetched.contains($0) && tx.messages(threadID: $0, accountID: accountID).isEmpty }
-                guard pruned.isEmpty else { return pruned }
+                guard pruned.isEmpty else { return (pruned, false) }
                 let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+                let addedMessages = try live.contains { try tx.message(id: $0.record.id, accountID: accountID) == nil }
                 let threads = try tx.upsertMessages(live)
                 try tx.holdSearchResults(found, until: expiresAt, accountID: accountID)
                 try tx.rebuildThreads(threads, accountID: accountID)
-                return []
+                return ([], addedMessages)
             }
-            guard !pruned.isEmpty else { return GmailResultPage(threadIDs: found, nextPageToken: page.nextPageToken) }
+            guard !pruned.isEmpty else {
+                return (GmailResultPage(threadIDs: found, nextPageToken: page.nextPageToken), addedMessages)
+            }
             wanted = pruned
         }
     }

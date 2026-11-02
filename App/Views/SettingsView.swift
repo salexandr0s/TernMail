@@ -4,22 +4,21 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(SettingsDestination.storageKey) private var storedDestination = SettingsDestination.general.rawValue
+    @State private var destination: SettingsDestination
     @State private var search = ""
     @State private var unsaved = SettingsUnsavedChanges()
-    @State private var pendingLeave: PendingLeave?
+    private let navigationRequests = SettingsNavigationRequests.shared
 
     init() {
         // Before the window first reads the stored pane.
         SettingsDestination.migrateSavedPane()
+        _destination = State(initialValue: SettingsDestination.stored(
+            UserDefaults.standard.string(forKey: SettingsDestination.storageKey) ?? ""))
     }
 
-    private var destination: SettingsDestination { SettingsDestination.stored(storedDestination) }
-
-    /// The sidebar follows the stored pane, so another window can land Settings
-    /// on a pane by writing the key before it opens Settings.
+    /// Intercept navigation before SwiftUI replaces an explicit-save editor.
     private var selection: Binding<SettingsDestination?> {
-        Binding(destination, set: { leave(for: .destination($0 ?? .general)) })
+        Binding(destination, set: { leave(for: $0 ?? .general) })
     }
 
     var body: some View {
@@ -59,21 +58,23 @@ struct SettingsView: View {
         .background {
             WindowCloseGuard { window in
                 guard unsaved.subject != nil else { return true }
-                pendingLeave = .close(window)
+                unsaved.request { window.close() }
                 return false
             }
         }
         .ternConfirm(
-            "Discard changes to the \(unsaved.subject ?? "pane")?",
-            item: $pendingLeave,
+            "Discard changes to the \(unsaved.pendingChange?.subject ?? "pane")?",
+            item: Bindable(unsaved).pendingChange,
             actionTitle: "Discard Changes",
             message: "Your unsaved edits will be lost."
-        ) { leave in
-            unsaved.clear()
-            switch leave {
-            case .destination(let destination): storedDestination = destination.rawValue
-            case .close(let window): window.close()
+        ) { change in unsaved.discardAndApply(change) }
+        .onChange(of: navigationRequests.revision, initial: true) { _, _ in
+            if let requested = navigationRequests.takeRequest() {
+                leave(for: requested)
             }
+        }
+        .onChange(of: destination) { _, destination in
+            UserDefaults.standard.set(destination.rawValue, forKey: SettingsDestination.storageKey)
         }
     }
 
@@ -84,10 +85,9 @@ struct SettingsView: View {
         return section.title
     }
 
-    private func leave(for leave: PendingLeave) {
-        if case .destination(let next) = leave, next == destination { return }
-        guard unsaved.subject == nil else { pendingLeave = leave; return }
-        if case .destination(let next) = leave { storedDestination = next.rawValue }
+    private func leave(for next: SettingsDestination) {
+        guard next != destination else { return }
+        unsaved.request { destination = next }
     }
 
     private var sidebar: some View {
@@ -145,7 +145,7 @@ struct SettingsView: View {
         guard !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if let first = SettingsNavigationSection.sections
             .flatMap(\.destinations).first(where: { $0.matches(search) }) {
-            leave(for: .destination(first))
+            leave(for: first)
         }
     }
 
@@ -186,16 +186,11 @@ struct SettingsView: View {
         } description: {
             Text("Add a Google account to set up its preferences, profiles and notifications.")
         } actions: {
-            Button("Open Connections") { leave(for: .destination(.connections)) }
+            Button("Open Connections") { leave(for: .connections) }
                 .buttonStyle(.borderedProminent)
         }
     }
 
-    /// What the user asked to do while a pane still holds unsaved edits.
-    private enum PendingLeave {
-        case destination(SettingsDestination)
-        case close(NSWindow)
-    }
 }
 
 private struct SettingsSearchField: NSViewRepresentable {

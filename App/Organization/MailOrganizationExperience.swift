@@ -1,4 +1,5 @@
 import SwiftUI
+import SyncEngine
 
 struct MailOrganizationRequirement {
     let message: String
@@ -12,6 +13,7 @@ struct MailOrganizationExperience: View {
     let canCreateFilters: Bool
     var requirement: MailOrganizationRequirement? = nil
     var onOpenSettings: (SettingsDestination) -> Void = { _ in }
+    var onOpenMessage: ((MailOrganizationSample) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,13 +57,13 @@ struct MailOrganizationExperience: View {
             if model.categories.isEmpty {
                 emptyReview
             } else {
-                MailOrganizationReviewSections(model: model, canCreateFilters: canCreateFilters)
+                MailOrganizationReviewSections(model: model, canCreateFilters: canCreateFilters, onOpenMessage: onOpenMessage)
             }
         case .applying, .queued, .complete:
             MailOrganizationDeliveryView(phase: model.phase, receipt: model.receipt, delivery: model.delivery,
                 onCheck: { Task { await model.refreshDelivery() } },
                 onOpenFailedChanges: { onOpenSettings(.failedChanges) }, onDone: model.clear)
-            MailOrganizationReviewSections(model: model, canCreateFilters: canCreateFilters)
+            MailOrganizationReviewSections(model: model, canCreateFilters: canCreateFilters, onOpenMessage: onOpenMessage)
         }
     }
 

@@ -32,7 +32,7 @@ struct OutboxView: View {
                 Button("Open", systemImage: "arrow.up.forward.square") { open(id) }
                     .labelStyle(.titleAndIcon)
                 if let activity = mailbox.selectedOutbox.first(where: { $0.id == id }), Self.canUndoSend(activity) {
-                    Button("Undo Send", systemImage: "arrow.uturn.backward") { undoSend(id) }
+                    Button("Cancel Send", systemImage: "arrow.uturn.backward") { undoSend(id) }
                         .labelStyle(.titleAndIcon)
                 }
             }
@@ -45,9 +45,10 @@ struct OutboxView: View {
         .background(Tokens.Surface.primary)
     }
 
-    /// A send still waiting out its delay, which hasn't tried Gmail yet.
+    /// A queued send whose delivery has never been requested, including a
+    /// failed draft lookup or upload before delivery.
     static func canUndoSend(_ activity: DraftActivity) -> Bool {
-        activity.isSending && activity.rows.contains { $0.kind == .sendDraft && $0.state == .queued && $0.attempts == 0 }
+        activity.canCancelSend
     }
 
     private func open(_ id: String) {

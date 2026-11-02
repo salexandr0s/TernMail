@@ -7,6 +7,21 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct GoogleTasksModelTests {
+    @Test func newQuickTaskDoesNotReadUnrelatedListsAndAConfirmedRetryDoesNotInsertAgain() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService(lists: [.init(id: "list", title: "My tasks"), .init(id: "archive", title: "Archive")])
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        await service.failTaskList("archive")
+        let request = TaskCreationRequest(title: "A quick task", accountID: "a", listID: "list")
+        #expect(await model.add(request))
+        #expect(await service.insertLists == ["list"])
+        #expect(await service.taskListReads.contains("archive") == false)
+        #expect(await model.add(request))
+        #expect(await service.inserts == 1)
+    }
+
     @Test func taskPresentationTracksValueChangesAndSkipsUnchangedSnapshots() throws {
         let fixture = try TasksModelFixture()
         defer { fixture.clean() }
@@ -383,12 +398,15 @@ private actor MemoryTasksService: TasksService {
     private var afterInsertGate: TasksReadGate?
     private var insertFailure: GmailError?
     private var readFailure: GmailError?
+    private var failedTaskList: String?
+    var taskListReads: [String] = []
 
     init(lists: [GoogleTaskList] = [.init(id: "list", title: "My tasks")], gate: TasksReadGate? = nil) {
         self.lists = lists; self.gate = gate
     }
     func setInsertFailure(_ error: GmailError?) { insertFailure = error }
     func setReadFailure(_ error: GmailError?) { readFailure = error }
+    func failTaskList(_ id: String) { failedTaskList = id }
     func delayInsert(_ insert: TasksReadGate, refresh: TasksReadGate) {
         insertGate = insert; afterInsertGate = refresh
     }
@@ -401,6 +419,8 @@ private actor MemoryTasksService: TasksService {
     }
     func tasks(listID: String, pageToken: String?) async throws -> GoogleTaskPage {
         reads += 1
+        taskListReads.append(listID)
+        if failedTaskList == listID { throw GmailError.transport(.timedOut) }
         if let readFailure { throw readFailure }
         return .init(items: values[listID] ?? [])
     }

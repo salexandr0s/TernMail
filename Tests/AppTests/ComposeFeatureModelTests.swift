@@ -158,6 +158,7 @@ import Testing
         var writes: [Int] = []
         var complete = false
         var returned = 0
+        var pendingGroups = 0
         let group = ContactGroupSuggestion(accountID: "a", resourceName: "contactGroups/team", name: "Team", memberCount: 3)
         let recipient = RecipientField(
             label: "To", addresses: .init(get: { recipients }, set: { writes.append($0.count); recipients = $0 }),
@@ -166,21 +167,25 @@ import Testing
                 try? await Task.sleep(for: .milliseconds(10))
                 returned += 1
                 return complete ? [existing, .init(address: "one@example.com"), .init(address: "two@example.com")] : nil
-            }
+            },
+            groupExpansionChanged: { pendingGroups += $0 ? 1 : -1 }
         ) { _ in [] }
         let coordinator = recipient.makeCoordinator()
         let field = NSTokenField()
         coordinator.field = field
         let rejected = coordinator.tokenField(field, shouldAdd: [RecipientField.GroupToken(group)], at: 0)
         #expect(rejected.isEmpty)
+        #expect(pendingGroups == 1)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while returned < 1, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(recipients == [existing] && writes.isEmpty)
+        #expect(pendingGroups == 0)
         complete = true
         _ = coordinator.tokenField(field, shouldAdd: [RecipientField.GroupToken(group)], at: 0)
         while recipients.count < 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(recipients.map(\.address) == ["existing@example.com", "one@example.com", "two@example.com"])
         #expect(writes == [3])
+        #expect(pendingGroups == 0)
         let later = ContactGroupSuggestion(accountID: "a", resourceName: "contactGroups/later", name: "Later", memberCount: 3)
         _ = coordinator.tokenField(field, shouldAdd: [RecipientField.GroupToken(later)], at: 0)
         coordinator.cancelRequests()

@@ -135,6 +135,7 @@ struct ReaderSessionContainer: View {
     let messageID: String?
     let mailbox: MailboxModel
     let isActive: Bool
+    var attachmentPartID: String? = nil
     var reportsNavigation = true
     var onDetailChange: ((ThreadDetail) -> Void)? = nil
     @State private var store = ReaderSessionStore()
@@ -171,6 +172,7 @@ struct ReaderSessionContainer: View {
             ForEach(displaySessions) { session in
                 let active = visible && session == selected
                 ThreadView(key: session.key, mailbox: mailbox, selectedMessageID: session.messageID,
+                           selectedAttachmentPartID: session == selected ? attachmentPartID : nil,
                            isReaderActive: active,
                            retainsHiddenBody: !active && allowsHiddenBodyRetention && store.retainsSource(for: session)
                                && (visible || recentSessions.suffix(2).contains(session)),

@@ -49,6 +49,7 @@ struct SidebarView: View {
                         ForEach(accountBoxes) { box in
                             let boxID = MailboxID.account(owner.account.id, box.id)
                             MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
+                                .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
                                 .conversationDropTarget(boxID, mailbox: mailbox)
                                 .sidebarHover(SidebarRowSelection(mailbox: boxID))
                                 .tag(SidebarRowSelection(mailbox: boxID))
@@ -238,6 +239,7 @@ struct SidebarView: View {
                         .sidebarHover(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
                         .tag(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
                         .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
+                        .accessibilityValue(mailbox.sidebarBadgeDescription(.account(owner.account.id, box.id)))
                 }
                 ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
                     LabelRow(mailbox: mailbox, node: LabelNode(label: label, title: label.name))
@@ -363,15 +365,21 @@ extension View {
 struct SidebarDisclosureAccessibility: ViewModifier {
     let isExpanded: Bool?
     var childrenTitle = "Accounts"
+    var badgeDescription = ""
     let toggle: () -> Void
+
+    static func value(badgeDescription: String, isExpanded: Bool?) -> String {
+        [badgeDescription, isExpanded.map { $0 ? "Expanded" : "Collapsed" }]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
 
     @ViewBuilder func body(content: Content) -> some View {
         if let isExpanded {
             content
-                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityValue(Self.value(badgeDescription: badgeDescription, isExpanded: isExpanded))
                 .accessibilityAction(named: Text("\(isExpanded ? "Hide" : "Show") \(childrenTitle)"), toggle)
         } else {
-            content
+            content.accessibilityValue(badgeDescription)
         }
     }
 }
@@ -461,8 +469,8 @@ private struct CombinedMailboxRows: View {
         .tag(SidebarRowSelection(mailbox: combinedID))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(box.title)
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityAction(named: Text(isExpanded ? "Hide Accounts" : "Show Accounts")) { isExpanded.toggle() }
+        .modifier(SidebarDisclosureAccessibility(isExpanded: isExpanded,
+            badgeDescription: isExpanded ? "" : mailbox.sidebarBadgeDescription(combinedID), toggle: { isExpanded.toggle() }))
         .contextMenu {
             MailboxContextMenu(mailbox: mailbox, box: combinedID, favoriteTarget: .mailbox(labelID: box.id, scope: .allAccounts))
         }
@@ -478,6 +486,7 @@ private struct CombinedMailboxRows: View {
                     .padding(.leading, Tokens.Space.s4)
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
+                    .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
                     .conversationDropTarget(boxID, mailbox: mailbox)
                     .sidebarHover(SidebarRowSelection(mailbox: boxID))
                     .tag(SidebarRowSelection(mailbox: boxID))
@@ -605,6 +614,7 @@ private struct LabelRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
         .modifier(SidebarDisclosureAccessibility(isExpanded: isExpanded, childrenTitle: "Labels",
+            badgeDescription: (label.threadsUnread ?? 0) > 0 ? "\(label.threadsUnread ?? 0) unread" : "",
             toggle: { onToggleExpansion?() }))
         .contextMenu {
             Button("Add to Favorites", systemImage: "star") {

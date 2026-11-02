@@ -14,12 +14,15 @@ extension MailCache {
 
 extension CacheTransaction {
     /// SENT determines direction, including messages sent through aliases. Self-addressed
-    /// mail counts once as sent. To/Cc are indexed; the current metadata cache has no Bcc header.
+    /// mail counts once as sent. Sent correspondents include To, Cc and provider-visible Bcc.
     public func upsertAnalyticsMessages(_ updates: [MessageUpdate], generation: String? = nil) throws {
         // Upgrade fixtures can write messages before this migration has run.
         guard try db.tableExists(MailAnalyticsRecord.databaseTableName) else { return }
         for update in updates where !LocalSend.isProvisional(update.record.id) {
             let message = update.record
+            if message.bcc != nil {
+                try finishRecipientHeaderBackfill(messageIDs: [message.id], accountID: message.accountID)
+            }
             let old = try MailAnalyticsRecord.fetchOne(db, key: ["accountID": message.accountID, "messageID": message.id])
             let active = try analyticsIndexState(accountID: message.accountID)
             let marker = generation ?? (active?.isComplete == false ? active?.generation : nil) ?? old?.generation
@@ -35,7 +38,7 @@ extension CacheTransaction {
             let record = MailAnalyticsRecord(accountID: message.accountID, messageID: message.id,
                 threadID: message.threadID, historyID: message.historyID, date: message.date,
                 subject: message.subject, sender: message.sender, senderAddress: sender?.normalized ?? "",
-                recipients: message.recipients, cc: message.cc, labelIDs: labels.sorted(),
+                recipients: message.recipients, cc: message.cc, bcc: message.bcc ?? old?.bcc, labelIDs: labels.sorted(),
                 direction: labels.contains(SystemLabel.sent) ? .sent : .received,
                 isIncluded: labels.isDisjoint(with: [SystemLabel.draft, SystemLabel.spam, SystemLabel.trash, LocalSend.label]),
                 generation: marker)
@@ -47,7 +50,7 @@ extension CacheTransaction {
 
     private func replaceAnalyticsContacts(_ message: MailAnalyticsRecord) throws {
         let addresses = message.direction == .sent
-            ? EmailAddress.parseList(message.recipients) + EmailAddress.parseList(message.cc ?? "")
+            ? EmailAddress.parseList(message.recipients) + EmailAddress.parseList(message.cc ?? "") + EmailAddress.parseList(message.bcc ?? "")
             : EmailAddress.parseList(message.sender)
         try db.execute(sql: "DELETE FROM mailAnalyticsContact WHERE accountID = ? AND messageID = ?",
                        arguments: [message.accountID, message.messageID])

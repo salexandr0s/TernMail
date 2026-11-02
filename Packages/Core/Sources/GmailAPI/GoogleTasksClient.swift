@@ -3,12 +3,20 @@ import Foundation
 public protocol TasksService: Sendable {
     func taskLists(pageToken: String?) async throws -> GoogleTaskListPage
     func tasks(listID: String, pageToken: String?) async throws -> GoogleTaskPage
+    func task(listID: String, taskID: String) async throws -> GoogleTask
     func insertTask(listID: String, draft: GoogleTaskDraft) async throws -> GoogleTask
     func updateTask(listID: String, taskID: String, update: GoogleTaskUpdate, etag: String?) async throws -> GoogleTask
     func deleteTask(listID: String, taskID: String, etag: String?) async throws
 }
 
 extension TasksService {
+    public func task(listID: String, taskID: String) async throws -> GoogleTask {
+        guard let task = try await allTasks(listID: listID).first(where: { $0.id == taskID }) else {
+            throw GmailError.notFound
+        }
+        return task
+    }
+
     public func allTaskLists() async throws -> [GoogleTaskList] {
         var result: [GoogleTaskList] = []
         var token: String?
@@ -73,6 +81,13 @@ public struct GoogleTasksClient: TasksService, Sendable {
     public func insertTask(listID: String, draft: GoogleTaskDraft) async throws -> GoogleTask {
         let task: GoogleTask = try await resource(request(["lists", listID, "tasks"], method: "POST", body: session.encode(draft)))
         try validateIDs([task.id])
+        return task
+    }
+
+    public func task(listID: String, taskID: String) async throws -> GoogleTask {
+        let task: GoogleTask = try await resource(request(["lists", listID, "tasks", taskID]))
+        try validateIDs([task.id])
+        guard task.id == taskID, task.deleted != true else { throw GmailError.notFound }
         return task
     }
 

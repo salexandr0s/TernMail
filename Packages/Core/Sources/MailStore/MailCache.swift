@@ -58,7 +58,7 @@ public struct CacheTransaction {
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
         "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold", "ownAddress", "unreadDelta",
         "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
-        "mailAnalyticsContact", "mailAnalyticsMessage", "mailAnalyticsState",
+        "mailAnalyticsContact", "mailAnalyticsMessage", "mailAnalyticsState", "recipientHeaderBackfill",
         "readReceiptRecipient", "readReceiptRequest", "readReceiptEvent",
         "readReceiptPending",
     ]
@@ -154,6 +154,7 @@ public struct CacheTransaction {
             var storedLabels = Set<String>()
             if let stored = try MessageRecord.fetchOne(db, key: ["accountID": record.accountID, "id": record.id]) {
                 guard stored.historyID <= record.historyID else { continue }
+                if record.bcc == nil { record.bcc = stored.bcc }
                 storedLabels = try messageLabelIDs(messageID: record.id, accountID: record.accountID)
                 if record.databaseEquals(stored), storedLabels == labelIDs { continue }
                 threads.insert(stored.threadID)

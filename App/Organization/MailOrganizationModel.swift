@@ -21,11 +21,17 @@ struct MailOrganizationReviewCategory: Identifiable {
     var name: String
     var isSelected = true
     var createsFilter: Bool
+    var selectedMessageIDs: Set<String> {
+        didSet {
+            if selectedMessageIDs != oldValue { createsFilter = false }
+        }
+    }
     var id: String { proposal.id }
 
     init(_ proposal: OrganizationCategory, canCreateFilters: Bool) {
         self.proposal = proposal
         name = proposal.name
+        selectedMessageIDs = Set(proposal.messageIDs)
         createsFilter = canCreateFilters && proposal.kind == .topic && !proposal.ruleSenders.isEmpty
     }
 }
@@ -67,8 +73,8 @@ final class MailOrganizationModel {
     var isBusy: Bool { isAnalyzing || phase == .applying }
     var canAnalyze: Bool { access().canAnalyze && !isBusy && phase != .queued }
     var selectedCount: Int { categories.filter(\.isSelected).count }
-    var selectedMessageCount: Int { Set(categories.filter(\.isSelected).flatMap { $0.proposal.messageIDs }).count }
-    var selectedFilterCount: Int { categories.filter { $0.isSelected && $0.createsFilter }.reduce(0) { $0 + $1.proposal.ruleSenders.count } }
+    var selectedMessageCount: Int { Set(categories.filter(\.isSelected).flatMap(\.selectedMessageIDs)).count }
+    var selectedFilterCount: Int { categories.filter { $0.isSelected && $0.createsFilter }.reduce(0) { $0 + eligibleRuleSenders(for: $1).count } }
     var canApply: Bool { phase == .review && snapshot == access() && validationMessage == nil }
 
     var validationMessage: String? {
@@ -76,6 +82,10 @@ final class MailOrganizationModel {
         guard !selected.isEmpty else { return "Select at least one category to apply." }
         var names = Set<String>()
         for category in selected {
+            guard !category.selectedMessageIDs.isEmpty,
+                  category.selectedMessageIDs.isSubset(of: Set(category.proposal.messageIDs)) else {
+                return "Include at least one suggested message in each selected label."
+            }
             let name = category.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard MailOrganizationAnalyzer.validLabelName(name),
                   LabelRules.problem(with: name, among: []) == nil else {
@@ -94,6 +104,9 @@ final class MailOrganizationModel {
             }
             if category.createsFilter && samples?.isPartial == true {
                 return "Analyze a complete sample before creating filters for future mail."
+            }
+            if category.createsFilter && eligibleRuleSenders(for: category).isEmpty {
+                return "The selected messages no longer support a future sender filter. Turn off future mail for this label."
             }
         }
         return nil
@@ -128,7 +141,10 @@ final class MailOrganizationModel {
                       plan.categories.allSatisfy({ Set($0.messageIDs).isSubset(of: ids) }) else {
                     throw AssistantMailError.accessChanged
                 }
-                categories = plan.categories.map { .init($0, canCreateFilters: expected.canCreateFilters && !loaded.isPartial) }
+                categories = plan.categories.map { proposal in
+                    let eligible = loaded.eligibleRuleSenders(proposal.ruleSenders, selectedMessageIDs: Set(proposal.messageIDs))
+                    return .init(proposal, canCreateFilters: expected.canCreateFilters && !eligible.isEmpty)
+                }
                 phase = .review
             } catch {
                 guard acceptsFailure(job, expected) else { return }
@@ -146,8 +162,9 @@ final class MailOrganizationModel {
         let selected = categories.filter(\.isSelected).map { category in
             OrganizationApplicationCategory(id: category.id,
                 name: category.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                kind: Self.applicationKind(category.proposal.kind), messageIDs: category.proposal.messageIDs,
-                ruleSenders: category.proposal.ruleSenders,
+                kind: Self.applicationKind(category.proposal.kind),
+                messageIDs: category.proposal.messageIDs.filter { category.selectedMessageIDs.contains($0) },
+                ruleSenders: eligibleRuleSenders(for: category),
                 createFilter: category.createsFilter && category.proposal.kind == .topic)
         }
         phase = .applying; errorMessage = nil
@@ -165,6 +182,12 @@ final class MailOrganizationModel {
                 errorMessage = Self.applicationMessage(error)
             }
         }
+    }
+
+    private func eligibleRuleSenders(for category: MailOrganizationReviewCategory) -> [String] {
+        guard category.proposal.kind == .topic else { return [] }
+        return samples?.eligibleRuleSenders(category.proposal.ruleSenders,
+                                            selectedMessageIDs: category.selectedMessageIDs) ?? []
     }
 
     func refreshDelivery() async {

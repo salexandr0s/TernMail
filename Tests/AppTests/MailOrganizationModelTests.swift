@@ -43,6 +43,46 @@ import TernAI
         #expect(model.samplingProgress == nil && model.analysisStartedAt == nil)
     }
 
+    @Test func removingOneExamplePreventsItsSenderRuleAndAppliesOnlyIncludedMessages() async throws {
+        let harness = OrganizationModelHarness()
+        let model = harness.makeModel()
+        model.startAnalysis()
+        await model.waitForOperation()
+        #expect(model.categories[0].createsFilter)
+        model.categories[0].selectedMessageIDs.remove("m2")
+        #expect(!model.categories[0].createsFilter)
+        #expect(model.selectedMessageCount == 2)
+        #expect(model.selectedFilterCount == 0)
+        model.categories[0].createsFilter = true
+        #expect(!model.canApply)
+        model.categories[0].createsFilter = false
+        model.applySelection()
+        await model.waitForOperation()
+        let applied = try #require(harness.applied.first)
+        #expect(applied.flatMap(\.messageIDs) == ["m1", "m3"])
+        #expect(applied.flatMap(\.ruleSenders).isEmpty)
+        #expect(applied.allSatisfy { !$0.createFilter })
+    }
+
+    @Test func excludedMessagesMustBeRestoredBeforeReenablingFutureFilters() async throws {
+        let harness = OrganizationModelHarness()
+        let model = harness.makeModel()
+        model.startAnalysis()
+        await model.waitForOperation()
+        model.categories[0].selectedMessageIDs = []
+        #expect(!model.canApply)
+        model.categories[0].selectedMessageIDs = ["m1", "m2", "invented"]
+        #expect(!model.canApply)
+        model.categories[0].selectedMessageIDs = ["m1", "m2"]
+        #expect(!model.categories[0].createsFilter)
+        model.categories[0].createsFilter = true
+        #expect(model.canApply)
+        #expect(model.selectedFilterCount == 1)
+        model.applySelection()
+        await model.waitForOperation()
+        #expect(harness.applied.first?.first?.ruleSenders == ["news@example.invalid"])
+    }
+
     @Test(arguments: [true, false])
     func partialSamplesAndMissingSettingsPermissionAllowLabelsOnly(partial: Bool) async throws {
         let harness = OrganizationModelHarness(partial: partial, canCreateFilters: partial)
@@ -195,7 +235,7 @@ import TernAI
         samples = .init(accountID: "a", messages: (1...3).map {
             .init(messageID: "m\($0)", threadID: "t\($0)", sender: $0 == 3 ? "colleague@example.invalid" : "news@example.invalid",
                 recipients: ["reader@example.invalid"], subject: "Example \($0)", snippet: "Sample preview",
-                date: Date(timeIntervalSince1970: TimeInterval($0)), isSent: false, labelIDs: [])
+                date: Date(timeIntervalSince1970: TimeInterval($0)), isSent: false, labelIDs: [], hasMailingListHeaders: $0 != 3)
         }, existingLabels: [], selectedCount: partial ? 4 : 3, unavailableCount: partial ? 1 : 0, isPartial: partial)
     }
 

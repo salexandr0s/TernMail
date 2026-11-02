@@ -43,7 +43,12 @@ import Testing
         try Schema.cacheMigrator.migrate(writer, upTo: "date-header-offset-v1")
         let message = record("old", date: analyticsDate("2020-01-12T12:00:00Z"))
         try await writer.write { db in
-            try message.insert(db)
+            try db.execute(sql: """
+                INSERT INTO message
+                (accountID,id,threadID,historyID,date,snippet,sender,recipients,cc,subject,sizeEstimate,addressedToMe)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """, arguments: [message.accountID, message.id, message.threadID, message.historyID, message.date,
+                    message.snippet, message.sender, message.recipients, message.cc, message.subject, message.sizeEstimate, false])
             try db.execute(sql: "INSERT INTO messageLabel (accountID,messageID,labelID) VALUES ('a','old','INBOX')")
         }
         let cache = try MailCache(writer: writer)
@@ -54,6 +59,67 @@ import Testing
         #expect(beforeDelete.coverage.first?.isComplete == false)
         try await cache.write { try $0.deleteAnalyticsMessages(messageIDs: ["old"], accountID: "a") }
         #expect(try await cache.mailAnalytics(query: .init(accountIDs: ["a"], period: .allTime)).totalCount == 0)
+    }
+
+    @Test func bccRecipientsSurviveStorageAndCountOnceForSentMail() async throws {
+        let cache = try MailCache.inMemory()
+        let day = analyticsDate("2026-10-20T10:00:00Z")
+        var sent = record("blind", date: day, sender: "me@example.test", to: "")
+        sent.bcc = "Alex <alex@example.test>, alex@example.test"
+        let update = CacheTransaction.MessageUpdate(record: sent, labelIDs: [SystemLabel.sent])
+        try await cache.write { tx in _ = try tx.upsertMessages([update]) }
+        #expect(try await cache.read { try $0.message(id: "blind", accountID: "a")?.bcc } == sent.bcc)
+        let snapshot = try await cache.mailAnalytics(query: .init(accountIDs: ["a"],
+            contactAddress: "alex@example.test", period: .allTime, now: day))
+        #expect(snapshot.sentCount == 1)
+        #expect(snapshot.correspondents.first?.totalCount == 1)
+    }
+
+    @Test func bccMigrationQueuesOldMetadataAndRevokesCompleteHistory() async throws {
+        let writer = try DatabaseQueue()
+        try Schema.cacheMigrator.migrate(writer, upTo: "read-receipts-v1")
+        try await writer.write { db in
+            try db.execute(sql: """
+                INSERT INTO message (accountID,id,threadID,historyID,date,snippet,sender,recipients,subject,sizeEstimate,addressedToMe)
+                VALUES ('a','old','thread',10,100,'','me@example.test','','subject',0,0)
+                """)
+            try db.execute(sql: """
+                INSERT INTO mailAnalyticsMessage
+                (accountID,messageID,threadID,historyID,date,subject,sender,senderAddress,recipients,labelIDs,direction,isIncluded)
+                VALUES ('a','evicted','old-thread',10,100,'subject','me@example.test','me@example.test','','["SENT"]','sent',1)
+                """)
+            try db.execute(sql: "INSERT INTO mailAnalyticsState (accountID,generation,isComplete) VALUES ('a','old-generation',1)")
+        }
+        let cache = try MailCache(writer: writer)
+        #expect(try await cache.read { try $0.pendingRecipientHeaderBackfill(accountID: "a") } == ["evicted", "old"])
+        let state = try #require(try await cache.read { try $0.analyticsIndexState(accountID: "a") })
+        #expect(!state.isComplete)
+        #expect(state.generation != "old-generation")
+        #expect(state.lastError == "Reload history to include Bcc recipients.")
+        #expect(try await cache.read { try $0.message(id: "old", accountID: "a")?.bcc } == nil)
+    }
+
+    @Test func bccMigrationKeepsProvisionalMailLocalAndRecoversItsDraftRecipients() async throws {
+        let writer = try DatabaseQueue()
+        try Schema.cacheMigrator.migrate(writer, upTo: "read-receipts-v1")
+        let date = analyticsDate("2026-10-20T10:00:00Z")
+        let draft = LocalDraft(id: "pending", accountID: "a", kind: .new,
+            content: .init(bcc: [.init(address: "blind@example.test")]), rfcMessageID: "pending@example.test", now: date)
+        try await writer.write { db in
+            try draft.insert(db)
+            try db.execute(sql: """
+                INSERT INTO message (accountID,id,threadID,historyID,date,snippet,sender,recipients,subject,sizeEstimate,addressedToMe)
+                VALUES ('a','local-send:pending','local-send:pending',0,100,'','me@example.test','','subject',0,0)
+                """)
+            try db.execute(sql: """
+                INSERT INTO messageBody (accountID,messageID,plainText,fetchedAt,enrichedAt)
+                VALUES ('a','local-send:pending','body',?,?)
+                """, arguments: [date, date])
+        }
+        let cache = try MailCache(writer: writer)
+        #expect(try await cache.read { try $0.message(id: "local-send:pending", accountID: "a")?.bcc } == "blind@example.test")
+        #expect(try await cache.read { try $0.unenrichedBodyMessageIDs(threadID: "local-send:pending", accountID: "a") }.isEmpty)
+        #expect(try await cache.read { try $0.pendingRecipientHeaderBackfill(accountID: "a") }.isEmpty)
     }
 
     @Test func reconciliationCommitsOnlyAtEndAndRejectsSupersededPages() async throws {

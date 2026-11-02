@@ -125,6 +125,9 @@ final class ComposeModel {
     private(set) var activity: DraftActivity?
     private(set) var senderChoices: [ComposeSender] = []
     var templates: [ComposeTemplate] = []
+    private(set) var signatures: [LocalSignature] = []
+    /// A delayed sender default must not replace a later per-message choice.
+    private var signatureChoiceGeneration = 0
     var inlineImageData: [String: Data] = [:]
     var expandingGroups = 0
     var showsFormatting = UserDefaults.standard.bool(forKey: ComposePreferences.formatBarKey) {
@@ -172,6 +175,9 @@ final class ComposeModel {
     private(set) var failedAttachments: [FailedAttachment] = []
     /// Storing the draft before the window closes, so nothing changes meanwhile.
     private(set) var isClosing = false
+    private(set) var isExiting = false
+    /// A sheet is editing content that Send must not overtake.
+    var isEditingSupplement = false
     @ObservationIgnored private let attachmentFiles: OutgoingAttachmentFiles
 
     @ObservationIgnored weak var editor: (any RichTextEditing)?
@@ -225,7 +231,7 @@ final class ComposeModel {
     /// Only a new message can change accounts.
     var canChangeAccount: Bool { draft?.kind == .new }
 
-    var isEditable: Bool { takesEdits && !isClosing }
+    var isEditable: Bool { takesEdits && !isClosing && !isExiting && !isEditingSupplement }
 
     /// Open, and not taken by a send or discard.
     private var takesEdits: Bool { phase == .open && draft?.state == .editing }
@@ -353,6 +359,8 @@ final class ComposeModel {
             return
         }
         guard sender.identity.lowercasedAddress != fromEmail.lowercased() else { return }
+        signatureChoiceGeneration += 1
+        let signatureGeneration = signatureChoiceGeneration
         var changed = content
         changed.fromAddress = sender.address
         changed.signatureHTML = sender.signature(for: draft.kind)
@@ -360,6 +368,7 @@ final class ComposeModel {
         serially { [self] in
             guard let store = mailbox.accountStore,
                   let signature = try? await store.composeSignature(accountID: sender.account.id, address: sender.address, kind: draft.kind),
+                  signatureChoiceGeneration == signatureGeneration,
                   fromEmail.lowercased() == sender.identity.lowercasedAddress else { return }
             content.signatureHTML = signature.html
             content.signatureAboveQuote = signature.aboveQuote
@@ -393,6 +402,8 @@ final class ComposeModel {
         }
         guard let engine = owner?.engine else { return false }
         content.archiveAfterSend = archive && draft?.threadID != nil
+        isExiting = true
+        defer { isExiting = false }
         cancelTimers()
         let id = localDraftID
         let delay = UndoSendDelay.current
@@ -424,15 +435,25 @@ final class ComposeModel {
     func discard() async -> Bool {
         guard isEditable else { return false }
         guard let engine = owner?.engine else { return false }
+        isExiting = true
+        defer { isExiting = false }
         cancelTimers()
         let id = localDraftID
         // Stores the last edits too, so Undo brings them back.
         let queued = await serially { [self] in
-            (try? await engine.discardDraft(id, content: content, hold: Self.discardHold)) ?? false
+            do {
+                return try await engine.discardDraft(id, content: content, hold: Self.discardHold)
+            } catch {
+                alert = Problem(title: "Couldn't Discard Draft", message: "The draft is still open. Try again.")
+                return false
+            }
         }.value
         if queued {
             mailbox.didQueueDiscard(id, hold: Self.discardHold)
             close()
+        } else {
+            if hasPendingEdits { store() }
+            if changedSinceSave { scheduleAutosave() }
         }
         return queued
     }
@@ -444,6 +465,10 @@ final class ComposeModel {
         guard isEditable, canChangeAccount, accountID != draft?.accountID,
               let engine = owner?.engine, let destination = mailbox.account(id: accountID)
         else { return }
+        guard expandingGroups == 0 else {
+            alert = Problem(title: "Recipients Are Still Loading", message: "Wait for the contact group before changing accounts.")
+            return
+        }
         if automaticChange == nil {
             choseRecipientAccount = true
             recipientAccountGeneration += 1
@@ -514,6 +539,9 @@ final class ComposeModel {
                 defer { copying.removeAll { $0.id == file.id } }
                 let attached: OutgoingAttachment?
                 do {
+                    // The editor can be ahead of its delayed local save. Store
+                    // its current inline references before checking the budget.
+                    guard try await engine.updateDraft(id, content: content) != nil else { return }
                     switch item {
                     case .file(let url):
                         attached = try await engine.attachFile(at: url, to: id)
@@ -622,6 +650,10 @@ final class ComposeModel {
     /// waits does nothing.
     func requestClose() async {
         guard isEditable, let draft else { return }
+        guard expandingGroups == 0 else {
+            alert = Problem(title: "Recipients Are Still Loading", message: "Wait for the contact group before closing this message.")
+            return
+        }
         if let hold = attachmentHold {
             alert = Problem(title: "Can't Close Message", message: hold)
             return
@@ -659,6 +691,10 @@ final class ComposeModel {
     /// file failed to attach or to be removed; the window then stays as it
     /// was, showing why.
     func prepareToQuit() async -> Bool {
+        guard expandingGroups == 0, !isEditingSupplement else {
+            alert = Problem(title: "Draft Has Unfinished Changes", message: "Finish loading recipients or editing the message before quitting.")
+            return false
+        }
         guard takesEdits, let draft else {
             await lastWrite?.value
             return true
@@ -946,6 +982,45 @@ final class ComposeModel {
 
     private func loadComposeFeatures() async {
         templates = (try? await mailbox.accountStore?.composeTemplates()) ?? []
+        signatures = (try? await mailbox.accountStore?.localSignatures()) ?? []
+    }
+
+    /// Quotation edits use the queue's local store path; body edits and reply
+    /// headers stay intact. A blank quotation removes both representations.
+    func replaceQuote(with text: String) async -> Bool {
+        guard takesEdits, !isClosing, !isExiting, let engine = owner?.engine else { return false }
+        return await serially { [self] in
+            do {
+                try await engine.replaceSelectedQuote(localDraftID: localDraftID, text: text)
+                markChanged()
+                try await engine.saveDraft(localDraftID, content: content)
+                return true
+            } catch {
+                alert = Problem(title: "Couldn't Save Quotation", message: "Your changes are still open. Try again.")
+                return false
+            }
+        }.value
+    }
+
+    func chooseSignature(_ signature: LocalSignature?) {
+        guard isEditable else { return }
+        signatureChoiceGeneration += 1
+        content.signatureHTML = signature?.document.html()
+    }
+
+    func useGmailSignature() {
+        guard isEditable else { return }
+        signatureChoiceGeneration += 1
+        content.signatureHTML = selectedSender?.identity.signatureHTML
+    }
+
+    func replaceSignature(with document: ComposeDocument) {
+        guard takesEdits, !isClosing, !isExiting else { return }
+        signatureChoiceGeneration += 1
+        // The sheet temporarily blocks normal body edits; store its edit after
+        // releasing that guard so it follows the standard persistence path.
+        isEditingSupplement = false
+        content.signatureHTML = document.isEmpty ? nil : document.html()
     }
 
     private func chooseRecipientAccountIfNeeded() {

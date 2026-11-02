@@ -355,12 +355,11 @@ struct RootView: View {
         case .signedOut, .signInRequired, .signedIn:
             if model.onboarding.isPresented {
                 OnboardingView()
-            } else if case .signedIn = model.phase {
-                if let mailbox = model.mailbox {
-                    WorkspaceView(mailbox: mailbox)
-                } else {
-                    openingState
-                }
+            } else if let mailbox = model.mailbox {
+                WorkspaceView(mailbox: mailbox)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        AccountReconnectionBanner(app: model)
+                    }
             } else {
                 SignInView()
             }

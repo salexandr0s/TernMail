@@ -217,31 +217,33 @@ struct AttachmentItemMenu: View {
         // Commands on a file in a multiple selection act on the selection, as in Finder.
         let files = model.selectedItems(with: item)
         let saved = files.compactMap { model.savedFile(for: $0) }
-        Button("Open", systemImage: "arrow.up.forward.app") { Task { await model.openFiles(files) } }
-        Button("Open With…") { Task { await model.openWith(item) } }
-        Button("Quick Look", systemImage: "eye") { Task { await model.preview(item) } }
-        Divider()
-        Button("Save…", systemImage: "arrow.down.to.line") { Task { await model.save(item) } }
-        if files.count > 1 {
-            Button("Save Selected Files…") { Task { await model.saveSelection() } }
-        }
-        if !saved.isEmpty {
-            Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(saved) }
-        }
-        Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFile(item) } }
-        ShareLink(items: files.map { AttachmentFileItem(attachment: $0.attachment, mailbox: model.mailbox) },
-                  preview: { SharePreview($0.attachment.filename) })
-        Divider()
-        Button("Open Conversation in New Window", systemImage: "macwindow.badge.plus") {
-            Task { await model.openSource(item) }
-        }
-        Menu("Category") {
-            ForEach(AttachmentCategory.allCases, id: \.self) { category in
-                Button {
-                    Task { await model.setCategory(category, for: item) }
-                } label: {
-                    if category == item.category { Label(category.title, systemImage: "checkmark") }
-                    else { Text(category.title) }
+        Group {
+            Button("Open", systemImage: "arrow.up.forward.app") { Task { await model.openFiles(files) } }
+            Button("Open With…") { Task { await model.openWith(item) } }
+            Button("Quick Look", systemImage: "eye") { Task { await model.preview(item) } }
+            Divider()
+            Button("Save…", systemImage: "arrow.down.to.line") { Task { await model.save(item) } }
+            if files.count > 1 {
+                Button("Save Selected Files…") { Task { await model.saveSelection() } }
+            }
+            if !saved.isEmpty {
+                Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(saved) }
+            }
+            Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFiles(files) } }
+            ShareLink(items: files.map { AttachmentFileItem(attachment: $0.attachment, mailbox: model.mailbox) },
+                      preview: { SharePreview($0.attachment.filename) })
+            Divider()
+            Button("Open Conversation in New Window", systemImage: "macwindow.badge.plus") {
+                Task { await model.openSource(item) }
+            }
+            Menu("Category") {
+                ForEach(AttachmentCategory.allCases, id: \.self) { category in
+                    Button {
+                        Task { await model.setCategory(category, for: item) }
+                    } label: {
+                        if category == item.category { Label(category.title, systemImage: "checkmark") }
+                        else { Text(category.title) }
+                    }
                 }
             }
         }

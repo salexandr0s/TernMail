@@ -32,24 +32,31 @@ import Testing
         #expect(model.protectedBudgetLimit)
     }
 
-    @Test func recoverableDraftPreventsTrimmingAndSuspendRejectsNewPasses() async throws {
+    @Test func recoverableDraftProtectsItsSourceWhileUnrelatedContentIsTrimmed() async throws {
         let cache = try MailCache.inMemory()
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = try await seed("old", in: cache, directory: directory)
+        let draftSource = try await seed("draft-source", in: cache, directory: directory)
         let timestamp = date
         try await cache.write { tx in
-            try tx.insertLocalDraft(LocalDraft(accountID: "a", kind: .new, rfcMessageID: "<pending@example.com>", now: timestamp))
+            var draft = LocalDraft(accountID: "a", kind: .reply, rfcMessageID: "<pending@example.com>", now: timestamp)
+            draft.threadID = "draft-source"
+            draft.sourceMessageID = "draft-source"
+            try tx.insertLocalDraft(draft)
         }
         let model = CacheMaintenanceModel(cache: cache, store: nil, attachmentDirectory: directory, budgetBytes: 1, now: { date })
         await model.enforceBudget()
         #expect(model.readiness?.localDraftCount == 1)
-        #expect(FileManager.default.fileExists(atPath: file.path))
-        #expect(try await cache.read { try $0.body(messageID: "old", accountID: "a") } != nil)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(try await cache.read { try $0.message(id: "old", accountID: "a") } == nil)
+        #expect(FileManager.default.fileExists(atPath: draftSource.path))
+        #expect(try await cache.read { try $0.body(messageID: "draft-source", accountID: "a") } != nil)
+        let later = try await seed("later", in: cache, directory: directory)
         await model.suspend()
         await model.enforceBudget()
         #expect(!model.isTrimming)
-        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(FileManager.default.fileExists(atPath: later.path))
         model.resume()
     }
 

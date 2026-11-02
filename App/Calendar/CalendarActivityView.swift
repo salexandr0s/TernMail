@@ -4,6 +4,7 @@ import SwiftUI
 struct CalendarActivityView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var model: CalendarModel
+    @State private var recoveryOperation: CalendarOperation?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,12 +28,16 @@ struct CalendarActivityView: View {
                 }
             }.padding(Tokens.Space.s4).background(Tokens.Surface.muted)
         }
+        .sheet(item: $recoveryOperation) { operation in
+            CalendarRecoveryView(model: model, operation: operation)
+        }
         .frame(minWidth: Tokens.Calendar.activityWidth, idealWidth: Tokens.Calendar.activityWidth, maxWidth: .infinity,
                minHeight: Tokens.Calendar.sheetMinHeight, idealHeight: CalendarSheetLayout.height(Tokens.Calendar.activityHeight), maxHeight: .infinity)
     }
 
     private func activityRow(_ operation: CalendarOperation) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+        let presentation = CalendarOperationPresentation(operation: operation)
+        return HStack(alignment: .top, spacing: Tokens.Space.s3) {
             Image(systemName: symbol(operation.status))
                 .font(.title3).foregroundStyle(color(operation.status))
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
@@ -40,14 +45,20 @@ struct CalendarActivityView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(title(operation)).font(.headline).lineLimit(2)
+                    Text(presentation.title).font(.headline).lineLimit(2)
                     Spacer(minLength: Tokens.Space.s2)
                     Text(statusTitle(operation.status)).font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 }
                 if let owner = model.calendars.first(where: { $0.accountID == operation.accountID && $0.calendarID == operation.calendarID }) {
                     Text("\(owner.accountName) · \(owner.title)").font(.caption).foregroundStyle(.secondary)
                 }
-                Text(operation.createdAt, format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                if let event = presentation.event, let start = event.start?.resolvedDate(fallbackTimeZone: model.calendar.timeZone) {
+                    Text(CalendarLayout.format(start, style: event.isAllDay
+                        ? .dateTime.year().month().day() : .dateTime.year().month().day().hour().minute(), calendar: model.calendar))
+                        .font(.callout)
+                }
+                Text("Requested \(operation.createdAt, format: .dateTime.month().day().hour().minute())")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let error = operation.errorMessage { CalendarInlineError(message: error) }
                 HStack(spacing: Tokens.Space.s3) {
                     switch operation.status {
@@ -58,10 +69,8 @@ struct CalendarActivityView: View {
                         Text("Waiting to synchronize").font(.caption).foregroundStyle(.secondary)
                         if operation.attempts == 0 { Button("Cancel") { Task { await model.cancelOperation(operation) } } }
                     case .failed, .conflicted:
-                        Button("Review and Retry") {
-                            if operation.status == .conflicted { dismiss() }
-                            Task { await model.retryOperation(operation) }
-                        }
+                        Button("Review Change") { recoveryOperation = operation }
+                            .accessibilityLabel("Review recovery: \(presentation.title)")
                     case .running:
                         ProgressView().controlSize(.small).accessibilityLabel("Synchronizing change")
                     case .completed, .cancelled:
@@ -84,19 +93,6 @@ struct CalendarActivityView: View {
         }
     }
 
-    private func title(_ operation: CalendarOperation) -> String {
-        switch operation.mutation {
-        case .create(let event): "Create \(event.title)"
-        case .importEvent(let event): "Import \(event.title)"
-        case .importSeries(let master, _): "Import \(master.title)"
-        case .update: "Update event"
-        case .delete: "Delete event"
-        case .respond: "Reply to invitation"
-        case .move: "Move event"
-        case .splitSeries: "Change following events"
-        case .deleteFollowing: "Delete following events"
-        }
-    }
     private func symbol(_ status: CalendarOperation.Status) -> String {
         switch status {
         case .proposed: "doc.text"

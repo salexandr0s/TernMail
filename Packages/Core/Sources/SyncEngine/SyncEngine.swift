@@ -60,7 +60,7 @@ public struct UndoHolds: Sendable, Equatable {
 
 public actor SyncEngine {
     /// The threading headers let a reply answer a message without fetching it.
-    static let metadataHeaders = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To", "Content-Type"]
+    static let metadataHeaders = ["From", "To", "Cc", "Bcc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To", "Content-Type"]
     static let inboxCap = 5000
     /// Releasing a search hold keeps what this lists, so both use one window.
     static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
@@ -472,6 +472,7 @@ public actor SyncEngine {
             try await fullSync(reset: state != nil)
             changed = true
         }
+        try await backfillRecipientHeaders()
         try await releaseExpiredHolds()
         try await retryPendingReadReceipts()
         // Historical attachment scans compete with the first mail download.

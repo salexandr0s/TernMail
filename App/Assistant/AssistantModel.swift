@@ -30,6 +30,7 @@ final class AssistantModel {
     private(set) var errorMessage: String?
     private(set) var statusText: String?
     private(set) var usage: AIUsage?
+    private(set) var hasPendingScopeChange = false
     var selectedScope: AssistantScope = .allEnabledAccounts {
         didSet { if selectedScope != oldValue { refreshAccess() } }
     }
@@ -55,6 +56,7 @@ final class AssistantModel {
     @ObservationIgnored private let hasWritingStyleOverride: Bool
     @ObservationIgnored private var history: [AIJSON] = []
     @ObservationIgnored private var observedScope: AssistantScopeSnapshot?
+    @ObservationIgnored private var lastNavigationScope: AssistantScopeSnapshot?
     @ObservationIgnored private var toolSession: AssistantToolSession?
     @ObservationIgnored private var readerSummaryCache = ThreadSummaryCache()
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -100,11 +102,47 @@ final class AssistantModel {
 
     var availableAccounts: [AccountRecord] { context().accounts }
 
+    var isModelReady: Bool {
+        let current = context()
+        return current.canUsePlan && catalogueRevision == current.connectionRevision
+            && models.contains { $0.id == selectedModelID }
+    }
+
+    var usesPreviousMailScope: Bool {
+        guard let observedScope else { return false }
+        return observedScope != scope(in: context())
+    }
+
+    var conversationScopeDescription: String {
+        guard let snapshot = observedScope else { return selectedScope.title }
+        let accounts = context().accounts.filter { snapshot.accountIDs.contains($0.id) }.map(\.email).joined(separator: ", ")
+        if let threads = snapshot.threadIDs {
+            return "\(threads.count) selected conversations in \(accounts)"
+        }
+        return accounts.isEmpty ? "Enabled calendars" : accounts
+    }
+
+    func keepConversationScope() {
+        refreshAccess()
+        hasPendingScopeChange = false
+        errorMessage = nil
+    }
+
+    func reviewCurrentScope() { hasPendingScopeChange = true }
+
+    func startChatWithCurrentScope() {
+        refreshAccess()
+        let unfinished = composerText
+        newChat()
+        composerText = unfinished
+    }
+
     var suggestions: [AssistantSuggestion] {
         [.awaitingReplies, .tasksFromMail, .eventsFromMail, .priorities, .followUps, .recentMail]
     }
 
     var contextualSuggestions: [AssistantSuggestion] {
+        guard !hasPendingScopeChange, !usesPreviousMailScope else { return [] }
         let current = context()
         let selected = scope(in: current, selection: .selectedThreads)
         guard let threads = selected.threadIDs, !threads.isEmpty,
@@ -122,18 +160,24 @@ final class AssistantModel {
 
     func requirement(for suggestion: AssistantSuggestion) -> String? {
         if isRunning { return "Wait for this reply or stop it first." }
+        if hasPendingScopeChange { return "Choose whether to keep this chat's scope or start a new chat." }
         let current = context()
+        if suggestion.requiresSelection, usesPreviousMailScope {
+            return "Start a new chat to use the current selection."
+        }
         let selection = suggestionScope(suggestion)
-        let snapshot = scope(in: current, selection: selection)
+        let snapshot = suggestion.requiresSelection
+            ? scope(in: current, selection: selection) : (observedScope ?? scope(in: current, selection: selection))
+        let effectiveSelection: AssistantScope = snapshot.threadIDs == nil ? .allEnabledAccounts : .selectedThreads
         do {
-            try validateStart(snapshot, selection: selection)
-            if selection == .selectedThreads, snapshot.threadIDs?.isEmpty != false {
+            try validateStart(snapshot, selection: effectiveSelection)
+            if effectiveSelection == .selectedThreads, snapshot.threadIDs?.isEmpty != false {
                 return "Select a conversation in an enabled mail account."
             }
             guard !snapshot.accountIDs.isEmpty else {
                 return "Enable a mail account in assistant settings or choose a scope with mail access."
             }
-            guard snapshot.accountIDs.isSubset(of: scope(in: current).accountIDs) else {
+            guard snapshot.accountIDs.isSubset(of: (observedScope ?? scope(in: current)).accountIDs) else {
                 return "Select a conversation within the current mail scope."
             }
             if suggestion == .draftReply, snapshot.threadIDs?.count != 1 {
@@ -148,8 +192,9 @@ final class AssistantModel {
     func run(_ suggestion: AssistantSuggestion) {
         refreshAccess()
         if let requirement = requirement(for: suggestion) { errorMessage = requirement; return }
-        selectedScope = suggestionScope(suggestion)
-        send(suggestion.prompt(for: selectedScope))
+        if suggestion.requiresSelection { selectedScope = .selectedThreads }
+        let activeSelection: AssistantScope = observedScope?.threadIDs == nil ? .allEnabledAccounts : .selectedThreads
+        send(suggestion.prompt(for: activeSelection))
     }
 
     private func suggestionScope(_ suggestion: AssistantSuggestion) -> AssistantScope {
@@ -189,9 +234,22 @@ final class AssistantModel {
         let snapshot = scope(in: current)
         if observedScope?.connectionRevision != current.connectionRevision { modelErrorMessage = nil }
         if let previous = observedScope {
-            if previous != snapshot { clearConversation() }
-        } else { calendarExtractionRevision += 1 }
-        observedScope = snapshot
+            if !isAuthorized(previous, in: current) {
+                clearConversation()
+                observedScope = snapshot
+            } else if lastNavigationScope != snapshot {
+                if !messages.isEmpty || !composerText.isEmpty {
+                    stop()
+                    hasPendingScopeChange = previous != snapshot
+                } else {
+                    observedScope = snapshot
+                }
+            }
+        } else {
+            calendarExtractionRevision += 1
+            observedScope = snapshot
+        }
+        lastNavigationScope = snapshot
         if catalogueRevision != current.connectionRevision {
             models = []
             catalogueRevision = nil
@@ -264,11 +322,15 @@ final class AssistantModel {
     func send(_ text: String) {
         guard !isRunning else { return }
         refreshAccess()
+        guard !hasPendingScopeChange else {
+            errorMessage = "Choose whether to keep this chat's scope or start a new chat."
+            return
+        }
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
-        let snapshot = scope(in: context())
+        let snapshot = observedScope ?? scope(in: context())
         do {
-            try validateStart(snapshot)
+            try validateStart(snapshot, selection: snapshot.threadIDs == nil ? .allEnabledAccounts : .selectedThreads)
             guard prompt.utf8.count <= 32_768 else { throw AssistantError.historyLimit }
             let input = history + [Self.userInput(prompt)]
             try checkHistory(input)
@@ -284,9 +346,13 @@ final class AssistantModel {
 
     func canRetry(_ messageID: UUID) -> Bool {
         guard !isRunning, let retryContext, retryContext.messageID == messageID,
-              retryContext.epoch == conversationEpoch, retryContext.scope == scope(in: context()),
+              !hasPendingScopeChange, retryContext.epoch == conversationEpoch, isCurrentChatScope(retryContext.scope),
               messages.last?.id == messageID, messages.last?.state == .failed else { return false }
-        do { try validateStart(retryContext.scope); try checkHistory(history); return true }
+        do {
+            try validateStart(retryContext.scope, selection: retryContext.scope.threadIDs == nil ? .allEnabledAccounts : .selectedThreads)
+            try checkHistory(history)
+            return true
+        }
         catch { return false }
     }
 
@@ -321,7 +387,11 @@ final class AssistantModel {
         isRunning = false; statusText = nil
     }
 
-    func newChat() { clearConversation(); observedScope = scope(in: context()) }
+    func newChat() {
+        clearConversation()
+        observedScope = scope(in: context())
+        lastNavigationScope = observedScope
+    }
 
     /// Loads a mail card's conversation, then hands its link to `open`.
     func openSourceInNewWindow(_ source: AssistantSource, using open: @escaping @MainActor (MailLink) -> Void) {
@@ -334,7 +404,7 @@ final class AssistantModel {
     func reviewCalendarProposal(_ proposal: AssistantCalendarProposal) {
         refreshAccess()
         let scope = context().calendarScope
-        guard scope.revision == proposal.accessRevision, scope.allows(proposal.calendar),
+        guard !hasPendingScopeChange, scope.revision == proposal.accessRevision, scope.allows(proposal.calendar),
               messages.contains(where: { $0.calendarProposals.contains(proposal) }) else { return }
         app?.calendar.openProposal(proposal.id)
     }
@@ -342,12 +412,12 @@ final class AssistantModel {
     var taskDestinationModel: GoogleTasksModel? { app?.tasks }
 
     func canUseTaskResult(_ result: AssistantTaskResult) -> Bool {
-        observedScope == scope(in: context()) && scope(in: context()).allows(result.source)
+        observedScope.map { isCurrentChatScope($0) && $0.allows(result.source) } == true
             && messages.contains { $0.taskResults.contains(result) }
     }
 
     func canUseEventResult(_ result: AssistantEventResult) -> Bool {
-        observedScope == scope(in: context()) && scope(in: context()).allows(result.source)
+        observedScope.map { isCurrentChatScope($0) && $0.allows(result.source) } == true
             && messages.contains { $0.eventResults.contains(result) }
     }
 
@@ -365,7 +435,8 @@ final class AssistantModel {
         guard !isRunning, !isCheckingCalendarAvailability, !choices.isEmpty, choices.count <= 6,
               let app else { return }
         refreshAccess()
-        let snapshot = scope(in: context())
+        guard !hasPendingScopeChange else { return }
+        let snapshot = observedScope ?? scope(in: context())
         let epoch = conversationEpoch
         let known = Set(messages.flatMap(\.availabilityChoices).map(\.id))
         guard choices.allSatisfy({ known.contains($0.id) && $0.accessRevision == snapshot.calendarScope.revision
@@ -383,14 +454,14 @@ final class AssistantModel {
                 let result = try await CalendarAssistantTools.check(keys: choice.calendarKeys, start: choice.start,
                     end: choice.end, hours: hours, bindings: bindings) { [weak self] in
                         guard let self, self.conversationEpoch == epoch,
-                              self.scope(in: self.context()) == snapshot else { throw AssistantError.accessChanged }
+                              self.isCurrentChatScope(snapshot) else { throw AssistantError.accessChanged }
                     }
                 guard result.isComplete else { throw CalendarAssistantTools.ToolError.incompleteAvailability }
                 guard result.slots.contains(where: { $0.start == choice.start && $0.end == choice.end }) else {
                     throw CalendarAssistantTools.ToolError.changedSlot
                 }
             }
-            guard conversationEpoch == epoch, scope(in: context()) == snapshot else { throw AssistantError.accessChanged }
+            guard conversationEpoch == epoch, isCurrentChatScope(snapshot) else { throw AssistantError.accessChanged }
             guard !isRunning else {
                 calendarChoiceError = "Wait for the current assistant reply, then choose these times again."
                 return
@@ -547,7 +618,7 @@ final class AssistantModel {
             let epoch = conversationEpoch
             let isValid: @MainActor @Sendable () -> Bool = { [weak self] in
                 guard let self else { return false }
-                return conversationEpoch == epoch && scope(in: context()) == snapshot
+                return conversationEpoch == epoch && isCurrentChatScope(snapshot)
             }
             let tools = MailAssistantTools(app: app, allowedAccountIDs: snapshot.accountIDs,
                 allowedThreadIDs: snapshot.threadIDs, isScopeValid: isValid)
@@ -600,15 +671,30 @@ final class AssistantModel {
         retryContext = nil
         errorMessage = nil; usage = nil
         calendarChoiceError = nil
+        hasPendingScopeChange = false
         app?.calendar.clearAssistantProposals()
     }
 
     private func ensureCurrent(_ snapshot: AssistantScopeSnapshot, turn: UUID) throws {
         try Task.checkCancellation()
-        guard turnID == turn, scope(in: context()) == snapshot else {
+        guard turnID == turn, isCurrentChatScope(snapshot) else {
             refreshAccess()
             throw AssistantError.accessChanged
         }
+    }
+
+    /// Navigation is not consent. A retained chat keeps its original scope, but
+    /// any lost permission, replaced account, or connection change invalidates it.
+    private func isAuthorized(_ snapshot: AssistantScopeSnapshot, in current: AssistantContext) -> Bool {
+        snapshot.canUsePlan == current.canUsePlan
+            && snapshot.connectionRevision == current.connectionRevision
+            && snapshot.accountIDs.isSubset(of: enabledAccountIDs)
+            && snapshot.accountInstances.allSatisfy { current.accountInstances[$0.key] == $0.value }
+            && snapshot.calendarScope == current.calendarScope
+    }
+
+    private func isCurrentChatScope(_ snapshot: AssistantScopeSnapshot) -> Bool {
+        !hasPendingScopeChange && observedScope == snapshot && isAuthorized(snapshot, in: context())
     }
 
     private func run(input initialInput: [AIJSON], model: String, snapshot: AssistantScopeSnapshot,
@@ -830,6 +916,17 @@ extension AssistantModel {
     /// Observing this value also observes permissions in the calendar and mail
     /// models. It does not depend on the selected mailbox or sidebar chat.
     var composeAccessRevision: ComposeAssistantAccess { composeAccess(accountID: nil) }
+
+    /// Opening cached citations does not require an online AI provider. The
+    /// captured revision still invalidates revoke-and-regrant races.
+    func sourceNavigationAuthorization(accountID: String) -> (@MainActor () -> Bool)? {
+        guard enabledAccountIDs.contains(accountID) else { return nil }
+        let revision = composePermissionRevision
+        return { [weak self] in
+            guard let self else { return false }
+            return composePermissionRevision == revision && enabledAccountIDs.contains(accountID)
+        }
+    }
 
     func composeAvailabilityMessage(accountID: String) -> String? {
         if connection.isRestoring { return "Loading your ChatGPT connection…" }

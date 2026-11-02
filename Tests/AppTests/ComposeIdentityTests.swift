@@ -7,6 +7,31 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct ComposeIdentityTests {
+    @Test(arguments: [false, true])
+    func anExplicitSignatureChoiceWinsOverAPendingSenderDefault(custom: Bool) async throws {
+        let (mailbox, cache, _, _) = try await fixture()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        let primary = try #require(model.senderChoices.first { $0.identity.isPrimary })
+        // Closing a blank new message deliberately discards it. Keep a real
+        // draft so closing must persist the explicit signature choice.
+        model.content.subject = "Signature choice"
+        model.selectSender(primary)
+        // Do not yield: the sender's asynchronous default is still queued.
+        if custom { model.replaceSignature(with: ComposeDocument(plainText: "Only this message")) }
+        else { model.chooseSignature(nil) }
+        let expected = model.content.signatureHTML
+        await model.requestClose()
+        let stored = try #require(try await cache.read { try $0.localDraft(id: id) })
+        #expect(model.phase == .closed && stored.state == .editing)
+        #expect(stored.fromAddress == primary.address)
+        #expect(stored.signatureHTML == expected)
+        #expect(custom ? stored.signatureHTML?.contains("Only this message") == true : stored.signatureHTML == nil)
+        await mailbox.stop()
+    }
+
     @Test func newMessagesUseTheDefaultAliasAndSenderChangesSaveTheirSignatureSnapshot() async throws {
         let (mailbox, cache, accounts, account) = try await fixture()
         let id = try #require(await mailbox.startCompose(.newMessage))

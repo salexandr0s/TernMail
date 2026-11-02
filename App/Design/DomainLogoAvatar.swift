@@ -7,7 +7,7 @@ struct DomainLogoAvatar<Placeholder: View>: View {
     let size: CGFloat
     let allowsLookup: Bool
     private let placeholder: Placeholder
-    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var image: NSImage?
     @State private var loadedAddress: String?
 
