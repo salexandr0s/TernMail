@@ -13,12 +13,12 @@ final class ReviewFixesUITests: XCTestCase {
         let templates = app.staticTexts["Templates"].firstMatch
         XCTAssertTrue(templates.waitForExistence(timeout: 10))
         templates.click()
-        let name = app.textFields["Name"].firstMatch
+        let name = app.textFields["compose-template-name"].firstMatch
         XCTAssertTrue(name.waitForExistence(timeout: 10))
         name.click()
         name.typeText("Unfinished reply")
 
-        let create = app.buttons["Create a new template"]
+        let create = app.buttons["compose-template-new"]
         create.click()
         XCTAssertTrue(app.buttons["Discard Changes"].waitForExistence(timeout: 5))
         app.buttons["Cancel"].click()
@@ -44,16 +44,13 @@ final class ReviewFixesUITests: XCTestCase {
         app.launch()
         defer { app.terminate() }
 
-        let reconnect = app.descendants(matching: .any).matching(identifier: "account.reconnect").firstMatch
+        let reconnect = app.buttons["Sign in again to audit@example.invalid"]
         XCTAssertTrue(reconnect.waitForExistence(timeout: 15))
-        let inboxCount = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label BEGINSWITH %@ AND value == %@", "Inbox", "2 unread")).firstMatch
-        XCTAssertTrue(inboxCount.waitForExistence(timeout: 10), "VoiceOver must receive the visible Inbox count and its meaning.")
         let subject = app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Field notes", "Field notes")).firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 10), "Cached Inbox must remain available after the only account expires.")
         subject.click()
-        let conversationActions = app.buttons["Conversation actions"]
-        XCTAssertTrue(conversationActions.waitForExistence(timeout: 10), "The cached conversation must still open.")
+        let message = app.descendants(matching: .any).matching(identifier: "message-disclosure-m1").firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10), "The cached message must still open in the reader.")
         XCTAssertTrue(reconnect.exists)
 
         let attachment = XCTAttachment(screenshot: app.windows.matching(identifier: "main").firstMatch.screenshot())

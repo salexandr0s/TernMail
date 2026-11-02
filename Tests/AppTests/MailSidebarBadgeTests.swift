@@ -64,8 +64,10 @@ import Testing
 
         func expectValue(_ expected: String, label: String) async throws {
             try await eventually("\(label) must expose AX value “\(expected)”", details: {
-                self.accessibilityElements(in: controller.view).filter { $0.label == label }
-                    .map { "label=\($0.label ?? "nil"), value=\($0.value ?? "nil")" }.joined(separator: "; ")
+                let candidates = self.accessibilityElements(in: controller.view).filter { $0.label == label }
+                return candidates.isEmpty ? "No matching accessibility element" : candidates.map {
+                    "class=\(type(of: $0.object)), label=\($0.label ?? "nil"), spokenValue=\($0.value ?? "nil")"
+                }.joined(separator: "; ")
             }) {
                 controller.view.layoutSubtreeIfNeeded()
                 return self.accessibilityElements(in: controller.view).contains {
@@ -164,10 +166,11 @@ import Testing
                 ?? object.accessibilityAttributeValue(.title) as? String
         }
         var value: String? {
-            // SwiftUI list nodes can expose their spoken value through valueDescription.
-            property("accessibilityValue") as? String ?? object.accessibilityAttributeValue(.value) as? String
+            // SwiftUI's list AccessibilityNode exposes its spoken value through
+            // valueDescription on macOS, while native AppKit rows may use value.
+            property("accessibilityValue") as? String
+                ?? object.accessibilityAttributeValue(.value) as? String
                 ?? property("accessibilityValueDescription") as? String
         }
     }
-
 }

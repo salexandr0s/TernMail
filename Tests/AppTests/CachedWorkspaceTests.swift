@@ -63,7 +63,28 @@ import Testing
         window.orderBack(nil)
         defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
 
-        try await eventually("RootView must expose reconnect, cached Inbox counts, and cached mail together") {
+        func diagnoseNativeFailure() {
+            let elements = self.elements(in: window)
+            print("CACHED_WORKSPACE_AX: visible=\(window.isVisible) nodes=\(elements.count) modelInboxValue=\(mailbox.sidebarBadgeDescription(.account(accountID, SystemLabel.inbox))) nativeTableRows=\(descendants(controller.view).compactMap { ($0 as? NSTableView)?.numberOfRows })")
+            for header in descendants(controller.view).compactMap({ $0 as? MessageHeaderClickView }).prefix(4) {
+                print("CACHED_WORKSPACE_READER: message=\(header.messageID) attached=\(header.window === window) hidden=\(header.isHiddenOrHasHiddenAncestor) bounds=\(header.bounds)")
+            }
+            let relevant = elements.filter {
+                $0.id?.hasPrefix("account.") == true || $0.label?.hasPrefix("Inbox") == true
+                    || $0.label?.contains("Field notes") == true || $0.value?.contains("Field notes") == true
+                    || $0.id?.hasPrefix("message-header-") == true || $0.id?.hasPrefix("sender-profile-") == true
+            }
+            for element in relevant.prefix(12) {
+                print("CACHED_WORKSPACE_AX: \(element.diagnostic)")
+            }
+            if let directory = ProcessInfo.processInfo.environment["TERN_CACHED_WORKSPACE_AUDIT_DIR"] {
+                do { try capture(controller.view, directory: directory, name: "cached-workspace-native-failure.png") }
+                catch { print("CACHED_WORKSPACE_CAPTURE: \(error)") }
+            }
+        }
+
+        try await eventually("RootView must expose reconnect, cached Inbox counts, and cached mail together",
+                             onFailure: diagnoseNativeFailure) {
             window.layoutIfNeeded()
             controller.view.layoutSubtreeIfNeeded()
             let elements = self.elements(in: window)
@@ -77,7 +98,8 @@ import Testing
 
         let thread = try #require(mailbox.threads.first { $0.subject == "Field notes" })
         mailbox.selectedThreadIDs = [thread.key]
-        try await eventually("Selecting cached mail must open the native reader while reconnect stays available") {
+        try await eventually("Selecting cached mail must open the native reader while reconnect stays available",
+                             onFailure: diagnoseNativeFailure) {
             window.layoutIfNeeded()
             controller.view.layoutSubtreeIfNeeded()
             let elements = self.elements(in: window)
@@ -100,12 +122,14 @@ import Testing
         }
     }
 
-    private func eventually(_ explanation: String, condition: () -> Bool) async throws {
+    private func eventually(_ explanation: String, onFailure: () -> Void = {}, condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while !condition(), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(80))
         }
-        try #require(condition(), "\(explanation)")
+        let passed = condition()
+        if !passed { onFailure() }
+        try #require(passed, "\(explanation)")
     }
 
     private func stop(_ app: AppModel) async {
@@ -143,19 +167,25 @@ import Testing
         var role: String? { property("accessibilityRole") as? String ?? object.accessibilityAttributeValue(.role) as? String }
 
         func isReconnectButton(for email: String) -> Bool {
-            // SwiftUI exports the banner identifier on its account-specific button.
+            // SwiftUI exports the banner's identifier on its child button.
+            // Match the actual button's identity, role, and account together.
             id == "account.reauthentication" && role == NSAccessibility.Role.button.rawValue
                 && label == "Sign in again to \(email)"
         }
+
+        var diagnostic: String {
+            func compact(_ text: String?) -> String { String((text ?? "nil").replacingOccurrences(of: "\n", with: " ").prefix(180)) }
+            return "role=\(compact(role)) id=\(compact(id)) label=\(compact(label)) value=\(compact(value))"
+        }
     }
 
-    private func capture(_ view: NSView, directory: String) throws {
+    private func capture(_ view: NSView, directory: String,
+                         name: String = "cached-workspace-after-session-expiry.png") throws {
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         view.layoutSubtreeIfNeeded()
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
-        let name = "cached-workspace-after-session-expiry.png"
         try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
         Attachment.record(Array(data), named: name)
     }

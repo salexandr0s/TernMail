@@ -4,9 +4,9 @@ Tern is a native macOS mail and calendar app with Gmail integration, a ChatGPT a
 
 [Organize Mail](docs/mail-organization.md) suggests personalized labels from the latest 250 received and sent messages. Review the categories in Settings, then apply labels and optional sender filters directly to Gmail.
 
-The canonical source is `/Users/developer/GitHub/REA_Mime` on `main`, with [TernMail on GitHub](https://github.com/salexandr0s/TernMail) as `origin`. Development branches and validation snapshots are retained in main's history. The old branches and worktrees were removed on 2026-11-02.
+The canonical source is `/Users/developer/GitHub/TernMail` on `main`, with [TernMail on GitHub](https://github.com/salexandr0s/TernMail) as `origin`. The functionality fixes, SwiftUI performance work and page-by-page redesign are integrated in main's history. Separate development worktrees retain their review and verification evidence.
 
-The installed app is `/Users/developer/Applications/Tern.app`. The universal Release build includes the performance and Contacts work alongside the current interface, onboarding, assistant, and concurrency fixes. `build/Tern-build-info.json` records its source revision, executable hash, and signing verification.
+The installed app is `/Users/developer/Applications/Tern.app`. Rebuild this copy from the combined main revision to use the current design and functionality fixes. `build/Tern-build-info.json` records the installed source revision, executable hash and signing verification.
 
 ## Development
 

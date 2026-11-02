@@ -46,7 +46,10 @@ import Testing
 
     private func capture<Content: View>(_ content: Content, width: Double, scheme: ColorScheme,
                                        name: String, directory: String) async throws {
-        let controller = NSHostingController(rootView: content.environment(\.colorScheme, scheme))
+        let controller = NSHostingController(rootView: content
+            .frame(width: width, height: 440, alignment: .topLeading)
+            .background(Tokens.Surface.primary)
+            .environment(\.colorScheme, scheme))
         controller.sizingOptions = []
         let window = NSWindow(contentViewController: controller)
         window.isReleasedWhenClosed = false
@@ -58,7 +61,9 @@ import Testing
         try await Task.sleep(for: .milliseconds(300))
         controller.view.layoutSubtreeIfNeeded()
         let bitmap = try #require(controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds))
-        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        window.effectiveAppearance.performAsCurrentDrawingAppearance {
+            controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        }
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
         try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
         Attachment.record(Array(data), named: name + ".png")

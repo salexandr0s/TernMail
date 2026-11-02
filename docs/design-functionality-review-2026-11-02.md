@@ -6,17 +6,17 @@ Tern has built an impressive number of ways to start work and too many ways to l
 
 The visual system is more consistent than those behaviors. Semantic surfaces, shared spacing, native toolbar groups, reduced-motion handling, and adaptive layouts already exist. Another round of rounded corners will not fix missing mail, lost edits, or recovery controls that do the wrong thing. The strongest design criticism is that the interface repeatedly presents certainty and control that the implementation does not provide.
 
-This report contains 42 findings, organized by file. P1 means a high-impact workflow or preservation failure; P2 means a concrete functional, usability, privacy, or accessibility problem; P3 means maintenance or an unmeasured efficiency issue. Confidence is high unless stated otherwise. Suggested code is deliberately brief: snippets showing new helpers or model fields describe a fix direction, not a compiled patch. No application fixes were applied by this review. Another session changed application files while the report was being finalized; those edits were preserved. Line references describe the reviewed `d05663c` baseline and may shift in the working tree.
+This report contains 42 findings, organized by file. P1 means a high-impact workflow or preservation failure; P2 means a concrete functional, usability, privacy, or accessibility problem; P3 means maintenance or an unmeasured efficiency issue. Confidence is high unless stated otherwise. The original findings and their suggested snippets describe the reviewed `d05663c` baseline. The follow-up fixes are recorded below; baseline line references may shift in the working tree. Concurrent application edits were preserved.
 
 ## Fix goal and verification
 
 The follow-up goal covers every finding below. Implementation began on 2026-11-02 with the existing uncommitted work preserved in `/tmp/tern-review-fixes-2026-11-02/preexisting-work.patch`. The original findings remain as the review record; the table records their subsequent resolution. A finding is complete only after its fix and applicable checks pass.
 
-The work proceeds in three stages: reconcile the current source and implement each feature batch; review the integrated changes and run regression checks; inspect the changed native interfaces and record the final results. The deployment target remains macOS 26. Commits, installation, and publishing are outside this goal.
+The work reconciled the current source, implemented each feature batch, reviewed the integrated changes, ran regression checks, and inspected the changed native interfaces. The deployment target remains macOS 26. No commit, installation, or publishing was performed.
 
-Implementation is present for all 42 findings. Final integration and native verification are still in progress; the evidence below is the checklist for completion, not a claim that every check has passed.
+All 42 findings are resolved in the working tree. Applicable regression, build, source-review, and hosted native checks are complete. The table maps each fix to its evidence; the system UI automation limitation and the scope of verification are stated below.
 
-| Finding | Fix | Verification checklist |
+| Finding | Fix | Verification evidence |
 | --- | --- | --- |
 | F01 | All Mail sends no app-only Gmail label ID. | SyncEngineSearchTests |
 | F02 | Browsing follows authoritative server cursors and refreshes partial cached threads. | SyncEngineSearchTests; MailPaginationTests |
@@ -47,7 +47,7 @@ Implementation is present for all 42 findings. Final integration and native veri
 | F27 | Organization review supports individual message exclusions, source opening and revalidated future-rule eligibility. | MailOrganizationModelTests; MailOrganizationSamplesTests; action-queue review |
 | F28 | Older email cards include the year and a full localized date tooltip. | AssistantEmailCard review; Assistant results captures |
 | F29 | Each lazy transcript entry has one stable enclosing row. | AssistantConversationView review; AssistantScrollTrackingTests |
-| F30 | Settings routes request navigation before changing editor identity and use shared dirty-editor confirmation. | SettingsEditorTests; native unsaved-editor navigation; account/source route review |
+| F30 | Settings routes request navigation before changing editor identity and use shared dirty-editor confirmation. | SettingsEditorTests; native template edits through New → Cancel/Discard; navigation/account/source route review |
 | F31 | Expired accounts retain the cached workspace and expose reconnect controls, including cold restoration. | native single-account expiry flow; startup/runtime path review |
 | F32 | New-mail sounds use the system notification request's sound field. | MailNotificationScheduler review; notification suites |
 | F33 | Cache trimming protects individual threads while allowing unrelated evictions; full reset remains strict. | CacheBudgetTests; CacheResetLifecycleTests |
@@ -57,9 +57,24 @@ Implementation is present for all 42 findings. Final integration and native veri
 | F37 | Removing the last page clamps the offset and restarts observation. | AttachmentLibraryModelTests |
 | F38 | Copy operates on the selected files, writes the clipboard once and reports partial failure. | AttachmentLibraryActionTests |
 | F39 | One account's history failure does not prevent other accounts from loading; cancellation stops the pass. | MailAnalyticsModelTests |
-| F40 | Company-logo website requests default off; existing explicit choices persist and onboarding explains the choice. | DomainLogoPreferencesTests; onboarding native flow; all call-site review |
+| F40 | Company-logo website requests default off; existing explicit choices persist and onboarding explains the choice. | DomainLogoPreferencesTests; onboarding disclosure and all call-site review |
 | F41 | Reviewed coordinate-space and background overloads use supported modern SwiftUI forms. | app build; API search; native captures |
 | F42 | The summary test explicitly chooses the selected-thread scope it intends to test. | ThreadSummaryTests |
+
+### Follow-up verification evidence
+
+Evidence for the fix goal is in `/tmp/tern-review-fixes-2026-11-02/`. Tests use the existing macOS 26 target and isolated development build; the installed app was not replaced.
+
+- Core: **715 tests in 118 suites passed**, including calendar recovery/checkpoint reconciliation, cancellation and attachment I/O, Bcc migration/backfill, provider pagination, and citation identities. Log: `core-tests-final.log`.
+- Hosted app: **668 tests passed, zero failed, eight opt-in tests skipped**, across 105 suites (676 total reported by Swift Testing). Seven skipped native/visual tests passed in their separate enabled runs; the performance benchmark remained disabled. The preceding full run failed the existing attachment-sidebar restoration check because it read widths before deferred native layout finished. Diagnostic reruns restored the exact original geometry. That test now waits up to three seconds for restoration and retains its one-point assertions. Final log: `app-tests-complete.log`; exact counts: `app-tests-summary.json`; result bundle: `/tmp/tern-design-review-2026-11-02/DerivedData/Logs/Test/Test-Tern-2026.11.02_18-16-48-+0100.xcresult`.
+- Native controls and accessibility: `MailSidebarBadgeTests` checks actual rendered unread/total counts, hidden badges, and expansion values in single- and multiple-account fixtures. `ComposeSettingsInteractionTests` enters text through native editors and verifies New → Cancel preserves it and Discard resets it. Both passed in `native-visuals-final.log`.
+- Cached account access: `CachedWorkspaceTests` passed after expiring its single synthetic account through the production handler. It verifies the cached Inbox count, mail table, subject heading, visible native message header, and account-specific reconnect control together. Log: `cached-workspace-verified.log`; capture: `cached-workspace-capture/`.
+- Native renders: the Assistant, Calendar sidebar, and analytics suites passed with 44 captures (`visuals-third.log`). The new quote/signature editors, scope notice, and recovery review passed with 14 final light/dark captures, including narrow layouts and recovery scroll positions (`native-visuals-final.log`, `captures-final/named/`). Selected captures were inspected for legibility, clipping, control placement, and retained draft content. The cached-workspace bitmap confirms rendered mail and reconnect content, but does not faithfully composite every sidebar material; its accessibility and native-view assertions provide the workspace evidence.
+- Independent cross-feature review caught additional races in send teardown, recipient loading, signature defaults, Bcc backfill, Spotlight fingerprints, calendar checkpoints, and asynchronous Assistant calendar authorization. Those corrections are included in the passing regression suites. New Swift files are registered in the project; `git diff --check` passes. `verified-source-manifest.json` records the tested source hashes.
+
+The system XCUITest runner could not enable automation mode (`native-tests-third.log`). The new end-to-end Settings navigation and expired-account scripts therefore remain unexecuted, as does the attempted onboarding UI rerun. Hosted native controls, model regression tests, source review, and captures supply the checks described above; they do not establish that those system UI scripts passed. Template picker/navigation confirmation is covered by shared-guard tests and route review, while the native interaction test covers New/Cancel/Discard. Provider failure and recovery scenarios use controlled services; live-account delivery, external notification playback, and every provider permission combination were not exercised.
+
+Earlier failures in the new native assertions came from SwiftUI exposing spoken values through `accessibilityValueDescription` and the hosted reader exposing a message header instead of the expected menu label. The assertions now read the observed accessibility properties and require the actual native message view. The cached-account test passed separately after that correction; the earlier combined native log retains its failed attempt.
 
 ## Coverage and evidence
 
@@ -73,7 +88,7 @@ Implementation is present for all 42 findings. Final integration and native veri
 | Settings and integration | Onboarding/auth, preferences, profiles, notifications, unsaved editors, cache maintenance, Spotlight, commands, Services, system routing |
 | SwiftUI skill checks | API deprecations, view structure, state flow, navigation, Mac design/accessibility, resizing, localization/formatting, performance, Swift/concurrency, hygiene |
 
-Findings come from source/caller/test tracing. The recurrence round-trip was reproduced with the actual Swift type. Native inspection of the installed app corroborated missing accessible mailbox counts; those source blocks are unchanged in this checkout. The installed app is revision `f827c6b`, so its Mail/Calendar/Attachments screenshots are not represented as current-build visual verification. Current-build verification and remaining limits are recorded near the end.
+Original findings came from source/caller/test tracing. The recurrence round-trip was reproduced with the actual Swift type. Native inspection of the installed app corroborated missing accessible mailbox counts against the source at review time. The installed app was revision `f827c6b`, so those Mail/Calendar/Attachments screenshots are not current-build verification. The follow-up uses separately built native fixtures and tests; its evidence is recorded with the fix status above.
 
 ## Packages/Core/Sources/SyncEngine/SyncEngine+Search.swift
 
@@ -952,7 +967,7 @@ Visually, keep the semantic colors and native controls. The main toolbar already
 
 The retained Mail sidebar beside the global attachment library can confuse scope, but the library explicitly has its own account filter and documented global behavior. Treat that as a usability question for observation, not an authorization leak. Likewise, the installed app's duplicate hidden accessibility tree and unhelpful sort-menu AX name need current-build reproduction before becoming defects. They are excluded from the 42 findings.
 
-## Verification and limits
+## Original review verification and limits
 
 - Core: `swift test --package-path Packages/Core` passed 686 tests in 114 suites.
 - Hosted app: built successfully in isolated DerivedData; 615 tests in 92 suites ran with one failure, F42. The ordinary build-directory attempt was blocked by a concurrent build's database lock; the isolated run avoided it.
