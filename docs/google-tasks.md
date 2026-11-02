@@ -4,7 +4,7 @@ Open **Google Tasks** from the toolbar beside Assistant. The two panels share th
 
 Select text in an email, right-click, and choose **Add to Google Tasks**. In an expanded AI summary, choose **Add to Tasks** below a suggested task. Both actions use the email's Google account and save a link to the source email. AI suggestions keep their due date and put any named owner in the notes; they do not assign the task to another person.
 
-Use the field at the bottom of the sidebar to add a task, or its details button to include notes and a due date. Click a task's title to edit it. The circle completes a task, and the Completed section lets you reopen it. The options menu opens the source email or deletes the task. Deletion also removes subtasks in Google Tasks.
+Use the field above the list to add a task, or its details button to include notes and a due date. Click a task's title to edit it. The circle completes a task, and the Completed section lets you reopen it. A task's email link opens its source message; the options menu also includes deletion. Deletion removes subtasks in Google Tasks too.
 
 ## Connect an account
 
