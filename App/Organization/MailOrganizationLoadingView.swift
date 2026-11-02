@@ -4,18 +4,18 @@ import SyncEngine
 struct MailOrganizationLoadingView: View {
     let phase: MailOrganizationModel.Phase
     let progress: MailOrganizationSamplingProgress?
-    let phaseStartedAt: Date?
+    let startedAt: Date?
     let sampleCount: Int
     let onCancel: () -> Void
 
     private var isAnalyzing: Bool { phase == .analyzing }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s6) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s5) {
             HStack(alignment: .top, spacing: Tokens.Space.s4) {
                 Image(systemName: isAnalyzing ? "sparkles" : "envelope")
                     .font(.title).foregroundStyle(Color.accentColor)
-                    .frame(width: Tokens.Space.s16, height: Tokens.Space.s16)
+                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
                     .background(Color.accentColor.opacity(Tokens.Opacity.wash),
                                 in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
                     .accessibilityHidden(true)
@@ -40,10 +40,13 @@ struct MailOrganizationLoadingView: View {
                 HStack {
                     Text(progressCaption).font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: Tokens.Space.s2)
-                    if let phaseStartedAt {
-                        Text(phaseStartedAt, style: .timer)
-                            .monospacedDigit().font(.caption).foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
+                    if let startedAt {
+                        HStack(spacing: Tokens.Space.s1) {
+                            Text("Elapsed")
+                            Text(startedAt, style: .timer).monospacedDigit()
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     }
                 }
             }
@@ -67,7 +70,7 @@ struct MailOrganizationLoadingView: View {
                     .accessibilityIdentifier("organization.cancel")
             }
         }
-        .padding(Tokens.Space.s6)
+        .padding(Tokens.Space.s5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .ternSurface()
     }

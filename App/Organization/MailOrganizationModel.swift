@@ -39,14 +39,9 @@ final class MailOrganizationModel {
     typealias Analyze = @Sendable (MailOrganizationSamples, String, @escaping Authorized) async throws -> OrganizationPlan
     typealias Apply = @MainActor ([OrganizationApplicationCategory], MailOrganizationSamples, @escaping Authorized) async throws -> OrganizationApplicationReceipt
 
-    private(set) var phase: Phase = .idle {
-        didSet {
-            if phase != oldValue { phaseStartedAt = phase == .idle ? nil : Date() }
-        }
-    }
+    private(set) var phase: Phase = .idle
     private(set) var samplingProgress: MailOrganizationSamplingProgress?
     private(set) var analysisStartedAt: Date?
-    private(set) var phaseStartedAt: Date?
     private(set) var samples: MailOrganizationSamples?
     private(set) var errorMessage: String?
     private(set) var delivery: OrganizationApplicationStatus?
@@ -204,7 +199,7 @@ final class MailOrganizationModel {
     func clear() {
         generation = UUID(); operation?.cancel(); operation = nil
         samples = nil; categories = []; receipt = nil; delivery = nil
-        samplingProgress = nil; analysisStartedAt = nil; phaseStartedAt = nil
+        samplingProgress = nil; analysisStartedAt = nil
         snapshot = nil; errorMessage = nil; phase = .idle
     }
 

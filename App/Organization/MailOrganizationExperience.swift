@@ -49,7 +49,7 @@ struct MailOrganizationExperience: View {
                 onAnalyze: model.startAnalysis, onOpenSettings: onOpenSettings)
         case .reading, .analyzing:
             MailOrganizationLoadingView(phase: model.phase, progress: model.samplingProgress,
-                phaseStartedAt: model.phaseStartedAt, sampleCount: model.samples?.messages.count ?? 0,
+                startedAt: model.analysisStartedAt, sampleCount: model.samples?.messages.count ?? 0,
                 onCancel: model.clear)
         case .review:
             if model.categories.isEmpty {

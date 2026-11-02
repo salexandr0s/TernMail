@@ -9,17 +9,19 @@ struct MailOrganizationIntroduction: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
             VStack(alignment: .leading, spacing: Tokens.Space.s6) {
-                Image(systemName: "tag.fill")
-                    .font(.largeTitle).foregroundStyle(Color.accentColor)
-                    .frame(width: Tokens.Space.s16, height: Tokens.Space.s16)
-                    .background(Color.accentColor.opacity(Tokens.Opacity.wash),
-                                in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    Text("Labels that fit your mail")
-                        .font(.title2.weight(.semibold))
-                    Text("Turn recent conversations and recurring mail into a set of labels you can review and make your own.")
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: Tokens.Space.s4) {
+                    Image(systemName: "tag.fill")
+                        .font(.title2).foregroundStyle(Color.accentColor)
+                        .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+                        .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                                    in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Text("Labels that fit your mail")
+                            .font(.title2.weight(.semibold))
+                        Text("Find useful labels from your recent mail, then review them before applying.")
+                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                     step("envelope", title: "Read your recent mail", detail: "Up to 250 received and sent messages combined.")

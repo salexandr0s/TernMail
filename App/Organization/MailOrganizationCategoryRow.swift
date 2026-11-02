@@ -6,6 +6,7 @@ struct MailOrganizationCategoryRow: View {
     let samples: MailOrganizationSamples
     let canCreateFilters: Bool
     var isEditable = true
+    var isApplied = false
     @State private var isExpanded = false
     @State private var visibleExampleCount = 4
 
@@ -36,16 +37,27 @@ struct MailOrganizationCategoryRow: View {
         category.proposal.kind == .topic && !category.proposal.ruleSenders.isEmpty
     }
 
+    private var labelState: String {
+        if isApplied { return "Saved in Gmail" }
+        if !isEditable { return "Selected label" }
+        return reusesLabel ? "Existing label" : "New label"
+    }
+
+    private var includesFutureMail: Bool {
+        category.createsFilter && hasRecurringSenders
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                Toggle("Include \(displayName)", isOn: $category.isSelected)
-                    .labelsHidden()
-                    .toggleStyle(.checkbox)
-                    .frame(width: Tokens.Control.icon, height: Tokens.Control.iconButton)
-                    .disabled(!isEditable)
-                    .accessibilityLabel("Include \(displayName)")
-                    .accessibilityIdentifier("organization.category.\(category.id).selected")
+                if isEditable {
+                    Toggle("Include \(displayName)", isOn: $category.isSelected)
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
+                        .frame(width: Tokens.Control.icon, height: Tokens.Control.iconButton)
+                        .accessibilityLabel("Include \(displayName)")
+                        .accessibilityIdentifier("organization.category.\(category.id).selected")
+                }
                 disclosureButton
             }
             .padding(Tokens.Space.s4)
@@ -53,8 +65,17 @@ struct MailOrganizationCategoryRow: View {
             if isExpanded {
                 Divider()
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                    editingControls
                     exampleList
+                    Divider()
+                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                        Text(isEditable ? "Label settings" : "Label details")
+                            .font(.subheadline.weight(.semibold))
+                        if isEditable {
+                            editingControls
+                        } else {
+                            readOnlyDetails
+                        }
+                    }
                 }
                 .padding(Tokens.Space.s4)
             }
@@ -90,9 +111,9 @@ struct MailOrganizationCategoryRow: View {
                         .lineLimit(isExpanded ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: Tokens.Space.s2) {
-                        Text(reusesLabel ? "Existing label" : "New label")
+                        Text(labelState)
                         Text("·").accessibilityHidden(true)
-                        Text(category.createsFilter && hasRecurringSenders ? "Future mail" : "Recent mail only")
+                        Text(includesFutureMail ? "Future mail" : "Recent mail only")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -110,9 +131,9 @@ struct MailOrganizationCategoryRow: View {
         }
         .buttonStyle(.plain)
         .ternHover()
-        .accessibilityLabel("\(displayName), \(examples.count) \(examples.count == 1 ? "message" : "messages"), \(reusesLabel ? "existing label" : "new label"), \(category.createsFilter && hasRecurringSenders ? "future mail filter" : "recent mail only")")
+        .accessibilityLabel("\(displayName), \(examples.count) \(examples.count == 1 ? "message" : "messages"), \(labelState), \(includesFutureMail ? "future mail filter" : "recent mail only")")
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint("\(category.proposal.explanation) \(isExpanded ? "Hide" : "Show") examples and label options.")
+        .accessibilityHint("\(category.proposal.explanation) \(isExpanded ? "Hide" : "Show") examples and label details.")
         .accessibilityIdentifier("organization.category.\(category.id).disclosure")
     }
 
@@ -143,6 +164,30 @@ struct MailOrganizationCategoryRow: View {
                 SettingsNote("These labels do not clear automatically when a reply arrives.")
             } else {
                 SettingsNote("This label applies to the sample. More consistent sender history is needed for a future filter.")
+            }
+        }
+    }
+
+    private var readOnlyDetails: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("Label name").font(.caption).foregroundStyle(.secondary)
+                Text(displayName).font(.callout).textSelection(.enabled)
+            }
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(isApplied ? "Label scope" : "Selected scope")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(includesFutureMail ? "Recent messages and future incoming mail" : "Recent messages only")
+                    .font(.callout)
+                if includesFutureMail {
+                    Text("Incoming mail from \(category.proposal.ruleSenders.joined(separator: ", "))")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if category.proposal.kind != .topic {
+                SettingsNote("These labels do not clear automatically when a reply arrives.")
             }
         }
     }

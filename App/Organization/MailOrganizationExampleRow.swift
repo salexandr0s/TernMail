@@ -9,19 +9,29 @@ struct MailOrganizationExampleRow: View {
         message.snippet.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    private var counterpart: String {
+        if message.isSent {
+            let recipients = message.recipients
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return recipients.isEmpty ? "Unknown recipients" : recipients.joined(separator: ", ")
+        }
+        return message.sender.isEmpty ? "Unknown sender" : message.sender
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-                Label(message.isSent ? "Sent" : "Received",
+                Label(message.isSent ? "Sent to" : "Received",
                       systemImage: message.isSent ? "arrow.up.right" : "arrow.down.left")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize()
-                Text(message.sender.isEmpty ? "Unknown sender" : message.sender)
+                Text(counterpart)
                     .font(.caption.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(message.sender)
+                    .help(counterpart)
                 Spacer(minLength: 0)
                 if let date = message.date {
                     Text(date, format: .dateTime.month(.abbreviated).day())

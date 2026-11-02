@@ -40,7 +40,7 @@ import TernAI
         #expect(model.phase == .complete)
         model.clear()
         #expect(model.samples == nil && model.categories.isEmpty && model.receipt == nil)
-        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil)
     }
 
     @Test(arguments: [true, false])
@@ -86,7 +86,7 @@ import TernAI
         await completion.value
         #expect(model.phase == .idle)
         #expect(model.samples == nil && model.categories.isEmpty)
-        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil)
         #expect(!model.canApply)
         #expect(harness.applied.isEmpty)
     }
@@ -120,27 +120,26 @@ import TernAI
         await reading.waitUntilStarted()
         #expect(model.phase == .reading)
         #expect(model.samplingProgress == .init(stage: .reading, processedCount: 1, selectedCount: 3))
-        #expect(model.analysisStartedAt != nil && model.phaseStartedAt != nil)
+        #expect(model.analysisStartedAt != nil)
         let cancelled = Task { await model.waitForOperation() }
         await Task.yield()
         model.clear()
         await reports[0](.init(stage: .reading, processedCount: 2, selectedCount: 3))
-        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil)
         await reading.release()
         await cancelled.value
 
         model.startAnalysis()
+        let analysisStarted = try #require(model.analysisStartedAt)
         await analyzing.waitUntilStarted()
         #expect(model.phase == .analyzing)
         let finalRead = try #require(model.samplingProgress)
-        let phaseStarted = try #require(model.phaseStartedAt)
-        let analysisStarted = try #require(model.analysisStartedAt)
         #expect(finalRead.processedCount == 3)
-        #expect(phaseStarted >= analysisStarted)
+        #expect(model.analysisStartedAt == analysisStarted)
         await reports[0](.init(stage: .reading, processedCount: 2, selectedCount: 3))
         await reports[1](.init(stage: .reading, processedCount: 2, selectedCount: 3))
         #expect(model.samplingProgress == finalRead)
-        #expect(model.phaseStartedAt == phaseStarted)
+        #expect(model.analysisStartedAt == analysisStarted)
         await analyzing.release()
         await model.waitForOperation()
         #expect(model.phase == .review)
@@ -156,7 +155,7 @@ import TernAI
         await model.waitForOperation()
         #expect(model.phase == .idle)
         #expect(model.errorMessage != nil)
-        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil)
     }
 
     @Test func revokedAccessDuringTokenRefreshStopsMetadataBeforeTransport() async throws {

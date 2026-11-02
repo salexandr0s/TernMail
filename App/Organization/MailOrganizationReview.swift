@@ -38,6 +38,10 @@ struct MailOrganizationReviewSections: View {
                     Text("\(samples.messages.count) analyzed · \(samples.messages.filter { !$0.isSent }.count) received · \(samples.messages.filter(\.isSent).count) sent")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if !model.categories.isEmpty {
+                        Text("Expand a label to review example messages.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
                 }
                 if samples.isPartial {
                     SettingsNote("Some messages were unavailable. You can label this sample; future filters need a complete sample.",
@@ -52,7 +56,8 @@ struct MailOrganizationReviewSections: View {
                     ForEach($model.categories) { $category in
                         if isReviewing || category.isSelected {
                             MailOrganizationCategoryRow(category: $category, samples: samples,
-                                canCreateFilters: canCreateFilters && !samples.isPartial, isEditable: isReviewing)
+                                canCreateFilters: canCreateFilters && !samples.isPartial,
+                                isEditable: isReviewing, isApplied: model.phase == .complete)
                         }
                     }
                 }
@@ -81,8 +86,7 @@ struct MailOrganizationReviewFooter: View {
                     }
                     Spacer(minLength: 0)
                     Button("Start Over") { model.clear() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("organization.startOver")
                     Button("Apply to Gmail") { model.applySelection() }
                         .buttonStyle(.borderedProminent)
