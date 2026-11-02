@@ -4,39 +4,41 @@ struct CalendarSidebarEventRow: View {
     let event: CalendarDisplayEvent
     let calendar: Calendar
     var showsDate = false
+    var isSelected = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+        HStack(alignment: .top, spacing: Tokens.Space.s3) {
             RoundedRectangle(cornerRadius: Tokens.Space.s0_5)
                 .fill(event.color)
                 .frame(width: Tokens.Space.s1)
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
                 if showsDate {
                     Text(CalendarLayout.format(event.start, style: .dateTime.weekday(.abbreviated).month(.abbreviated).day(), calendar: calendar))
-                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .font(.callout.bold()).foregroundStyle(.secondary)
                 }
+                Text(event.isAllDay ? "All day" : timeRange)
+                    .font(.callout).foregroundStyle(.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-                    Text(event.title).font(.callout.weight(.semibold)).lineLimit(2)
+                    Text(event.title).font(.body.bold()).lineLimit(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if event.isPending {
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.caption2).foregroundStyle(.secondary)
+                            .font(.callout).foregroundStyle(.secondary)
                             .accessibilityLabel("Waiting to sync")
                     }
                 }
-                Text(event.isAllDay ? "All day" : timeRange)
-                    .font(.caption).foregroundStyle(.secondary)
                 if let location = event.event.location, !location.isEmpty {
                     Label(location, systemImage: "mappin.and.ellipse")
                         .labelStyle(.titleAndIcon)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
         }
-        .padding(Tokens.Space.s2)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(event.color.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .background(event.color.opacity(Tokens.Calendar.eventTint), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .ternOutline(radius: Tokens.Radius.md, focus: isSelected ? .accentColor : nil)
+        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
     }
 
     private var timeRange: String {
@@ -57,7 +59,7 @@ struct CalendarSidebarEmptyDay: View {
     private var isUnverified: Bool { model.sidebarPresentation == nil || model.sidebarHasStaleEvents }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(spacing: Tokens.Space.s2) {
                 if isLoading {
                     ProgressView().controlSize(.mini)
@@ -65,13 +67,15 @@ struct CalendarSidebarEmptyDay: View {
                     Image(systemName: hasVisibleCalendars ? "calendar" : "calendar.badge.minus")
                         .foregroundStyle(.secondary)
                 }
-                Text(title).font(.callout.weight(.medium))
+                Text(title).font(.headline)
             }
-            Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(nil)
+            Text(message).font(.callout).foregroundStyle(.secondary).lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .ternOutline(radius: Tokens.Radius.md)
     }
 
     private var title: String {

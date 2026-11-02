@@ -192,35 +192,92 @@ struct CalendarView: View {
         }
     }
 
-    /// The period title above the grid. The section title, navigation and
-    /// view switcher sit in the window toolbar.
+    /// Keep the period and the controls that change it together above every mode.
     private func header(compact: Bool) -> some View {
-        HStack(spacing: Tokens.Space.s2) {
-            if compact && !hasToolbarSidebar {
-                Button(action: sidebarState.toggle) {
-                    Image(systemName: "sidebar.left").frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            TernPageHeader(title: periodTitle) {
+                Button("New Event", systemImage: "plus") { model.beginNew(on: model.date) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(!model.calendars.contains(where: \.canWrite))
+                    .help("New Event (\(ShortcutCatalog.newEvent.label))")
+                    .accessibilityIdentifier("calendar.newEvent")
+            }
+            .accessibilityIdentifier("calendar.periodHeader")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s3) {
+                    periodNavigation
+                    dateControls(compact: compact)
+                    Spacer(minLength: 0)
+                    viewModePicker.pickerStyle(.segmented).fixedSize()
                 }
-                .buttonStyle(.borderless).help("Show calendars").accessibilityLabel("Show calendars")
-            }
-            Button { showDatePicker.toggle() } label: {
-                HStack(spacing: Tokens.Space.s2) {
-                    Text(periodTitle).font(.title2.weight(.semibold)).lineLimit(1)
-                    Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                HStack(spacing: Tokens.Space.s3) {
+                    periodNavigation
+                    dateControls(compact: compact)
+                    Spacer(minLength: 0)
+                    viewModePicker.pickerStyle(.menu).fixedSize()
+                }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    periodNavigation
+                    HStack(spacing: Tokens.Space.s3) {
+                        dateControls(compact: compact)
+                        Spacer(minLength: 0)
+                        viewModePicker.pickerStyle(.menu).fixedSize()
+                    }
                 }
             }
-            .buttonStyle(.plain).help("Go to Date (\(ShortcutCatalog.goToDate.label))").accessibilityLabel("Go to date, \(periodTitle)")
-            .popover(isPresented: $showDatePicker) {
-                DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
-                    .datePickerStyle(.graphical).padding(Tokens.Space.s4)
-            }
-            Spacer(minLength: Tokens.Space.s2)
+            .controlSize(.regular)
         }
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Workspace.pageGutter)
+        .padding(.vertical, Tokens.Space.s4)
         .background(Tokens.Surface.primary)
         .popover(isPresented: $sidebarState.isPopoverPresented, attachmentAnchor: .point(.topLeading), arrowEdge: .top) {
             sidebar.frame(width: Tokens.Calendar.sidebarWidth, height: CalendarSidebar.popoverHeight(for: model))
         }
+    }
+
+    private func dateControls(compact: Bool) -> some View {
+        HStack(spacing: Tokens.Space.s3) {
+            if compact && !hasToolbarSidebar {
+                Button("Show Calendars", systemImage: "sidebar.left", action: sidebarState.toggle)
+                    .labelStyle(.iconOnly)
+                    .help("Show calendars")
+            }
+            Button("Choose Date", systemImage: "calendar") { showDatePicker.toggle() }
+                .labelStyle(.iconOnly)
+                .help("Go to Date (\(ShortcutCatalog.goToDate.label))")
+                .accessibilityIdentifier("calendar.goToDate")
+                .popover(isPresented: $showDatePicker) {
+                    DatePicker("Go to date", selection: $model.date, displayedComponents: .date)
+                        .datePickerStyle(.graphical).padding(Tokens.Space.s4)
+                }
+        }
+        .fixedSize()
+    }
+
+    private var viewModePicker: some View {
+        Picker("Calendar view", selection: $model.mode) {
+            ForEach(CalendarDisplayMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .labelsHidden()
+        .accessibilityIdentifier("calendar.viewMode")
+    }
+
+    private var periodNavigation: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            Button("Previous \(model.mode.title)", systemImage: "chevron.left") { model.shift(periods: -1) }
+                .labelStyle(.iconOnly)
+                .help("Previous \(model.mode.title.lowercased())")
+            Button("Today") { model.date = .now }
+                .help("Today (\(ShortcutCatalog.today.label))")
+                .accessibilityIdentifier("calendar.today")
+            Button("Next \(model.mode.title)", systemImage: "chevron.right") { model.shift(periods: 1) }
+                .labelStyle(.iconOnly)
+                .help("Next \(model.mode.title.lowercased())")
+        }
+        .fixedSize()
     }
 
     private var periodTitle: String {

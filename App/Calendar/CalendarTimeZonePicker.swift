@@ -15,27 +15,43 @@ struct CalendarTimeZonePicker: View {
         LabeledContent(title) {
             Button { isPresented.toggle() } label: {
                 HStack(spacing: Tokens.Space.s1) {
-                    Text(Self.displayName(identifier)).lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(Self.displayName(identifier)).font(.callout.weight(.medium)).lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
             }
             .buttonStyle(.bordered)
             .help("Choose a time zone")
             .accessibilityLabel(title)
             .accessibilityValue(Self.displayName(identifier))
+            .accessibilityIdentifier("calendar.timeZone")
             .popover(isPresented: $isPresented, arrowEdge: .bottom) { popover }
         }
     }
 
     private var popover: some View {
         VStack(spacing: 0) {
-            TextField("Search time zones", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .padding(Tokens.Space.s2)
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Text("Choose a time zone").font(.headline)
+                Text("Current: \(Self.displayName(identifier))")
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                    .help(Self.displayName(identifier))
+                TextField("Search time zones", text: $query)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(Tokens.Space.s3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Tokens.Surface.muted)
             Divider()
             List(filtered, id: \.self, selection: $highlighted) { zone in
-                HStack {
-                    Text(Self.displayName(zone)).lineLimit(1)
+                HStack(spacing: Tokens.Space.s2) {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: Tokens.Control.icon)
+                        .opacity(zone == identifier ? 1 : 0)
+                        .accessibilityHidden(true)
+                    Text(Self.displayName(zone))
+                        .font(.callout.weight(zone == identifier ? .semibold : .regular)).lineLimit(1)
                     Spacer(minLength: Tokens.Space.s2)
                     Text(Self.offsetText(zone)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 }

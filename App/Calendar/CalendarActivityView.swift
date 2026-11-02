@@ -22,9 +22,9 @@ struct CalendarActivityView: View {
             VStack(spacing: Tokens.Space.s3) {
                 if let error = model.errorMessage { CalendarInlineError(message: error) }
                 HStack {
-                    Text("^[\(model.operations.count) change](inflect: true)").font(.caption).foregroundStyle(.secondary)
+                    Text("^[\(model.operations.count) change](inflect: true)").font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).controlSize(.large)
                 }
             }.padding(Tokens.Space.s4).background(Tokens.Surface.muted)
         }
@@ -39,18 +39,22 @@ struct CalendarActivityView: View {
         let presentation = CalendarOperationPresentation(operation: operation)
         return HStack(alignment: .top, spacing: Tokens.Space.s3) {
             Image(systemName: symbol(operation.status))
-                .font(.title3).foregroundStyle(color(operation.status))
+                .font(.title2).foregroundStyle(color(operation.status))
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .background(color(operation.status).opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(presentation.title).font(.headline).lineLimit(2)
+                    Text(presentation.title).font(.title3.bold()).lineLimit(2)
                     Spacer(minLength: Tokens.Space.s2)
-                    Text(statusTitle(operation.status)).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    Text(statusTitle(operation.status))
+                        .font(.caption.weight(.semibold)).foregroundStyle(color(operation.status))
+                        .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
+                        .background(color(operation.status).opacity(Tokens.Opacity.wash), in: Capsule())
+                        .fixedSize()
                 }
                 if let owner = model.calendars.first(where: { $0.accountID == operation.accountID && $0.calendarID == operation.calendarID }) {
-                    Text("\(owner.accountName) · \(owner.title)").font(.caption).foregroundStyle(.secondary)
+                    Text("\(owner.accountName) · \(owner.title)").font(.callout).foregroundStyle(.secondary)
                 }
                 if let event = presentation.event, let start = event.start?.resolvedDate(fallbackTimeZone: model.calendar.timeZone) {
                     Text(CalendarLayout.format(start, style: event.isAllDay
@@ -64,12 +68,14 @@ struct CalendarActivityView: View {
                     switch operation.status {
                     case .proposed:
                         Button("Review Proposal") { model.reviewOperation(operation); dismiss() }
+                            .buttonStyle(.bordered)
                         if operation.attempts == 0 { Button("Dismiss") { Task { await model.cancelOperation(operation) } } }
                     case .queued:
                         Text("Waiting to synchronize").font(.caption).foregroundStyle(.secondary)
                         if operation.attempts == 0 { Button("Cancel") { Task { await model.cancelOperation(operation) } } }
                     case .failed, .conflicted:
                         Button("Review Change") { recoveryOperation = operation }
+                            .buttonStyle(.borderedProminent)
                             .accessibilityLabel("Review recovery: \(presentation.title)")
                     case .running:
                         ProgressView().controlSize(.small).accessibilityLabel("Synchronizing change")
@@ -78,7 +84,8 @@ struct CalendarActivityView: View {
                     }
                 }.buttonStyle(.borderless)
             }
-        }.padding(.vertical, Tokens.Space.s3)
+        }.padding(.vertical, Tokens.Space.s4)
+            .accessibilityElement(children: .contain)
     }
 
     private func statusTitle(_ status: CalendarOperation.Status) -> String {

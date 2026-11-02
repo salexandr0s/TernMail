@@ -19,7 +19,7 @@ struct CalendarSidebar: View {
         let agenda = (model.sidebarPresentation?.agenda(on: model.date, calendar: model.calendar)
             ?? CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar)).count
         let rows = model.calendars.isEmpty ? 0 : CGFloat(model.calendars.count + max(agenda, 1) + model.accounts.count + 1)
-        let height = CalendarMiniMonth.height + rows * Tokens.Settings.rowHeight + Tokens.Space.s16
+        let height = CalendarMiniMonth.height + rows * Tokens.Space.s10 + Tokens.Space.s16 + Tokens.Space.s6
         return min(max(height, Tokens.Popover.maxListHeight), Tokens.Calendar.activityHeight)
     }
 
@@ -31,16 +31,25 @@ struct CalendarSidebar: View {
         List(selection: $selection) {
             CalendarMiniMonth(date: $model.date, calendar: model.calendar, events: model.sidebarEvents,
                 presentation: model.sidebarPresentation)
+                .padding(.horizontal, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s3)
+                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .ternOutline(radius: Tokens.Radius.md)
                 .listRowInsets(EdgeInsets(top: Tokens.Space.s3, leading: Tokens.Space.s2, bottom: Tokens.Space.s3, trailing: Tokens.Space.s2))
                 .selectionDisabled()
             if !model.calendars.isEmpty {
                 Section {
                     ForEach(model.accounts) { account in
                         if model.accounts.count > 1 {
-                            Text(account.title)
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                .padding(.top, Tokens.Space.s1)
-                                .selectionDisabled()
+                            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                                Text(account.title).font(.callout.bold())
+                                if !account.email.isEmpty, account.email != account.title {
+                                    Text(account.email).font(.caption).foregroundStyle(.secondary)
+                                        .lineLimit(1).help(account.email)
+                                }
+                            }
+                            .padding(.top, Tokens.Space.s3)
+                            .selectionDisabled()
                         }
                         let calendars = model.calendars.filter { $0.accountID == account.id }
                         if calendars.isEmpty || model.connectionState(for: account.id).issue != nil {
@@ -53,27 +62,24 @@ struct CalendarSidebar: View {
                     }
                 } header: {
                     HStack {
-                        Text("Calendars")
-                        Spacer()
-                        Button(action: manage) {
-                            Image(systemName: "slider.horizontal.3")
-                                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                                .contentShape(Rectangle())
+                        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                            Text("Calendars").font(.headline)
+                            Text("\(model.calendars.filter(\.isVisible).count) of \(model.calendars.count) visible")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.borderless)
-                        .help("Manage Calendars")
-                        .accessibilityLabel("Manage Calendars")
+                        Spacer()
+                        Button("Manage Calendars", systemImage: "slider.horizontal.3", action: manage)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .help("Manage Calendars")
                     }
+                    .padding(.top, Tokens.Space.s3)
+                    .textCase(nil)
                 }
                 Section {
                     agendaRows(agenda)
                 } header: {
-                    HStack {
-                        Text(calendarDayTitle)
-                        Spacer()
-                        Text(CalendarLayout.format(model.date, style: .dateTime.month(.abbreviated).day(), calendar: model.calendar))
-                            .foregroundStyle(.secondary)
-                    }
+                    agendaHeading(count: agenda.count)
                 }
                 if !upcoming.isEmpty {
                     Section("Later this month") {
@@ -113,30 +119,57 @@ struct CalendarSidebar: View {
     }
 
     private func calendarRow(_ calendar: CalendarDisplayCalendar, count: Int) -> some View {
-        HStack(spacing: Tokens.Space.s2) {
+        HStack(spacing: Tokens.Space.s3) {
             Toggle(calendar.title, isOn: model.visibility(of: calendar))
-                .toggleStyle(.checkbox).controlSize(.small).labelsHidden().tint(calendar.color)
-            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                Text(calendar.title).font(.callout.weight(.medium)).lineLimit(1)
-                    .foregroundStyle(calendar.isVisible ? .primary : .secondary)
-                if !calendar.isVisible {
-                    Text("Hidden").font(.caption).foregroundStyle(.secondary)
-                } else if model.sidebarPresentation != nil, !model.sidebarHasStaleEvents {
-                    Text(count == 1 ? "1 event this month" : "\(count) events this month")
-                        .font(.caption).foregroundStyle(.secondary)
+                .toggleStyle(.checkbox).labelsHidden().tint(calendar.color)
+                .accessibilityValue(calendar.isVisible ? "Visible" : "Hidden")
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1_5) {
+                    Circle().fill(calendar.color)
+                        .frame(width: Tokens.Space.s2, height: Tokens.Space.s2)
+                        .accessibilityHidden(true)
+                    Text(calendar.title).font(.callout.bold()).lineLimit(2)
                 }
+                .foregroundStyle(calendar.isVisible ? .primary : .secondary)
+                Text(calendar.isVisible ? (calendar.canWrite ? "Can edit" : "Read only") : "Hidden")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if !calendar.canWrite {
-                Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary)
-                    .accessibilityLabel("Read only")
+            if calendar.isVisible, model.sidebarPresentation != nil, !model.sidebarHasStaleEvents {
+                Text(count, format: .number)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, Tokens.Space.s2)
+                    .padding(.vertical, Tokens.Space.s1)
+                    .background(Tokens.Surface.primary, in: Capsule())
+                    .accessibilityLabel(count == 1 ? "1 event this month" : "\(count) events this month")
+                    .help(count == 1 ? "1 event this month" : "\(count) events this month")
             }
         }
-        .padding(.vertical, Tokens.Space.s1)
+        .padding(.vertical, Tokens.Space.s2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .ternHover(isEnabled: selection != .calendar(calendar.id))
         .help(calendar.title)
+    }
+
+    private func agendaHeading(count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(calendarDayTitle).font(.title3.bold()).foregroundStyle(.primary)
+                Text(CalendarLayout.format(model.date, style: .dateTime.month(.wide).day(), calendar: model.calendar))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if count > 0 {
+                Text(count == 1 ? "1 event" : "\(count) events")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, Tokens.Space.s2)
+        .textCase(nil)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 
     private var agendaEvents: [CalendarDisplayEvent] {
@@ -169,7 +202,8 @@ struct CalendarSidebar: View {
     }
 
     private func eventRow(_ event: CalendarDisplayEvent, showsDate: Bool = false) -> some View {
-        CalendarSidebarEventRow(event: event, calendar: model.calendar, showsDate: showsDate)
+        CalendarSidebarEventRow(event: event, calendar: model.calendar, showsDate: showsDate,
+                                isSelected: selection == .event(event.id))
             .ternHover(isEnabled: selection != .event(event.id))
             .tag(CalendarSidebarItem.event(event.id))
             .draggable(CalendarEventTransfer(event))

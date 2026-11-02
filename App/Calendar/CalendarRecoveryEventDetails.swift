@@ -8,20 +8,27 @@ struct CalendarRecoveryEventDetails: View {
     let calendar: Calendar
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(event.title).font(.headline)
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            Text(title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            Text(event.title).font(.title3.bold())
+                .fixedSize(horizontal: false, vertical: true)
             if let start = event.start?.resolvedDate(fallbackTimeZone: calendar.timeZone),
                let end = event.end?.resolvedDate(fallbackTimeZone: calendar.timeZone) {
-                Text(dateRange(start: start, end: end)).font(.callout)
+                Label(dateRange(start: start, end: end), systemImage: "calendar")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
                 Text(event.isAllDay ? "All day" : calendar.timeZone.identifier).font(.caption).foregroundStyle(.secondary)
             }
-            if let location = event.location, !location.isEmpty { Text(location).font(.callout) }
+            if let location = event.location, !location.isEmpty {
+                Label(location, systemImage: "mappin.and.ellipse").font(.callout)
+            }
             if let description = event.description, !description.isEmpty { Text(description).font(.callout) }
             if let recurrence = event.recurrence, !recurrence.isEmpty {
                 CalendarRecurrenceDescription(rules: recurrence, allDay: event.isAllDay, calendar: calendar)
             }
-            Text("\(event.transparency == "transparent" ? "Free" : "Busy") · \(visibility)").font(.caption)
+            Divider()
+            Text("\(event.transparency == "transparent" ? "Free" : "Busy") · \(visibility)")
+                .font(.callout).foregroundStyle(.secondary)
             if let reminders = event.reminders {
                 if reminders.useDefault == true { Text("Calendar's default alerts").font(.caption) }
                 else if reminders.overrides?.isEmpty != false { Text("No alerts").font(.caption) }
@@ -41,8 +48,13 @@ struct CalendarRecoveryEventDetails: View {
                     .accessibilityLabel("Open \(event.title) in Google Calendar")
             }
             ForEach(event.attendees ?? [], id: \.email) { attendee in
-                Text("\(attendee.displayName ?? attendee.email) · \(attendee.email) · \(response(attendee.responseStatus))")
-                    .font(.caption)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(attendee.displayName ?? attendee.email).font(.callout.weight(.semibold))
+                    if attendee.displayName != nil {
+                        Text(attendee.email).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Text(response(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
+                }
             }
             ForEach(event.attachments ?? []) { attachment in
                 if let url = safeURL(attachment.fileUrl) {
@@ -51,9 +63,10 @@ struct CalendarRecoveryEventDetails: View {
             }
         }
         .textSelection(.enabled)
-        .padding(Tokens.Space.s3)
+        .padding(Tokens.Space.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .ternOutline(radius: Tokens.Radius.md)
     }
 
     private var visibility: String {

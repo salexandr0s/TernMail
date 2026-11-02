@@ -22,14 +22,26 @@ struct CalendarRecoveryView: View {
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                     if let review {
                         if review.isAlreadyApplied {
-                            Label(completionTitle, systemImage: "checkmark.circle")
-                            Text("Finish Review records the event shown below without sending this request again.")
-                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                                Label(completionTitle, systemImage: "checkmark.circle.fill")
+                                    .font(.headline).foregroundStyle(Tokens.Status.success)
+                                Text("Finish Review records the event shown below without sending this request again.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            .padding(Tokens.Space.s4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Tokens.Status.success.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                         } else {
-                            Text(intent).font(.headline)
+                            Text(intent).font(.title3.bold())
+                                .fixedSize(horizontal: false, vertical: true)
                             if review.completedStep > 0 {
-                                Text("Part of this request is already saved. Resume keeps that progress and applies only the remaining changes.")
-                                    .foregroundStyle(.secondary)
+                                Label("Part of this request is already saved. Resume keeps that progress and applies only the remaining changes.",
+                                      systemImage: "checkmark.circle")
+                                    .font(.callout).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(Tokens.Space.s4)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                             }
                             if let requested = CalendarOperationPresentation(operation: requestedOperation).event {
                                 CalendarRecoveryEventDetails(title: "Requested event", event: requested, calendar: model.calendar)
@@ -46,9 +58,16 @@ struct CalendarRecoveryView: View {
                         }
                         if let blocked = review.blockedReason { CalendarInlineError(message: blocked) }
                         if !review.isAlreadyApplied {
-                            Toggle("I reviewed the current events and the remaining changes.", isOn: $confirmsChanges)
-                            Text(operation.sendUpdates == "none" ? "Google will not send guest updates for this request." : "Google may notify the guests shown above when these changes are saved.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                                Toggle("I reviewed the current events and the remaining changes.", isOn: $confirmsChanges)
+                                    .font(.callout.weight(.medium))
+                                    .accessibilityIdentifier("calendar.recovery.confirm")
+                                Text(operation.sendUpdates == "none" ? "Google will not send guest updates for this request." : "Google may notify the guests shown above when these changes are saved.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            .padding(Tokens.Space.s4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                         }
                     } else if isWorking {
                         ProgressView("Loading current events…")
@@ -58,9 +77,12 @@ struct CalendarRecoveryView: View {
             }
             Divider()
             ViewThatFits(in: .horizontal) {
-                HStack { actions }
-                VStack(alignment: .leading) { actions }
-            }.padding(Tokens.Space.s4)
+                HStack(spacing: Tokens.Space.s3) { actions }
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) { actions }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(Tokens.Space.s4)
+            .background(Tokens.Surface.muted)
         }
         .frame(minWidth: Tokens.Calendar.activityWidth, idealWidth: Tokens.Calendar.activityWidth,
             minHeight: Tokens.Calendar.sheetMinHeight, idealHeight: CalendarSheetLayout.height(Tokens.Calendar.activityHeight))
@@ -96,8 +118,10 @@ struct CalendarRecoveryView: View {
             }
             Button(review.isAlreadyApplied ? "Finish Review" : "Resume Change") { perform(review) }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(isWorking || review.blockedReason != nil || (!review.isAlreadyApplied && !confirmsChanges))
                 .accessibilityLabel("\(review.isAlreadyApplied ? "Reconcile saved change" : "Resume reviewed change"): \(CalendarOperationPresentation(operation: operation).title)")
+                .accessibilityIdentifier("calendar.recovery.resume")
         }
     }
 

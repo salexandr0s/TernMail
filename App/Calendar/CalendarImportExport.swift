@@ -231,8 +231,10 @@ struct CalendarImportReview: View {
                 Picker("Add to", selection: $calendarKey) {
                     ForEach(calendars.filter(\.canWrite)) { calendar in Text("\(calendar.accountName) · \(calendar.title)").tag(calendar.id) }
                 }
+                .accessibilityIdentifier("calendar.import.destination")
                 HStack {
-                    Text("\(selected.count) of \(events.count) selected").font(.caption).foregroundStyle(.secondary)
+                    Label("\(selected.count) of \(events.count) selected", systemImage: "checkmark.circle")
+                        .font(.callout.weight(.semibold)).foregroundStyle(.secondary)
                     Spacer()
                     Button("Select All") { selected = Set(events.filter { !$0.event.isCancelled }.map(\.id)) }
                     Button("Deselect All") { selected.removeAll() }
@@ -248,10 +250,18 @@ struct CalendarImportReview: View {
                 HStack {
                     Toggle(isOn: $selected.contains(item.id)) {
                         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                            Text(item.event.title).font(.headline)
-                            if let start = item.event.startDate { Text(start.formatted(date: .abbreviated, time: item.event.isAllDay ? .omitted : .shortened)).font(.caption) }
-                            if !item.exceptions.isEmpty { Text("Repeats, with ^[\(item.exceptions.count) changed or cancelled occurrence](inflect: true)").font(.caption).foregroundStyle(.secondary) }
-                            if item.event.isCancelled { Text("Cancelled event").font(.caption).foregroundStyle(.secondary) }
+                            Text(item.event.title).font(.title3.bold()).lineLimit(2)
+                            if let start = item.event.startDate {
+                                Text(start.formatted(date: .abbreviated, time: item.event.isAllDay ? .omitted : .shortened))
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            if !item.exceptions.isEmpty {
+                                Label("Repeats, with ^[\(item.exceptions.count) changed or cancelled occurrence](inflect: true)", systemImage: "repeat")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            if item.event.isCancelled {
+                                Label("Cancelled event", systemImage: "minus.circle").font(.callout).foregroundStyle(.secondary)
+                            }
                         }
                     }.toggleStyle(.checkbox).disabled(item.event.isCancelled || isSaving)
                     Spacer()
@@ -259,7 +269,7 @@ struct CalendarImportReview: View {
                         editingID = item.id
                         editing = CalendarEditorDraft(event: item.event, calendarKey: calendarKey, isImport: true, importedExceptions: item.exceptions)
                     }.disabled(item.event.isCancelled || isSaving)
-                }.padding(.vertical, Tokens.Space.s2)
+                }.padding(.vertical, Tokens.Space.s3)
             }.listStyle(.inset)
                 .overlay {
                     if events.isEmpty {
@@ -279,8 +289,11 @@ struct CalendarImportReview: View {
                             do { try await save(events.filter { selected.contains($0.id) }, calendarKey); dismiss() }
                             catch { self.error = error.localizedDescription; isSaving = false }
                         }
-                    }.keyboardShortcut(.defaultAction).disabled(isSaving || selected.isEmpty || calendarKey.isEmpty)
+                    }.buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction).disabled(isSaving || selected.isEmpty || calendarKey.isEmpty)
+                        .accessibilityIdentifier("calendar.import.save")
                 }
+                .controlSize(.large)
             }.padding(Tokens.Space.s4).background(Tokens.Surface.muted)
         }
         .frame(minWidth: Tokens.Calendar.editorWidth, idealWidth: Tokens.Calendar.editorWidth, maxWidth: .infinity,

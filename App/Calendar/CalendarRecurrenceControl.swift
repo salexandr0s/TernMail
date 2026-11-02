@@ -20,38 +20,46 @@ struct CalendarRecurrenceControl: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Picker("Repeat", selection: $selection.frequency) {
+            Picker("Frequency", selection: $selection.frequency) {
                 Text("Never").tag("NONE")
                 Text("Daily").tag("DAILY")
                 Text("Weekly").tag("WEEKLY")
                 Text("Monthly").tag("MONTHLY")
                 Text("Yearly").tag("YEARLY")
-                Text("Custom Rule").tag("CUSTOM")
+                Text("Custom rule").tag("CUSTOM")
             }
+            .accessibilityIdentifier("calendar.recurrence.frequency")
             if selection.frequency == "CUSTOM" {
-                TextEditor(text: $selection.custom).font(.system(.caption, design: .monospaced))
+                TextEditor(text: $selection.custom).font(.system(.callout, design: .monospaced))
                     .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s2)
+                    .padding(Tokens.Space.s2)
+                    .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .ternOutline(radius: Tokens.Radius.sm)
                     .accessibilityLabel("Recurrence rules")
                 Text("One RRULE, RDATE or EXDATE per line. Existing custom rules are preserved.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(.secondary)
             } else if selection.frequency != "NONE" {
                 Stepper("Every \(selection.interval) \(unit)", value: $selection.interval, in: 1...999)
                 if selection.frequency == "WEEKLY" {
-                    HStack(spacing: Tokens.Space.s1) {
-                        ForEach(Array(RecurrenceSelection.dayCodes.enumerated()), id: \.element) { index, code in
-                            Toggle(Calendar.autoupdatingCurrent.shortWeekdaySymbols[dayNumbers[index] - 1],
-                                   isOn: $selection.weekdays.contains(code))
-                            .toggleStyle(.button)
-                            .accessibilityLabel(Calendar.autoupdatingCurrent.weekdaySymbols[dayNumbers[index] - 1])
-                            .frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Text("On these days").font(.callout.weight(.semibold))
+                        HStack(spacing: Tokens.Space.s1) {
+                            ForEach(Array(RecurrenceSelection.dayCodes.enumerated()), id: \.element) { index, code in
+                                Toggle(Calendar.autoupdatingCurrent.shortWeekdaySymbols[dayNumbers[index] - 1],
+                                       isOn: $selection.weekdays.contains(code))
+                                .toggleStyle(.button)
+                                .font(.callout.weight(selection.weekdays.contains(code) ? .bold : .regular))
+                                .accessibilityLabel(Calendar.autoupdatingCurrent.weekdaySymbols[dayNumbers[index] - 1])
+                                .frame(maxWidth: .infinity)
+                            }
                         }
                     }
                 }
                 Picker("Ends", selection: $selection.endMode) {
-                    Text("Never").tag("never"); Text("After Occurrences").tag("count"); Text("On Date").tag("until")
+                    Text("Never").tag("never"); Text("After a number of events").tag("count"); Text("On a date").tag("until")
                 }
                 if selection.endMode == "count" { Stepper("After ^[\(selection.count) event](inflect: true)", value: $selection.count, in: 1...9999) }
-                if selection.endMode == "until" { DatePicker("Last Date", selection: $selection.until, displayedComponents: .date) }
+                if selection.endMode == "until" { DatePicker("Last date", selection: $selection.until, displayedComponents: .date) }
             }
         }
         .onChange(of: selection) { _, _ in publish() }
