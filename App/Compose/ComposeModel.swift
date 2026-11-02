@@ -20,11 +20,13 @@ enum UndoSendDelay {
 /// Something to attach: a file, or data pasted or dropped without one.
 enum Attachable: Sendable {
     case file(URL)
+    case dropped(ComposeDroppedFile)
     case data(Data, filename: String, mimeType: String)
 
     var name: String {
         switch self {
         case .file(let url): url.lastPathComponent
+        case .dropped(let file): file.filename
         case .data(_, let filename, _): filename
         }
     }
@@ -515,11 +517,14 @@ final class ComposeModel {
                     switch item {
                     case .file(let url):
                         attached = try await engine.attachFile(at: url, to: id)
+                    case .dropped(let file):
+                        attached = try await engine.attachFile(at: file.fileURL(), to: id)
                     case .data(let data, let filename, let mimeType):
                         attached = try await engine.attachData(data, filename: filename, mimeType: mimeType, to: id)
                     }
                 } catch {
-                    let reason = (error as? ComposeError)?.errorDescription ?? "Tern couldn't attach “\(item.name)”."
+                    let reason = (error as? ComposeError)?.errorDescription
+                        ?? (error as? ComposeFileDropError)?.errorDescription ?? "Tern couldn't attach “\(item.name)”."
                     failedAttachments.append(FailedAttachment(action: .attach(item, inlineImage: inlineImages), reason: reason))
                     return
                 }

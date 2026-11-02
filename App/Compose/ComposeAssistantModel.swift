@@ -1,6 +1,7 @@
 import Foundation
 import MailStore
 import Observation
+import SyncEngine
 import TernAI
 
 /// Owns only suggestions and chat history. ComposeModel remains the draft's writer.
@@ -12,6 +13,7 @@ final class ComposeAssistantModel {
     private(set) var isRunning = false
     private(set) var errorMessage: String?
     private(set) var statusText: String?
+    private(set) var contextAttachments: [ComposeAssistantAttachment] = []
 
     private let compose: ComposeModel
     private let assistant: AssistantModel
@@ -23,6 +25,13 @@ final class ComposeAssistantModel {
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var lastRequest: String?
+    @ObservationIgnored private var contextSources: [UUID: ComposeDroppedFile] = [:]
+    @ObservationIgnored private var contextContents: [UUID: ComposeAssistantFileContent] = [:]
+    @ObservationIgnored private var contextImports: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var contextAttempts: [UUID: UUID] = [:]
+    @ObservationIgnored private var contextAccess: ComposeAssistantAccess?
+    @ObservationIgnored private var contextAccountID: String?
+    @ObservationIgnored private var contextFileIDsInHistory: Set<UUID> = []
 
     init(compose: ComposeModel, assistant: AssistantModel) {
         self.compose = compose; self.assistant = assistant
@@ -35,6 +44,10 @@ final class ComposeAssistantModel {
     var contextDescription: String {
         "This draft · \(compose.fromEmail) · \(assistant.hasCalendarAccess ? "Allowed calendars" : "Calendar access off")"
     }
+    var isLoadingContextFiles: Bool { contextAttachments.contains(where: \.isLoading) }
+    var hasContextFileErrors: Bool { contextAttachments.contains { $0.errorMessage != nil } }
+    var canAsk: Bool { !isRunning && availabilityMessage == nil && !isLoadingContextFiles && !hasContextFileErrors }
+    var canAddContextFiles: Bool { compose.isEditable && !isRunning }
     var preservesInlineImages: Bool { proposalContext?.hasInlineImages == true }
     var proposalStatusMessage: String? {
         guard proposal != nil, !isRunning, proposalContext != ComposeAssistantContext(compose) else { return nil }
@@ -51,7 +64,12 @@ final class ComposeAssistantModel {
 
     /// Called on live access changes, including while the panel is hidden.
     func refreshAccess() {
-        if let session, !session.isValid() || session.scope.accountIDs != Set([compose.draft?.accountID].compactMap { $0 }) {
+        let contextAccessChanged = contextAccess.map { $0 != assistant.composeAccessRevision } ?? false
+        let contextAccountChanged = contextAccountID.map { $0 != compose.draft?.accountID } ?? false
+        if contextAccessChanged || contextAccountChanged {
+            clear()
+            errorMessage = "Assistant access changed. Add your context files again for this account."
+        } else if let session, !session.isValid() || session.scope.accountIDs != Set([compose.draft?.accountID].compactMap { $0 }) {
             clear()
             errorMessage = "Assistant access changed. Start a new request."
         } else if !compose.isEditable { clear() }
@@ -60,6 +78,8 @@ final class ComposeAssistantModel {
     func send() {
         guard !isRunning else { return }
         refreshAccess()
+        guard !isLoadingContextFiles else { errorMessage = "Wait for the AI context files to finish loading."; return }
+        guard !hasContextFileErrors else { errorMessage = "Retry or remove the files that could not be read before asking."; return }
         let request = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty else { return }
         do {
@@ -91,8 +111,112 @@ final class ComposeAssistantModel {
     }
 
     func clear() {
+        for task in contextImports.values { task.cancel() }
+        contextImports = [:]; contextAttempts = [:]; contextSources = [:]; contextContents = [:]
+        contextAttachments = []; contextAccess = nil; contextAccountID = nil
+        resetConversation()
+    }
+
+    private func resetConversation() {
         stop(); history = []; messages = []; proposal = nil; proposalContext = nil
         undoContext = nil; previousSuggestion = nil; session = nil; lastRequest = nil; errorMessage = nil; prompt = ""
+        contextFileIDsInHistory = []
+    }
+
+    func rejectContextFileDrop() {
+        errorMessage = isRunning ? "Stop the response before adding files." : "Open an editable draft to add AI context."
+    }
+
+    func rejectContextFilePaste() {
+        errorMessage = "Drag this file into the assistant instead of pasting it."
+    }
+
+    func addContextFiles(_ files: [ComposeDroppedFile]) {
+        guard canAddContextFiles else { rejectContextFileDrop(); return }
+        refreshAccess()
+        let available = ComposeAssistantFileReader.maximumFiles - contextAttachments.count
+        let accepted = files.filter { contextSources[$0.id] == nil }.prefix(max(0, available))
+        guard !accepted.isEmpty else {
+            if !files.isEmpty { errorMessage = "Use up to four files as AI context. Remove one before adding another." }
+            return
+        }
+        // Keep the conversation so a dropped reference can refine the previous
+        // suggestion. A new suggestion must account for the added files.
+        proposal = nil; proposalContext = nil; errorMessage = nil; statusText = nil
+        contextAccess = assistant.composeAccessRevision; contextAccountID = compose.draft?.accountID
+        for file in accepted {
+            contextSources[file.id] = file
+            contextAttachments.append(.init(id: file.id, filename: file.filename))
+            importContextFile(file)
+        }
+        if accepted.count < files.count { errorMessage = "Only four files can be used as AI context. Additional files were not added." }
+    }
+
+    func removeContextFile(_ id: UUID) {
+        guard contextSources[id] != nil else { return }
+        contextImports.removeValue(forKey: id)?.cancel(); contextAttempts.removeValue(forKey: id)
+        contextSources.removeValue(forKey: id); contextContents.removeValue(forKey: id)
+        contextAttachments.removeAll { $0.id == id }
+        let savedPrompt = prompt
+        resetConversation(); prompt = savedPrompt
+        statusText = "File removed. Started a new chat."
+        if contextAttachments.isEmpty { contextAccess = nil; contextAccountID = nil }
+    }
+
+    func retryContextFile(_ id: UUID) {
+        guard canAddContextFiles else { rejectContextFileDrop(); return }
+        refreshAccess()
+        guard let file = contextSources[id], let index = contextAttachments.firstIndex(where: { $0.id == id }),
+              contextAttachments[index].errorMessage != nil else { return }
+        contextAttachments[index].state = .loading; contextAttachments[index].detail = nil; errorMessage = nil
+        importContextFile(file)
+    }
+
+    private func importContextFile(_ file: ComposeDroppedFile) {
+        let attempt = UUID()
+        contextAttempts[file.id] = attempt
+        contextImports[file.id] = Task { [weak self, file] in
+            // Keep its staged file alive through detached decoding, including cancellation.
+            defer { withExtendedLifetime(file) {} }
+            do {
+                let url = try await file.fileURL()
+                try Task.checkCancellation()
+                let worker = Task.detached(priority: .utility) {
+                    try ComposeAssistantFileReader.read(url: url, id: file.id, filename: file.filename)
+                }
+                let result = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                try Task.checkCancellation()
+                guard let self else { return }
+                refreshAccess()
+                guard contextAttempts[file.id] == attempt,
+                      let index = contextAttachments.firstIndex(where: { $0.id == file.id }) else { return }
+                let used = contextContents.values.reduce(0) { $0 + $1.encodedBytes }
+                guard result.encodedBytes <= ComposeAssistantFileReader.maximumContextBytes - used else {
+                    throw ComposeAssistantFileReader.ReadError.contextLimit
+                }
+                contextContents[file.id] = result
+                contextAttachments[index].state = .ready
+                contextAttachments[index].detail = result.imageDataURL != nil ? "Image preview ready for AI"
+                    : (result.truncated ? "Excerpt ready for AI" : "Ready for AI")
+                contextImports.removeValue(forKey: file.id)
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                refreshAccess()
+                guard contextAttempts[file.id] == attempt,
+                      let index = contextAttachments.firstIndex(where: { $0.id == file.id }) else { return }
+                contextAttachments[index].state = .failed(Self.contextFileMessage(for: error))
+                contextImports.removeValue(forKey: file.id)
+            }
+        }
+    }
+
+    private static func contextFileMessage(for error: any Error) -> String {
+        if error is AttachmentTextReader.ReadError || error is AssistantMailError
+            || error is ComposeAssistantFileReader.ReadError || error is ComposeFileDropError {
+            return error.localizedDescription
+        }
+        // Cocoa and provider errors can contain local paths. Keep them out of chat.
+        return "This file could not be read. Retry it or remove it from AI context."
     }
 
     func apply() {
@@ -118,6 +242,10 @@ final class ComposeAssistantModel {
 
     func waitForCurrentTurn() async { await task?.value }
 
+    func waitForContextImports() async {
+        for task in Array(contextImports.values) { await task.value }
+    }
+
     private func validate(_ session: ComposeAssistantSession, turn: UUID) throws {
         try Task.checkCancellation()
         guard turnID == turn, session.isValid(), compose.isEditable,
@@ -131,6 +259,7 @@ final class ComposeAssistantModel {
                      turn: UUID, messageID: UUID) async {
         // Publish only a complete, paired transcript. Interrupted read-only work can be retried safely.
         var input = history
+        let files = contextAttachments.compactMap { contextContents[$0.id] }
         do {
             try validate(session, turn: turn)
             var thread: AIJSON = .null
@@ -147,7 +276,8 @@ final class ComposeAssistantModel {
                     thread = .object(["unavailable": .bool(true), "reason": .string("The current thread could not be read. Use only supplied draft and quote context and explain the limitation.")])
                 }
             }
-            input.append(try context.input(request: request, thread: thread, previousSuggestion: previousSuggestion))
+            input.append(try context.input(request: request, thread: thread, previousSuggestion: previousSuggestion,
+                contextFiles: files, previouslyIncludedFileIDs: contextFileIDsInHistory))
             let style = try await session.writingStyle()
             try validate(session, turn: turn)
             let instructions = ComposeAssistantInstructions.text() + "\n" + style
@@ -193,7 +323,7 @@ final class ComposeAssistantModel {
                         throw AIProviderError.incomplete
                     }
                     try checkHistory(input)
-                    history = input; finish(turn, messageID: messageID)
+                    history = input; contextFileIDsInHistory.formUnion(files.map(\.id)); finish(turn, messageID: messageID)
                     return
                 }
                 for call in response.toolCalls {
@@ -225,7 +355,7 @@ final class ComposeAssistantModel {
                 }
                 try checkHistory(input)
                 if finalRound, proposal != nil {
-                    history = input; finish(turn, messageID: messageID)
+                    history = input; contextFileIDsInHistory.formUnion(files.map(\.id)); finish(turn, messageID: messageID)
                     return
                 }
             }

@@ -27,8 +27,26 @@ struct AttachmentStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Divider()
+            HStack(spacing: Tokens.Space.s2) {
+                Image(systemName: "paperclip")
+                    .frame(width: Tokens.Control.icon)
+                    .accessibilityHidden(true)
+                Text(attachmentCount)
+                    .font(.caption.weight(.medium))
+                if !attachments.isEmpty {
+                    Text(totalSize).font(.caption)
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                if !failed.isEmpty {
+                    Label("\(failed.count) \(failed.count == 1 ? "issue" : "issues")", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.top, Tokens.Space.s2)
             ScrollView(.horizontal) {
-                HStack(spacing: Tokens.Space.s2) {
+                HStack(alignment: .top, spacing: Tokens.Space.s2) {
                     ForEach(attachments) { attachment in
                         if let failure = failed.first(where: { $0.removedID == attachment.id }) {
                             failedChip(failure)
@@ -40,7 +58,7 @@ struct AttachmentStrip: View {
                         failedChip(failure)
                     }
                 }
-                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.horizontal, Tokens.Space.s5)
                 .padding(.vertical, Tokens.Space.s2)
             }
             .scrollIndicators(.automatic)
@@ -52,7 +70,15 @@ struct AttachmentStrip: View {
             if !previewIDs.isSubset(of: ids) { previewURL = nil }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")
+        .accessibilityLabel("\(attachmentCount)\(attachments.isEmpty ? "" : ", \(totalSize)")")
+    }
+
+    private var attachmentCount: String {
+        attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments"
+    }
+
+    private var totalSize: String {
+        ByteCountFormatter.string(fromByteCount: attachments.reduce(Int64(0)) { $0 + Int64($1.size) }, countStyle: .file)
     }
 
     private func chip(_ attachment: OutgoingAttachment) -> some View {
@@ -71,6 +97,7 @@ struct AttachmentStrip: View {
                 .accessibilityLabel("Remove \(attachment.filename)")
             }
         }
+        .frame(width: Tokens.Layout.attachmentWidth)
         .focusable()
         .focused($focusedID, equals: attachment.id)
         .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
@@ -92,31 +119,38 @@ struct AttachmentStrip: View {
     /// A file that failed to attach or to be removed, with Retry, and Remove
     /// for one that wasn't attached or Keep for one still attached.
     private func failedChip(_ failure: ComposeModel.FailedAttachment) -> some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Tokens.Status.warning)
-                .frame(width: Tokens.Control.avatar, height: Tokens.Control.avatar)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                Text(failure.filename)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(failure.isRemoval ? "Couldn't remove" : "Couldn't attach")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Tokens.Status.warning)
+                    .frame(width: Tokens.Control.icon)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                    Text(failure.filename)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(failure.filename)
+                    Text(failure.isRemoval ? "Couldn't remove" : "Couldn't attach")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer(minLength: 0)
+            Text(failure.reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if isEditable {
-                Button("Retry") { retry(failure) }
-                Button(failure.isRemoval ? "Keep" : "Remove") { dismissFailure(failure) }
+                HStack(spacing: Tokens.Space.s2) {
+                    Button("Retry") { retry(failure) }
+                    Button(failure.isRemoval ? "Keep" : "Remove") { dismissFailure(failure) }
+                }
             }
         }
         .controlSize(.small)
-        .padding(Tokens.Space.s1)
-        .frame(maxWidth: Tokens.Layout.attachmentWidth, alignment: .leading)
-        .ternSurface()
-        .help(failure.reason)
+        .padding(Tokens.Space.s3)
+        .frame(width: Tokens.Layout.attachmentWidth, alignment: .leading)
+        .ternSurface(radius: Tokens.Radius.md)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(failure.filename), \(failure.isRemoval ? "couldn't remove" : "couldn't attach")")
     }

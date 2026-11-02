@@ -8,7 +8,7 @@ struct FormatBar: View {
     let onEditLink: () -> Void
 
     var body: some View {
-        HStack(spacing: Tokens.Space.s2) {
+        HStack(spacing: Tokens.Space.s3) {
             ControlGroup {
                 formatToggle("Bold", systemImage: "bold", isOn: format.bold) { $0.toggleBold() }
                 formatToggle("Italic", systemImage: "italic", isOn: format.italic) { $0.toggleItalic() }
@@ -20,16 +20,18 @@ struct FormatBar: View {
             }
             Button(action: onEditLink) {
                 Label(format.link ? "Edit Link" : "Add Link", systemImage: "link")
+                    .frame(minWidth: Tokens.Control.iconButton)
             }
+            .buttonStyle(.borderless)
             .help(format.link ? "Edit Link" : "Add Link")
             .disabled(!isEnabled)
             Spacer(minLength: 0)
         }
         .labelStyle(.iconOnly)
         .controlSize(.small)
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s1)
-        .background(Tokens.Surface.muted)
+        .padding(.horizontal, Tokens.Space.s5)
+        .padding(.vertical, Tokens.Space.s2)
+        .background(Tokens.Surface.primary)
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Formatting")

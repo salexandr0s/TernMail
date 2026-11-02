@@ -78,6 +78,13 @@ enum Tokens {
         static let assistantBubble = Surface.primary
     }
 
+    enum Compose {
+        static let gutter = Space.s5
+        static let assistantMaxWidth = Assistant.contentWidth
+        /// Keep the primary actions named when the toolbar has room.
+        static let labeledToolbarWidth: CGFloat = 600
+    }
+
     /// Calendar panes and sheets share native control sizing and semantic surfaces.
     enum Calendar {
         static let sidebarWidth: CGFloat = 248
@@ -177,7 +184,7 @@ enum Tokens {
         static let conversationMinWidth: CGFloat = 560
         static let conversationMinHeight: CGFloat = 400
         /// The To, Cc and Subject column in a compose header.
-        static let composeLabelWidth: CGFloat = 64
+        static let composeLabelWidth = Space.s12
         /// Room to write below the recipients, files and quoted text.
         static let editorMinHeight: CGFloat = 128
         /// A sender name keeps this much width before the metadata wraps below it.

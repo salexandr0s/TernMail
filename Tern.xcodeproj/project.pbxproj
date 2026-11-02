@@ -173,6 +173,7 @@
 		6EE44A599A7948CB78C1D9C6 /* LabelPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7614291A9BBAB3D4EA6F54B3 /* LabelPickerView.swift */; };
 		6F112199ECD48ADBA5680073 /* MessageActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2712B79FFB5BAFF5FEEF516A /* MessageActions.swift */; };
 		70626CB461B86C33BB92E870 /* SelectedMailQuote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841CBFC3C4AA6EB2D4C66C79 /* SelectedMailQuote.swift */; };
+		7164DC711BEB08326E4097C8 /* ComposePromptFieldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65568957B29EA8F56B237FC /* ComposePromptFieldTests.swift */; };
 		71AB528D2E39FFBCAB9FA57B /* SearchHighlights.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E51C9688A26E9F7D13A96AE /* SearchHighlights.swift */; };
 		71B4075ADE8ADA6F30496EC0 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59D9ED8DE6505A59716158D2 /* AppModel.swift */; };
 		71D3F49936B8F391CB05D2A2 /* LabelNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5124728AAC27713068C29A2A /* LabelNode.swift */; };
@@ -208,6 +209,7 @@
 		8A7FEC940FEFE0241F30C670 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BB9B46E342248DBF893DA9 /* ThreadView.swift */; };
 		8BB61EE599387D8D58E88CAD /* MailServicesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A41FE61E560E8C5FA1D8D15D /* MailServicesTests.swift */; };
 		8BD5C3DC319AC6DACDB34155 /* FavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D27FD7C9C290517BF878F3 /* FavoritesView.swift */; };
+		8BDA99CC2A6100BCAC71228A /* ComposeFileDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E6F3555E7642090B1101FC /* ComposeFileDrop.swift */; };
 		8C7C0FCC85917D9AA7777726 /* AssistantDiagramView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B505931423070A4CF415A500 /* AssistantDiagramView.swift */; };
 		8C8AEE3BAA03A97BD75E53A9 /* CalendarActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B8CA086C6AB732F94A346D3 /* CalendarActivityView.swift */; };
 		8CAFA56EDF8661042094300E /* GmailAPI in Frameworks */ = {isa = PBXBuildFile; productRef = DADFA2A14CD8FDA35DA120E3 /* GmailAPI */; };
@@ -223,6 +225,7 @@
 		922C033906A4F1D366D15381 /* FilterEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DFCB3BA3FF6403FFC6A9096 /* FilterEditorSheet.swift */; };
 		92B0E8BF0444B82243348870 /* LabelAppearanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9EEDB8790E068A6F2E388A7 /* LabelAppearanceTests.swift */; };
 		92B3A33E03285F6EF450CDDA /* ComposeModel+ContactGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB21866DEEF6F3657DA70731 /* ComposeModel+ContactGroups.swift */; };
+		933C3CA2FB3037D910D96E54 /* ComposeFileDropTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D86D381868CDB8BA57846DB9 /* ComposeFileDropTests.swift */; };
 		9385D42224297D460ED9523F /* SuggestionBlocklistPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51F7D70752C9128652A11981 /* SuggestionBlocklistPane.swift */; };
 		93FD4744D1FF24F1388A2485 /* CalendarTimelinePlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4F4F942D1C093DBBE2538BF /* CalendarTimelinePlacement.swift */; };
 		94FC0BF2A2519CA66D5A71EF /* MessageListItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84FE8D373C9C774ECC5F7D01 /* MessageListItem.swift */; };
@@ -231,6 +234,7 @@
 		97158050EEF68C1A3D6265F8 /* PublicSuffix.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEDAD2351D4D9A40BCC4E155 /* PublicSuffix.swift */; };
 		985D89B99281301931019026 /* MailboxModel+MessageSnooze.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E2A1E39DCE1990D585B19A /* MailboxModel+MessageSnooze.swift */; };
 		98F7DA320D3FD4B8B0F49AD1 /* PublicSuffixList.dat in Resources */ = {isa = PBXBuildFile; fileRef = 2F641499B08E6A3FC034961A /* PublicSuffixList.dat */; };
+		99A48DC92444323CFD259809 /* ComposePromptField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77F9CF1CE2707A6374783D1E /* ComposePromptField.swift */; };
 		9AFDA5119D8FD03D5454DC05 /* ContactPhotoImagesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A570AAE2ACA004420A60965 /* ContactPhotoImagesTests.swift */; };
 		9B8E0C8C64397A972690370A /* AssistantEmailCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC9BA2F9008557C277714782 /* AssistantEmailCard.swift */; };
 		9C6BF23B0C9161F30BDE4A77 /* SwatchPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B19D08B1E7974E9D52A622E /* SwatchPicker.swift */; };
@@ -356,6 +360,7 @@
 		F54AC79D5C044CB2AD107655 /* AttachmentChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FB78A80DB609E8F1B551E96 /* AttachmentChip.swift */; };
 		F5829BFC12FE1A6E22977C5D /* MailboxModel+Reading.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD5BAE3966376BC09D235ABB /* MailboxModel+Reading.swift */; };
 		F5D78A8E257DB917FCE51B9E /* SnoozePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91CA7FF62FB26BF0EC5327A /* SnoozePicker.swift */; };
+		F6CB987865FBC24AC2082174 /* ComposeAssistantAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DA08DC3A9C3D42B4C577EB /* ComposeAssistantAttachment.swift */; };
 		F8BFADE9ABBA85FB519608E1 /* MailAssistantTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50845FEB4887030FFA81D657 /* MailAssistantTools.swift */; };
 		FA7ABEE42996EA5B6C5B5102 /* SyncEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 83A833DCF26A2C49025C1785 /* SyncEngine */; };
 		FBCD6B4B6D507B6F11016498 /* AssistantDiagram.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00C7C0E0A0991DFEA3E64177 /* AssistantDiagram.swift */; };
@@ -397,6 +402,7 @@
 		134EB935A4C32957738365D4 /* FiltersPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FiltersPane.swift; sourceTree = "<group>"; };
 		1381D00DAB79A074D34DF060 /* MailboxModel+Snooze.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Snooze.swift"; sourceTree = "<group>"; };
 		14B2A60E7704812D2193EEA4 /* SenderAccountLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderAccountLabel.swift; sourceTree = "<group>"; };
+		14E6F3555E7642090B1101FC /* ComposeFileDrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFileDrop.swift; sourceTree = "<group>"; };
 		15569EF35E74AFD2FC46ED3C /* AssistantSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSettingsView.swift; sourceTree = "<group>"; };
 		167830634175ACE25ADE4A4D /* AssistantDiagramLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantDiagramLayout.swift; sourceTree = "<group>"; };
 		17191321573C1967BF425698 /* ShortcutCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutCatalogTests.swift; sourceTree = "<group>"; };
@@ -464,6 +470,7 @@
 		43E34E2A10414C1BCFF3620D /* CalendarTimelineGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimelineGesture.swift; sourceTree = "<group>"; };
 		4463F25A316147E854AB475E /* Tokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tokens.swift; sourceTree = "<group>"; };
 		4495C7655653F21ED937ED6B /* WorkspaceAssistantToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAssistantToolbar.swift; sourceTree = "<group>"; };
+		44DA08DC3A9C3D42B4C577EB /* ComposeAssistantAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeAssistantAttachment.swift; sourceTree = "<group>"; };
 		45879A9FDF1B517254E856E6 /* ComposeFeatureCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFeatureCommands.swift; sourceTree = "<group>"; };
 		46D27FD7C9C290517BF878F3 /* FavoritesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoritesView.swift; sourceTree = "<group>"; };
 		477B537BC0D1B9B98D3911DB /* CalendarAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAudit.swift; sourceTree = "<group>"; };
@@ -532,6 +539,7 @@
 		75FC50DD867478C0394F07A2 /* MailScriptingBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailScriptingBridge.swift; sourceTree = "<group>"; };
 		7614291A9BBAB3D4EA6F54B3 /* LabelPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelPickerView.swift; sourceTree = "<group>"; };
 		76B124379B5808528D2CE7BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		77F9CF1CE2707A6374783D1E /* ComposePromptField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposePromptField.swift; sourceTree = "<group>"; };
 		788B13A8174DC864CE74D887 /* ComposeAssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeAssistantModel.swift; sourceTree = "<group>"; };
 		792BA8B8FE273C5F8CD53721 /* SyncActivityGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncActivityGuard.swift; sourceTree = "<group>"; };
 		79DAD2C1B0EF8F5161349C1D /* CalendarTimeGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimeGrid.swift; sourceTree = "<group>"; };
@@ -627,6 +635,7 @@
 		B5C4C9BF70703B761800543C /* ConversationWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWindow.swift; sourceTree = "<group>"; };
 		B608C0171CFBAF342E151CA9 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		B60F9A1756F95C8B7841401F /* CalendarModel+Interaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CalendarModel+Interaction.swift"; sourceTree = "<group>"; };
+		B65568957B29EA8F56B237FC /* ComposePromptFieldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposePromptFieldTests.swift; sourceTree = "<group>"; };
 		B6AB2DB7E75C1B7F5380F194 /* MailUserActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailUserActivityTests.swift; sourceTree = "<group>"; };
 		B785EDBBAA7C46531A1C1057 /* SnoozeScheduleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozeScheduleTests.swift; sourceTree = "<group>"; };
 		B7D81D234C78FAFE2702D6F9 /* ComposeAssistantContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeAssistantContext.swift; sourceTree = "<group>"; };
@@ -680,6 +689,7 @@
 		D4CEE39609A5EF3263B4CFB8 /* MessageListRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListRow.swift; sourceTree = "<group>"; };
 		D6A85371ECD408294E818F8C /* AssistantEmailResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEmailResult.swift; sourceTree = "<group>"; };
 		D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientField.swift; sourceTree = "<group>"; };
+		D86D381868CDB8BA57846DB9 /* ComposeFileDropTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFileDropTests.swift; sourceTree = "<group>"; };
 		D8C7A830FA6D99D8E2F24A35 /* AccountMailboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMailboxTests.swift; sourceTree = "<group>"; };
 		D9A4EF88EB6607EAF306BC69 /* ShareActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareActions.swift; sourceTree = "<group>"; };
 		D9B5D1A48DD56DA0A39726A7 /* ProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesView.swift; sourceTree = "<group>"; };
@@ -810,16 +820,19 @@
 			children = (
 				34CAD881F5F6678BF14AC6CB /* AttachmentStrip.swift */,
 				7134C8F3AA79455D2952E725 /* AttributedDocument.swift */,
+				44DA08DC3A9C3D42B4C577EB /* ComposeAssistantAttachment.swift */,
 				B7D81D234C78FAFE2702D6F9 /* ComposeAssistantContext.swift */,
 				788B13A8174DC864CE74D887 /* ComposeAssistantModel.swift */,
 				3525AF397F4CC6CE31021C6A /* ComposeAssistantSession.swift */,
 				6777C9CE29FF391731A79152 /* ComposeAssistantView.swift */,
 				45879A9FDF1B517254E856E6 /* ComposeFeatureCommands.swift */,
+				14E6F3555E7642090B1101FC /* ComposeFileDrop.swift */,
 				41869617703A57E061659DB4 /* ComposeImageAttachment.swift */,
 				028FE485D145D5610D43A3DB /* ComposeModel.swift */,
 				CB21866DEEF6F3657DA70731 /* ComposeModel+ContactGroups.swift */,
 				1C780CEE7B29F26D3720FDA0 /* ComposePreferences.swift */,
 				2C011A22B6705DC9045ADAF5 /* ComposePreferencesPane.swift */,
+				77F9CF1CE2707A6374783D1E /* ComposePromptField.swift */,
 				9975DF91AE0BFAB24B60387F /* ComposeSender.swift */,
 				0FA834AC16BCA3FD7875E0FD /* ComposeSignatureView.swift */,
 				91AE86CEAF17C226E2E350ED /* ComposeTemplatesPane.swift */,
@@ -972,8 +985,10 @@
 				E58168BBE9F19A18A62CE8E1 /* ChatGPTConnectionTests.swift */,
 				3FA77B4F0A4C3E3B0981C7BC /* ComposeAssistantTests.swift */,
 				47FA19EC10F8AFB2B976FF9F /* ComposeFeatureModelTests.swift */,
+				D86D381868CDB8BA57846DB9 /* ComposeFileDropTests.swift */,
 				75826CDD812745C14BA03F63 /* ComposeIdentityTests.swift */,
 				C638B4DA55E259BE90B98EC7 /* ComposeModelTests.swift */,
+				B65568957B29EA8F56B237FC /* ComposePromptFieldTests.swift */,
 				8A570AAE2ACA004420A60965 /* ContactPhotoImagesTests.swift */,
 				84DFC28295B07B0B6E771074 /* DomainLogoImagesTests.swift */,
 				3B1C246205C901405B0F5BFC /* EmailCalendarTests.swift */,
@@ -1411,8 +1426,10 @@
 				2E41BE8DEC34702C71C79DCC /* ChatGPTConnectionTests.swift in Sources */,
 				5BBA04B93006B1D77BA44E4A /* ComposeAssistantTests.swift in Sources */,
 				B8EAFAB0B00375BDCAF36EC2 /* ComposeFeatureModelTests.swift in Sources */,
+				933C3CA2FB3037D910D96E54 /* ComposeFileDropTests.swift in Sources */,
 				44D6C088B74A80805716D832 /* ComposeIdentityTests.swift in Sources */,
 				38AB75433958E4728F94A426 /* ComposeModelTests.swift in Sources */,
+				7164DC711BEB08326E4097C8 /* ComposePromptFieldTests.swift in Sources */,
 				9AFDA5119D8FD03D5454DC05 /* ContactPhotoImagesTests.swift in Sources */,
 				76652E616B4D75FE7FD4578A /* DomainLogoImagesTests.swift in Sources */,
 				764CF8F05D3F2EE8619C9AEA /* EmailCalendarTests.swift in Sources */,
@@ -1566,16 +1583,19 @@
 				541C00E543BC6D6FDF5C55B7 /* Color+GmailHex.swift in Sources */,
 				CCFA16ADC8FB1A5DD1C5E1D4 /* CommandTargets.swift in Sources */,
 				228B2DDF3EA010A373356AD1 /* Components.swift in Sources */,
+				F6CB987865FBC24AC2082174 /* ComposeAssistantAttachment.swift in Sources */,
 				3BEE4AD5DBF44327BE53C5EC /* ComposeAssistantContext.swift in Sources */,
 				2727EB2F48B256444A96DBE2 /* ComposeAssistantModel.swift in Sources */,
 				52C5CDE25A0735F780F2F046 /* ComposeAssistantSession.swift in Sources */,
 				8FDB461EEE8176049C9E9910 /* ComposeAssistantView.swift in Sources */,
 				54F0643F608EA827E7161AD0 /* ComposeFeatureCommands.swift in Sources */,
+				8BDA99CC2A6100BCAC71228A /* ComposeFileDrop.swift in Sources */,
 				73B98CB0303C5784F28699C4 /* ComposeImageAttachment.swift in Sources */,
 				92B3A33E03285F6EF450CDDA /* ComposeModel+ContactGroups.swift in Sources */,
 				7F67F161B94D1978497051AE /* ComposeModel.swift in Sources */,
 				458451AF85F352EBD9A62790 /* ComposePreferences.swift in Sources */,
 				4ECC8701550EF6C6E316EB62 /* ComposePreferencesPane.swift in Sources */,
+				99A48DC92444323CFD259809 /* ComposePromptField.swift in Sources */,
 				E406CC56E846812FAE8C739A /* ComposeSender.swift in Sources */,
 				004D41A179C50D3E845B9D96 /* ComposeSignatureView.swift in Sources */,
 				EA8F2F2568881DA2B9F26C41 /* ComposeTemplatesPane.swift in Sources */,

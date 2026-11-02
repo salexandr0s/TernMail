@@ -103,6 +103,9 @@ struct ComposeView: View {
     @State private var model: ComposeModel
     @State private var composeAssistant: ComposeAssistantModel?
     @State private var showsAssistant = false
+    @State private var isFileDropTargeted = false
+    @State private var isBodyFileDropTargeted = false
+    @State private var availableWidth = Tokens.Layout.composeWidth
     @State private var senderAvatars = SenderAvatarModels()
     @Environment(AppModel.self) private var app
     @Environment(\.addressAvatarContext) private var avatarContext
@@ -160,9 +163,11 @@ struct ComposeView: View {
             }
         }
         .background(Tokens.Surface.primary)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
         .navigationTitle(model.title)
         .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
+        .toolbar(removing: availableWidth < Tokens.Compose.labeledToolbarWidth ? .title : nil)
         .alert(model.alert?.title ?? "", isPresented: $model.alert.isPresent()) {
             Button("OK") {}
         } message: {
@@ -228,6 +233,15 @@ struct ComposeView: View {
                 .padding(.vertical, Tokens.Space.s2)
                 .background(Tokens.Surface.muted)
                 .accessibilityElement(children: .combine)
+            } else if availableWidth < Tokens.Compose.labeledToolbarWidth,
+                      let status = model.status, !status.isError {
+                Text(status.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Tokens.Compose.gutter)
+                    .padding(.vertical, Tokens.Space.s1_5)
+                    .background(Tokens.Surface.muted)
             }
             header
                 .fixedSize(horizontal: false, vertical: true)
@@ -241,14 +255,19 @@ struct ComposeView: View {
                 format: $model.format,
                 isEditable: model.isEditable,
                 font: model.content.composeFont,
-                inlineImages: model.inlineImageData
+                inlineImages: model.inlineImageData,
+                onDropFiles: { model.attach($0.map(Attachable.dropped)) },
+                onFileDropTargetChange: { isBodyFileDropTargeted = $0 }
             ) { model.editor = $0 } onAttach: { model.attach($0, inlineImages: true) } onFocusChange: { model.isEditingMessage = $0 }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if showsAssistant, let composeAssistant {
-                    ComposeAssistantView(model: composeAssistant, assistant: app.assistant) {
-                        closeAssistant()
-                    }
-                    .padding(Tokens.Space.s3)
+            .overlay(alignment: .topLeading) {
+                if model.content.body.plainText().isEmpty {
+                    Text("Write your message…")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, Tokens.Compose.gutter + Tokens.Border.hairline)
+                        .padding(.top, Tokens.Space.s3)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
             // Keep room to write when recipients, files and quoted text are visible.
@@ -260,6 +279,14 @@ struct ComposeView: View {
                 LinkEditor(existingURL: model.format.linkURL, width: Tokens.Layout.linkEditorWidth) { url in
                     model.editor?.setLink(url)
                 }
+            }
+            if showsAssistant, let composeAssistant {
+                ComposeAssistantView(model: composeAssistant, assistant: app.assistant) {
+                    closeAssistant()
+                }
+                .frame(maxWidth: Tokens.Compose.assistantMaxWidth)
+                .frame(maxWidth: .infinity)
+                .padding(Tokens.Space.s3)
             }
             if model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty {
                 AttachmentStrip(
@@ -280,12 +307,26 @@ struct ComposeView: View {
             if !model.content.signatureAboveQuote { signature }
         }
         .ternAnimation(value: model.showsFormatting)
-        // Files dropped outside the message, which handles its own drops.
-        .dropDestination(for: URL.self) { urls, _ in
-            let files = urls.filter(\.isFileURL)
-            guard model.isEditable, !files.isEmpty else { return false }
-            model.attach(files.map(Attachable.file))
-            return true
+        // The AI bar consumes its own drops as context; the rest of the form attaches to mail.
+        .composeFileDrop(isEnabled: model.isEditable, isTargeted: $isFileDropTargeted) { files in
+            model.attach(files.map(Attachable.dropped))
+        }
+        .overlay {
+            if isFileDropTargeted || isBodyFileDropTargeted {
+                RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                    .fill(Color.accentColor.opacity(Tokens.Opacity.wash))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                            .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
+                    }
+                    .overlay {
+                        Label("Attach to email", systemImage: "paperclip")
+                            .font(.headline)
+                            .padding(Tokens.Space.s4)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    }
+                    .allowsHitTesting(false)
+            }
         }
         .fileImporter(isPresented: $model.isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
@@ -352,7 +393,7 @@ struct ComposeView: View {
             fieldRow("Subject:", field: .subject) {
                 TextField("", text: $model.content.subject, selection: $subjectSelection)
                     .textFieldStyle(.plain)
-                    .font(.body)
+                    .font(.body.weight(.medium))
                     .labelsHidden()
                     .accessibilityLabel("Subject")
                     .focused($focus, equals: .subject)
@@ -366,17 +407,18 @@ struct ComposeView: View {
             }
         }
         .disabled(!model.isEditable)
-        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.horizontal, Tokens.Compose.gutter - Tokens.Space.s2)
         .padding(.vertical, Tokens.Space.s1)
         .background(Tokens.Surface.primary)
         .ternAnimation(value: focus)
         .ternAnimation(value: focusedRecipient)
     }
 
-    /// A hairline between header rows, aligned with their labels.
+    /// Hairlines follow the editable values, leaving the labels quiet.
     private var rowDivider: some View {
         Divider()
-            .padding(.horizontal, Tokens.Space.s2)
+            .padding(.leading, Tokens.Space.s2 + Tokens.Layout.composeLabelWidth + Tokens.Space.s2)
+            .padding(.trailing, Tokens.Space.s2)
     }
 
     /// Rows have no border. Focus outlines the whole row, label included.
@@ -411,7 +453,7 @@ struct ComposeView: View {
                 fieldLabel("From:")
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
                     if let sender = model.selectedSender {
-                        SenderAccountLabel(account: sender.account, address: sender.label, avatarModel: senderAvatars.models[sender.id])
+                        SenderAccountLabel(account: sender.account, address: sender.address, avatarModel: senderAvatars.models[sender.id])
                             .lineLimit(1)
                             .truncationMode(.middle)
                     } else {
@@ -424,7 +466,7 @@ struct ComposeView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .font(.body)
+            .font(.callout)
             .padding(.horizontal, Tokens.Space.s2)
             .padding(.vertical, Tokens.Space.s1_5)
             .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton)
@@ -495,7 +537,7 @@ struct ComposeView: View {
 
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
-            .font(.callout.weight(.medium))
+            .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
             .frame(width: Tokens.Layout.composeLabelWidth, alignment: .leading)
             .allowsHitTesting(false)
@@ -569,29 +611,30 @@ struct ComposeView: View {
 
     private func quotedText(_ quote: String) -> some View {
         let noun = model.draft?.kind == .forward ? "Forwarded Message" : "Quoted Text"
-        return VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Divider()
+        return VStack(alignment: .leading, spacing: 0) {
             Button {
                 showsQuote.toggle()
             } label: {
                 HStack(spacing: Tokens.Space.s2) {
-                    Image(systemName: "chevron.right")
+                    Image(systemName: showsQuote ? "chevron.down" : "chevron.right")
                         .font(.caption.weight(.semibold))
-                        .rotationEffect(.degrees(showsQuote ? 90 : 0))
-                    Text(noun)
-                        .font(.callout.weight(.medium))
-                    Spacer()
+                        .frame(width: Tokens.Space.s3)
                     Image(systemName: "text.quote")
-                        .foregroundStyle(.secondary)
+                        .frame(width: Tokens.Control.icon)
+                    Text(noun)
+                        .font(.caption.weight(.medium))
+                    Spacer(minLength: Tokens.Space.s2)
+                    Text("Included").font(.caption)
                 }
-                .padding(.vertical, Tokens.Space.s1)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, Tokens.Compose.gutter)
+                .padding(.vertical, Tokens.Space.s2)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Included unchanged below your message, even when hidden.")
             .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
             .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
-            .padding(.horizontal, Tokens.Space.s4)
             if showsQuote {
                 ScrollView {
                     Text(quote)
@@ -599,14 +642,15 @@ struct ComposeView: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Tokens.Space.s4)
+                        .padding(.horizontal, Tokens.Compose.gutter)
+                        .padding(.bottom, Tokens.Space.s2)
                 }
                 .frame(minHeight: Tokens.Space.s16, maxHeight: Tokens.Layout.quoteMaxHeight)
                 .transition(.opacity)
             }
         }
-        .padding(.bottom, Tokens.Space.s1)
         .background(Tokens.Surface.muted)
+        .overlay(alignment: .top) { Divider() }
         .ternAnimation(value: showsQuote)
     }
 
@@ -624,42 +668,34 @@ struct ComposeView: View {
             .help("Discard Draft")
             .disabled(!model.isEditable)
         }
+        ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
             Button {
                 if showsAssistant { closeAssistant() }
                 else { showsAssistant = true }
             } label: {
-                Label("Compose Assistant", systemImage: "sparkles")
+                toolbarLabel("Ask AI", systemImage: "sparkles")
+                    .foregroundStyle(showsAssistant ? Color.accentColor : .primary)
             }
-            .labelStyle(.iconOnly)
             .keyboardShortcut("j", modifiers: [.command, .shift])
             .help(showsAssistant ? "Close compose assistant (⇧⌘J)" : "Ask the assistant to help write (⇧⌘J)")
             .accessibilityLabel("Compose Assistant")
             .accessibilityValue(showsAssistant ? "Open" : "Closed")
             .disabled(!model.isEditable)
         }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
-            Toggle(isOn: $model.showsFormatting) {
+            Button {
+                model.showsFormatting.toggle()
+            } label: {
                 Label("Formatting", systemImage: "textformat")
+                    .foregroundStyle(model.showsFormatting ? Color.accentColor : .primary)
             }
-            .toggleStyle(.button)
             .labelStyle(.iconOnly)
             .help(model.showsFormatting ? "Hide Formatting" : "Show Formatting")
             .accessibilityLabel("Formatting")
             .accessibilityValue(model.showsFormatting ? "Expanded" : "Collapsed")
             .disabled(!model.isEditable)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Menu {
-                if model.templates.isEmpty { Text("No templates") }
-                ForEach(model.templates) { template in
-                    Button(template.name) { model.insertTemplate(template) }
-                }
-            } label: { Label("Insert Template", systemImage: "doc.text") }
-            .help(model.templates.isEmpty ? "No templates yet. Add them in Settings > Templates." : "Insert Template")
-            // Without it, VoiceOver reads the menu's arrow image name.
-            .accessibilityLabel("Insert Template")
-            .disabled(!model.isEditable || model.templates.isEmpty)
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -670,34 +706,45 @@ struct ComposeView: View {
             .help("Attach Files")
             .disabled(!model.isEditable)
         }
+        if model.canSendAndArchive || !model.templates.isEmpty {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    if !model.templates.isEmpty {
+                        Menu("Insert Template", systemImage: "doc.text") {
+                            ForEach(model.templates) { template in
+                                Button(template.name) { model.insertTemplate(template) }
+                            }
+                        }
+                    }
+                    if model.canSendAndArchive {
+                        if !model.templates.isEmpty { Divider() }
+                        Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                }
+                .labelStyle(.iconOnly)
+                .menuIndicator(.hidden)
+                .help("More compose actions")
+                .accessibilityLabel("More Compose Actions")
+                .disabled(!model.isEditable)
+            }
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
             Button {
                 Task { await model.send() }
             } label: {
-                Label("Send", systemImage: "paperplane.fill")
+                Label("Send", systemImage: "paperplane")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize()
             }
-            .labelStyle(.iconOnly)
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .controlSize(.regular)
             .help("Send (⇧⌘D)")
             .accessibilityLabel("Send")
             .disabled(!model.isEditable)
-        }
-        // The arrow half of Send. A toolbar Menu with a primary action can't
-        // take the prominent style, so Send stays a Button.
-        if model.canSendAndArchive {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Send and Archive", systemImage: "archivebox") { Task { await model.send(archive: true) } }
-                } label: {
-                    Label("More Send Options", systemImage: "chevron.down")
-                }
-                .labelStyle(.iconOnly)
-                .menuIndicator(.hidden)
-                .help("Send and Archive")
-                .accessibilityLabel("More Send Options")
-                .disabled(!model.isEditable)
-            }
         }
     }
 
@@ -712,7 +759,15 @@ struct ComposeView: View {
     private func closeAssistant() {
         composeAssistant?.stop()
         showsAssistant = false
-        model.editor?.focus()
+        model.editor?.resumeEditing()
+    }
+
+    @ViewBuilder private func toolbarLabel(_ title: String, systemImage: String) -> some View {
+        if availableWidth >= Tokens.Compose.labeledToolbarWidth {
+            Label(title, systemImage: systemImage).labelStyle(.titleAndIcon)
+        } else {
+            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
+        }
     }
 
     /// A reply starts in the message; anything without recipients starts in To.

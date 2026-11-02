@@ -247,6 +247,163 @@ import TernAI
         await fixture.close()
     }
 
+    @Test func contextFilesRequireAnExplicitAskPreserveFollowupsAndDisappearFromHistoryWhenRemoved() async throws {
+        let provider = Provider(replies: [.complete(try Self.suggestion("Original suggestion")), .complete(Self.answer("Ready.")),
+            .complete(Self.answer("Used the reference.")), .complete(Self.answer("Kept the reference.")), .complete(Self.answer("New chat."))])
+        let fixture = try await Fixture(provider: provider, attachment: true)
+        defer { fixture.stop() }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try Self.file(in: directory, name: "reference.txt", data: Data("private-context-marker".utf8))
+        fixture.model.prompt = "Suggest a reply."
+        fixture.model.send()
+        await fixture.model.waitForCurrentTurn()
+        let original = fixture.compose.content
+        let outgoing = fixture.compose.attachments
+        let file = ComposeDroppedFile(url: url)
+        fixture.model.addContextFiles([file])
+        await fixture.model.waitForContextImports()
+        #expect(!fixture.model.hasContextFileErrors)
+        #expect(fixture.model.messages.count == 2)
+        #expect(await provider.requests.count == 2)
+        #expect(fixture.compose.content == original && fixture.compose.attachments == outgoing)
+
+        fixture.model.prompt = "Use this reference to revise that."
+        fixture.model.send()
+        await fixture.model.waitForCurrentTurn()
+        let first = try Self.userContext(try #require(await provider.requests.last))
+        #expect(first["previous_suggestion"]?["body"] == .string("Original suggestion"))
+        #expect(first["ai_context_files"]?.arrayValue?.first?["text"] == .string("private-context-marker"))
+        #expect(!((try first.jsonString()).contains(directory.path)))
+        fixture.model.prompt = "Keep it shorter."
+        fixture.model.send()
+        await fixture.model.waitForCurrentTurn()
+        let followup = try #require(await provider.requests.last)
+        #expect(try AIJSON.array(followup.input).jsonString().components(separatedBy: "private-context-marker").count == 2)
+        #expect(try Self.userContext(followup)["ai_context_files"]?.arrayValue?.first?["contents_in_earlier_turn"] == .bool(true))
+        fixture.model.removeContextFile(file.id)
+        #expect(fixture.model.messages.isEmpty && fixture.model.contextAttachments.isEmpty)
+        #expect(fixture.model.statusText == "File removed. Started a new chat.")
+        fixture.model.prompt = "Write without the reference."
+        fixture.model.send()
+        await fixture.model.waitForCurrentTurn()
+        #expect(try !AIJSON.array(try #require(await provider.requests.last).input).jsonString().contains("private-context-marker"))
+        #expect(fixture.compose.content == original && fixture.compose.attachments == outgoing)
+        await fixture.close()
+    }
+
+    @Test func imageContextUsesBoundedImageInputInsteadOfSendingItAsAnEmailAttachment() async throws {
+        let provider = Provider(replies: [.complete(Self.answer("The image is available."))])
+        let fixture = try await Fixture(provider: provider)
+        defer { fixture.stop() }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.bitmapData?.initialize(repeating: 160, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let url = try Self.file(in: directory, name: "reference.png", data: #require(bitmap.representation(using: .png, properties: [:])))
+        fixture.model.addContextFiles([ComposeDroppedFile(url: url)])
+        await fixture.model.waitForContextImports()
+        #expect(!fixture.model.hasContextFileErrors)
+        #expect(await provider.requests.isEmpty)
+        fixture.model.prompt = "Use this image as reference."
+        fixture.model.send()
+        await fixture.model.waitForCurrentTurn()
+        let request = try #require(await provider.requests.last)
+        let parts = try #require(request.input.last?["content"]?.arrayValue)
+        let image = try #require(parts.first { $0["type"] == .string("input_image") })
+        let dataURL = try #require(image["image_url"]?.stringValue)
+        #expect(dataURL.hasPrefix("data:image/jpeg;base64,"))
+        #expect(dataURL.utf8.count <= ComposeAssistantFileReader.maximumJPEGBytes * 4 / 3 + 40)
+        #expect(try AIJSON.array(request.input).encoded().count <= AssistantModel.maximumHistoryBytes)
+        #expect(try Self.userContext(request)["ai_context_files"]?.arrayValue?.first?["truncated"] == .bool(true))
+        #expect(fixture.compose.attachments.isEmpty && fixture.compose.content.body.plainText() == "Original draft")
+        await fixture.close()
+    }
+
+    @Test func contextFileLimitsBlockRequestsUntilFailuresAreRemovedOrRetried() async throws {
+        let provider = Provider(replies: [])
+        let fixture = try await Fixture(provider: provider)
+        defer { fixture.stop() }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let unicode = try Self.file(in: directory, name: "notes.txt", data: Data(String(repeating: "€", count: 10_000).utf8))
+        let excerpt = try ComposeAssistantFileReader.read(url: unicode, id: UUID(), filename: "notes.txt")
+        #expect(excerpt.truncated && excerpt.text?.utf8.count == 12_000)
+        #expect(excerpt.text?.contains("�") == false)
+        let oversized = try Self.file(in: directory, name: "large.txt", data: Data(repeating: 65, count: AssistantMailLimits.attachmentBytes + 1))
+        #expect(throws: AssistantMailError.self) { try ComposeAssistantFileReader.read(url: oversized, id: UUID(), filename: "large.txt") }
+        let unsupported = try Self.file(in: directory, name: "notes.docx", data: Data("unsupported".utf8))
+        #expect(throws: AttachmentTextReader.ReadError.self) { try ComposeAssistantFileReader.read(url: unsupported, id: UUID(), filename: "notes.docx") }
+
+        let text = try Self.file(in: directory, name: "quotes.txt", data: Data(String(repeating: "\"", count: 12_000).utf8))
+        fixture.model.addContextFiles((0..<5).map { _ in ComposeDroppedFile(url: text) })
+        #expect(fixture.model.contextAttachments.count == 4)
+        await fixture.model.waitForContextImports()
+        #expect(fixture.model.hasContextFileErrors && !fixture.model.canAsk)
+        fixture.model.prompt = "Use all files."
+        fixture.model.send()
+        #expect(await provider.requests.isEmpty)
+        let failed = try #require(fixture.model.contextAttachments.first { $0.errorMessage != nil })
+        for item in fixture.model.contextAttachments where item.id != failed.id { fixture.model.removeContextFile(item.id) }
+        fixture.model.retryContextFile(failed.id)
+        await fixture.model.waitForContextImports()
+        #expect(!fixture.model.hasContextFileErrors && fixture.model.contextAttachments.first?.state == .ready)
+        #expect(fixture.compose.attachments.isEmpty && fixture.compose.content.body.plainText() == "Original draft")
+        await fixture.close()
+    }
+
+    @Test(arguments: ["clear", "remove", "revoke"])
+    func pendingContextImportsCannotPublishAfterRemovalOrAccessChanges(action: String) async throws {
+        let provider = Provider(replies: [])
+        let fixture = try await Fixture(provider: provider)
+        defer { fixture.stop() }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try Self.file(in: directory, name: "private.txt", data: Data("late-private-context".utf8))
+        let gate = FileGate()
+        let file = ComposeDroppedFile(filename: "private.txt", load: { try await gate.load() })
+        fixture.model.addContextFiles([file])
+        try await Self.waitUntil { gate.isWaiting }
+        fixture.model.prompt = "Use the pending file."
+        fixture.model.send()
+        #expect(!fixture.model.isRunning)
+        #expect(await provider.requests.isEmpty)
+        var isWaitingForImports = false
+        let completion = Task { isWaitingForImports = true; await fixture.model.waitForContextImports() }
+        try await Self.waitUntil { isWaitingForImports }
+        switch action {
+        case "clear": fixture.model.clear()
+        case "remove": fixture.model.removeContextFile(file.id)
+        default:
+            fixture.assistant.setAccountEnabled("audit", enabled: false)
+            fixture.model.refreshAccess()
+        }
+        gate.release(url)
+        await completion.value
+        #expect(fixture.model.contextAttachments.isEmpty && fixture.model.messages.isEmpty)
+        #expect(fixture.compose.attachments.isEmpty && fixture.compose.content.body.plainText() == "Original draft")
+        #expect(await provider.requests.isEmpty)
+        await fixture.close()
+    }
+
+    private static func file(in directory: URL, name: String, data: Data) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: name)
+        try data.write(to: url)
+        return url
+    }
+
+    @MainActor private final class FileGate {
+        private var continuation: CheckedContinuation<URL, any Error>?
+        var isWaiting: Bool { continuation != nil }
+        func load() async throws -> URL {
+            try await withCheckedThrowingContinuation { continuation = $0 }
+        }
+        func release(_ url: URL) { continuation?.resume(returning: url); continuation = nil }
+    }
+
     private static func capture(_ view: NSView, name: String) throws {
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
@@ -257,7 +414,8 @@ import TernAI
     }
 
     private static func userContext(_ request: AIRequest) throws -> AIJSON {
-        let text = try #require(request.input.last(where: { $0["role"] == .string("user") })?["content"]?.stringValue)
+        let content = try #require(request.input.last(where: { $0["role"] == .string("user") })?["content"])
+        let text = try #require(content.stringValue ?? content.arrayValue?.first?["text"]?.stringValue)
         return try AIJSON.decode(Data(text.utf8))
     }
     private static func call(_ name: String, _ args: [String: AIJSON]) throws -> AIToolCall {
