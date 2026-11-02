@@ -74,14 +74,18 @@ final class AddressAvatarModel {
                     self.contactImage = nil
                     self.contactsResolved = !enabled
                     self.refresh(generation: token)
-                    guard enabled else { continue }
+                    guard enabled else {
+                        ContactThumbnailCache.shared.remove(accountID: owner)
+                        continue
+                    }
                     self.photoTask = Task { [weak self] in
                         do {
                             for try await record in cache.observeContactPhoto(accountID: owner, address: address) {
                                 guard !Task.isCancelled else { return }
                                 let photo: NSImage?
                                 if let record {
-                                    photo = await ContactPhotoImages.image(for: record, address: address, cache: cache, accounts: accounts)
+                                    photo = await ContactPhotoImages.image(for: record, address: address, cache: cache,
+                                        accounts: accounts, contextID: context.identity)
                                 } else { photo = nil }
                                 guard let self, self.generation == token, !Task.isCancelled else { return }
                                 self.contactImage = photo

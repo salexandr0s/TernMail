@@ -16,7 +16,8 @@ struct CalendarSidebar: View {
     /// Room for the compact popover: the mini month, a row per calendar and
     /// agenda entry plus headers, capped so it never outgrows the window.
     static func popoverHeight(for model: CalendarModel) -> CGFloat {
-        let agenda = CalendarLayout.events(model.events, on: model.date, calendar: model.calendar).count
+        let agenda = model.presentation?.day(model.date)?.events.count
+            ?? CalendarLayout.events(model.events, on: model.date, calendar: model.calendar).count
         let rows = model.calendars.isEmpty ? 0 : CGFloat(model.calendars.count + max(agenda, 1) + model.accounts.count + 1)
         let height = CalendarMiniMonth.height + rows * Tokens.Settings.rowHeight + Tokens.Space.s16
         return min(max(height, Tokens.Popover.maxListHeight), Tokens.Calendar.activityHeight)
@@ -91,11 +92,17 @@ struct CalendarSidebar: View {
                     .accessibilityLabel("Read only")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .ternHover(isEnabled: selection != .calendar(calendar.id))
         .help(calendar.title)
     }
 
     private var agendaEvents: [CalendarDisplayEvent] {
-        CalendarLayout.events(model.events, on: model.date, calendar: model.calendar)
+        if let presentation = model.presentation, presentation.matches(model.calendar) {
+            return presentation.day(model.date)?.events ?? []
+        }
+        return CalendarLayout.events(model.events, on: model.date, calendar: model.calendar)
     }
 
     @ViewBuilder private var agendaRows: some View {
@@ -122,7 +129,9 @@ struct CalendarSidebar: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, Tokens.Space.s1)
-                .ternHover()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .ternHover(isEnabled: selection != .event(event.id))
                 .tag(CalendarSidebarItem.event(event.id))
                 .draggable(CalendarEventTransfer(event))
                 .help("Open \(event.title)")

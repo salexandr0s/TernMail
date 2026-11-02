@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
 import Foundation
 import GmailAPI
 import MailStore
@@ -50,8 +50,10 @@ actor CalendarAuditService: CalendarService {
     private var rows: [String: [String: GoogleCalendarEvent]]
     private var rules: [String: [CalendarACLRule]] = [:]
     private var revision = 1
+    private let performanceTransport: PerformanceAuditTransport?
 
-    init(now: Date) {
+    init(now: Date, performanceTransport: PerformanceAuditTransport? = nil) {
+        self.performanceTransport = performanceTransport ?? (ProcessInfo.processInfo.arguments.contains("--performance-audit") ? .shared : nil)
         var personal = GoogleCalendarEntry(id: "personal", summary: "Personal", timeZone: "Europe/Vienna", accessRole: "owner", backgroundColor: "#0b8043")
         personal.primary = true
         personal.rawValue["conferenceProperties"] = .object(["allowedConferenceSolutionTypes": .array([.string("hangoutsMeet")])])
@@ -91,12 +93,23 @@ actor CalendarAuditService: CalendarService {
         rows = ["personal": [breakfast.id: breakfast, trip.id: trip],
                 "work": [review.id: review, overlap.id: overlap, planning.id: planning],
                 "shared": [focus.id: focus]]
+        if ProcessInfo.processInfo.arguments.contains("--performance-audit") {
+            let argument = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-events=") }
+            let count = min(1_000, max(100, argument.flatMap { Int($0.split(separator: "=").last ?? "") } ?? 100))
+            for index in 0..<count {
+                let value = event("performance-\(index)", "Synthetic event \(index)", day: index % 7,
+                                  hour: 8 + (index / 7) % 10, minutes: 15 + (index % 4) * 15)
+                rows["work", default: [:]][value.id] = value
+            }
+        }
     }
 
     func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage {
-        CalendarListPage(items: Array(entries.values).sorted { $0.id < $1.id }, nextSyncToken: "audit-\(revision)")
+        _ = try await performanceTransport?.request(.calendar)
+        return CalendarListPage(items: Array(entries.values).sorted { $0.id < $1.id }, nextSyncToken: "audit-\(revision)")
     }
     func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
+        _ = try await performanceTransport?.request(.calendar)
         guard entries[calendarID] != nil else { throw GmailError.notFound }
         var values = Array(rows[calendarID, default: [:]].values)
         if query.singleEvents {
@@ -112,6 +125,7 @@ actor CalendarAuditService: CalendarService {
         return CalendarEventPage(items: values, nextSyncToken: "audit-\(revision)")
     }
     func event(calendarID: String, eventID: String) async throws -> GoogleCalendarEvent {
+        _ = try await performanceTransport?.request(.calendar)
         if let event = rows[calendarID]?[eventID] { return event }
         if let separator = eventID.lastIndex(of: "_"), let timestamp = TimeInterval(eventID[eventID.index(after: separator)...]),
            let master = rows[calendarID]?[String(eventID[..<separator])] {

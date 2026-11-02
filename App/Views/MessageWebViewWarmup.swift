@@ -9,6 +9,10 @@ enum MessageWebViewWarmup {
     static func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        Task {
+            _ = await RemoteContentBlocker.ruleList()
+            _ = await RemoteContentBlocker.ruleList(allowsRemoteImages: true)
+        }
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()

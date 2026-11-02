@@ -21,17 +21,31 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(id: "workspace.search", placement: .primaryAction) {
-            WorkspaceSearchItem(
-                placeholder: placeholder, text: text, focusRequest: focusRequest,
-                // Reserve the added gaps within the regular search width.
-                width: Tokens.Layout.searchWidth - 2 * Tokens.Space.s2,
-                canFold: isFolded,
-                onChange: update, onSubmit: submit, onCancel: cancel
-            )
-            .help(help)
+            WorkspaceSearchContent(mailbox: mailbox, calendar: calendar, libraryToolbar: libraryToolbar,
+                section: section, isFolded: isFolded)
         }
         .customizationBehavior(.disabled)
         ToolbarSpacer(.fixed, placement: .primaryAction)
+    }
+}
+
+/// Typing and Find update the field without rebuilding toolbar declarations.
+struct WorkspaceSearchContent: View {
+    let mailbox: MailboxModel
+    let calendar: CalendarModel
+    let libraryToolbar: AttachmentLibraryToolbarState
+    let section: WorkspaceSection
+    var isFolded = false
+
+    var body: some View {
+        WorkspaceSearchItem(
+            placeholder: placeholder, text: text, focusRequest: focusRequest,
+            // Reserve the added gaps within the regular search width.
+            width: Tokens.Layout.searchWidth - 2 * Tokens.Space.s2,
+            canFold: isFolded,
+            onChange: update, onSubmit: submit, onCancel: cancel
+        )
+        .help(help)
     }
 
     private var placeholder: String {
@@ -58,11 +72,14 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
         }
     }
 
-    private var focusRequest: Int {
+    private var focusRequest: WorkspaceSearchFocusRequest {
         switch section {
-        case .mail: mailbox.search.fieldFocusRequest
-        case .calendar: calendar.searchFocusRequest
-        case .attachments: libraryToolbar.searchFocusRequest
+        case .mail:
+            .init(section: section, owner: mailbox.search, generation: mailbox.search.fieldFocusRequest)
+        case .calendar:
+            .init(section: section, owner: calendar, generation: calendar.searchFocusRequest)
+        case .attachments:
+            .init(section: section, owner: libraryToolbar, generation: libraryToolbar.searchFocusRequest)
         }
     }
 
@@ -87,32 +104,66 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     }
 }
 
+/// Find callers target the active search model. A different model's existing
+/// counter establishes a baseline; switching destinations is not a Find action.
+struct WorkspaceSearchFocusRequest: Equatable {
+    struct Source: Equatable {
+        let section: WorkspaceSection
+        let owner: ObjectIdentifier
+    }
+
+    let source: Source
+    let generation: Int
+
+    init(section: WorkspaceSection, owner: AnyObject, generation: Int) {
+        source = Source(section: section, owner: ObjectIdentifier(owner))
+        self.generation = generation
+    }
+
+    func isNewRequest(after previous: Self) -> Bool {
+        source == previous.source && generation > previous.generation
+    }
+}
+
 /// The field, or while it's folded, a button that opens it. An opened field
 /// takes focus and folds again once it's left empty.
-private struct WorkspaceSearchItem: View {
+struct WorkspaceSearchItem: View {
     let placeholder: String
     let text: String
-    let focusRequest: Int
+    let focusRequest: WorkspaceSearchFocusRequest
     let width: CGFloat
     let canFold: Bool
     let onChange: (String) -> Void
     let onSubmit: () -> Void
     let onCancel: () -> Void
-    @State private var isOpen = false
+    @State private var openSource: WorkspaceSearchFocusRequest.Source?
+
+    private var isOpen: Bool { openSource == focusRequest.source }
 
     var body: some View {
-        if canFold && text.isEmpty && !isOpen {
-            Button(placeholder, systemImage: "magnifyingglass") { isOpen = true }
-                .labelStyle(.iconOnly)
-                // ⌥⌘F and Find open the field when it's folded.
-                .onChange(of: focusRequest) { _, _ in isOpen = true }
-        } else {
-            WorkspaceSearchField(
-                placeholder: placeholder, text: text, focusRequest: focusRequest, focusesOnAppear: isOpen,
-                onChange: onChange, onSubmit: onSubmit, onCancel: onCancel,
-                onEndEditing: { isOpen = false }
-            )
-            .frame(width: width)
+        Group {
+            if canFold && text.isEmpty && !isOpen {
+                Button(placeholder, systemImage: "magnifyingglass") { openSource = focusRequest.source }
+                    .labelStyle(.iconOnly)
+                    // ⌥⌘F and Find open the field when it's folded.
+                    .onChange(of: focusRequest) { previous, request in
+                        if request.isNewRequest(after: previous) { openSource = request.source }
+                    }
+            } else {
+                WorkspaceSearchField(
+                    placeholder: placeholder, text: text, focusRequest: focusRequest, focusesOnAppear: isOpen,
+                    onChange: onChange, onSubmit: onSubmit, onCancel: onCancel,
+                    onEndEditing: {
+                        if openSource == focusRequest.source { openSource = nil }
+                    }
+                )
+                .frame(width: width)
+            }
+        }
+        .onChange(of: focusRequest.source) { _, _ in
+            // A removed field need not deliver an end-editing notification.
+            // Returning to its source must not replay an earlier Find action.
+            openSource = nil
         }
     }
 }
@@ -120,7 +171,7 @@ private struct WorkspaceSearchItem: View {
 private struct WorkspaceSearchField: NSViewRepresentable {
     let placeholder: String
     let text: String
-    let focusRequest: Int
+    let focusRequest: WorkspaceSearchFocusRequest
     var focusesOnAppear = false
     let onChange: (String) -> Void
     let onSubmit: () -> Void
@@ -150,8 +201,9 @@ private struct WorkspaceSearchField: NSViewRepresentable {
         }
         if field.stringValue != text { field.stringValue = text }
         if coordinator.focusRequest != focusRequest {
+            let shouldFocus = focusRequest.isNewRequest(after: coordinator.focusRequest)
             coordinator.focusRequest = focusRequest
-            field.window?.makeFirstResponder(field)
+            if shouldFocus { field.window?.makeFirstResponder(field) }
         }
     }
 
@@ -161,13 +213,13 @@ private struct WorkspaceSearchField: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var focusRequest: Int
+        var focusRequest: WorkspaceSearchFocusRequest
         var onChange: (String) -> Void
         var onSubmit: () -> Void
         var onCancel: () -> Void
         var onEndEditing: () -> Void = {}
 
-        init(focusRequest: Int, onChange: @escaping (String) -> Void,
+        init(focusRequest: WorkspaceSearchFocusRequest, onChange: @escaping (String) -> Void,
              onSubmit: @escaping () -> Void, onCancel: @escaping () -> Void) {
             self.focusRequest = focusRequest
             self.onChange = onChange

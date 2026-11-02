@@ -6,26 +6,117 @@ import SwiftUI
 struct MessageListRow: View {
     let item: MessageListItem
     let mailbox: MailboxModel
-    let isSelected: Bool
+    let accountMark: String?
+    let accountColor: Color
+
+    #if DEBUG || TERN_PERFORMANCE
+    struct RenderState: Equatable {
+        let selected: Bool
+        let unread: Bool
+        let starred: Bool
+        let textScale: Double
+        let compact: Bool
+    }
+    static var onBodyEvaluation: ((MailboxModel, MailListRowID, RenderState) -> Void)?
+    static var onSelectionObserverEvaluation: ((MailboxModel, MailListRowID) -> Void)?
+    #endif
+
+    /// Observe selection at the realized row, outside the ForEach content closure.
+    private var isSelected: Bool {
+        mailbox.listPreferences.conversations
+            ? mailbox.selectedThreadIDs.contains(item.id.threadKey)
+            : mailbox.selectedMessageRows.contains(item.id)
+    }
+
+    var body: some View {
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = Self.onSelectionObserverEvaluation?(mailbox, item.id)
+        #endif
+        MessageListVisualRow(item: item, mailbox: mailbox, selected: isSelected,
+            dateKey: ThreadDate.short(item.thread.lastDate), accountMark: accountMark, accountColor: accountColor)
+            .background {
+                if NavigationPerformance.rowFeedbackDiagnosticsEnabled {
+                    RowSelectionFeedbackDiagnostic(mailbox: mailbox, row: item.id)
+                }
+            }
+    }
+
+    /// VoiceOver reads the row as one line: state first, then who, what and when.
+    static func accessibilitySummary(unread: Bool, sender: String, subject: String, date: String,
+                                     messageCount: Int, starred: Bool, important: Bool = false,
+                                     labels: [String] = [], attachments: Int = 0, account: String? = nil) -> String {
+        var parts: [String] = []
+        if unread { parts.append("Unread") }
+        parts.append(sender)
+        parts.append(subject.isEmpty ? "No Subject" : subject)
+        parts.append(date)
+        if messageCount > 1 { parts.append("\(messageCount) messages") }
+        if starred { parts.append("starred") }
+        if important { parts.append("important") }
+        if attachments == 1 { parts.append("1 attachment") } else if attachments > 1 { parts.append("\(attachments) attachments") }
+        if !labels.isEmpty { parts.append("labels " + labels.joined(separator: ", ")) }
+        if let account { parts.append("in \(account)") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// Stable per-realized-row native probes exist only for explicit diagnostics.
+/// Keep their observation dependencies outside the actual visual row content.
+private struct RowSelectionFeedbackDiagnostic: View {
+    @Environment(AppModel.self) private var app
+    let mailbox: MailboxModel
+    let row: MailListRowID
+
+    private static func isCurrent(app: AppModel, mailbox: MailboxModel, accountOwner: AccountMailbox,
+                                  row: MailListRowID) -> Bool {
+        guard app.destination == .mail, app.mailbox === mailbox,
+              mailbox.account(id: row.accountID) === accountOwner else { return false }
+        if mailbox.listPreferences.conversations {
+            return mailbox.selectedThreadIDs.count == 1 && mailbox.selectedThreadIDs.contains(row.threadKey)
+        }
+        return mailbox.selectedMessageRows.count == 1 && mailbox.selectedMessageRows.contains(row)
+    }
+
+    var body: some View {
+        if let accountOwner = mailbox.account(id: row.accountID) {
+            VisibleContentProbe(selectedRow: .init(identity: .init(owner: ObjectIdentifier(mailbox),
+                accountOwner: ObjectIdentifier(accountOwner), row: row),
+                isCurrent: { [weak app, weak mailbox, weak accountOwner, row] in
+                    guard let app, let mailbox, let accountOwner else { return false }
+                    return Self.isCurrent(app: app, mailbox: mailbox, accountOwner: accountOwner, row: row)
+                }), isActive: Self.isCurrent(app: app, mailbox: mailbox, accountOwner: accountOwner, row: row))
+        }
+    }
+}
+
+/// Selection changes reach each observer, while unchanged visual content keeps
+/// its existing view graph. Settings and row interaction state remain live here.
+private struct MessageListVisualRow: View, Equatable {
+    let item: MessageListItem
+    let mailbox: MailboxModel
+    let selected: Bool
+    let dateKey: String
     let accountMark: String?
     let accountColor: Color
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @Environment(\.backgroundProminence) private var prominence
     @State private var isHovered = false
 
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.mailbox === rhs.mailbox && lhs.selected == rhs.selected && lhs.dateKey == rhs.dateKey
+            && lhs.accountMark == rhs.accountMark && lhs.accountColor == rhs.accountColor && lhs.item == rhs.item
+    }
+
     private var compact: Bool { mailbox.listPreferences.density == .compact }
     private let avatarSize = Tokens.Control.listAvatar
     private var scale: Double { ReadingPreferences.textScale(textScale) }
     private var thread: ThreadRecord { item.thread }
-    private var displayedLabels: [LabelRecord] {
-        let labels = mailbox.account(id: item.id.accountID)?.labels ?? []
-        return item.displayedLabels(from: labels, mailboxID: mailbox.selectedLabelID)
-    }
+    private var displayedLabels: [LabelRecord] { item.visibleLabels }
     /// Text starts past the unread dot and the avatar; the separator starts with it.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s1_5 * 3 + Tokens.Space.s0_5 + avatarSize }
-    private var showsStar: Bool { thread.isStarred || isHovered || isSelected }
+    private var showsStar: Bool { thread.isStarred || isHovered || selected }
     private var senderLineHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize * scale)
+        let font = NSFont.systemFont(ofSize: MessageListFontMetrics.size(for: .body) * scale)
         return max(avatarSize, ceil(font.ascender - font.descender + font.leading))
     }
     /// Set in Snoozed, where the row shows when the conversation returns.
@@ -36,7 +127,7 @@ struct MessageListRow: View {
 
     /// Row text follows the reader's text size, so dates and counts keep pace with the subject.
     private func scaledFont(_ style: NSFont.TextStyle, weight: Font.Weight = .regular) -> Font {
-        .system(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale, weight: weight)
+        .system(size: MessageListFontMetrics.size(for: style) * scale, weight: weight)
     }
 
     private var labelFont: Font { .system(size: NSFont.systemFontSize(for: .mini) * scale) }
@@ -46,9 +137,14 @@ struct MessageListRow: View {
         let separatorLeading = textLeading
         let labels = displayedLabels
         let lineHeight = senderLineHeight
-        let date = ThreadDate.short(thread.lastDate)
+        let date = dateKey
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = MessageListRow.onBodyEvaluation?(mailbox, item.id,
+            MessageListRow.RenderState(selected: selected, unread: thread.isUnread, starred: thread.isStarred,
+                                       textScale: scale, compact: compact))
+        #endif
         HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
-            Circle().fill(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+            Circle().fill(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
                 .frame(height: lineHeight)
                 .opacity(thread.isUnread ? 1 : 0)
@@ -66,6 +162,7 @@ struct MessageListRow: View {
         .padding(.horizontal, Tokens.Space.s1)
         .padding(.vertical, compact ? Tokens.Space.s1 : Tokens.Space.s1_5)
         .onHover { isHovered = $0 }
+        .ternHover(isEnabled: !selected)
         .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
@@ -74,7 +171,7 @@ struct MessageListRow: View {
     }
 
     @ViewBuilder private var avatar: some View {
-        if let sender = EmailAddress.parseList(item.messages.first?.message.sender ?? thread.participants).first {
+        if let sender = item.sender {
             ContactAvatar(accountID: item.id.accountID, address: sender.address, name: sender.name ?? "",
                           cache: mailbox.cache, accounts: mailbox.accountStore, size: avatarSize)
         } else {
@@ -178,30 +275,12 @@ struct MessageListRow: View {
     private func accessibilitySummary(labels: [LabelRecord], date: String) -> String {
         let account = mailbox.listMixesAccounts
             ? mailbox.account(id: item.id.accountID).map { mailbox.accountTitle($0.account) } : nil
-        return Self.accessibilitySummary(
+        return MessageListRow.accessibilitySummary(
             unread: thread.isUnread, sender: senderText, subject: thread.subject,
             date: wakeTime.map { "Returns \(ThreadDate.wake($0))" } ?? date,
             messageCount: thread.messageCount, starred: thread.isStarred,
             important: mailbox.listPreferences.showsImportance && item.labels.contains(SystemLabel.important),
             labels: labels.map(\.title), attachments: item.attachments.count, account: account)
-    }
-
-    /// VoiceOver reads the row as one line: state first, then who, what and when.
-    static func accessibilitySummary(unread: Bool, sender: String, subject: String, date: String,
-                                     messageCount: Int, starred: Bool, important: Bool = false,
-                                     labels: [String] = [], attachments: Int = 0, account: String? = nil) -> String {
-        var parts: [String] = []
-        if unread { parts.append("Unread") }
-        parts.append(sender)
-        parts.append(subject.isEmpty ? "No Subject" : subject)
-        parts.append(date)
-        if messageCount > 1 { parts.append("\(messageCount) messages") }
-        if starred { parts.append("starred") }
-        if important { parts.append("important") }
-        if attachments == 1 { parts.append("1 attachment") } else if attachments > 1 { parts.append("\(attachments) attachments") }
-        if !labels.isEmpty { parts.append("labels " + labels.joined(separator: ", ")) }
-        if let account { parts.append("in \(account)") }
-        return parts.joined(separator: ", ")
     }
 
     private func attachmentSymbol(_ type: String) -> String {
@@ -242,6 +321,20 @@ private struct MailLabelBadge: View {
         .help(label.title)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label.title)
+    }
+}
+
+/// Native font lookup can invoke AppKit layout/font machinery. Every row uses
+/// the same metrics; the reader's text scale remains a live per-view setting.
+@MainActor
+private enum MessageListFontMetrics {
+    private static var sizes: [NSFont.TextStyle: CGFloat] = [:]
+
+    static func size(for style: NSFont.TextStyle) -> CGFloat {
+        if let value = sizes[style] { return value }
+        let value = NSFont.preferredFont(forTextStyle: style).pointSize
+        sizes[style] = value
+        return value
     }
 }
 

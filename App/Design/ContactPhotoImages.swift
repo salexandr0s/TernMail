@@ -58,42 +58,37 @@ enum ContactPhotoImages {
         return output as Data
     }
 
-    /// Cached bytes still need validation, but ImageIO work must not occupy the UI actor.
-    static func prepareCachedThumbnail(_ data: Data) async throws -> Data {
-        try Task.checkCancellation()
-        let preparation = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            let result = try thumbnail(data)
-            try Task.checkCancellation()
-            return result
-        }
-        return try await withTaskCancellationHandler {
-            let result = try await preparation.value
-            try Task.checkCancellation()
-            return result
-        } onCancel: {
-            preparation.cancel()
-        }
-    }
-
     @MainActor
-    static func image(for record: ContactPhotoRecord, address: String, cache: MailCache, accounts: AccountStore) async -> NSImage? {
+    static func image(for record: ContactPhotoRecord, address: String, cache: MailCache, accounts: AccountStore,
+                      contextID: String = "") async -> NSImage? {
         do {
-            guard try await isEnabled(record.accountID, accounts: accounts) else { return nil }
-            let data: Data
-            if let cached = record.data, let date = record.fetchedAt, date > Date().addingTimeInterval(-7 * 86400),
-               let clean = try? await prepareCachedThumbnail(cached) { data = clean }
-            else {
-                try Task.checkCancellation()
-                data = try await loadThumbnail(url: record.url)
-                try Task.checkCancellation()
-                guard try await isEnabled(record.accountID, accounts: accounts),
-                      try await cache.storeContactPhoto(data, for: record) else { return nil }
+            guard try await isEnabled(record.accountID, accounts: accounts) else {
+                ContactThumbnailCache.shared.remove(accountID: record.accountID)
+                return nil
             }
+            if let cached = record.data, let date = record.fetchedAt, date > Date().addingTimeInterval(-7 * 86400) {
+                do {
+                    let image = try await ContactThumbnailCache.shared.image(
+                        for: ContactPhotoCacheKey(record, contextID: contextID), data: cached)
+                    guard try await cache.contactPhoto(accountID: record.accountID, address: address)?.version == record.version,
+                          try await isEnabled(record.accountID, accounts: accounts), !Task.isCancelled else { return nil }
+                    return image
+                } catch is CancellationError { return nil }
+                catch { /* An invalid disk thumbnail is replaced from its trusted source. */ }
+            }
+            let data = try await loadThumbnail(url: record.url)
             try Task.checkCancellation()
             guard try await isEnabled(record.accountID, accounts: accounts),
-                  try await cache.contactPhoto(accountID: record.accountID, address: address)?.version == record.version else { return nil }
-            return NSImage(data: data)
+                  try await cache.storeContactPhoto(data, for: record) else { return nil }
+            try Task.checkCancellation()
+            guard try await isEnabled(record.accountID, accounts: accounts),
+                  let current = try await cache.contactPhoto(accountID: record.accountID, address: address),
+                  current.version == record.version else { return nil }
+            let image = try await ContactThumbnailCache.shared.image(for: ContactPhotoCacheKey(current, contextID: contextID), data: data)
+            guard try await isEnabled(record.accountID, accounts: accounts),
+                  try await cache.contactPhoto(accountID: record.accountID, address: address)?.version == record.version,
+                  !Task.isCancelled else { return nil }
+            return image
         } catch { return nil }
     }
 

@@ -21,6 +21,8 @@ import Testing
         #expect(summary.count == 5)
         #expect(summary.median == .milliseconds(30))
         #expect(summary.p90 == .milliseconds(50))
+        #expect(summary.p95 == .milliseconds(50))
+        #expect(summary.p99 == .milliseconds(50))
         #expect(summary.max == .milliseconds(50))
         #expect(recorder.summary(for: .passToListValue) == nil)
     }
@@ -30,5 +32,11 @@ import Testing
         let token = TernSignposts.begin(.actionToGmail)
         TernSignposts.end(token, recorder: recorder)
         #expect(recorder.records(for: .actionToGmail).count == 1)
+    }
+
+    @Test func cancelledIntervalsDoNotEnterSuccessfulTimingSummaries() {
+        let before = SpanRecorder.shared.records.count
+        TernSignposts.cancel(TernSignposts.begin(.workspaceSwitchToContent))
+        #expect(SpanRecorder.shared.records.count == before)
     }
 }

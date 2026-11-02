@@ -94,6 +94,9 @@ struct SavedSearchRows: View {
             ForEach(mailbox.navigation.searches) { search in
                 if let target = mailbox.favoriteMailboxID(.savedSearch(id: search.id)) {
                     Label(search.name, systemImage: "magnifyingglass")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .ternHover(isEnabled: mailbox.sidebarSelection != target)
                         .tag(target)
                         .popover(isPresented: Bindable(mailbox.navigation).searchToEdit.equals(search), arrowEdge: .trailing) {
                             SavedSearchEditor(mailbox: mailbox, existing: search)

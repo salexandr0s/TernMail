@@ -21,6 +21,9 @@ struct CalendarView: View {
     @AppStorage(CalendarDisplayMode.storageKey, store: CalendarDefaults.store) private var storedMode = CalendarDisplayMode.week
     @State private var sidebarState: CalendarSidebarState
     private let hasToolbarSidebar: Bool
+    @State private var heldPresentation: CalendarPresentationSnapshot?
+    @State private var heldGridIdentity: CalendarGridIdentity?
+    @State private var heldEvents: [CalendarDisplayEvent] = []
     @FocusState private var hasKeyboardFocus: Bool
 
     init(model: CalendarModel, isActive: Bool = true, sidebarState: CalendarSidebarState? = nil) {
@@ -52,6 +55,7 @@ struct CalendarView: View {
         }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
+        .environment(\.calendarPresentation, isActive ? model.presentation : heldPresentation)
         .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
             MailUserActivity.describeCalendarDay(
                 activity, date: model.date, calendar: model.calendar,
@@ -60,8 +64,16 @@ struct CalendarView: View {
         }
         .onAppear { model.mode = storedMode }
         .onChange(of: model.mode) { _, mode in storedMode = mode }
+        .onChange(of: currentGridIdentity, initial: true) { _, identity in
+            if isActive || heldGridIdentity == nil || identity.lifecycle != heldGridIdentity?.lifecycle
+                || identity.accessRevision != heldGridIdentity?.accessRevision {
+                heldGridIdentity = identity
+                heldPresentation = model.presentation
+                heldEvents = model.events
+            }
+        }
         .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
-        .task(id: rangeRequest) { if isActive { await model.reloadOccurrences() } }
+        .task(id: rangeRequest) { if isActive { await model.activateRange() } }
         .task(id: searchRequest) {
             guard isActive else { return }
             await model.searchEvents()
@@ -221,9 +233,12 @@ struct CalendarView: View {
                                       edit: model.edit, delete: requestDelete, duplicate: model.duplicate)
             }
         } else {
-            CalendarGridViews(mode: $model.mode, date: $model.date, calendar: model.calendar, events: model.events,
+            CalendarGridViews(presentationID: isActive ? currentGridIdentity : heldGridIdentity ?? currentGridIdentity,
+                              mode: $model.mode, date: $model.date, calendar: model.calendar,
+                              events: isActive ? model.events : heldEvents,
                               selectedID: $model.selectedEventID, create: model.beginNew(in:), edit: model.edit,
                               change: prepareChange, delete: requestDelete, duplicate: model.duplicate, dropMail: dropMail)
+                .equatable()
                 .focusable().focused($hasKeyboardFocus)
                 .onDeleteCommand { if isActive, let selected, selected.canEdit { requestDelete(selected) } }
                 .onCopyCommand { copyProviders() }
@@ -301,6 +316,12 @@ struct CalendarView: View {
     private var rangeRequest: [String] {
         [String(isActive), model.mode.rawValue, String(model.date.timeIntervalSince1970),
          model.calendar.timeZone.identifier, String(model.firstWeekday)]
+    }
+
+    private var currentGridIdentity: CalendarGridIdentity {
+        .init(mode: model.mode.rawValue, date: model.date, calendar: model.calendar,
+              selectedID: model.selectedEventID, revision: model.presentationRevision,
+              lifecycle: model.lifecycleRevision, accessRevision: model.accessRevision)
     }
 
     private var searchRequest: [String] {

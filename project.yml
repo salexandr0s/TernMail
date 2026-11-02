@@ -40,6 +40,7 @@ targets:
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSHumanReadableCopyright: ""
+        TernBuildRevision: $(TERN_BUILD_REVISION)
         TernGoogleClientID: $(GOOGLE_CLIENT_ID)
         TernGoogleClientIDPrefix: $(GOOGLE_CLIENT_ID_PREFIX)
         TernGoogleRedirectScheme: $(GOOGLE_REDIRECT_SCHEME)

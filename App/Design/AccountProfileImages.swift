@@ -73,7 +73,7 @@ final class AccountProfileImages {
         }
     }
 
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
     func setAuditImage(_ image: NSImage, for accountID: String) {
         guard ProcessInfo.processInfo.arguments.contains("--ui-audit") else { return }
         remove(accountID: accountID)

@@ -96,6 +96,8 @@
 	</array>
 	<key>OSAScriptingDefinition</key>
 	<string>Tern.sdef</string>
+	<key>TernBuildRevision</key>
+	<string>$(TERN_BUILD_REVISION)</string>
 	<key>TernGoogleClientID</key>
 	<string>$(GOOGLE_CLIENT_ID)</string>
 	<key>TernGoogleClientIDPrefix</key>

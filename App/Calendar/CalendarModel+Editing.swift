@@ -28,8 +28,9 @@ extension CalendarModel {
                 let id = display.event.recurringEventId ?? display.event.id
                 let master = try await engine.readEvent(calendarID: display.calendarID, eventID: id, refresh: false)
                 guard revision == editRevision else { return }
-                var source = display
-                source.event.recurrence = master.recurrence
+                var sourceEvent = display.event
+                sourceEvent.recurrence = master.recurrence
+                let source = display.replacingEvent(sourceEvent)
                 var proposed = proposedEvent ?? source.event
                 proposed.recurrence = source.event.recurrence
                 var draft = CalendarEditorDraft(event: proposed, calendarKey: source.calendarKey, source: source)
@@ -244,8 +245,9 @@ extension CalendarModel {
             let start = display.event.originalStartTime?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? display.start
             let exceptions = try await engine.futureExceptions(calendarID: display.calendarID, eventID: id, from: scope == .series ? .distantPast : start)
             guard revision == lifecycleRevision else { throw CalendarModelError.unavailable }
-            var source = display
-            source.event.recurrence = original.recurrence
+            var sourceEvent = display.event
+            sourceEvent.recurrence = original.recurrence
+            let source = display.replacingEvent(sourceEvent)
             var draft = CalendarEditorDraft(event: source.event, calendarKey: display.calendarKey, source: source, editScope: scope)
             draft.seriesMaster = original; draft.isDeletion = true
             draft.followingExceptionsCount = exceptions.count

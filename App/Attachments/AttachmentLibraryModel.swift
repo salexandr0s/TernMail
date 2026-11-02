@@ -14,6 +14,8 @@ final class AttachmentLibraryModel {
     private var loadedPage: AttachmentLibraryPage?
     private var loadedQuery: AttachmentLibraryQuery?
     private var currentPage: AttachmentLibraryPage? { loadedQuery == query ? loadedPage : nil }
+    var isPageReady: Bool { currentPage != nil }
+    private(set) var pagePresentationRevision = 0
     var items: [AttachmentLibraryItem] { currentPage?.items ?? [] }
     var totalCount: Int { currentPage?.totalCount ?? 0 }
     var hasMore: Bool { currentPage?.hasMore ?? false }
@@ -195,8 +197,11 @@ final class AttachmentLibraryModel {
             guard observationRevision == revision, query == request else { return }
             for try await page in mailbox.cache.observeAttachmentLibrary(query: request) {
                 guard !Task.isCancelled, observationRevision == revision, query == request else { return }
-                if loadedPage != page { loadedPage = page }
-                if loadedQuery != request { loadedQuery = request }
+                if loadedPage != page || loadedQuery != request {
+                    if loadedPage != page { loadedPage = page }
+                    if loadedQuery != request { loadedQuery = request }
+                    pagePresentationRevision += 1
+                }
                 let retainedSelection = selection.intersection(page.items.map(\.id))
                 if selection != retainedSelection { selection = retainedSelection }
                 if isLoading { isLoading = false }

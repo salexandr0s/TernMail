@@ -99,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NavigationPerformance.shared.installInputMonitoring()
         MailNotificationRouter.shared.install()
         MailScriptingBridge.shared.bind(model)
         // The Info.plist NSServices entries call these handlers. NSApp keeps the provider.
@@ -164,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.continueActivity(userActivity)
     }
 
-    #if DEBUG
+    #if DEBUG || TERN_PERFORMANCE
     /// Appearance checks affect only the synthetic audit app, never system preferences.
     func applicationWillFinishLaunching(_ notification: Notification) {
         let arguments = ProcessInfo.processInfo.arguments

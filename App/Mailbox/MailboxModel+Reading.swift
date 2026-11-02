@@ -13,8 +13,18 @@ extension MailboxModel {
 
     func markConversationRead(_ key: ThreadKey, messageID: String? = nil) async {
         guard let owner = account(id: key.accountID) else { return }
-        let target: MailActionTarget = messageID.map { .messages([$0]) } ?? .threads([key.threadID])
-        do { _ = try await owner.engine.perform(.markRead, target: target) }
+        do {
+            let unread = try await cache.read { tx in
+                try tx.currentLabels(threadID: key.threadID, accountID: key.accountID).contains {
+                    $0.value.contains(SystemLabel.unread) && (messageID == nil || $0.key == messageID)
+                }
+            }
+            guard unread, !Task.isCancelled else { return }
+            invalidateListSnapshots()
+            defer { invalidateListSnapshots() }
+            let target: MailActionTarget = messageID.map { .messages([$0]) } ?? .threads([key.threadID])
+            _ = try await owner.engine.perform(.markRead, target: target)
+        }
         catch { if !Task.isCancelled { notice = .init(message: "The reading state could not be updated.", isError: true) } }
     }
 

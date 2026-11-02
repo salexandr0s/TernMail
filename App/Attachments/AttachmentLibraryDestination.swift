@@ -19,6 +19,20 @@ struct AttachmentLibraryDestination: View {
             }
             AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
+                .background {
+                    ZStack {
+                        VisibleContentProbe(kind: .workspace, isActive: model.isPageReady,
+                                            revision: model.pagePresentationRevision)
+                        VisibleContentProbe(kind: .mailbox, isActive: model.isPageReady,
+                                            revision: model.pagePresentationRevision)
+                    }
+                }
+                .onChange(of: model.isPageReady, initial: true) { _, ready in
+                    if ready { reportReady() }
+                }
+                .onChange(of: model.pagePresentationRevision) { _, _ in
+                    if model.isPageReady { reportReady() }
+                }
         }
         .toolbar(removing: .sidebarToggle)
         .modifier(MailNoticeOverlay(mailbox: mailbox))
@@ -34,6 +48,12 @@ struct AttachmentLibraryDestination: View {
             model.sourceLink = nil
             openWindow(id: ConversationWindow.sceneID, value: link)
         }
+    }
+
+    private func reportReady() {
+        guard app.destination == .mail, mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID else { return }
+        NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained)
+        NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .retained)
     }
 }
 

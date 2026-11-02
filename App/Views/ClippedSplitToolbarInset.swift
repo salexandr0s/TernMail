@@ -10,6 +10,10 @@ final class ClippedSplitToolbarInset {
     private(set) var top: CGFloat = 0
     @ObservationIgnored private weak var split: NSSplitView?
     @ObservationIgnored private var scheduled = false
+    #if DEBUG || TERN_PERFORMANCE
+    @ObservationIgnored private(set) var diagnosticPublicationCount = 0
+    @ObservationIgnored private(set) var diagnosticPublications: [(sequence: Int, top: CGFloat, source: ObjectIdentifier)] = []
+    #endif
 
     func measure(_ split: NSSplitView) {
         self.split = split
@@ -22,7 +26,14 @@ final class ClippedSplitToolbarInset {
             guard let split = self.split, let window = split.window else { return }
             let overlap = split.convert(split.bounds, to: nil).maxY - window.contentLayoutRect.maxY
             let missing = max(0, overlap - split.safeAreaInsets.top)
-            if abs(top - missing) > 0.5 { top = missing }
+            if abs(top - missing) > 0.5 {
+                #if DEBUG || TERN_PERFORMANCE
+                diagnosticPublicationCount += 1
+                diagnosticPublications.append((diagnosticPublicationCount, missing, ObjectIdentifier(split)))
+                if diagnosticPublications.count > 64 { diagnosticPublications.removeFirst() }
+                #endif
+                top = missing
+            }
         }
     }
 

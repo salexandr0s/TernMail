@@ -280,6 +280,9 @@ struct InboxCategoryRows: View {
             let box = SystemMailbox(labelID: category.labelID)
             Label(box.title, systemImage: box.systemImage)
                 .padding(.leading, Tokens.Space.s8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .ternHover(isEnabled: mailbox.sidebarSelection != .account(accountID, category.labelID))
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
                 .tag(MailboxID.account(accountID, category.labelID))
         }

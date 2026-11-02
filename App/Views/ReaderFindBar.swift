@@ -1,6 +1,17 @@
 import AppKit
+import MailStore
 import SwiftUI
 import WebKit
+
+struct ReaderSearchIdentity: Equatable {
+    struct Message: Equatable { let id: String; let body: ReaderBodyVersion? }
+    let messages: [Message]
+    let isEnabled: Bool
+    init(messages: [MessageDetail], isEnabled: Bool) {
+        self.messages = messages.map { Message(id: $0.id, body: $0.body.map(ReaderBodyVersion.init)) }
+        self.isEnabled = isEnabled
+    }
+}
 
 /// Edit ▸ Find… over the open conversation. Each message body is its own web
 /// view, so a search steps through them in reading order and wraps around.
@@ -14,10 +25,34 @@ final class ReaderFindModel {
     var focusRequest = 0
     /// Message IDs as shown, so Next and Previous follow the reading order.
     var order: [String] = []
+    private(set) var requestedMessageID: String?
+    private(set) var requestRevision = 0
 
     private var views: [String: WKWebView] = [:]
+    private var readable: Set<String> = []
     private var currentID: String?
     private var search: Task<Void, Never>?
+    private var searchableText: [String: String] = [:]
+    private var versions: [String: ReaderBodyVersion] = [:]
+
+    func setSearchableText(_ text: String, for messageID: String) { searchableText[messageID] = text }
+
+    func discardSourceText() {
+        hide()
+        searchableText.removeAll(); versions.removeAll()
+    }
+
+    func prepareSearch(messages: [MessageDetail]) async {
+        for message in messages {
+            guard !Task.isCancelled, let body = message.body else { continue }
+            let version = ReaderBodyVersion(body)
+            guard versions[message.id] != version else { continue }
+            guard let text = try? await ReaderPreparedCache.shared.searchableText(body), !Task.isCancelled else { return }
+            searchableText[message.id] = text
+            versions[message.id] = version
+        }
+        if isVisible, !query.isEmpty { find(forward: true) }
+    }
 
     func show() {
         isVisible = true
@@ -29,14 +64,19 @@ final class ReaderFindModel {
         isVisible = false
         cameUpEmpty = false
         currentID = nil
+        requestedMessageID = nil
         for view in views.values { clearSelection(in: view) }
     }
 
     func register(_ view: WKWebView, for messageID: String) {
         views[messageID] = view
+        readable.remove(messageID)
     }
 
+    func didBecomeReadable(_ messageID: String) { readable.insert(messageID) }
+
     func unregister(_ view: WKWebView) {
+        for (id, existing) in views where existing === view { readable.remove(id) }
         views = views.filter { $0.value !== view }
     }
 
@@ -53,7 +93,13 @@ final class ReaderFindModel {
             cameUpEmpty = false
             return
         }
-        let ordered = order.compactMap { id in views[id].map { (id: id, view: $0) } }
+        // A missing index is unknown, never evidence that a message cannot
+        // match. This keeps Find correct while bodies are still hydrating.
+        let ordered = order.filter { id in
+            guard let text = searchableText[id] else { return true }
+            guard let firstWord = query.split(whereSeparator: \.isWhitespace).first else { return true }
+            return text.range(of: String(firstWord), options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }
         guard !ordered.isEmpty else {
             cameUpEmpty = true
             return
@@ -63,12 +109,24 @@ final class ReaderFindModel {
         configuration.wraps = false
         search = Task { [weak self] in
             guard let self else { return }
-            var index = ordered.firstIndex { $0.id == self.currentID } ?? (forward ? 0 : ordered.count - 1)
+            var index = ordered.firstIndex { $0 == self.currentID } ?? (forward ? 0 : ordered.count - 1)
             // One pass more than there are messages: the starting one is
             // searched again from its edge once its selection is cleared.
             for _ in 0...ordered.count {
                 guard !Task.isCancelled else { return }
-                let (id, view) = ordered[index]
+                let id = ordered[index]
+                requestedMessageID = id
+                requestRevision &+= 1
+                // Scrolling materializes only the candidate body, not the
+                // entire expanded conversation. Wait for its first layout.
+                var attempts = 0
+                while (views[id] == nil || !readable.contains(id)), attempts < 500 {
+                    guard !Task.isCancelled else { return }
+                    try? await Task.sleep(for: .milliseconds(10))
+                    attempts += 1
+                }
+                guard !Task.isCancelled else { return }
+                guard let view = views[id], readable.contains(id) else { cameUpEmpty = false; return }
                 let result = try? await view.find(query, configuration: configuration)
                 guard !Task.isCancelled else { return }
                 if result?.matchFound == true {

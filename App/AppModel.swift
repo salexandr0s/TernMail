@@ -40,7 +40,16 @@ final class AppModel {
     @ObservationIgnored private var spotlightIndexer: MailSpotlightIndexer?
     @ObservationIgnored private var mailBadges: MailBadgeController?
     @ObservationIgnored private var preferenceReconciliation: Task<Void, Never>?
-    var destination: WorkspaceDestination = .mail
+    var destination: WorkspaceDestination = .mail {
+        didSet {
+            guard destination != oldValue else { return }
+            NavigationPerformance.shared.begin(.workspace, destination: destination.rawValue)
+            if destination == .calendar {
+                NavigationPerformance.shared.cancel(.reader)
+                NavigationPerformance.shared.cancel(.mailbox)
+            }
+        }
+    }
     @ObservationIgnored var assistantNavigationTask: Task<Void, Never>?
     /// Set by the main window's root view. The Dock, notifications and a
     /// Dock-icon click with no window open use it to show the window again.
@@ -107,6 +116,8 @@ final class AppModel {
         guard !isResettingCache, !isSigningIn, let cache, let accounts else { return }
         let readiness = try await cache.cacheResetReadiness()
         guard readiness.canReset else { throw CacheMaintenanceError.recoverableWork(readiness) }
+        ReaderCacheLifecycle.reset()
+        ContactThumbnailCache.shared.removeAll()
         isResettingCache = true
         await maintenance.suspend()
         defer { isResettingCache = false; maintenance.resume(); startCacheMaintenance() }
@@ -121,6 +132,10 @@ final class AppModel {
             try await accounts.importAttachmentCategoryOverrides(categories)
             inboxUpdatesAreStopped = true
             await closeMailbox()
+            ReaderCacheLifecycle.reset()
+            ContactThumbnailCache.shared.removeAll()
+            AttachmentPresentation.removeAll()
+            await EmailCalendarPreparation.shared.removeAll()
             spotlight.removeAll()
             do {
                 try await cache.resetDisposableCache()
@@ -410,7 +425,7 @@ final class AppModel {
     private func restoreAccounts() async {
         guard phase == .loading else { return }
         do {
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
             if ProcessInfo.processInfo.arguments.contains("--ui-audit") || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
                 let cache = try MailCache.inMemory()
                 let accounts = try AccountStore.inMemory()
@@ -464,6 +479,7 @@ final class AppModel {
                     schedulePreferenceReconciliation()
                     spotlight.start()
                     await mailbox.start()
+                    await PerformanceAudit.runIfRequested(app: self)
                 }
                 return
             }
@@ -599,6 +615,8 @@ final class AppModel {
             AccountProfileImages.shared.refresh(accountID: account.id, tokens: session)
             accountsNeedingSignIn.remove(account.id)
             let turnedOff = AccountFeature.named(stored?.enabledFeatures ?? []).subtracting(AccountFeature.named(account.enabledFeatures))
+            if turnedOff.contains(.contacts) { ContactThumbnailCache.shared.remove(accountID: account.id) }
+            if turnedOff.contains(.calendar) { await EmailCalendarPreparation.shared.remove(accountID: account.id) }
             defer { if !turnedOff.isEmpty { reportTurnedOff(turnedOff, for: account) } }
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
@@ -707,12 +725,18 @@ final class AppModel {
             try await session.replace(with: user.state)
             guard sessions[accountID] === session, session.isSignedIn else { return nil }
             let (granted, hostedDomain) = (user.grantedScopes, user.hostedDomain)
-            try await accounts.updateAccount(id: accountID) { account in
+            let updated = try await accounts.updateAccount(id: accountID) { account in
                 // Features turned off while Google's page was open stay off.
                 let wanted = AccountFeature.named(account.enabledFeatures).union([feature])
                 account.grantedScopes = granted
                 account.hostedDomain = hostedDomain
                 account.enabledFeatures = AccountFeature.names(of: wanted.filter { GoogleScopes.isCovered($0, by: granted) })
+            }
+            if updated?.enabledFeatures.contains(AccountFeature.contacts.rawValue) != true {
+                ContactThumbnailCache.shared.remove(accountID: accountID)
+            }
+            if updated?.enabledFeatures.contains(AccountFeature.calendar.rawValue) != true {
+                await EmailCalendarPreparation.shared.remove(accountID: accountID)
             }
             await calendarModel?.refresh()
             await inboxWatchers.removeValue(forKey: accountID)?.stop()
@@ -731,10 +755,12 @@ final class AppModel {
                 account.enabledFeatures.removeAll { $0 == feature.rawValue }
             }
             if feature == .contacts {
+                ContactThumbnailCache.shared.remove(accountID: accountID)
                 try await cache.write { tx in try tx.deleteContacts(accountID: accountID) }
             }
             await refreshInboxUpdates()
             if feature == .calendar {
+                await EmailCalendarPreparation.shared.remove(accountID: accountID)
                 await calendarModel?.removeAccount(accountID)
             } else if feature == .calendarManagement || feature == .calendarSharing {
                 await calendarModel?.refresh()
@@ -767,6 +793,8 @@ final class AppModel {
                 account.hostedDomain = hostedDomain
                 account.enabledFeatures = features
             }
+            if !features.contains(AccountFeature.contacts.rawValue) { ContactThumbnailCache.shared.remove(accountID: record.id) }
+            if !features.contains(AccountFeature.calendar.rawValue) { await EmailCalendarPreparation.shared.remove(accountID: record.id) }
             corrected.append(updated ?? record)
         }
         return corrected
@@ -1009,7 +1037,7 @@ final class AppModel {
     /// the combined Inbox when there are several.
     private func mailboxService(for accountID: String) -> (any GmailService)? {
         if let session = sessions[accountID] { return GmailClient(tokens: session, gmailRequestBudget: session.gmailRequestBudget) }
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
         if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
             return accountID == "ui-audit-2" ? AuditGmail(.second) : AuditGmail()
         }
@@ -1098,6 +1126,12 @@ final class AppModel {
     /// attached to their drafts, which only their local drafts lead to.
     private func removeCachedData(accountIDs: Set<String>) async throws {
         guard let cache else { return }
+        for accountID in accountIDs {
+            ReaderCacheLifecycle.invalidate(accountID: accountID)
+            ContactThumbnailCache.shared.remove(accountID: accountID)
+            await EmailCalendarPreparation.shared.remove(accountID: accountID)
+        }
+        AttachmentPresentation.removeAll()
         spotlight.remove(accountIDs: accountIDs)
         let draftIDs = try await cache.write { tx in
             var draftIDs: [String] = []

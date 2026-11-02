@@ -8,7 +8,6 @@ struct MainView: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workspaceToolbarID) private var toolbarIdentifier
-    @FocusedValue(\.selectedMailQuote) private var selectedQuote
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var mailWidth: CGFloat = 0
@@ -151,7 +150,8 @@ struct MainView: View {
             }
         }
         .background {
-            ShortcutMonitor(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID, perform: perform)
+            MailShortcutContext(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID,
+                perform: perform)
         }
         .background { WindowReader { hostWindow = $0 } }
         .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
@@ -198,54 +198,12 @@ struct MainView: View {
     }
 
     private func mailContent(topInset: CGFloat) -> some View {
-        MailWorkspaceColumns(columnVisibility: $columnVisibility, showsReader: !hidesReader) {
-            SidebarView(mailbox: mailbox)
-                // AppKit asserts when the system toggle, or any item over the sidebar
-                // column, meets a saved customizable toolbar or a second window, so
-                // the workspace toolbar carries its own sidebar button.
-                .toolbar(removing: .sidebarToggle)
-                .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-                .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .navigation, isPresented: showsAssistant) }
-                .padding(.trailing, Tokens.Layout.columnGutter)
-                .overlay(alignment: .trailing) {
-                    SplitDividerHandle()
-                        .frame(width: Tokens.Layout.columnGutter)
-                }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if $0 > 0 { sidebarColumnWidth = $0 } }
-                .navigationSplitViewColumnWidth(
-                    min: Tokens.Layout.sidebarMinWidth + Tokens.Layout.columnGutter,
-                    ideal: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter,
-                    max: showsAssistant ? AssistantSidebarLayout.navigationMinimum : Tokens.Layout.sidebarMaxWidth + Tokens.Layout.columnGutter
-                )
-        } content: {
-            Group {
-                if showsOutbox {
-                    OutboxView(mailbox: mailbox, listFocused: $outboxFocused)
-                } else {
-                    ThreadListView(mailbox: mailbox)
-                }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-            .background { MailColumnProbe(sizing: paneSizing, toolbarInset: toolbarInset, pane: .list, isPresented: showsAssistant) }
-            .onChange(of: mailbox.search.listFocusRequest) {
-                outboxFocused = showsOutbox
-            }
-            .padding(.trailing, Tokens.Layout.columnGutter)
-            .overlay(alignment: .trailing) {
-                SplitDividerHandle()
-                    .frame(width: Tokens.Layout.columnGutter)
-            }
-            .navigationSplitViewColumnWidth(
-                min: Tokens.Layout.listMinWidth + Tokens.Layout.columnGutter,
-                ideal: showsAssistant ? AssistantSidebarLayout.listMinimum : Tokens.Layout.listWidth + Tokens.Layout.columnGutter,
-                max: showsAssistant ? AssistantSidebarLayout.listMinimum : nil
-            )
-        } detail: {
-            DetailView(mailbox: mailbox)
-                .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: topInset) }
-                .navigationSplitViewColumnWidth(min: Tokens.Assistant.readerMinWidth, ideal: Tokens.Assistant.readerMinWidth)
-                .background(Tokens.Surface.canvas)
-        }
+        MailColumnsContent(mailbox: mailbox,
+            identity: .init(columnVisibility: columnVisibility, showsReader: !hidesReader,
+                showsAssistant: showsAssistant, topInset: topInset, outboxFocused: outboxFocused),
+            columnVisibility: $columnVisibility, sidebarColumnWidth: $sidebarColumnWidth,
+            outboxFocused: $outboxFocused, paneSizing: paneSizing, toolbarInset: toolbarInset)
+        .equatable()
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
         .modifier(MailNoticeOverlay(mailbox: mailbox))
@@ -306,7 +264,7 @@ struct MainView: View {
     /// A single-key shortcut does what its menu command does, when that is
     /// enabled. Returns false when it does nothing, so the key goes on to the
     /// focused view: Return with a selection reaches the list, for one.
-    private func perform(_ action: SingleKeyShortcuts.Action) -> Bool {
+    private func perform(_ action: SingleKeyShortcuts.Action, selectedQuote: SelectedMailQuote?) -> Bool {
         guard canPerform(action) else { return false }
         switch action {
         case .nextConversation: mailbox.selectAdjacentThread(1)
@@ -322,9 +280,9 @@ struct MainView: View {
         case .snooze: mailbox.showSnoozeDate()
         case .search: mailbox.search.focusField()
         case .newMessage: newMessage()
-        case .reply: reply(.reply)
-        case .replyAll: reply(.replyAll)
-        case .forward: reply(.forward)
+        case .reply: reply(.reply, quote: selectedQuote)
+        case .replyAll: reply(.replyAll, quote: selectedQuote)
+        case .forward: reply(.forward, quote: selectedQuote)
         case .undo: undoManager?.undo()
         case .showShortcuts: openWindow(id: KeyboardShortcutsView.sceneID)
         case .go(let destination): mailbox.go(to: Self.labelID(of: destination))
@@ -348,7 +306,7 @@ struct MainView: View {
         }
     }
 
-    private func reply(_ kind: ReplyKind) {
+    private func reply(_ kind: ReplyKind, quote selectedQuote: SelectedMailQuote?) {
         Task {
             if let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1,
                let quote = selectedQuote, quote.belongsTo(accountID: key.accountID, threadID: key.threadID,
@@ -371,6 +329,19 @@ struct MainView: View {
         case .drafts: SystemLabel.draft
         case .sent: SystemLabel.sent
         case .allMail: SystemLabel.allMail
+        }
+    }
+}
+
+/// Keeps selected-text focus observation with the shortcut handler.
+struct MailShortcutContext: View {
+    @FocusedValue(\.selectedMailQuote) private var selectedQuote
+    let isEnabled: Bool
+    let perform: (SingleKeyShortcuts.Action, SelectedMailQuote?) -> Bool
+
+    var body: some View {
+        ShortcutMonitor(isEnabled: isEnabled) { action in
+            perform(action, selectedQuote)
         }
     }
 }
@@ -413,41 +384,5 @@ private struct SignOutDialogs: ViewModifier {
             ) { account in
                 Task { await app.signOut(of: account.id) }
             }
-    }
-}
-
-private struct DetailView: View {
-    let mailbox: MailboxModel
-    @Environment(AppModel.self) private var app
-
-    private struct ReaderIdentity: Hashable { let key: ThreadKey; let messageID: String? }
-
-    var body: some View {
-        let ids = mailbox.selectedThreadIDs
-        if mailbox.selectedLabelID == MailboxModel.outboxID, !mailbox.search.isActive {
-            TernEmptyState(
-                title: "Outgoing Messages",
-                systemImage: "tray.and.arrow.up",
-                message: "Messages wait here until Gmail receives them. Double-click to open."
-            )
-        } else if !mailbox.listPreferences.conversations, mailbox.selectedMessageRows.count > 1 {
-            TernEmptyState(title: "\(mailbox.selectedMessageRows.count) Messages Selected", systemImage: "square.stack",
-                message: "Use the toolbar to organize your selection.")
-        } else if ids.count == 1, let key = ids.first {
-            let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
-            ThreadView(key: key, mailbox: mailbox, selectedMessageID: messageID, isReaderActive: app.destination == .mail)
-                .id(ReaderIdentity(key: key, messageID: messageID))
-        } else if ids.count > 1 {
-            TernEmptyState(
-                title: "\(ids.count) Conversations Selected",
-                systemImage: "square.stack",
-                message: "Use the toolbar to organize your selection."
-            )
-        } else {
-            TernEmptyState(
-                title: mailbox.listPreferences.conversations ? "No Conversation Selected" : "No Message Selected",
-                systemImage: "envelope.open"
-            )
-        }
     }
 }

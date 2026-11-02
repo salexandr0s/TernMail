@@ -18,7 +18,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     let sidebar: SidebarToggle?
     let onSelect: (WorkspaceSection) -> Void
     let onNewMessage: () -> Void
-    let onReply: (ReplyKind) -> Void
+    let onReply: (ReplyKind, SelectedMailQuote?) -> Void
     let isAssistantPresented: Bool
     let isAssistantAvailable: Bool
     let onToggleAssistant: () -> Void

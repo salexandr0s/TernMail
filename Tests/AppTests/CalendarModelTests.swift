@@ -40,6 +40,262 @@ import Testing
         #expect(!model.isLoading)
     }
 
+    @Test func oversizedRefreshCannotLeaveAnOlderRetainedSnapshotForItsRange() async throws {
+        try await withFixture { fixture in
+            let original = Self.event(id: "growing")
+            let day = try #require(original.startDate)
+            fixture.model.mode = .day
+            fixture.model.date = day
+            await fixture.service.put(original)
+            await fixture.model.activateRange()
+            let key = fixture.model.rangeIdentity
+            #expect(fixture.model.rangeSnapshots[key] != nil)
+
+            var refreshed = original
+            refreshed.summary = "Updated oversized event"
+            refreshed.description = String(repeating: "x", count: 7 * 1_024 * 1_024)
+            await fixture.service.put(refreshed)
+            await fixture.model.reloadOccurrences()
+
+            #expect(fixture.model.events.first?.title == refreshed.summary)
+            #expect(fixture.model.rangeSnapshots[key] == nil)
+            #expect(!fixture.model.rangeSnapshotOrder.contains(key))
+            fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: 1, to: day))
+            await fixture.model.activateRange()
+            fixture.model.date = day
+            await fixture.model.activateRange()
+            #expect(fixture.model.events.first?.title == refreshed.summary)
+        }
+    }
+
+    @Test func adjacentLocalDaysPrepareWithoutPublishingOrRequestingAndActivateWarm() async throws {
+        try await withFixture { fixture in
+            let center = try await fixture.cacheDayNeighborhood()
+            fixture.model.isVisible = true
+            await fixture.model.reloadOccurrences(refresh: false)
+            let visible = try #require(fixture.model.presentation?.id)
+            let revision = fixture.model.presentationRevision
+            let preparation = try #require(fixture.model.adjacentRangeTask?.task)
+            await preparation.value
+
+            #expect(fixture.model.presentation?.id == visible)
+            #expect(fixture.model.presentationRevision == revision)
+            #expect(fixture.model.rangeSnapshots.count == 3)
+            #expect(fixture.model.rangeSnapshots[fixture.model.rangeIdentity]?.presentation.id == visible)
+            #expect(fixture.model.rangeSnapshots.values.reduce(0) { $0 + $1.byteCost } <= 12 * 1_024 * 1_024)
+            for offset in [-1, 1] {
+                fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: offset, to: center))
+                let prepared = try #require(fixture.model.rangeSnapshots[fixture.model.rangeIdentity]?.presentation)
+                await fixture.model.activateRange()
+                #expect(fixture.model.presentation?.id == prepared.id)
+                #expect(fixture.model.events.map(\.event.id) == ["adjacent-\(offset)"])
+            }
+            #expect(await fixture.service.rangeRequestCount == 0)
+        }
+    }
+
+    @Test func incompleteAdjacentLocalDaysDoNotTriggerSpeculativeNetworkRequests() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "only-current")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            try await fixture.cacheRange([event])
+            fixture.model.isVisible = true
+            await fixture.model.reloadOccurrences(refresh: false)
+            await fixture.model.adjacentRangeTask?.task.value
+
+            #expect(fixture.model.rangeSnapshots.count == 1)
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 0)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func purgedAdjacentPreparationCannotRestoreSnapshots(revoked: Bool) async throws {
+        try await withFixture { fixture in
+            _ = try await fixture.cacheDayNeighborhood()
+            fixture.model.isVisible = true
+            await fixture.model.reloadOccurrences(refresh: false)
+            let preparation = try #require(fixture.model.adjacentRangeTask?.task)
+            let visible = fixture.model.presentation?.id
+            if revoked { fixture.model.accessExpired(fixture.accountID) }
+            else { fixture.model.invalidateRangeSnapshots() }
+            await preparation.value
+
+            #expect(fixture.model.rangeSnapshots.isEmpty)
+            #expect(fixture.model.adjacentRangeTask == nil)
+            if revoked { #expect(fixture.model.events.isEmpty) }
+            else { #expect(fixture.model.presentation?.id == visible) }
+        }
+    }
+
+    @Test func searchCannotRestoreEventsWhenAccessChangesDuringRequest() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "search-private")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.searchText = "Planning"
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let search = Task { await fixture.model.searchEvents() }
+            #expect(await fixture.waitForSuspendedRange())
+
+            fixture.model.handleCalendarAccessFailure(CalendarEngineError.permissionDenied,
+                accountID: fixture.accountID, calendarID: fixture.owner.calendarID)
+            await fixture.service.resumeRange()
+            await search.value
+
+            #expect(fixture.model.searchResults.isEmpty)
+            #expect(fixture.model.completedSearch == nil)
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test func deniedSearchDoesNotFallBackToRetainedPrivateEvents() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "search-denied")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.events = [fixture.display(event)]
+            fixture.model.searchText = "Planning"
+            await fixture.service.setRangeFailure(.http(status: 403, reason: nil))
+
+            await fixture.model.searchEvents()
+
+            #expect(fixture.model.searchResults.isEmpty)
+            #expect(fixture.model.events.isEmpty)
+            #expect(fixture.model.completedSearch == nil)
+        }
+    }
+
+    @Test func oneHundredUnchangedSearchActivationsReuseCompletedResults() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "search-warm")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.searchText = "Planning"
+            await fixture.service.put(event)
+            await fixture.model.searchEvents()
+            let revision = fixture.model.searchRevision
+
+            for _ in 0..<100 { await fixture.model.searchEvents() }
+
+            #expect(fixture.model.searchResults.map(\.event) == [event])
+            #expect(fixture.model.searchRevision == revision)
+            #expect(await fixture.service.rangeRequestCount == 2)
+        }
+    }
+
+    @Test func deniedRangeCannotRestoreAnotherRetainedRangeFromThatCalendar() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "private")
+            let firstDay = try #require(event.startDate)
+            fixture.model.mode = .day
+            fixture.model.date = firstDay
+            await fixture.service.put(event)
+            await fixture.model.activateRange()
+            fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: 1, to: firstDay))
+            await fixture.model.activateRange()
+            #expect(fixture.model.rangeSnapshots.count == 2)
+
+            await fixture.service.setRangeFailure(.http(status: 403, reason: nil))
+            await fixture.model.reloadOccurrences()
+            fixture.model.date = firstDay
+            await fixture.model.activateRange()
+
+            #expect(fixture.model.calendars.isEmpty)
+            #expect(fixture.model.events.isEmpty)
+            #expect(fixture.model.rangeSnapshots.values.allSatisfy { $0.presentation.events.isEmpty })
+        }
+    }
+
+    @Test func oneHundredWarmActivationsReusePreparedRangeWithoutRequestsOrPublication() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "warm")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.model.activateRange()
+            let prepared = try #require(fixture.model.presentation)
+            let revision = fixture.model.presentationRevision
+
+            for _ in 0..<100 { await fixture.model.activateRange() }
+
+            #expect(fixture.model.presentation?.id == prepared.id)
+            #expect(fixture.model.presentationRevision == revision)
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 1)
+            #expect(fixture.model.rangeSnapshots.count == 1)
+        }
+    }
+
+    @Test func concurrentActivationSharesItsNetworkRequest() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "shared")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let first = Task { await fixture.model.activateRange() }
+            #expect(await fixture.waitForSuspendedRange())
+            let second = Task { await fixture.model.activateRange() }
+            await Task.yield()
+            await fixture.service.resumeRange()
+            await first.value
+            await second.value
+
+            #expect(fixture.model.events.map(\.event) == [event])
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test func rapidReactivationReplacesCanceledRefreshWhileItsRequestFinishes() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "reactivated")
+            fixture.model.mode = .day
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let first = Task { await fixture.model.activateRange() }
+            #expect(await fixture.waitForSuspendedRange())
+            first.cancel()
+
+            let second = Task { await fixture.model.activateRange() }
+            for _ in 0..<200 {
+                if await fixture.service.rangeRequestCount == 2 { break }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(await fixture.service.rangeRequestCount == 2)
+            await fixture.service.resumeRange()
+            await first.value
+            await second.value
+
+            #expect(fixture.model.events.map(\.event) == [event])
+        }
+    }
+
+    @Test func rangeRetentionIsBoundedAndRevocationDropsPreparedContent() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "bounded")
+            let firstDay = try #require(event.startDate)
+            fixture.model.mode = .day
+            await fixture.service.put(event)
+            for offset in 0..<5 {
+                fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: offset, to: firstDay))
+                await fixture.model.activateRange()
+            }
+            #expect(fixture.model.rangeSnapshots.count == 3)
+            #expect(fixture.model.rangeSnapshotOrder.count == 3)
+            #expect(fixture.model.rangeSnapshots.values.reduce(0) { $0 + $1.byteCost } <= 12 * 1_024 * 1_024)
+            let visible = fixture.model.presentation?.id
+            fixture.model.invalidateRangeSnapshots()
+            #expect(fixture.model.rangeSnapshots.isEmpty)
+            #expect(fixture.model.presentation?.id == visible)
+
+            fixture.model.accessExpired(fixture.accountID)
+            #expect(fixture.model.rangeSnapshots.isEmpty)
+            #expect(fixture.model.presentation == nil || fixture.model.presentation?.events.isEmpty == true)
+            #expect(fixture.model.events.isEmpty)
+        }
+    }
+
     @Test func initialRangeLoadsFromNetworkOnlyWhenItsCacheIsIncomplete() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "first-open")
@@ -421,6 +677,21 @@ import Testing
                 start: interval.start, end: interval.end, expected: state)
         }
 
+        func cacheDayNeighborhood() async throws -> Date {
+            let center = try #require(CalendarModelTests.event().startDate)
+            model.mode = .day
+            for offset in -1...1 {
+                let start = try #require(model.calendar.date(byAdding: .day, value: offset, to: center))
+                model.date = start
+                var event = CalendarModelTests.event(id: "adjacent-\(offset)")
+                event.start = CalendarDateTime(date: start)
+                event.end = CalendarDateTime(date: start.addingTimeInterval(3_600))
+                try await cacheRange([event])
+            }
+            model.date = center
+            return center
+        }
+
         func waitForSuspendedRange() async -> Bool {
             for _ in 0..<200 {
                 if await service.hasSuspendedRange { return true }
@@ -440,6 +711,7 @@ import Testing
         static let entry = GoogleCalendarEntry(id: "work", summary: "Work", timeZone: "Europe/Vienna", accessRole: "owner")
         private var remote: [String: GoogleCalendarEvent] = [:]
         private var offline = false
+        private var rangeFailure: GmailError?
         private var shouldSuspendRange = false
         private var rangeContinuation: CheckedContinuation<Void, Never>?
         private(set) var rangeRequestCount = 0
@@ -447,6 +719,7 @@ import Testing
         private(set) var patchETags: [String?] = []
 
         func setOffline(_ value: Bool) { offline = value }
+        func setRangeFailure(_ value: GmailError?) { rangeFailure = value }
         func put(_ event: GoogleCalendarEvent) { remote[event.id] = event }
         var hasSuspendedRange: Bool { rangeContinuation != nil }
         func suspendNextRange() { shouldSuspendRange = true }
@@ -462,6 +735,7 @@ import Testing
 
         func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
             if offline { throw GmailError.transport(.notConnectedToInternet) }
+            if query.singleEvents, let rangeFailure { throw rangeFailure }
             var events = Array(remote.values)
             if query.singleEvents {
                 rangeRequestCount += 1

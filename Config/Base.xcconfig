@@ -3,6 +3,8 @@
 
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
+// Verified builds override this with their source commit.
+TERN_BUILD_REVISION = development
 
 // The OAuth client ID is <prefix>.apps.googleusercontent.com and its redirect
 // scheme is the reversed ID. Only the prefix is set locally.

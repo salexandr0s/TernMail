@@ -66,12 +66,22 @@ final class MailboxModel {
     var selectedMailbox: MailboxID? {
         didSet {
             guard selectedMailbox != oldValue else { return }
+            NavigationPerformance.shared.begin(.mailbox)
+            if selectedMailbox?.id == AttachmentLibraryModel.mailboxID || oldValue?.id == AttachmentLibraryModel.mailboxID {
+                NavigationPerformance.shared.begin(.workspace,
+                    destination: selectedMailbox?.id == AttachmentLibraryModel.mailboxID ? "attachments" : "mail")
+            }
+            isListPresentationReady = false
             // Choosing another mailbox leaves search.
             search.clear()
             updateSearchSources()
             selectedThreadIDs = []
             selectedMessageRows = []
             threads = []
+            mailboxPage = .empty
+            mailboxPageReady = false
+            isListPresentationReady = false
+            listEntries = []
             threadLimit = Self.pageSize
             older?.cancel()
             older = nil
@@ -87,13 +97,29 @@ final class MailboxModel {
     }
     /// The selected mailbox's label or virtual mailbox ID, whichever account it's in.
     var selectedLabelID: String? { selectedMailbox?.id }
-    var selectedThreadIDs: Set<ThreadKey> = []
-    var selectedMessageRows: Set<MailListRowID> = []
+    var selectedThreadIDs: Set<ThreadKey> = [] {
+        didSet {
+            if listPreferences.conversations, selectedThreadIDs != oldValue, selectedThreadIDs.count == 1 {
+                measureReaderSelection()
+            }
+        }
+    }
+    var selectedMessageRows: Set<MailListRowID> = [] {
+        didSet {
+            if !listPreferences.conversations, selectedMessageRows != oldValue, selectedMessageRows.count == 1 {
+                measureReaderSelection()
+            }
+        }
+    }
     var conversationWindowRequest: MailLink?
-    var listEntries: [MessageListEntry] = []
+    var listEntries: [MessageListEntry] = [] { didSet { listDataRevision &+= 1 } }
+    private(set) var listDataRevision: UInt64 = 0
+    private(set) var listContextRevision: UInt64 = 0
+    var listPresentationRevision: Int { Int(truncatingIfNeeded: listDataRevision) }
+    private(set) var isListPresentationReady = false
     @ObservationIgnored let listProjection = MessageListProjection()
-    var listOwnAddresses: [String: Set<String>] = [:]
-    var accountPresentation: [String: AccountMailPreferences] = [:]
+    var listOwnAddresses: [String: Set<String>] = [:] { didSet { listContextRevision &+= 1 } }
+    var accountPresentation: [String: AccountMailPreferences] = [:] { didSet { listContextRevision &+= 1 } }
     var visibleAccountIDs: Set<String>?
     let listPreferences: MessageListPreferences
     @ObservationIgnored lazy var triage = MailTriageModel(mailbox: self)
@@ -103,7 +129,7 @@ final class MailboxModel {
     /// The newest send still inside its undo delay, for Edit > Undo Send.
     private(set) var undoableSendID: String?
 
-    private(set) var threads: [ThreadRecord] = []
+    private(set) var threads: [ThreadRecord] = [] { didSet { listDataRevision &+= 1 } }
     /// Gmail's older pages of the selected mailbox, after Load Older Conversations.
     private(set) var older: GmailPager?
 
@@ -126,6 +152,13 @@ final class MailboxModel {
     var retainedUndoCount: Int { undoEntries.count }
     @ObservationIgnored private var isStopped = false
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
+    @ObservationIgnored private let listPages = MailListPageCache()
+    @ObservationIgnored private var mailboxPage = MailListPage.empty
+    @ObservationIgnored private var mailboxPageReady = false
+    private var searchPage = MailListPage.empty
+    @ObservationIgnored private var searchPageTask: Task<Void, Never>?
+    @ObservationIgnored private var searchPageGeneration: UInt64 = 0
+    @ObservationIgnored private var mailboxPageGeneration: UInt64 = 0
     @ObservationIgnored private var navigationTask: Task<Void, Never>?
     /// Drafts opened from another app with formatting the editor drops, until their window warns.
     @ObservationIgnored private var droppedFormatting = Set<String>()
@@ -171,7 +204,7 @@ final class MailboxModel {
         )
         defaultAccount = first
         search = SearchModel(cache: cache, sources: [.init(accountID: account.id, engine: first.engine)])
-        search.onResultsChange = { [weak self] in self?.listChanged() }
+        search.onResultsChange = { [weak self] in self?.observeSearchPage() }
         wire(first)
         search.setMessageMode(!self.listPreferences.conversations)
     }
@@ -182,6 +215,8 @@ final class MailboxModel {
     func applyAccountPresentation(preferences: [AccountMailPreferences], visibleAccountIDs: Set<String>) {
         let previousSearchIDs = Set(searchedAccounts.map(\.account.id))
         let previousMailboxIDs = Set(selectedAccounts.map(\.account.id))
+        let visibilityChanged = self.visibleAccountIDs != visibleAccountIDs
+        if visibilityChanged { listPages.stop() }
         accountPresentation = Dictionary(preferences.map { ($0.accountID, $0) }, uniquingKeysWith: { _, last in last })
         self.visibleAccountIDs = visibleAccountIDs
         var destination = selectedMailbox
@@ -202,11 +237,14 @@ final class MailboxModel {
             if previousSearchIDs != Set(searchedAccounts.map(\.account.id)) { updateSearchSources() }
             if previousMailboxIDs != Set(selectedAccounts.map(\.account.id)) {
                 threads = []
+                mailboxPage = .empty
+                mailboxPageReady = false
+                isListPresentationReady = false
                 listEntries = listEntries.filter { visibleAccountIDs.contains($0.message.accountID) }
                 selectedThreadIDs = selectedThreadIDs.filter { visibleAccountIDs.contains($0.accountID) }
                 selectedMessageRows = selectedMessageRows.filter { visibleAccountIDs.contains($0.accountID) }
-                observeThreads()
             }
+            if visibilityChanged || previousMailboxIDs != Set(selectedAccounts.map(\.account.id)) { observeThreads() }
             listChanged()
         }
     }
@@ -342,6 +380,8 @@ final class MailboxModel {
     func stop() async {
         isStopped = true
         threadsTask?.cancel()
+        searchPageTask?.cancel()
+        listPages.stop()
         navigationTask?.cancel()
         search.stop()
         older?.cancel()
@@ -461,7 +501,7 @@ final class MailboxModel {
     /// The conversations the list shows: search results while searching,
     /// otherwise the selected mailbox.
     var listedThreads: [ThreadRecord] {
-        search.isActive ? search.results : threads
+        search.isActive ? searchPage.threads : threads
     }
 
     var selectedLabelTitle: String {
@@ -484,6 +524,7 @@ final class MailboxModel {
     /// Loads missing bodies and marks the thread read.
     func open(_ key: ThreadKey, markRead: Bool = true) async -> Bool {
         guard let owner = account(id: key.accountID) else { return false }
+        if markRead { listPages.invalidateRetained() }
         do {
             try await owner.engine.openThread(key.threadID, markRead: markRead)
             return true
@@ -769,10 +810,11 @@ final class MailboxModel {
     /// `confirmation` shows in a notice with Undo.
     private func queueUndoable(_ name: String, confirmation: String?, steps: [UndoStep], revert: Revert?, sound: MailSounds.Event?) -> Task<Void, Never>? {
         guard !isStopped, !steps.isEmpty else { return nil }
+        listPages.invalidateRetained()
         let entry = UndoEntry(name: name, revert: revert)
         registerUndo(entry)
         let task = Task {
-            defer { entry.isQueued = false }
+            defer { entry.isQueued = false; listPages.invalidateRetained() }
             guard !isStopped, !Task.isCancelled else { return }
             var failure: (any Error)?
             // An account signed out meanwhile is skipped, and so is its change.
@@ -823,6 +865,7 @@ final class MailboxModel {
     }
 
     private func requestUndo(_ entry: UndoEntry) -> Task<Void, Never>? {
+        listPages.invalidateRetained()
         guard !isStopped else { return nil }
         entry.undoRequested = true
         if !((undoManager?.isUndoing) ?? false) { undoManager?.removeAllActions(withTarget: entry) }
@@ -830,6 +873,7 @@ final class MailboxModel {
         entry.isApplying = true
         let revert = entry.revert
         return Task {
+            defer { listPages.invalidateRetained() }
             do {
                 // Newest first. A change undone drops out, so a retry skips
                 // it. Signing out of an account drops its changes meanwhile.
@@ -902,24 +946,70 @@ final class MailboxModel {
 
     private func observeThreads() {
         threadsTask?.cancel()
+        mailboxPageGeneration &+= 1
+        let generation = mailboxPageGeneration
         let sources = selectedAccounts.map(\.account.id)
-        guard let mailbox = selectedMailbox, mailbox.id != Self.outboxID, !sources.isEmpty else {
+        guard let mailbox = selectedMailbox,
+              ![Self.outboxID, AttachmentLibraryModel.mailboxID].contains(mailbox.id), !sources.isEmpty else {
+            listPages.deactivate()
             threads = []
+            mailboxPage = .empty
+            if !search.isActive { listEntries = [] }
+            isListPresentationReady = true
             return
         }
         if mailbox.id == Self.snoozedID {
-            // The snoozed streams fill it.
-            threads = snoozedThreads()
-            listChanged()
+            listPages.deactivate()
+            observeSnoozedPage(generation: generation)
             return
         }
-        let stream = cache.threads(accountIDs: sources, labelID: mailbox.id, limit: threadLimit)
+        let key = MailListPageCache.Key(accountIDs: sources.sorted(), labelID: mailbox.id, limit: threadLimit)
+        listPages.activate(key, cache: cache, configuration: { [weak self] page in
+            guard let self else {
+                return (.init(threads: [], entries: [], conversations: true, filters: [], mailboxID: key.labelID,
+                              categories: [:], addresses: [:], availableLabels: [:]),
+                        .init(dataRevision: 0, contextRevision: 0, conversations: true, filters: [], mailboxID: key.labelID))
+            }
+            return (listProjectionInput(threads: page.threads, entries: page.entries, mailboxID: key.labelID),
+                    listProjectionConfiguration(mailboxID: key.labelID))
+        }, onValue: { [weak self] prepared, retained in
+            guard let self, !isStopped, selectedMailbox == mailbox, mailboxPageGeneration == generation else { return }
+            applyMailboxPage(prepared, retained: retained)
+        }, onError: { [weak self] in self?.selectedAccounts.forEach { $0.cacheReadFailed() } })
+    }
+
+    private func applyMailboxPage(_ prepared: PreparedMailListPage, retained: Bool) {
+        mailboxPage = prepared.page
+        mailboxPageReady = true
+        threads = prepared.page.threads
+        guard !search.isActive else { return }
+        publishListPage(prepared)
+        NavigationPerformance.shared.contentReady(.mailbox, cacheTier: retained ? .retained : .local)
+    }
+
+    private func publishListPage(_ prepared: PreparedMailListPage) {
+        listEntries = prepared.page.entries
+        if prepared.configuration == listProjectionConfiguration(mailboxID: search.isActive ? nil : selectedLabelID) {
+            listProjection.store(prepared.rows, for: listProjectionKey)
+        }
+        listChanged()
+        let validRows = Set(listItems.map(\.id))
+        let retainedRows = selectedMessageRows.intersection(validRows)
+        if retainedRows != selectedMessageRows { selectedMessageRows = retainedRows }
+        isListPresentationReady = true
+    }
+
+    private func observeSnoozedPage(generation: UInt64) {
+        let stream = cache.listPage(.snoozed(snoozedThreads()))
         threadsTask = Task { [weak self] in
             do {
-                for try await threads in stream {
-                    guard let self, !Task.isCancelled, !isStopped, selectedMailbox == mailbox else { return }
-                    self.threads = threads
-                    listChanged()
+                for try await page in stream {
+                    guard let self, !Task.isCancelled, !isStopped, mailboxPageGeneration == generation else { return }
+                    let prepared = try await MailListPreparation.shared.prepare(page,
+                        input: listProjectionInput(threads: page.threads, entries: page.entries, mailboxID: Self.snoozedID),
+                        configuration: listProjectionConfiguration(mailboxID: Self.snoozedID))
+                    guard !Task.isCancelled, mailboxPageGeneration == generation else { return }
+                    applyMailboxPage(prepared, retained: false)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -928,8 +1018,53 @@ final class MailboxModel {
         }
     }
 
+    /// Search result identities choose the page; its threads and messages are
+    /// then read atomically rather than joined from independent observations.
+    private func observeSearchPage() {
+        searchPageTask?.cancel()
+        searchPageGeneration &+= 1
+        let generation = searchPageGeneration
+        guard search.isActive else {
+            searchPage = .empty
+            listEntries = mailboxPage.entries
+            isListPresentationReady = mailboxPageReady
+            listChanged()
+            return
+        }
+        if search.results.isEmpty {
+            searchPage = .empty
+            listEntries = []
+            isListPresentationReady = search.hasLocalAnswer
+            listChanged()
+            if isListPresentationReady { NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .local) }
+            return
+        }
+        let stream = cache.listPage(.searchResults(search.results,
+            matching: listPreferences.conversations ? nil : search.query, includingMessageIDs: search.matchingMessageIDs))
+        searchPageTask = Task { [weak self] in
+            do {
+                for try await page in stream {
+                    guard let self, !Task.isCancelled, !isStopped, searchPageGeneration == generation else { return }
+                    let prepared = try await MailListPreparation.shared.prepare(page,
+                        input: listProjectionInput(threads: page.threads, entries: page.entries, mailboxID: nil),
+                        configuration: listProjectionConfiguration(mailboxID: nil))
+                    guard !Task.isCancelled, searchPageGeneration == generation else { return }
+                    searchPage = page
+                    publishListPage(prepared)
+                    NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .local)
+                }
+            } catch {
+                guard let self, !Task.isCancelled, searchPageGeneration == generation else { return }
+                searchPage = .empty
+                listEntries = []
+                listChanged()
+            }
+        }
+    }
+
     /// Leaves a label that's gone for its account's Inbox.
     private func labelsChanged() {
+        listContextRevision &+= 1
         guard !isStopped, case .account(let accountID, let id)? = selectedMailbox, id != Self.outboxID,
               id != AttachmentLibraryModel.mailboxID,
               !id.hasPrefix(MailNavigationModel.searchPrefix),
@@ -954,8 +1089,7 @@ final class MailboxModel {
 
     private func snoozedChanged() {
         guard !isStopped, selectedLabelID == Self.snoozedID else { return }
-        threads = snoozedThreads()
-        listChanged()
+        observeThreads()
     }
 
     /// The selected accounts' snoozed conversations, the soonest to wake first.
@@ -972,9 +1106,35 @@ final class MailboxModel {
 
     /// Keeps search and a combined mailbox's list in step with the accounts.
     private func accountsChanged() {
+        listContextRevision &+= 1
+        listPages.stop()
+        let retainedAccounts = Set(selectedAccounts.map(\.account.id))
+        mailboxPage = MailListPage(
+            threads: mailboxPage.threads.filter { retainedAccounts.contains($0.accountID) },
+            entries: mailboxPage.entries.filter { retainedAccounts.contains($0.message.accountID) })
+        mailboxPageReady = false
+        threads = mailboxPage.threads
+        if !search.isActive { listEntries = mailboxPage.entries }
+        let signedInAccounts = Set(accounts.map(\.account.id))
+        selectedThreadIDs = selectedThreadIDs.filter { signedInAccounts.contains($0.accountID) }
+        selectedMessageRows = selectedMessageRows.filter { signedInAccounts.contains($0.accountID) }
+        isListPresentationReady = false
         updateSearchSources()
-        if case .combined? = selectedMailbox { observeThreads() }
-        if case .scoped? = selectedMailbox { observeThreads() }
+        // Account construction also runs before start(), including headless
+        // scripting/compose contexts. It must not launch a list subscription
+        // whose delayed first value can revoke an unrelated explicit selection.
+        if isStarted { observeThreads() }
+    }
+
+    /// Call before cache-changing reading/triage operations that bypass the
+    /// window's undo queue. Existing visible rows remain until the atomic update.
+    func invalidateListSnapshots() { listPages.invalidateRetained() }
+
+    private func measureReaderSelection() {
+        NavigationPerformance.shared.begin(.reader)
+        NavigationPerformance.shared.begin(.readerHeader)
+        NavigationPerformance.shared.begin(.selectionFeedback)
+        NavigationPerformance.shared.contentReady(.selectionFeedback, cacheTier: .local)
     }
 
     private func updateSearchSources() {
@@ -985,7 +1145,8 @@ final class MailboxModel {
     /// list shows so expired search holds don't drop it.
     private func listChanged() {
         let threads = listedThreads
-        selectedThreadIDs.formIntersection(threads.map(\.key))
+        let retainedThreads = selectedThreadIDs.intersection(threads.map(\.key))
+        if retainedThreads != selectedThreadIDs { selectedThreadIDs = retainedThreads }
         let shown = Dictionary(grouping: threads, by: \.accountID)
         for account in accounts {
             account.engine.setVisibleThreads(Set(shown[account.account.id, default: []].map(\.id)))

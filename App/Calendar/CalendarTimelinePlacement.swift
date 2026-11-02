@@ -1,6 +1,6 @@
 import Foundation
 
-struct CalendarTimelinePlacement: Identifiable {
+struct CalendarTimelinePlacement: Identifiable, Sendable {
     var event: CalendarDisplayEvent
     /// Minutes from the top of the grid, as `CalendarTimeAxis` measures them.
     var startMinute: Int

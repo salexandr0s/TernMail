@@ -1,5 +1,8 @@
-#if DEBUG
+#if DEBUG || TERN_PERFORMANCE
 import Foundation
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 import GmailAPI
 import MailStore
 import SyncEngine
@@ -18,6 +21,8 @@ actor AuditGmail: GmailService {
         /// The name of a small text file the message carries.
         var attachment: String?
         var ageDays: Int?
+        var inlineImageCount = 0
+        var largeInlineImages = false
     }
 
     private struct UserLabel {
@@ -35,6 +40,10 @@ actor AuditGmail: GmailService {
     private var userLabels = [UserLabel(id: "Label_1", name: "Hiking")]
     private var nextLabel = 2
     private var shouldFailNextThreadLoad = false
+    private let performanceTransport: PerformanceAuditTransport?
+    private let performanceAccountID: String
+    private let hasPerformanceCorpus: Bool
+    private let beforeFullThread: (@Sendable (String) async throws -> Void)?
 
     private var version = 200
     private let referenceDate = Date.now
@@ -56,7 +65,18 @@ actor AuditGmail: GmailService {
         case second
     }
 
-    init(_ account: Account = .first) {
+    init(_ account: Account = .first, performanceTransport: PerformanceAuditTransport? = nil,
+         performanceFixtureCount: Int? = nil,
+         beforeFullThread: (@Sendable (String) async throws -> Void)? = nil) {
+        let performance = ProcessInfo.processInfo.arguments.contains("--performance-audit")
+        self.performanceTransport = performanceTransport ?? (performance ? .shared : nil)
+        self.beforeFullThread = beforeFullThread
+        performanceAccountID = account == .first ? "ui-audit" : "ui-audit-2"
+        hasPerformanceCorpus = performance || performanceFixtureCount != nil
+        if hasPerformanceCorpus {
+            mail = Self.performanceMail(countOverride: performanceFixtureCount)
+            return
+        }
         if account == .second {
             mail = Self.secondMail
             userLabels = [UserLabel(id: "Label_1", name: "Projects")]
@@ -108,6 +128,52 @@ actor AuditGmail: GmailService {
         }
     }
 
+    private static func performanceMail(countOverride: Int?) -> [Message] {
+        let argument = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-mails=") }
+        let count = min(60_000, max(200, countOverride ?? argument.flatMap { Int($0.split(separator: "=").last ?? "") } ?? 1_000))
+        var result = (0..<count).map { index in
+            Message(id: "performance-\(index)", thread: "performance-thread-\(index)",
+                    subject: "Synthetic performance message \(index)",
+                    text: index.isMultiple(of: 2)
+                        ? String(repeating: "<p>Prepared content for measuring scrolling and navigation.</p>", count: 20)
+                        : String(repeating: "Synthetic plain text for measuring navigation.\n", count: 12),
+                    html: index.isMultiple(of: 2), labels: ["INBOX"],
+                    from: "Synthetic Sender \(index % 20) <sender\(index % 20)@example.invalid>",
+                    attachment: index.isMultiple(of: 4) ? "Synthetic-document-\(index).txt" : nil,
+                    inlineImageCount: index % 20 == 2 ? 8 : 0)
+        }
+        for size in [20, 100] {
+            let conversation = (0..<size).map { index in
+                Message(id: "performance-long-\(size)-\(index)", thread: "performance-long-\(size)",
+                        subject: "Synthetic \(size)-message conversation",
+                        text: String(repeating: "<p>Long conversation message \(index): synthetic text for layout and Find.</p>", count: 10),
+                        html: true, labels: ["INBOX", "UNREAD"])
+            }
+            result.insert(contentsOf: conversation, at: 10)
+        }
+        // Untouched, separately named bodies make network-cache misses verifiable.
+        // None is a file attachment or a neighbour of the ordinary list corpus.
+        for index in 0..<600 {
+            result.append(Message(id: "performance-network-\(index)", thread: "performance-network-\(index)",
+                subject: "Synthetic network body \(index)",
+                text: String(repeating: "<p>Delayed synthetic body for response-to-visible measurement.</p>", count: 20),
+                html: true, labels: ["INBOX"]))
+        }
+        for index in 0..<100 {
+            result.append(Message(id: "performance-image-heavy-\(index)", thread: "performance-image-heavy-\(index)",
+                subject: "Synthetic image-heavy body \(index)", text: "<p>Large inline-image corpus.</p>",
+                html: true, labels: ["INBOX"], inlineImageCount: 8, largeInlineImages: true))
+        }
+        for mebibytes in [2, 8] {
+            let line = "<p>Oversized synthetic stress content, reported separately.</p>"
+            result.append(Message(id: "performance-stress-\(mebibytes)", thread: "performance-stress-\(mebibytes)",
+                subject: "Synthetic \(mebibytes) MiB stress body",
+                text: String(repeating: line, count: mebibytes * 1_048_576 / line.utf8.count),
+                html: true, labels: ["INBOX"]))
+        }
+        return result
+    }
+
     private static let secondMail: [Message] = [
         Message(id: "m1", thread: "t1", subject: "Book club", text: "The next meeting moves to Thursday.", html: false, labels: ["INBOX", "UNREAD"], from: "Sky <sky@example.invalid>"),
         Message(id: "m2", thread: "t2", subject: "Garden plans", text: "The first message.", html: false, labels: ["INBOX"], from: "Sky <sky@example.invalid>"),
@@ -116,11 +182,13 @@ actor AuditGmail: GmailService {
         Message(id: "m5", thread: "t5", subject: "Order confirmation", text: "Synthetic sent message.", html: false, labels: ["SENT"]),
     ]
 
-    func profile() throws -> GmailProfile {
-        try decode(["emailAddress": "audit@example.invalid", "historyId": String(version)])
+    func profile() async throws -> GmailProfile {
+        _ = try await performanceTransport?.request(.metadata)
+        return try decode(["emailAddress": "audit@example.invalid", "historyId": String(version)])
     }
 
-    func labels() throws -> [GmailLabel] {
+    func labels() async throws -> [GmailLabel] {
+        _ = try await performanceTransport?.request(.metadata)
         let system = try Self.systemLabels.map { id in
             try decode(["id": id, "name": id, "type": "system", "threadsUnread": unreadThreads(id)]) as GmailLabel
         }
@@ -140,14 +208,16 @@ actor AuditGmail: GmailService {
     }
 
     /// Like Gmail's batch, answers every ID, with a 404 for a label it doesn't have.
-    func labels(ids: [String]) throws -> [String: Result<GmailLabel, GmailError>] {
-        let all = try labels()
+    func labels(ids: [String]) async throws -> [String: Result<GmailLabel, GmailError>] {
+        _ = try await performanceTransport?.request(.metadata)
+        let all = try await labels()
         return Dictionary(uniqueKeysWithValues: ids.map { id in
             (id, all.first { $0.id == id }.map { .success($0) } ?? .failure(.notFound))
         })
     }
 
-    func listMessages(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) throws -> MessageListPage {
+    func listMessages(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) async throws -> MessageListPage {
+        _ = try await performanceTransport?.request(.metadata)
         let selected = mail.filter { message in
             labelIDs.allSatisfy(message.labels.contains) && (includeSpamTrash || message.labels.isDisjoint(with: ["TRASH", "SPAM"]))
                 && (query != "has:attachment" || message.attachment != nil)
@@ -162,9 +232,10 @@ actor AuditGmail: GmailService {
         return try decode(["messages": selected.map { ["id": $0.id, "threadId": $0.thread] }])
     }
 
-    func messages(ids: [String], format: MessageFormat, metadataHeaders: [String]) throws -> [String: Result<GmailMessage, GmailError>] {
-        try Dictionary(uniqueKeysWithValues: ids.map { id in
-            (id, try mail.first { $0.id == id }.map { .success(try decode(messageJSON($0))) } ?? .failure(.notFound))
+    func messages(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailMessage, GmailError>] {
+        _ = try await performanceTransport?.request(format == .full ? .body : .metadata)
+        return try Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, try mail.first { $0.id == id }.map { .success(try decode(messageJSON($0, format: format))) } ?? .failure(.notFound))
         })
     }
 
@@ -172,19 +243,30 @@ actor AuditGmail: GmailService {
         shouldFailNextThreadLoad = true
     }
 
-    func thread(id: String, format: MessageFormat) throws -> GmailThread {
+    func thread(id: String, format: MessageFormat) async throws -> GmailThread {
+        if format == .full { try await beforeFullThread?(id) }
+        _ = try await performanceTransport?.request(format == .full ? .body : .metadata)
+        let result = try threadValue(id: id, format: format)
+        if format == .full {
+            await performanceTransport?.bodyDelivered(accountID: performanceAccountID, threadID: id, at: .now)
+        }
+        return result
+    }
+
+    private func threadValue(id: String, format: MessageFormat) throws -> GmailThread {
         if shouldFailNextThreadLoad {
             shouldFailNextThreadLoad = false
             throw URLError(.notConnectedToInternet)
         }
         let messages = mail.filter { $0.thread == id }
         guard !messages.isEmpty else { throw GmailError.notFound }
-        return try decode(["id": id, "messages": messages.map(messageJSON)])
+        return try decode(["id": id, "messages": messages.map { messageJSON($0, format: format) }])
     }
 
     /// Matches every plain word of `query` against subjects and text, and
     /// ignores operators.
-    func listThreads(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) throws -> ThreadListPage {
+    func listThreads(query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int) async throws -> ThreadListPage {
+        _ = try await performanceTransport?.request(.metadata)
         let words = (query ?? "").lowercased().split(separator: " ").filter { !$0.contains(":") }
         let selected = mail.filter { message in
             let text = (message.subject + " " + message.text).lowercased()
@@ -196,19 +278,26 @@ actor AuditGmail: GmailService {
         return try decode(["threads": selected.map(\.thread).filter { seen.insert($0).inserted }.map { ["id": $0] }])
     }
 
-    func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) -> [String: Result<GmailThread, GmailError>] {
-        Dictionary(uniqueKeysWithValues: ids.map { id in
-            (id, Result { try thread(id: id, format: format) }.mapError { $0 as? GmailError ?? .notFound })
+    func threads(ids: [String], format: MessageFormat, metadataHeaders: [String]) async throws -> [String: Result<GmailThread, GmailError>] {
+        _ = try await performanceTransport?.request(format == .full ? .body : .metadata)
+        return Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, Result { try threadValue(id: id, format: format) }.mapError { $0 as? GmailError ?? .notFound })
         })
     }
 
-    func attachment(messageID: String, attachmentID: String) throws -> Data {
+    func attachment(messageID: String, attachmentID: String) async throws -> Data {
+        _ = try await performanceTransport?.request(.optionalResource)
         guard mail.contains(where: { $0.id == messageID && $0.attachment != nil }) else { throw GmailError.notFound }
         let filename = mail.first { $0.id == messageID }?.attachment ?? ""
         return filename.hasSuffix(".pdf") ? AttachmentAuditFixtures.invoicePDF : Self.attachmentData
     }
 
-    func history(startHistoryID: String, pageToken: String?) throws -> HistoryPage {
+    func history(startHistoryID: String, pageToken: String?) async throws -> HistoryPage {
+        if try await performanceTransport?.request(.history) == .activeSync {
+            let selected = mail.prefix(8).map(\.id)
+            let add = version.isMultiple(of: 2)
+            change(ids: selected, add: add ? ["STARRED"] : [], remove: add ? [] : ["STARRED"])
+        }
         let changed = mail.filter { $0.history > (Int(startHistoryID) ?? 0) }
         let allLabels = Set(Self.systemLabels + userLabels.map(\.id))
         return try decode(["historyId": String(version), "history": changed.map { message in
@@ -329,17 +418,30 @@ actor AuditGmail: GmailService {
         }
     }
 
-    private func messageJSON(_ message: Message) -> [String: Any] {
+    private func messageJSON(_ message: Message, format: MessageFormat = .full) -> [String: Any] {
         let index = mail.firstIndex { $0.id == message.id } ?? 0
         let ageHours = message.ageDays.map { Double($0 * 24) } ?? (message.id == "m2" ? 3 : Double(index))
         return ["id": message.id, "threadId": message.thread, "labelIds": Array(message.labels),
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
-                "snippet": message.id.hasPrefix("list") ? message.text : "Synthetic mail for the UI audit", "payload": payload(message)]
+                "snippet": message.id.hasPrefix("list") ? message.text : "Synthetic mail for the UI audit", "payload": payload(message, includesBody: !hasPerformanceCorpus || format == .full)]
     }
 
-    private func payload(_ message: Message) -> [String: Any] {
+    private func payload(_ message: Message, includesBody: Bool = true) -> [String: Any] {
         let headers = [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]]
-        let text: [String: Any] = ["mimeType": message.html ? "text/html" : "text/plain", "body": ["data": Data(message.text.utf8).base64EncodedString()]]
+        let imageTags = (0..<message.inlineImageCount).map { "<img src='cid:audit-image-\($0)' width='512' height='256'>" }.joined()
+        let source = message.text + imageTags
+        let text: [String: Any] = ["mimeType": message.html ? "text/html" : "text/plain", "body": includesBody ? ["data": Data(source.utf8).base64EncodedString()] : ["size": source.utf8.count]]
+        if message.inlineImageCount > 0 {
+            let image = message.largeInlineImages ? Self.largePerformanceImage : Self.performanceImage
+            let images: [[String: Any]] = (0..<message.inlineImageCount).map { index -> [String: Any] in
+                var body: [String: Any] = ["size": image.count]
+                if includesBody { body["data"] = image.base64EncodedString() }
+                return ["partId": "image-\(index)", "mimeType": "image/png", "filename": "",
+                 "headers": [["name": "Content-ID", "value": "<audit-image-\(index)>"], ["name": "Content-Disposition", "value": "inline"]],
+                 "body": body]
+            }
+            return ["mimeType": "multipart/related", "headers": headers, "parts": [text.merging(["partId": "0"]) { $1 }] + images]
+        }
         guard let name = message.attachment else { return text.merging(["headers": headers]) { $1 } }
         let file: [String: Any] = [
             "partId": "1", "mimeType": name.hasSuffix(".pdf") ? "application/pdf" : "text/plain", "filename": name,
@@ -347,6 +449,41 @@ actor AuditGmail: GmailService {
             "body": ["attachmentId": "a-\(message.id)", "size": name.hasSuffix(".pdf") ? AttachmentAuditFixtures.invoicePDF.count : Self.attachmentData.count],
         ]
         return ["mimeType": "multipart/mixed", "headers": headers, "parts": [text.merging(["partId": "0"]) { $1 }, file]]
+    }
+
+    /// Deterministic valid PNG, shared source bytes; each message has distinct CID capabilities.
+    struct ImageCorpus: Codable, Sendable {
+        let width: Int
+        let height: Int
+        let imagesPerMessage: Int
+        let encodedBytesPerMessage: Int
+        let decodedPixelBytesPerMessage: Int
+        init(width: Int, height: Int, imagesPerMessage: Int, encodedBytesPerMessage: Int) {
+            self.width = width; self.height = height; self.imagesPerMessage = imagesPerMessage
+            self.encodedBytesPerMessage = encodedBytesPerMessage
+            decodedPixelBytesPerMessage = width * height * 4 * imagesPerMessage
+        }
+    }
+
+    static var performanceImageCorpora: [ImageCorpus] {
+        [ImageCorpus(width: 128, height: 128, imagesPerMessage: 8, encodedBytesPerMessage: performanceImage.count * 8),
+         ImageCorpus(width: 512, height: 384, imagesPerMessage: 8, encodedBytesPerMessage: largePerformanceImage.count * 8)]
+    }
+    private static let performanceImage = makePerformanceImage(width: 128, height: 128)
+    private static let largePerformanceImage = makePerformanceImage(width: 512, height: 384)
+
+    private static func makePerformanceImage(width: Int, height: Int) -> Data {
+        let bytes = (0..<(width * height * 4)).map { UInt8(truncatingIfNeeded: ($0 &* 73) ^ ($0 >> 3)) }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                  bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: provider,
+                  decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return Data() }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { return Data() }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return Data() }
+        return output as Data
     }
 
     private func decode<T: Decodable>(_ json: [String: Any]) throws -> T {

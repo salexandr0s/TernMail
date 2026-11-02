@@ -4,14 +4,23 @@ import QuickLook
 import SwiftUI
 
 struct ThreadListView: View {
-    @Bindable var mailbox: MailboxModel
-    @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
+    let mailbox: MailboxModel
     @Environment(\.openWindow) private var openWindow
     @FocusState private var listFocused: Bool
     @Namespace private var dragNamespace
     @State private var previewURL: URL?
 
+    #if DEBUG || TERN_PERFORMANCE
+    /// Scoped by the test to its mailbox; measures row construction, not projection reuse.
+    static var onRowContentBuild: ((MailboxModel, MailListRowID) -> Void)?
+    enum BodyPhase { case list, dragSelection }
+    static var onBodyBuild: ((MailboxModel, BodyPhase) -> Void)?
+    #endif
+
     var body: some View {
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = Self.onBodyBuild?(mailbox, .list)
+        #endif
         list
             .modifier(MessagePrefetchModifier(mailbox: mailbox))
             .overlay {
@@ -39,36 +48,19 @@ struct ThreadListView: View {
             .onChange(of: mailbox.search.listFocusRequest) {
                 listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
             }
-            .task(id: observationID) {
-                await observeEntries(for: displayedThreads.map(\.key))
-            }
             .task(id: mailbox.accounts.map(\.account.id)) { await observeAddresses() }
             .onChange(of: mailbox.listPreferences.conversations) { _, _ in
                 mailbox.search.setMessageMode(!mailbox.listPreferences.conversations)
                 mailbox.selectedMessageRows = []
                 mailbox.selectedThreadIDs = []
             }
-            .onChange(of: mailbox.listItems.map(\.id)) { _, ids in
-                mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(ids))
+            .onChange(of: mailbox.listProjectionKey) { _, _ in
+                mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(mailbox.listItems.map(\.id)))
+                if mailbox.listItems.isEmpty {
+                    if mailbox.search.isActive { mailbox.search.loadMoreResults() }
+                    else { mailbox.loadMoreThreads() }
+                }
             }
-    }
-
-    /// Choose Date & Time opens beside the first conversation it will snooze.
-    private func snoozeDateAnchor(in rows: [MessageListItem]) -> MailListRowID? {
-        guard let keys = mailbox.snoozeDateTargets else { return nil }
-        let targetRows = mailbox.snoozeRowTargets
-        return rows.first { targetRows?.contains($0.id) ?? keys.contains($0.id.threadKey) }?.id
-    }
-
-    @ViewBuilder private var snoozeDatePicker: some View {
-        if let ids = mailbox.snoozeDateTargets {
-            SnoozeDateSheet(
-                initial: SnoozeSchedule().wakeTime(for: .tomorrow, now: .now) ?? .now.addingTimeInterval(3600),
-                now: .now,
-                onSnooze: { mailbox.snooze(ids, until: $0) },
-                onCancel: { mailbox.snoozeDateTargets = nil }
-            )
-        }
     }
 
     /// Double-click and Return open each chosen conversation in its own window, in list order.
@@ -90,35 +82,6 @@ struct ThreadListView: View {
             mailbox.toggleListRead(selection)
         }
         return .handled
-    }
-
-    private var displayedThreads: [ThreadRecord] {
-        mailbox.search.isActive ? mailbox.search.results : mailbox.threads
-    }
-
-    private var observationID: MessageListObservationID {
-        .init(keys: displayedThreads.map(\.key), query: mailbox.search.queryText,
-              remoteRevision: mailbox.search.gmail?.revision ?? 0, conversations: mailbox.listPreferences.conversations)
-    }
-
-    private func observeEntries(for keys: [ThreadKey]) async {
-        guard !Task.isCancelled else { return }
-        let visible = Set(keys)
-        mailbox.listEntries = mailbox.listEntries.filter { visible.contains(ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID)) }
-        guard !keys.isEmpty else { mailbox.listEntries = []; return }
-        let threadsByAccount = Dictionary(grouping: keys, by: \.accountID).mapValues { $0.map(\.threadID) }
-        do {
-            let query = mailbox.search.isActive && !mailbox.listPreferences.conversations ? mailbox.search.query : nil
-            for try await entries in mailbox.cache.messageListEntries(threadsByAccount: threadsByAccount, matching: query,
-                                                                      includingMessageIDs: mailbox.search.matchingMessageIDs, snoozedOnly: mailbox.showsSnoozed) {
-                guard !Task.isCancelled else { return }
-                mailbox.listEntries = entries
-                if mailbox.listItems.isEmpty { mailbox.loadMoreThreads() }
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            mailbox.listEntries = []
-        }
     }
 
     private func observeAddresses() async {
@@ -201,66 +164,17 @@ struct ThreadListView: View {
 
     /// Keep the native scroll view mounted while mailbox and search states change.
     private var list: some View {
-        let rows = mailbox.listItems
-        let selection = mailbox.selectedListRowIDs
-        let isSearching = mailbox.search.isActive
-        let accountMarks = compactAccountMarks
-        let accountColors = AccountAppearance.colorIndexes(
-            for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
-        )
-        let snoozeAnchor = snoozeDateAnchor(in: rows)
-        return List(selection: $mailbox.selectedListRowIDs) {
-            // Keyed by account too, since thread IDs repeat across accounts.
-            ForEach(rows) { row in
-                MessageListRow(
-                    item: row, mailbox: mailbox, isSelected: selection.contains(row.id),
-                    accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
-                )
-                    .tag(row.id)
-                    .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
-                    // Only the first targeted row anchors the snooze popover.
-                    .popover(isPresented: snoozeAnchor == row.id ? $mailbox.snoozeDateTargets.isPresent() : .constant(false),
-                             arrowEdge: .trailing) { snoozeDatePicker }
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, row: row)
-                    }
-                    .onAppear {
-                        if row.id == rows.last?.id {
-                            if isSearching {
-                                mailbox.search.loadMoreResults()
-                            } else {
-                                mailbox.loadMoreThreads()
-                            }
-                        }
-                    }
-            }
-            // Restart row appearance and pagination when entering or leaving search.
-            .id(isSearching)
-            // Apply outside the row wrappers so the native list receives these insets.
-            // The column's resize gutter stays outside the list.
-            .listRowInsets(.horizontal, -Tokens.Space.s2)
-            if !rows.isEmpty {
-                if isSearching {
-                    let gmail = mailbox.search.gmailState
-                    if gmail != .finished {
-                        GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
-                    }
-                } else if mailbox.offersOlderConversations {
-                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
-                }
-            }
-        }
+        MessageListSelectionSurface(mailbox: mailbox,
+            rows: MessageListRows(mailbox: mailbox, revision: mailbox.listProjectionKey, dragNamespace: dragNamespace))
         .listStyle(.inset)
+        .background(PerformanceScrollSurfaceMarker(name: "mailbox", isActive: true))
         .contentMargins(.horizontal, 0, for: .scrollContent)
         .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
         // Dragging a selected row carries the whole selection.
         .dragContainer(for: ConversationDragItem.self, itemID: \.rowID, in: dragNamespace) { ids in
             ids.map { ConversationDragItem(mailbox.conversationLink(for: $0)) }
         }
-        .dragContainerSelection(Array(selection), containerNamespace: dragNamespace)
+        .modifier(MessageListDragSelection(mailbox: mailbox, namespace: dragNamespace))
         .contextMenu(forSelectionType: MailListRowID.self) { ids in
             MessageListMenu(mailbox: mailbox, rows: ids)
         } primaryAction: { ids in
@@ -276,6 +190,112 @@ struct ThreadListView: View {
         .quickLookPreview($previewURL)
         .protectAttachmentPreview(previewURL)
         .focused($listFocused)
+    }
+
+    private var emptyDescription: String {
+        if mailbox.selectedLabelID == SystemLabel.inbox { return "Your inbox is empty." }
+        if mailbox.showsSnoozed { return "Snoozed conversations wait here until they return to the Inbox." }
+        return "Tern keeps your inbox and the last 30 days of mail on this Mac."
+    }
+}
+
+/// Selection/content separation is informed by MishMail's MIT-licensed design:
+/// https://github.com/ronboger/mishmail/blob/7f4720692f84188fbaa5def97e3748dcaa84cc40/Sources/MishMail/UI/ThreadListView.swift#L480-L541
+/// Tern keeps its existing snapshot keys, account-qualified identities and row modifiers.
+private struct MessageListSelectionSurface<Rows: View>: View {
+    @Bindable var mailbox: MailboxModel
+    let rows: Rows
+
+    var body: some View {
+        List(selection: $mailbox.selectedListRowIDs) { rows }
+    }
+}
+
+/// A fresh selection binding must update AppKit, while unchanged row content
+/// keeps its existing menus, swipe actions and identities. Conformance alone
+/// preserves flattened tags; do not wrap this content in `.equatable()`.
+private struct MessageListRows: View, Equatable {
+    let mailbox: MailboxModel
+    let revision: MessageListProjection.Key
+    let dragNamespace: Namespace.ID
+    @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.mailbox === rhs.mailbox && lhs.revision == rhs.revision && lhs.dragNamespace == rhs.dragNamespace
+    }
+
+    var body: some View {
+        @Bindable var model = mailbox
+        let rows = mailbox.listItems
+        let isSearching = mailbox.search.isActive
+        let accountMarks = compactAccountMarks
+        let accountColors = AccountAppearance.colorIndexes(
+            for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
+        )
+        let snoozeAnchor = snoozeDateAnchor(in: rows)
+        // Keyed by account too, since thread IDs repeat across accounts.
+        ForEach(rows) { row in
+            #if DEBUG || TERN_PERFORMANCE
+            let _ = ThreadListView.onRowContentBuild?(mailbox, row.id)
+            #endif
+            MessageListRow(
+                item: row, mailbox: mailbox,
+                accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
+            )
+                .tag(row.id)
+                .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
+                // Only the first targeted row anchors the snooze popover.
+                .popover(isPresented: snoozeAnchor == row.id ? $model.snoozeDateTargets.isPresent() : .constant(false),
+                         arrowEdge: .trailing) { snoozeDatePicker }
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, row: row)
+                }
+                .onAppear {
+                    if row.id == rows.last?.id {
+                        if isSearching {
+                            mailbox.search.loadMoreResults()
+                        } else {
+                            mailbox.loadMoreThreads()
+                        }
+                    }
+                }
+        }
+        // Restart row appearance and pagination when entering or leaving search.
+        .id(isSearching)
+        // Apply outside the row wrappers so the native list receives these insets.
+        // The column's resize gutter stays outside the list.
+        .listRowInsets(.horizontal, -Tokens.Space.s2)
+        if !rows.isEmpty {
+            if isSearching {
+                let gmail = mailbox.search.gmailState
+                if gmail != .finished {
+                    GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
+                }
+            } else if mailbox.offersOlderConversations {
+                GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
+            }
+        }
+    }
+
+    /// Choose Date & Time opens beside the first conversation it will snooze.
+    private func snoozeDateAnchor(in rows: [MessageListItem]) -> MailListRowID? {
+        guard let keys = mailbox.snoozeDateTargets else { return nil }
+        let targetRows = mailbox.snoozeRowTargets
+        return rows.first { targetRows?.contains($0.id) ?? keys.contains($0.id.threadKey) }?.id
+    }
+
+    @ViewBuilder private var snoozeDatePicker: some View {
+        if let ids = mailbox.snoozeDateTargets {
+            SnoozeDateSheet(
+                initial: SnoozeSchedule().wakeTime(for: .tomorrow, now: .now) ?? .now.addingTimeInterval(3600),
+                now: .now,
+                onSnooze: { mailbox.snooze(ids, until: $0) },
+                onCancel: { mailbox.snoozeDateTargets = nil }
+            )
+        }
     }
 
     @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, row: MessageListItem) -> some View {
@@ -307,11 +327,18 @@ struct ThreadListView: View {
         }
         return marks
     }
+}
 
-    private var emptyDescription: String {
-        if mailbox.selectedLabelID == SystemLabel.inbox { return "Your inbox is empty." }
-        if mailbox.showsSnoozed { return "Snoozed conversations wait here until they return to the Inbox." }
-        return "Tern keeps your inbox and the last 30 days of mail on this Mac."
+/// Keeps drag-selection observation separate from row construction.
+private struct MessageListDragSelection: ViewModifier {
+    let mailbox: MailboxModel
+    let namespace: Namespace.ID
+
+    func body(content: Content) -> some View {
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = ThreadListView.onBodyBuild?(mailbox, .dragSelection)
+        #endif
+        content.dragContainerSelection(Array(mailbox.selectedListRowIDs), containerNamespace: namespace)
     }
 }
 

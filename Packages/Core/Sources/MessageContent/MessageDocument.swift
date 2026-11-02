@@ -10,6 +10,8 @@ public struct RenderedMessage: Sendable, Equatable {
     /// Blocked images that `allowsRemoteImages` would show.
     public var blockedRemoteImages: Int = 0
     public var blockedTrackers: Int = 0
+    /// Full visible text, including quoted replies, for conversation-wide Find.
+    public var searchableText: String = ""
 }
 
 public enum MessageDocument {
@@ -58,7 +60,8 @@ public enum MessageDocument {
             try head.prepend(headMarkup(style: htmlStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))
             document.outputSettings().prettyPrint(pretty: false)
             return RenderedMessage(html: try document.outerHtml(), blockedRemoteContent: blocked,
-                blockedRemoteImages: hiddenImages, blockedTrackers: trackers)
+                blockedRemoteImages: hiddenImages, blockedTrackers: trackers,
+                searchableText: try document.body()?.text() ?? "")
         } catch {
             // Showing the escaped source is safe; showing nothing would hide the mail.
             return render(plainText: html)
@@ -68,7 +71,18 @@ public enum MessageDocument {
     public static func render(plainText: String, policy: MessageRenderPolicy = .init()) -> RenderedMessage {
         let page = "<!doctype html><html><head>\(headMarkup(style: plainTextStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))</head>"
             + "<body><div class=\"tern-plain\">\(linkified(plainText))</div></body></html>"
-        return RenderedMessage(html: page, blockedRemoteContent: 0)
+        return RenderedMessage(html: page, blockedRemoteContent: 0, searchableText: plainText)
+    }
+
+    /// A complete candidate index for Find. WebKit confirms matches against
+    /// the displayed document; quoted replies and long bodies stay searchable.
+    public static func searchableText(_ body: ExtractedBody) -> String {
+        guard let html = body.html else { return body.plainText ?? "" }
+        do {
+            let document = try SwiftSoup.parse(html)
+            try document.select("script,style,head").remove()
+            return try document.body()?.text() ?? ""
+        } catch { return body.plainText ?? html }
     }
 
     // The native message card supplies the inset. Type matches the macOS body size (13).

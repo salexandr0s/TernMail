@@ -70,6 +70,8 @@ final class EmailCalendarModel {
     private var interpretedItems: [EmailCalendarItem]?
     private var invitationState = CalendarInvitationState()
     private var referenceDate = Date.now
+    @ObservationIgnored private var preparationGeneration = 0
+    @ObservationIgnored private var lastPreparation: PreparedEmailCalendarMessages?
 
     var cachedInterpretation: [EmailCalendarItem]? { interpretedRevision == revision ? interpretedItems : nil }
 
@@ -78,11 +80,29 @@ final class EmailCalendarModel {
     func update(messages: [EmailCalendarMessage], addresses: [String],
                 timeZone: TimeZone = .autoupdatingCurrent, dismissedIDs: Set<String> = [],
                 invitationState: CalendarInvitationState = .init(), now: Date = .now) {
+        preparationGeneration += 1
+        let revision = Self.fingerprint(messages, timeZone: timeZone)
+        let detections = Dictionary(uniqueKeysWithValues: messages.map { message in
+            (message.id, message.invitations.isEmpty && message.allowsDateDetection
+                ? CalendarDetection.suggestions(in: message.text, messageDate: message.date, timeZone: timeZone) : [])
+        })
+        update(prepared: .init(messages: messages, revision: revision, detections: detections), addresses: addresses,
+            timeZone: timeZone, dismissedIDs: dismissedIDs, invitationState: invitationState, now: now)
+    }
+
+    func beginPreparation() -> Int { preparationGeneration += 1; return preparationGeneration }
+    func acceptsPreparation(_ generation: Int) -> Bool { preparationGeneration == generation }
+
+    func update(prepared: PreparedEmailCalendarMessages, addresses: [String],
+                timeZone: TimeZone = .autoupdatingCurrent, dismissedIDs: Set<String> = [],
+                invitationState: CalendarInvitationState = .init(), now: Date = .now) {
+        let messages = prepared.messages
+        lastPreparation = prepared
         let addressesChanged = self.addresses != addresses
         self.addresses = addresses
         self.invitationState = invitationState
         self.dismissedIDs.formUnion(dismissedIDs)
-        let fingerprint = Self.fingerprint(messages, timeZone: timeZone)
+        let fingerprint = prepared.revision
         let revisionChanged = fingerprint != revision
         guard revisionChanged || addressesChanged else {
             refreshInvitationState()
@@ -134,7 +154,7 @@ final class EmailCalendarModel {
             // create another candidate for the invitation's readable alternative.
             guard invitations.isEmpty, message.allowsDateDetection else { continue }
             let zoneWarning = message.timeZoneWarning(readerTimeZone: timeZone)
-            for suggestion in CalendarDetection.suggestions(in: message.text, messageDate: message.date, timeZone: timeZone) {
+            for suggestion in prepared.detections[message.id] ?? [] {
                 var event = GoogleCalendarEvent(summary: message.subject)
                 event.start = CalendarDateTime(date: suggestion.start, timeZone: timeZone, allDay: suggestion.isAllDay)
                 if let end = suggestion.end {
@@ -265,7 +285,11 @@ final class EmailCalendarModel {
         let sourceMessages = messages
         revision = ""
         interpretedRevision = nil
-        update(messages: sourceMessages, addresses: addresses, timeZone: timeZone, invitationState: invitationState)
+        if let lastPreparation {
+            update(prepared: lastPreparation, addresses: addresses, timeZone: timeZone, invitationState: invitationState)
+        } else {
+            update(messages: sourceMessages, addresses: addresses, timeZone: timeZone, invitationState: invitationState)
+        }
     }
 
     func attendee(for item: EmailCalendarItem) -> Invitation.Participant? {
@@ -274,9 +298,9 @@ final class EmailCalendarModel {
 
     /// Part of every revision. Raise it when the same mail should give different
     /// cards, so readings the assistant cached under the old rules are not reused.
-    private static let rulesVersion = 1
+    nonisolated private static let rulesVersion = 1
 
-    private static func fingerprint(_ messages: [EmailCalendarMessage], timeZone: TimeZone) -> String {
+    nonisolated static func fingerprint(_ messages: [EmailCalendarMessage], timeZone: TimeZone) -> String {
         var hash = SHA256()
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys

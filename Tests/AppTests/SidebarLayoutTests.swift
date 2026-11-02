@@ -61,12 +61,12 @@ import Testing
         try await settle()
         try await toggleAssistant(in: window, rootView: controller.view, opens: true)
         try await settle()
-        try expectColumnsBesideAssistant(in: controller.view, window: window, label: "opening at 720 points")
+        try await expectColumnsBesideAssistant(in: controller.view, window: window, label: "opening at 720 points")
         for width in [CGFloat(960), Tokens.Layout.windowMinWidth] {
             window.setContentSize(NSSize(width: width, height: 760))
             try await settle()
             try await settle()
-            try expectColumnsBesideAssistant(in: controller.view, window: window, label: "\(Int(width)) points")
+            try await expectColumnsBesideAssistant(in: controller.view, window: window, label: "\(Int(width)) points")
         }
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await settle()
@@ -228,10 +228,34 @@ import Testing
     /// Checks that the window has room for the list and reader beside the
     /// assistant, which keeps its minimum width at these sizes, and that no
     /// mail column runs under it.
-    private func expectColumnsBesideAssistant(in rootView: NSView, window: NSWindow, label: String) throws {
+    private func expectColumnsBesideAssistant(in rootView: NSView, window: NSWindow, label: String) async throws {
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: .seconds(3))
+        var split = try mailSplit(in: rootView)
+        func fits() -> Bool {
+            let panes = split.arrangedSubviews.filter { !$0.isHidden && !split.isSubviewCollapsed($0) }
+            let assistantEdge = window.frame.width - Tokens.Assistant.sidebarMinWidth
+            return window.frame.width >= AssistantSidebarLayout.windowMinimum - 1
+                && split.convert(split.bounds, to: nil).minX >= -1
+                && panes.allSatisfy { $0.convert($0.bounds, to: nil).maxX <= assistantEdge + 1 }
+                && panes.flatMap(tables(in:)).filter { $0.numberOfRows > 0 }.allSatisfy {
+                    $0.convert($0.rect(ofRow: 0), to: nil).minX >= -1
+                }
+        }
+        // Clamping a requested window width and collapsing native columns can
+        // finish in separate passes. Wait for the same final bounds asserted
+        // below, rather than assuming two fixed sleeps cover both passes.
+        while !fits(), ContinuousClock.now < deadline {
+            try await settle()
+            split = try mailSplit(in: rootView)
+        }
+        let elapsed = started.duration(to: .now)
+        if elapsed > .milliseconds(400) {
+            let frames = split.arrangedSubviews.filter { !$0.isHidden && !split.isSubviewCollapsed($0) }.map(\.frame)
+            print("Sidebar assistant layout \(label): \(fits() ? "settled" : "still invalid") after \(elapsed); window width \(window.frame.width), split \(split.frame), columns \(frames)")
+        }
         #expect(window.frame.width >= AssistantSidebarLayout.windowMinimum - 1,
             "The window is \(window.frame.width) points wide after \(label) with the assistant")
-        let split = try mailSplit(in: rootView)
         let assistantEdge = window.frame.width - Tokens.Assistant.sidebarMinWidth
         for column in split.arrangedSubviews where !column.isHidden && !split.isSubviewCollapsed(column) {
             #expect(column.convert(column.bounds, to: nil).maxX <= assistantEdge + 1,
@@ -259,6 +283,30 @@ import Testing
     }
 
     private func clickAssistantButton(in window: NSWindow) async throws {
+        // orderFront() only makes a window visible. sendEvent() bypasses the
+        // WindowServer activation that precedes a real click, so an inactive
+        // test host can discard both synthetic clicks as activation clicks.
+        // Establish their native input preconditions before testing the button.
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        window.makeMain()
+        // A hosted test process may need external activation. This preflight
+        // does not extend the separate three-second geometry deadline.
+        let focusDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        if !NSApp.isActive || !window.isKeyWindow || !window.isMainWindow {
+            print("SIDEBAR_FOCUS_WAIT: waiting for native test-host activation; pid \(ProcessInfo.processInfo.processIdentifier)")
+        }
+        while (!NSApp.isActive || !window.isKeyWindow || !window.isMainWindow), ContinuousClock.now < focusDeadline {
+            // External activation can choose the app's main scene instead of
+            // this fixture window. Reclaim focus once the app is active.
+            if NSApp.isActive, !window.isKeyWindow || !window.isMainWindow {
+                window.makeKeyAndOrderFront(nil)
+                window.makeMain()
+            }
+            try await settle()
+        }
+        try #require(NSApp.isActive && window.isKeyWindow && window.isMainWindow,
+            "The toolbar window must receive input: app active \(NSApp.isActive), key \(window.isKeyWindow), main \(window.isMainWindow)")
         // After a resize the toolbar lays its items out a little later.
         var target: NSPoint?
         var seen = ""

@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import MailStore
 import Testing
 @testable import Tern
 
@@ -43,15 +44,63 @@ import Testing
     }
 
     @Test func cachedPreparationBoundsImagesAndPropagatesCancellation() async throws {
+        let cache = ContactThumbnailCache(monitorsPressure: false)
+        let url = try #require(URL(string: "https://lh3.googleusercontent.com/person"))
+        let record = ContactPhotoRecord(accountID: "a", source: .connection, resourceName: "people/1", url: url)
         let picture = try png(width: 512, height: 256)
-        let prepared = try await ContactPhotoImages.prepareCachedThumbnail(picture)
-        let source = try #require(CGImageSourceCreateWithData(prepared as CFData, nil))
-        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
-        #expect((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue == 160)
-        #expect((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue == 80)
-        let canceled = Task { try await ContactPhotoImages.prepareCachedThumbnail(picture) }
+        let prepared = try await cache.image(for: ContactPhotoCacheKey(record, contextID: "bounds"), data: picture)
+        #expect(prepared.size.width == 160)
+        #expect(prepared.size.height == 80)
+        let canceled = Task {
+            try await cache.image(for: ContactPhotoCacheKey(record, contextID: "cancelled"), data: picture)
+        }
         canceled.cancel()
         await #expect(throws: CancellationError.self) { try await canceled.value }
+    }
+
+    @Test func decodedPhotosReusePixelsAndSeparateLifetimesAndVersions() async throws {
+        let cache = ContactThumbnailCache(monitorsPressure: false)
+        let url = try #require(URL(string: "https://lh3.googleusercontent.com/person"))
+        var record = ContactPhotoRecord(accountID: "a", source: .connection, resourceName: "people/1",
+            url: url, version: "v1", fetchedAt: .now)
+        let firstKey = ContactPhotoCacheKey(record, contextID: "lifetime-1")
+        let data = try png(width: 20, height: 20)
+        async let first = cache.image(for: firstKey, data: data)
+        async let joined = cache.image(for: firstKey, data: data)
+        let images = try await (first, joined)
+        #expect(images.0 === images.1)
+        #expect(cache.decodeCount == 1)
+        #expect(try await cache.image(for: firstKey, data: data) === images.0)
+        #expect(cache.decodeCount == 1)
+
+        let newLifetime = ContactPhotoCacheKey(record, contextID: "lifetime-2")
+        #expect(cache.image(for: newLifetime) == nil)
+        record.version = "v2"
+        let newVersion = ContactPhotoCacheKey(record, contextID: "lifetime-1")
+        #expect(cache.image(for: newVersion) == nil)
+        record.accountID = "b"
+        let otherAccount = ContactPhotoCacheKey(record, contextID: "lifetime-1")
+        _ = try await cache.image(for: otherAccount, data: data)
+        cache.remove(accountID: "a")
+        #expect(cache.image(for: firstKey) == nil)
+        #expect(cache.image(for: otherAccount) != nil)
+        cache.removeAll()
+        #expect(cache.cost == 0)
+    }
+
+    @Test func decodedPhotoBudgetEvictsOldPixels() async throws {
+        let cache = ContactThumbnailCache(capacity: 160 * 160 * 4, monitorsPressure: false)
+        let url = try #require(URL(string: "https://lh3.googleusercontent.com/person"))
+        let data = try png(width: 160, height: 160)
+        let first = ContactPhotoCacheKey(ContactPhotoRecord(accountID: "a", source: .connection,
+            resourceName: "first", url: url), contextID: "test")
+        let second = ContactPhotoCacheKey(ContactPhotoRecord(accountID: "a", source: .connection,
+            resourceName: "second", url: url), contextID: "test")
+        _ = try await cache.image(for: first, data: data)
+        _ = try await cache.image(for: second, data: data)
+        #expect(cache.cost <= cache.capacity)
+        #expect(cache.image(for: first) == nil)
+        #expect(cache.image(for: second) != nil)
     }
 
     private func png(width: Int, height: Int) throws -> Data {

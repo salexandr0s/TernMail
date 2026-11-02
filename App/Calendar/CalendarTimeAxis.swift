@@ -9,15 +9,15 @@ import Foundation
 /// and the hour autumn repeats gets two. A week shows every row any of its days
 /// has, so the columns stay aligned. A row one day lacks takes no time in that
 /// day's column: every point in it is the moment the clocks change.
-struct CalendarTimeAxis {
+struct CalendarTimeAxis: Sendable {
     /// A clock hour, and which time through it: the repeat after the clocks go back is pass 1.
-    struct Row: Hashable {
+    struct Row: Hashable, Sendable {
         var hour: Int
         var pass: Int
     }
 
     /// A stretch of one day that its clock spends in one row.
-    private struct Slot {
+    private struct Slot: Sendable {
         var row: Int
         /// Minutes from the top of the grid to where the stretch starts.
         var top: Double

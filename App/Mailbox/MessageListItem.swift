@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import MailStore
 import MessageContent
 
@@ -13,10 +14,18 @@ struct MailListRowID: Hashable, Sendable, Comparable {
     }
 }
 
-/// Reuses the displayed rows while selection, toolbar or sync status changes.
-/// Callers still read every observable input before consulting this cache.
+/// Reuses rows by data/configuration revision. Selection never compares the
+/// complete message arrays or rebuilds derived row presentation.
 final class MessageListProjection {
-    struct Input: Equatable {
+    struct Key: Equatable, Sendable {
+        let dataRevision: UInt64
+        let contextRevision: UInt64
+        let conversations: Bool
+        let filters: Set<MailQuickFilter>
+        let mailboxID: String?
+    }
+
+    struct Input: Sendable {
         let threads: [ThreadRecord]
         let entries: [MessageListEntry]
         let conversations: Bool
@@ -24,56 +33,95 @@ final class MessageListProjection {
         let mailboxID: String?
         let categories: [String: Set<String>]
         let addresses: [String: Set<String>]
+        let availableLabels: [String: [LabelRecord]]
     }
 
-    private var previous: Input?
+    private var previous: Key?
     private var result: [MessageListItem] = []
+    private(set) var preparationCount = 0
 
-    func items(for input: Input) -> [MessageListItem] {
-        guard previous != input else { return result }
-        result = MessageListItem.project(threads: input.threads, entries: input.entries,
+    func cached(for key: Key) -> [MessageListItem]? { previous == key ? result : nil }
+
+    func store(_ items: [MessageListItem], for key: Key) {
+        result = items
+        previous = key
+        preparationCount += 1
+    }
+
+    static func prepare(_ input: Input, reusing previous: [MessageListItem] = []) -> [MessageListItem] {
+        MessageListItem.project(threads: input.threads, entries: input.entries,
             conversations: input.conversations, filters: input.filters, mailboxID: input.mailboxID,
-            categories: input.categories, addresses: input.addresses)
-        previous = input
-        return result
+            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels, reusing: previous)
     }
 }
 
-struct MessageListItem: Identifiable, Equatable {
+struct MessageListItem: Identifiable, Equatable, Sendable {
     let id: MailListRowID
     let thread: ThreadRecord
     let messages: [MessageListEntry]
     private let metadata: Metadata
+    let sender: EmailAddress?
+    let visibleLabels: [LabelRecord]
 
     var labels: Set<String> { metadata.labels }
     var attachments: [AttachmentRecord] { metadata.attachments }
+    var recipients: String { messages.first?.message.recipients ?? "" }
 
-    init(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry]) {
+    init(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry],
+         availableLabels: [LabelRecord] = [], mailboxID: String? = nil) {
         self.id = id
         self.thread = thread
         self.messages = messages
-        metadata = Metadata(messages: messages)
+        let metadata = Metadata(messages: messages)
+        self.metadata = metadata
+        sender = EmailAddress.parseList(messages.first?.message.sender ?? thread.participants).first
+        visibleLabels = Self.displayedLabels(applied: metadata.labels, from: availableLabels, mailboxID: mailboxID)
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.thread == rhs.thread && lhs.messages == rhs.messages
+            && lhs.visibleLabels == rhs.visibleLabels
     }
 
-    private final class Metadata {
+    /// Rows are prepared off-main and later read by the UI; protect shared lazy values.
+    private final class Metadata: Sendable {
         let messages: [MessageListEntry]
-        lazy var labels: Set<String> = messages.reduce(into: []) { $0.formUnion($1.labels) }
-        lazy var attachments: [AttachmentRecord] = {
-            var seen = Set<String>()
-            return messages.flatMap(\.attachments).filter { seen.insert($0.messageID + ":" + $0.partID).inserted }
-        }()
+        private let cached = Mutex(Values())
+
+        private struct Values {
+            var labels: Set<String>?
+            var attachments: [AttachmentRecord]?
+        }
+
+        var labels: Set<String> {
+            cached.withLock { values in
+                if let labels = values.labels { return labels }
+                let labels = messages.reduce(into: Set<String>()) { $0.formUnion($1.labels) }
+                values.labels = labels
+                return labels
+            }
+        }
+
+        var attachments: [AttachmentRecord] {
+            cached.withLock { values in
+                if let attachments = values.attachments { return attachments }
+                var seen = Set<String>()
+                let attachments = messages.flatMap(\.attachments).filter {
+                    seen.insert($0.messageID + ":" + $0.partID).inserted
+                }
+                values.attachments = attachments
+                return attachments
+            }
+        }
 
         init(messages: [MessageListEntry]) { self.messages = messages }
     }
 
-    var recipients: String { messages.first?.message.recipients ?? "" }
-
     func displayedLabels(from available: [LabelRecord], mailboxID: String?) -> [LabelRecord] {
-        let applied = labels
+        Self.displayedLabels(applied: labels, from: available, mailboxID: mailboxID)
+    }
+
+    private static func displayedLabels(applied: Set<String>, from available: [LabelRecord], mailboxID: String?) -> [LabelRecord] {
         return available.filter {
             applied.contains($0.id) && (!$0.isSystem || $0.id != mailboxID)
                 && ![SystemLabel.unread, SystemLabel.starred, SystemLabel.important, SystemLabel.allMail].contains($0.id)
@@ -88,7 +136,14 @@ struct MessageListItem: Identifiable, Equatable {
 
     static func project(threads: [ThreadRecord], entries: [MessageListEntry], conversations: Bool,
                         filters: Set<MailQuickFilter>, mailboxID: String?, categories: [String: Set<String>],
-                        addresses: [String: Set<String>]) -> [MessageListItem] {
+                        addresses: [String: Set<String>], availableLabels: [String: [LabelRecord]] = [:],
+                        reusing previous: [MessageListItem] = []) -> [MessageListItem] {
+        let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func row(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry]) -> MessageListItem {
+            if let previous = previousByID[id], previous.thread == thread, previous.messages == messages { return previous }
+            return MessageListItem(id: id, thread: thread, messages: messages,
+                                   availableLabels: availableLabels[id.accountID] ?? [], mailboxID: mailboxID)
+        }
         let threadMap = Dictionary(threads.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         let filtered = entries.filter { entry in
             guard threadMap[ThreadKey(accountID: entry.message.accountID, threadID: entry.message.threadID)] != nil else { return false }
@@ -114,8 +169,8 @@ struct MessageListItem: Identifiable, Equatable {
         }
         if !conversations {
             return filtered.map { entry in
-                MessageListItem(id: .init(accountID: entry.message.accountID, threadID: entry.message.threadID, messageID: entry.message.id),
-                                thread: entry.rowThread, messages: [entry])
+                row(id: .init(accountID: entry.message.accountID, threadID: entry.message.threadID, messageID: entry.message.id),
+                    thread: entry.rowThread, messages: [entry])
             }
         }
         let groups = Dictionary(grouping: filtered) { ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID) }
@@ -125,7 +180,7 @@ struct MessageListItem: Identifiable, Equatable {
             displayed.isUnread = messages.contains { $0.labels.contains(SystemLabel.unread) }
             displayed.isStarred = messages.contains { $0.labels.contains(SystemLabel.starred) }
             displayed.lastDate = messages.map(\.message.date).max() ?? thread.lastDate
-            return MessageListItem(id: .init(accountID: thread.accountID, threadID: thread.id), thread: displayed, messages: messages)
+            return row(id: .init(accountID: thread.accountID, threadID: thread.id), thread: displayed, messages: messages)
         }
     }
 }

@@ -165,15 +165,26 @@ private struct TernAnimation<Value: Equatable>: ViewModifier {
 private struct TernHover: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
+    let isEnabled: Bool
     let radius: CGFloat
     let pointer: PointerStyle?
 
     func body(content: Content) -> some View {
         content
-            .background(Color.primary.opacity(isHovered ? Tokens.Opacity.hover : 0),
-                        in: RoundedRectangle(cornerRadius: radius))
+            .background {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.primary.opacity(isHovered && isEnabled ? Tokens.Opacity.hover : 0))
+                    .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isHovered)
+                    .transaction { transaction in
+                        if !isEnabled || reduceMotion {
+                            transaction.animation = nil
+                            transaction.disablesAnimations = true
+                        }
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
             .onHover { isHovered = $0 }
-            .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isHovered)
             .pointerStyle(pointer)
     }
 }
@@ -195,8 +206,8 @@ extension View {
     }
 
     /// Highlights the view under the pointer. Pass `.link` for views that open something.
-    func ternHover(radius: CGFloat = Tokens.Radius.sm, pointer: PointerStyle? = nil) -> some View {
-        modifier(TernHover(radius: radius, pointer: pointer))
+    func ternHover(isEnabled: Bool = true, radius: CGFloat = Tokens.Radius.sm, pointer: PointerStyle? = nil) -> some View {
+        modifier(TernHover(isEnabled: isEnabled, radius: radius, pointer: pointer))
     }
 
     /// The resize pointer for a divider or grip that moves along `axis`.

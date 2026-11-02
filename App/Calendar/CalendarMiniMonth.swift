@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CalendarMiniMonth: View {
+    @Environment(\.calendarPresentation) private var presentation
     @Binding var date: Date
     let calendar: Calendar
     var fixedMonth: Date?
@@ -66,7 +67,7 @@ struct CalendarMiniMonth: View {
                     .foregroundStyle(calendar.isDate(day, equalTo: month, toGranularity: .month) ? Color.primary : Color.secondary)
                     .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
                     .overlay { Circle().strokeBorder(calendar.isDate(day, inSameDayAs: date) ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus) }
-                Circle().fill(CalendarLayout.events(events, on: day, calendar: calendar).isEmpty ? Color.clear : .secondary)
+                Circle().fill(hasEvents(on: day) ? .secondary : Color.clear)
                     .frame(width: Tokens.Space.s1, height: Tokens.Space.s1)
             }
             .frame(maxWidth: .infinity)
@@ -78,4 +79,10 @@ struct CalendarMiniMonth: View {
     }
 
     private func shift(_ amount: Int) { date = calendar.date(byAdding: .month, value: amount, to: date) ?? date }
+
+    private func hasEvents(on day: Date) -> Bool {
+        guard !events.isEmpty else { return false }
+        if let presentation, presentation.matches(calendar) { return presentation.day(day)?.events.isEmpty == false }
+        return !CalendarLayout.events(events, on: day, calendar: calendar).isEmpty
+    }
 }

@@ -84,9 +84,11 @@ import Testing
     @Test func applyingRangeRetainsMetadataAndUsesCivilDatesOnConversion() throws {
         let calendar = try calendar()
         var original = event(start: try date(30, hour: 9, calendar: calendar), end: try date(30, hour: 10, calendar: calendar), allDay: false, calendar: calendar)
-        original.event.rawValue["futureField"] = .object(["keep": .bool(true)])
-        original.event.attendees = [CalendarAttendee(email: "guest@example.invalid")]
-        original.event.recurrence = ["RRULE:FREQ=WEEKLY"]
+        var recurring = original.event
+        recurring.rawValue["futureField"] = .object(["keep": .bool(true)])
+        recurring.attendees = [CalendarAttendee(email: "guest@example.invalid")]
+        recurring.recurrence = ["RRULE:FREQ=WEEKLY"]
+        original = original.replacingEvent(recurring)
         let range = CalendarInteraction.moving(original, to: try date(31, calendar: calendar), allDay: true, calendar: calendar)
         let changed = range.applying(to: original.event, calendar: calendar)
         #expect(changed.start?.date == "2026-10-31")

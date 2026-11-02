@@ -45,7 +45,7 @@ struct CalendarAccountOption: Identifiable, Hashable {
     var canShare = false
 }
 
-struct CalendarDisplayCalendar: Identifiable, Equatable {
+struct CalendarDisplayCalendar: Identifiable, Equatable, Sendable {
     var entry: GoogleCalendarEntry
     var accountID: String
     var accountName: String
@@ -67,22 +67,49 @@ struct CalendarDisplayCalendar: Identifiable, Equatable {
     }
 }
 
-struct CalendarDisplayEvent: Identifiable, Equatable {
-    var event: GoogleCalendarEvent
-    var accountID: String
-    var calendarID: String
-    var colorHex = "#4285f4"
-    var isPending = false
-    var canEdit = true
-    var fallbackTimeZoneID = TimeZone.current.identifier
-    var id: String { "\(calendarKey)|\(event.id)" }
-    var calendarKey: String { CalendarDisplayCalendar.key(accountID: accountID, calendarID: calendarID) }
-    var title: String { event.summary?.isEmpty == false ? event.summary ?? "" : "Untitled event" }
-    var start: Date { event.start?.resolvedDate(fallbackTimeZone: TimeZone(identifier: fallbackTimeZoneID) ?? .autoupdatingCurrent) ?? .distantPast }
-    var end: Date { event.end?.resolvedDate(fallbackTimeZone: TimeZone(identifier: fallbackTimeZoneID) ?? .autoupdatingCurrent) ?? start }
-    var isAllDay: Bool { event.isAllDay }
+struct CalendarDisplayEvent: Identifiable, Equatable, Sendable {
+    /// Keep the provider document for editing; view properties are decoded once.
+    let event: GoogleCalendarEvent
+    let accountID: String
+    let calendarID: String
+    let colorHex: String
+    var isPending: Bool
+    var canEdit: Bool
+    let fallbackTimeZoneID: String
+    let id: String
+    let calendarKey: String
+    let title: String
+    let start: Date
+    let end: Date
+    let isAllDay: Bool
+    let isRecurring: Bool
     var color: Color { Color(calendarHex: colorHex) }
-    var isRecurring: Bool { event.recurringEventId != nil || !(event.recurrence ?? []).isEmpty }
+
+    init(event: GoogleCalendarEvent, accountID: String, calendarID: String, colorHex: String = "#4285f4",
+         isPending: Bool = false, canEdit: Bool = true, fallbackTimeZoneID: String = TimeZone.current.identifier) {
+        self.event = event
+        self.accountID = accountID
+        self.calendarID = calendarID
+        self.colorHex = colorHex
+        self.isPending = isPending
+        self.canEdit = canEdit
+        self.fallbackTimeZoneID = fallbackTimeZoneID
+        calendarKey = CalendarDisplayCalendar.key(accountID: accountID, calendarID: calendarID)
+        id = "\(calendarKey)|\(event.id)"
+        let summary = event.summary ?? ""
+        title = summary.isEmpty ? "Untitled event" : summary
+        let zone = TimeZone(identifier: fallbackTimeZoneID) ?? .autoupdatingCurrent
+        let beginning = event.start
+        start = beginning?.resolvedDate(fallbackTimeZone: zone) ?? .distantPast
+        end = event.end?.resolvedDate(fallbackTimeZone: zone) ?? start
+        isAllDay = beginning?.isAllDay == true
+        isRecurring = event.recurringEventId != nil || !(event.recurrence ?? []).isEmpty
+    }
+
+    func replacingEvent(_ event: GoogleCalendarEvent) -> Self {
+        Self(event: event, accountID: accountID, calendarID: calendarID, colorHex: colorHex,
+             isPending: isPending, canEdit: canEdit, fallbackTimeZoneID: fallbackTimeZoneID)
+    }
 }
 
 enum CalendarEditScope: String, CaseIterable, Identifiable {

@@ -1,4 +1,5 @@
 import AppKit
+import Diagnostics
 import MessageContent
 import SwiftUI
 import WebKit
@@ -14,6 +15,9 @@ struct MessageWebView: NSViewRepresentable {
     var resources = InlineResourceMap()
     var adaptsDarkMode = true
     var forcesLightAppearance = false
+    /// Hidden retained readers keep their document, but stop remote loads.
+    var isActive = true
+    var onReadable: (_ retained: Bool) -> Void = { _ in }
     var onHover: (String?) -> Void = { _ in }
     var onSelectionChange: (String) -> Void = { _ in }
     /// `mailto:` and `tern:` links stay in Tern; the app's router opens them.
@@ -38,6 +42,7 @@ struct MessageWebView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(height: $height, onHover: onHover, onSelectionChange: onSelectionChange, onOpenMailLink: onOpenMailLink)
         coordinator.onDismantle = onDismantle
+        coordinator.onReadable = onReadable
         return coordinator
     }
 
@@ -53,6 +58,10 @@ struct MessageWebView: NSViewRepresentable {
             configuration.userContentController.add(blocker)
         }
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
+        #if DEBUG || TERN_PERFORMANCE
+        ReaderLayoutDiagnostics.shared?.register(view)
+        #endif
+        NavigationPerformance.shared.increment(.webViewCreated)
         MessageWebViewWarmup.messageViewCreated()
         if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
         view.navigationDelegate = context.coordinator
@@ -62,6 +71,7 @@ struct MessageWebView: NSViewRepresentable {
             coordinator?.measure(view)
         }
         view.onOpenLink = { [weak coordinator = context.coordinator] url, behind in coordinator?.open(url, behind: behind) }
+        context.coordinator.setActive(isActive, in: view)
         context.coordinator.load(html, in: view)
         onCreate(view)
         return view
@@ -73,6 +83,8 @@ struct MessageWebView: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onOpenMailLink = onOpenMailLink
         context.coordinator.onDismantle = onDismantle
+        context.coordinator.onReadable = onReadable
+        context.coordinator.setActive(isActive, in: view)
         if context.coordinator.needsLoad(html) {
             view.configuration.userContentController.removeAllContentRuleLists()
             if let blocker { view.configuration.userContentController.add(blocker) }
@@ -82,6 +94,11 @@ struct MessageWebView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: ContentSizedWebView, coordinator: Coordinator) {
+        NavigationPerformance.shared.increment(.webViewDestroyed)
+        coordinator.setActive(false, in: view)
+        #if DEBUG || TERN_PERFORMANCE
+        ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .dismantle)
+        #endif
         coordinator.onDismantle(view)
         view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternHeight", contentWorld: .defaultClient)
@@ -117,9 +134,9 @@ struct MessageWebView: NSViewRepresentable {
               + px(style.paddingBottom) + px(style.marginTop) + px(style.marginBottom));
           };
           let lastHeight;
-          const report = () => {
+          const report = (force = false) => {
             const height = measure();
-            if (height === lastHeight) return;
+            if (!force && height === lastHeight) return;
             lastHeight = height;
             webkit.messageHandlers.ternHeight.postMessage({height, revision: \(revision)});
           };
@@ -168,8 +185,50 @@ struct MessageWebView: NSViewRepresentable {
         var onSelectionChange: (String) -> Void
         var onOpenMailLink: (URL) -> Void
         var onDismantle: (WKWebView) -> Void = { _ in }
+        var onReadable: (_ retained: Bool) -> Void = { _ in }
         private var loadedHTML: String?
         private var revision = 0
+        private var reportedReadable = false
+        private var needsHeightReport = true
+        private var isActive = true
+        private var isMeasuring = false
+        private var measureAgain = false
+        private var interruptedLoad = false
+
+        func setActive(_ active: Bool, in view: WKWebView) {
+            (view as? ContentSizedWebView)?.setReaderActive(active)
+            #if DEBUG || TERN_PERFORMANCE
+            if let view = view as? ContentSizedWebView {
+                ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .activation,
+                    documentRevision: revision, active: active, readable: reportedReadable,
+                    previousActive: isActive, requestedActive: active)
+            }
+            #endif
+            guard active != isActive else { return }
+            isActive = active
+            needsHeightReport = true
+            if !active {
+                interruptedLoad = view.isLoading
+                view.stopLoading()
+            } else {
+                if reportedReadable {
+                    let currentRevision = revision
+                    Task { [weak self] in
+                        guard let self, self.isActive, self.revision == currentRevision else { return }
+                        self.onReadable(true)
+                    }
+                }
+                if interruptedLoad {
+                    interruptedLoad = false
+                    if !reportedReadable, let loadedHTML { view.loadHTMLString(loadedHTML, baseURL: nil) }
+                    else {
+                        view.evaluateJavaScript("document.querySelectorAll('img').forEach(i => { if (!i.complete || !i.naturalWidth) { const s = i.getAttribute('src'); if (s) i.src = s; } })",
+                            in: nil, in: .defaultClient) { _ in }
+                    }
+                }
+                measure(view)
+            }
+        }
 
         init(height: Binding<CGFloat>, onHover: @escaping (String?) -> Void = { _ in }, onSelectionChange: @escaping (String) -> Void = { _ in },
              onOpenMailLink: @escaping (URL) -> Void = { _ in }) {
@@ -184,8 +243,17 @@ struct MessageWebView: NSViewRepresentable {
 
         func load(_ html: String, in view: WKWebView) {
             guard html != loadedHTML else { return }
+            guard isActive else { return }
             loadedHTML = html
             revision += 1
+            reportedReadable = false
+            needsHeightReport = true
+            #if DEBUG || TERN_PERFORMANCE
+            if let view = view as? ContentSizedWebView {
+                ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .load,
+                    documentRevision: revision, active: isActive, readable: false)
+            }
+            #endif
             let current = revision
             Task { [weak self] in
                 guard let self, self.revision == current else { return }
@@ -224,14 +292,31 @@ struct MessageWebView: NSViewRepresentable {
         }
 
         func measure(_ webView: WKWebView) {
+            guard isActive else { return }
+            guard !isMeasuring else { measureAgain = true; return }
+            isMeasuring = true
             // Runs in Tern's own script world, which page JavaScript settings don't affect.
+            let revision = revision
+            // A hidden reader may have ignored a script report. Re-request its
+            // current height on activation without duplicating later bridge updates.
+            let forceReport = needsHeightReport
             let script = """
-                if (globalThis.__ternSizing?.revision === \(revision)) globalThis.__ternSizing.report();
+                if (globalThis.__ternSizing?.revision === \(revision)) globalThis.__ternSizing.report(\(forceReport));
                 """
-            webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { _ in }
+            Task { [weak self] in
+                defer {
+                    if let self {
+                        self.isMeasuring = false
+                        if self.measureAgain { self.measureAgain = false; self.measure(webView) }
+                    }
+                }
+                guard self?.isActive == true, self?.revision == revision else { return }
+                _ = try? await webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient)
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard isActive else { return }
             if message.name == "ternReading", message.frameInfo.isMainFrame,
                let value = message.body as? [String: Any], (value["revision"] as? NSNumber)?.intValue == revision {
                 if let hover = value["hover"] as? String {
@@ -246,13 +331,40 @@ struct MessageWebView: NSViewRepresentable {
                   let value = message.body as? [String: Any],
                   (value["revision"] as? NSNumber)?.intValue == revision,
                   let measured = (value["height"] as? NSNumber)?.doubleValue else { return }
+            #if DEBUG || TERN_PERFORMANCE
+            acceptHeightWithDiagnostics(measured, in: message.webView, source: .script, requestEpoch: nil)
+            #else
             acceptHeight(measured)
+            #endif
         }
 
-        private func acceptHeight(_ measured: Double) {
-            guard measured.isFinite, measured > 0 else { return }
-            if abs(height.wrappedValue - measured) >= 1 { height.wrappedValue = measured }
+        @discardableResult
+        private func acceptHeight(_ measured: Double) -> (previous: CGFloat, published: Bool)? {
+            guard isActive, measured.isFinite, measured > 0 else { return nil }
+            needsHeightReport = false
+            NavigationPerformance.shared.increment(.heightReport)
+            let previous = height.wrappedValue
+            let published = abs(previous - measured) >= 1
+            if published { height.wrappedValue = measured }
+            if !reportedReadable {
+                reportedReadable = true
+                if isActive { onReadable(false) }
+            }
+            return (previous, published)
         }
+
+        #if DEBUG || TERN_PERFORMANCE
+        private func acceptHeightWithDiagnostics(_ measured: Double, in webView: WKWebView?,
+                                                 source: ReaderLayoutDiagnostics.HeightSource,
+                                                 requestEpoch: ReaderLayoutDiagnostics.Epoch?) {
+            let accepted = acceptHeight(measured)
+            guard let view = webView as? ContentSizedWebView else { return }
+            ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .height,
+                documentRevision: revision, active: isActive, readable: reportedReadable,
+                heightSource: source, requestEpoch: requestEpoch, receivedHeight: measured,
+                oldBindingHeight: accepted.map { Double($0.previous) }, publishedHeight: accepted?.published)
+        }
+        #endif
     }
 }
 
@@ -261,12 +373,41 @@ struct MessageWebView: NSViewRepresentable {
 /// reflow the message and change its height, and gives links their own
 /// context menu.
 final class ContentSizedWebView: WKWebView {
+    #if DEBUG || TERN_PERFORMANCE
+    var readerLayoutState: ReaderLayoutDiagnostics.RendererState?
+    #endif
     var onWidthChange: (() -> Void)?
     /// The link under the pointer, as the page script reports it.
     var hoveredLink: URL?
     /// Opens a link in front of Tern, or behind it when `behind` is true.
     var onOpenLink: ((_ url: URL, _ behind: Bool) -> Void)?
     private var scrollDirection = ScrollDirection()
+    private var isReaderActive = true
+
+    override var acceptsFirstResponder: Bool { isReaderActive && super.acceptsFirstResponder }
+    override var canBecomeKeyView: Bool { isReaderActive && super.canBecomeKeyView }
+
+    override func becomeFirstResponder() -> Bool {
+        guard isReaderActive else { return false }
+        return super.becomeFirstResponder()
+    }
+
+    func setReaderActive(_ active: Bool) {
+        isReaderActive = active
+        // WebKit can put focus in an internal descendant instead of this
+        // wrapper. Native hiding removes the whole subtree from the key-view
+        // loop while retaining its document and measured geometry.
+        if isHidden != !active { isHidden = !active }
+        guard !active, let window, ownsResponder(window.firstResponder) else { return }
+        // Hiding may already have moved focus to another control. Never
+        // clear another reader's responder or the window's search field.
+        window.makeFirstResponder(nil)
+    }
+
+    private func ownsResponder(_ responder: NSResponder?) -> Bool {
+        guard let view = responder as? NSView else { return false }
+        return view === self || view.isDescendant(of: self)
+    }
 
     /// WebKit's own link items either navigate this view, which the policy
     /// refuses, or need a UI delegate that makes windows. Tern's take their
@@ -332,8 +473,16 @@ final class ContentSizedWebView: WKWebView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
-        let widthChanged = newSize.width != frame.width
+        #if DEBUG || TERN_PERFORMANCE
+        let oldSize = frame.size
+        #endif
+        let scale = window?.backingScaleFactor ?? 2
+        let widthChanged = (newSize.width * scale).rounded() != (frame.width * scale).rounded()
         super.setFrameSize(newSize)
+        #if DEBUG || TERN_PERFORMANCE
+        ReaderLayoutDiagnostics.shared?.recordRenderer(self, phase: .frame, widthChanged: widthChanged,
+                                                       oldFrame: oldSize, proposedFrame: newSize)
+        #endif
         if widthChanged { onWidthChange?() }
     }
 }

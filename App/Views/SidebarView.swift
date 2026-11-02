@@ -173,7 +173,11 @@ struct SidebarView: View {
         if mailbox.listPreferences.showsMore {
             DisclosureGroup("More") {
                 ForEach(moreBoxes(owner), id: \.id) { box in
-                    Label(box.title, systemImage: box.systemImage).tag(MailboxID.account(owner.account.id, box.id))
+                    Label(box.title, systemImage: box.systemImage)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .ternHover(isEnabled: mailbox.sidebarSelection != .account(owner.account.id, box.id))
+                        .tag(MailboxID.account(owner.account.id, box.id))
                         .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
                 }
                 ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
@@ -458,6 +462,8 @@ private struct LabelRow: View {
                 .foregroundStyle(color ?? .secondary)
                 .frame(width: Tokens.Space.s5 * scale)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
         .conversationDropTarget(.account(label.accountID, label.id), mailbox: mailbox)

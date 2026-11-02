@@ -4,11 +4,15 @@ import MessageContent
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct AttachmentLibraryRow: View {
+struct AttachmentLibraryRow: View, Equatable {
     let item: AttachmentLibraryItem
     let accountName: String
     let accounts: [AccountRecord]
     var compact = false
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item == rhs.item && lhs.accountName == rhs.accountName && lhs.accounts == rhs.accounts && lhs.compact == rhs.compact
+    }
 
     var body: some View {
         HStack(spacing: Tokens.Space.s3) {
@@ -74,13 +78,17 @@ struct AttachmentLibraryRow: View {
     }
 }
 
-struct AttachmentLibraryCard: View {
+struct AttachmentLibraryCard: View, Equatable {
     let item: AttachmentLibraryItem
     let accountName: String
     let accounts: [AccountRecord]
     let selected: Bool
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovered = false
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item == rhs.item && lhs.accountName == rhs.accountName && lhs.accounts == rhs.accounts && lhs.selected == rhs.selected
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
@@ -176,7 +184,7 @@ private struct AttachmentFileIcon: View {
     let size: CGFloat
 
     var body: some View {
-        Image(nsImage: NSWorkspace.shared.icon(for: AttachmentPresentation.fileType(item)))
+        Image(nsImage: AttachmentPresentation.icon(item))
             .resizable().scaledToFit()
             .frame(width: size, height: size)
             .accessibilityHidden(true)
@@ -194,25 +202,51 @@ private struct AttachmentSenderAvatar: View {
                 .frame(width: size, height: size)
                 .clipShape(Circle()).accessibilityHidden(true)
         } else {
-            DomainLogoAvatar(address: EmailAddress.parseList(sender).first?.address ?? "", size: size) {
+            DomainLogoAvatar(address: AttachmentPresentation.senderAddress(sender), size: size) {
                 TernAvatar(name: sender, size: size)
             }
         }
     }
 
     private var matchingAccount: AccountRecord? {
-        let address = EmailAddress.parseList(sender).first?.address.lowercased()
+        let address = AttachmentPresentation.senderAddress(sender).lowercased()
         return accounts.first { $0.email.lowercased() == address }
     }
 }
 
-enum AttachmentPresentation {
+@MainActor enum AttachmentPresentation {
+    private struct FilePresentation {
+        let type: UTType
+        let tint: Color
+        let icon: NSImage
+    }
+    private struct SenderPresentation {
+        let name: String
+        let address: String
+    }
+    private static var files: [String: FilePresentation] = [:]
+    private static var senders: [String: SenderPresentation] = [:]
+
     static func fileType(_ item: AttachmentLibraryItem) -> UTType {
-        UTType(filenameExtension: item.fileExtension) ?? UTType(mimeType: item.mimeType) ?? .data
+        file(item).type
     }
 
-    static func tint(_ item: AttachmentLibraryItem) -> Color {
-        let type = fileType(item)
+    static func icon(_ item: AttachmentLibraryItem) -> NSImage { file(item).icon }
+    static func tint(_ item: AttachmentLibraryItem) -> Color { file(item).tint }
+
+    private static func file(_ item: AttachmentLibraryItem) -> FilePresentation {
+        let key = item.fileExtension.lowercased() + ":" + item.mimeType.lowercased()
+        if let stored = files[key] { return stored }
+        let type = UTType(filenameExtension: item.fileExtension) ?? UTType(mimeType: item.mimeType) ?? .data
+        let prepared = FilePresentation(type: type, tint: tint(type), icon: NSWorkspace.shared.icon(for: type))
+        // Native document icons are shared immutable AppKit assets. The small
+        // catalog is bounded independently of the decoded contact-photo cache.
+        if files.count >= 64 { files.removeAll(keepingCapacity: true) }
+        files[key] = prepared
+        return prepared
+    }
+
+    private static func tint(_ type: UTType) -> Color {
         if type.conforms(to: .pdf) { return Color(nsColor: .systemRed) }
         if type.conforms(to: .image) { return Color(nsColor: .systemPurple) }
         if type.conforms(to: .spreadsheet) { return Color(nsColor: .systemGreen) }
@@ -223,8 +257,26 @@ enum AttachmentPresentation {
     }
 
     static func senderName(_ sender: String) -> String {
-        guard let parsed = EmailAddress.parseList(sender).first else { return sender }
-        return parsed.name?.isEmpty == false ? parsed.name ?? parsed.address : parsed.address
+        parsedSender(sender).name
+    }
+
+    static func senderAddress(_ sender: String) -> String { parsedSender(sender).address }
+
+    private static func parsedSender(_ sender: String) -> SenderPresentation {
+        if let stored = senders[sender] { return stored }
+        let parsed = EmailAddress.parseList(sender).first
+        let name = parsed.map { $0.name?.isEmpty == false ? $0.name ?? $0.address : $0.address } ?? sender
+        let value = SenderPresentation(name: name, address: parsed?.address ?? "")
+        if senders.count >= 512 { senders.removeAll(keepingCapacity: true) }
+        // A malformed, enormous header must not turn this small display cache
+        // into another copy of message content.
+        if sender.utf8.count <= 4_096 { senders[sender] = value }
+        return value
+    }
+
+    static func removeAll() {
+        files.removeAll()
+        senders.removeAll()
     }
 
     static func format(_ item: AttachmentLibraryItem) -> String {

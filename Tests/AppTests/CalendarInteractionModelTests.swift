@@ -82,12 +82,16 @@ import Testing
             #expect(fixture.model.operations.isEmpty)
 
             let index = try #require(fixture.model.events.firstIndex(where: { $0.id == source.id }))
-            fixture.model.events[index].event.rawValue["locked"] = .bool(true)
+            var lockedEvent = fixture.model.events[index].event
+            lockedEvent.rawValue["locked"] = .bool(true)
+            fixture.model.events[index] = fixture.model.events[index].replacingEvent(lockedEvent)
             let locked = fixture.model.events[index]
             let range = CalendarInteraction.moving(source, to: source.start.addingTimeInterval(900), calendar: fixture.model.calendar)
             await #expect(throws: CalendarModelError.self) { try await fixture.model.change(locked, to: range) }
             fixture.model.events[index] = source
-            fixture.model.events[index].event.etag = "changed-elsewhere"
+            var changed = fixture.model.events[index].event
+            changed.etag = "changed-elsewhere"
+            fixture.model.events[index] = fixture.model.events[index].replacingEvent(changed)
             await #expect(throws: CalendarModelError.self) { try await fixture.model.change(source, to: range) }
             #expect(fixture.model.operations.isEmpty)
         }
@@ -179,11 +183,13 @@ import Testing
     @Test func duplicateFromReadOnlyRecurringCalendarIsAnIndependentWritableEvent() async throws {
         try await withFixture { fixture in
             var source = try fixture.event("focus")
-            source.event.recurrence = ["RRULE:FREQ=WEEKLY"]
-            source.event.recurringEventId = "source-series"
-            source.event.attendees = [CalendarAttendee(email: "guest@example.invalid")]
-            source.event.eventType = "focusTime"
-            source.event.rawValue["focusTimeProperties"] = .object(["autoDeclineMode": .string("declineAllConflictingInvitations")])
+            var recurring = source.event
+            recurring.recurrence = ["RRULE:FREQ=WEEKLY"]
+            recurring.recurringEventId = "source-series"
+            recurring.attendees = [CalendarAttendee(email: "guest@example.invalid")]
+            recurring.eventType = "focusTime"
+            recurring.rawValue["focusTimeProperties"] = .object(["autoDeclineMode": .string("declineAllConflictingInvitations")])
+            source = source.replacingEvent(recurring)
             fixture.model.duplicate(source)
             let draft = try #require(fixture.model.editor)
             #expect(draft.isNew)

@@ -22,15 +22,23 @@ public enum TernSpan: String, Sendable, CaseIterable, Codable {
     case mailboxSwitchToList
     /// Process start to the first list rows on screen.
     case launchToList
+    /// Workspace selection to a ready destination's native drawing commit.
+    case workspaceSwitchToContent
+    /// Selection change to native drawing of the selected row state.
+    case selectionToFeedback
+    /// Selection change to native drawing of current message headers.
+    case selectionToHeader
+    case readerPreparation
+    case readerResources
+    case calendarPreparation
+    case mailListProjection
 }
 
 /// An open interval. End it with `TernSignposts.end(_:)`.
 public struct SpanToken: Sendable {
     public let span: TernSpan
     let start: ContinuousClock.Instant
-    // OSSignpostIntervalState is an opaque handle that os_signpost accepts
-    // from any thread. It is only ever passed back to `endInterval`.
-    nonisolated(unsafe) let state: OSSignpostIntervalState
+    let state: OSSignpostIntervalState
 }
 
 /// Signpost intervals plus a duration record for each one that ends.
@@ -50,6 +58,11 @@ public enum TernSignposts {
         let duration = token.start.duration(to: .now)
         signposter.endInterval("span", token.state, "\(token.span.rawValue, privacy: .public)")
         recorder.record(SpanRecord(span: token.span, duration: duration, endedAt: .now))
+    }
+
+    /// Closes an abandoned interval without adding it to successful timings.
+    public static func cancel(_ token: SpanToken) {
+        signposter.endInterval("span", token.state, "cancelled")
     }
 
     /// Measures `body`.
