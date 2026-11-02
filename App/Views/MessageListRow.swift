@@ -181,7 +181,6 @@ private struct MessageListVisualRow: View, Equatable {
                 let shape = RoundedRectangle(cornerRadius: Tokens.Radius.sm)
                 shape
                     .fill(Tokens.MessageList.backgroundTint(isUnread: thread.isUnread, colorScheme: colorScheme))
-                    .background(Tokens.Surface.primary, in: shape)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
