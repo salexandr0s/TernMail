@@ -90,51 +90,59 @@ struct SnoozeDateSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PopupHeader(title: "Snooze Until", systemImage: "moon.zzz")
-
+        SettingsEditorSheet(title: "Snooze Until", width: Tokens.Settings.editorWidth,
+                            messages: isInPast ? ["Choose a future time."] : []) {
             VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                DatePicker("Date", selection: $wakeAt, in: now..., displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                Divider()
-                HStack {
-                    Text("Time")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
-                        .labelsHidden()
-                        .accessibilityHint(isInPast ? "Choose a future time." : "Time to return to the Inbox")
-                }
-                if isInPast {
-                    Label("Choose a future time.", systemImage: "exclamationmark.triangle")
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Label("Back in your Inbox", systemImage: "tray")
                         .font(.callout)
-                        .foregroundStyle(Tokens.Status.error)
+                        .foregroundStyle(.secondary)
+                    Text(wakeAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.title2.bold())
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            .padding(.horizontal, Tokens.Space.s5)
-            .padding(.bottom, Tokens.Space.s5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Tokens.Space.s4)
+                .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+                .ternOutline(radius: Tokens.Radius.lg, style: .contrastOnly)
+                .accessibilityElement(children: .combine)
 
-            PopupFooter {
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Button("Snooze") {
-                    // The sheet may stay open past the chosen time.
-                    if wakeAt > .now {
-                        onSnooze(wakeAt)
-                    } else {
-                        isInPast = true
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    DatePicker("Date", selection: $wakeAt, in: now..., displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                    Divider()
+                    HStack {
+                        Text("Time").font(.callout.bold())
+                        Spacer()
+                        DatePicker("Time", selection: $wakeAt, in: now..., displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .controlSize(.large)
+                            .accessibilityHint(isInPast ? "Choose a future time." : "Time to return to the Inbox")
                     }
                 }
+                .padding(Tokens.Space.s4)
+                .ternSurface(style: .grouped)
+            }
+        } actions: {
+            Button("Cancel", role: .cancel, action: onCancel)
+                .keyboardShortcut(.cancelAction)
+            Button("Snooze", action: snooze)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-            }
         }
-        .frame(width: Tokens.Sheet.smallWidth)
-        .fixedSize(horizontal: false, vertical: true)
         .onChange(of: wakeAt) { isInPast = false }
         .ternAnimation(value: isInPast)
+    }
+
+    private func snooze() {
+        // The sheet may stay open past the chosen time.
+        if wakeAt > .now {
+            onSnooze(wakeAt)
+        } else {
+            isInPast = true
+        }
     }
 }

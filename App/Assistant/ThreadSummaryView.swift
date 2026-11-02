@@ -290,7 +290,7 @@ struct ThreadSummaryContent: View {
         Text(report.summary.summary)
             .font(.callout)
             .lineSpacing(Tokens.Space.s0_5)
-            .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var details: some View {

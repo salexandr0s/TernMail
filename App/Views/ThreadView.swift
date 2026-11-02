@@ -252,15 +252,14 @@ struct ThreadView: View {
                                 }
                             }
                             }
-                            LazyVStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                            LazyVStack(alignment: .leading, spacing: Tokens.Space.s3) {
                                 ForEach(messages) { message in
                                     messageRow(message, in: detail, scroll: scroll)
                                 }
                             }
                         }
-                        .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(Tokens.Space.s4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Tokens.Workspace.pageGutter)
                         .background(PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive))
                     }
                     .scrollPosition($scrollPosition)
@@ -467,7 +466,10 @@ struct ThreadView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { review in Text(review.explanation) }
+        } message: { review in
+            Text(InvitationReply.subject(for: review.answer, summary: review.item.title)
+                 + "\n\n" + review.explanation)
+        }
         .alert("Remove cancelled event?", isPresented: $cancellationReview.isPresent(), presenting: cancellationReview) { item in
             Button("Remove Event", role: .destructive) {
                 calendarReplyBusy = true
@@ -580,14 +582,22 @@ private struct ThreadHeading: View {
     var actions: ReaderActions? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                Text(detail.thread.subject.isEmpty ? "No Subject" : detail.thread.subject)
-                    .font(.title2.weight(.semibold))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            HStack(alignment: .center, spacing: Tokens.Space.s3) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(messageID == nil ? "Conversation" : "Message")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if let account = mailbox.account(id: key.accountID)?.account {
+                        Text(mailbox.accountTitle(account))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(account.email)
+                    }
+                }
+                Spacer(minLength: 0)
                 let canPrint = !detail.messages.contains { $0.body == nil }
                 Menu {
                     if let actions {
@@ -608,13 +618,39 @@ private struct ThreadHeading: View {
                 .accessibilityLabel("Conversation actions")
                 .help("Conversation actions")
             }
+            Text(detail.thread.subject.isEmpty ? "No Subject" : detail.thread.subject)
+                .font(.title.weight(.bold))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s3) { conversationContext }
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) { conversationContext }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
             if !chips.isEmpty {
                 FlowLayout(spacing: Tokens.Space.s1_5) {
                     labelChips
                 }
             }
+            Divider()
         }
-        .padding(.bottom, Tokens.Space.s0_5)
+        .padding(.top, Tokens.Space.s2)
+        .padding(.bottom, Tokens.Space.s1)
+        .accessibilityIdentifier("mail.reader.heading")
+    }
+
+    @ViewBuilder private var conversationContext: some View {
+        if messageID == nil {
+            Label("^[\(detail.messages.count) message](inflect: true)", systemImage: "bubble.left.and.bubble.right")
+                .fixedSize()
+        }
+        let date = messageID == nil ? detail.thread.lastDate : detail.messages.first?.record.date ?? detail.thread.lastDate
+        Text(date.formatted(date: .abbreviated, time: .omitted))
+            .fixedSize()
     }
 
     private var labelChips: some View {

@@ -65,34 +65,29 @@ struct AddFavoriteView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PopupHeader(title: "Add Favorite", systemImage: "star", subtitle: "Keep a folder within reach in your sidebar.")
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        SettingsEditorSheet(title: "Add Favorite", width: Tokens.Settings.editorWideWidth, scrolls: false) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                 accountPicker
-                HStack(spacing: Tokens.Space.s2) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Find a folder", text: $query)
+                HStack(spacing: Tokens.Space.s3) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField("Find a folder or label", text: $query)
                         .textFieldStyle(.plain)
+                        .font(.title3)
                         .focused($searchFocused)
+                        .accessibilityLabel("Find a folder or label")
                         .accessibilityIdentifier("favorites.searchFolders")
                     if !query.isEmpty {
-                        Button {
-                            query = ""
-                            searchFocused = true
-                        } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Clear folder search")
+                        Button("Clear Folder Search", systemImage: "xmark.circle.fill", action: clearSearch)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .padding(Tokens.Space.s2)
-                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .strokeBorder(searchFocused ? Color.accentColor : Tokens.Surface.border,
-                                      lineWidth: searchFocused ? Tokens.Border.focus : Tokens.Border.hairline)
-                }
+                .padding(Tokens.Space.s4)
+                .ternSurface(style: .grouped)
+                .ternOutline(radius: Tokens.Radius.lg, focus: searchFocused ? .accentColor : nil)
                 folderList
                 if let saveError {
                     Label(saveError, systemImage: "exclamationmark.triangle")
@@ -100,29 +95,22 @@ struct AddFavoriteView: View {
                         .foregroundStyle(Tokens.Status.error)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("favorites.saveError")
-                } else {
-                    Text(selectedAccount.isEmpty ? "Choose an account to see its labels." : "Hidden labels are included.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, Tokens.Space.s5)
-            .padding(.bottom, Tokens.Space.s4)
+            .padding(.horizontal, Tokens.Workspace.pageGutter)
+            .padding(.vertical, Tokens.Space.s4)
             .disabled(isSaving)
-            PopupFooter {
-                if isSaving { ProgressView().controlSize(.small) }
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isSaving)
-                Button("Add Favorite") { Task { await add() } }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canAdd)
-                    .accessibilityIdentifier("favorites.confirmAdd")
-            }
+        } actions: {
+            if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Adding favorite") }
+            Button("Cancel", role: .cancel) { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isSaving)
+            Button("Add Favorite") { Task { await add() } }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdd)
+                .accessibilityIdentifier("favorites.confirmAdd")
         }
-        .frame(width: Tokens.Settings.editorWidth)
-        .fixedSize(horizontal: false, vertical: true)
         .interactiveDismissDisabled(isSaving)
         .onAppear { searchFocused = true }
         .onChange(of: selectedAccount) { _, _ in
@@ -139,20 +127,26 @@ struct AddFavoriteView: View {
     }
 
     private var accountPicker: some View {
-        HStack(spacing: Tokens.Space.s3) {
-            Text("Account").font(.callout).foregroundStyle(.secondary)
-            Picker("Account", selection: $selectedAccount) {
-                Label("All Accounts (Unified)", systemImage: "person.2").tag("")
-                ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
-                    SenderAccountLabel(account: owner.account, address: mailbox.accountTitle(owner.account))
-                        .tag(owner.account.id)
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(spacing: Tokens.Space.s3) {
+                Text("Account").font(.callout.bold())
+                Picker("Account", selection: $selectedAccount) {
+                    Label("All Accounts (Unified)", systemImage: "person.2").tag("")
+                    ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
+                        SenderAccountLabel(account: owner.account, address: mailbox.accountTitle(owner.account))
+                            .tag(owner.account.id)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityIdentifier("favorites.accountPicker")
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.large)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .accessibilityIdentifier("favorites.accountPicker")
+            Text(selectedAccount.isEmpty ? "Choose an account to include its labels." : "All labels are included, even those hidden from the sidebar.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -171,17 +165,14 @@ struct AddFavoriteView: View {
         }
         .overlay {
             if visibleOptions.isEmpty {
-                VStack(spacing: Tokens.Space.s2) {
-                    Image(systemName: "folder").font(.title2).foregroundStyle(.secondary)
-                    Text(mailbox.presentedAccounts.isEmpty ? "No accounts available" : "No matching folders")
-                        .font(.headline)
-                    Text(mailbox.presentedAccounts.isEmpty ? "Add an account to choose a favorite." : "Try another name or account.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                .padding(Tokens.Space.s5)
+                ContentUnavailableView(
+                    mailbox.presentedAccounts.isEmpty ? "No Accounts Available" : "No Matching Folders",
+                    systemImage: "folder",
+                    description: Text(mailbox.presentedAccounts.isEmpty ? "Add an account to choose a favorite." : "Try another name or account.")
+                )
             }
         }
-        .frame(height: Tokens.Layout.sidebarWidth)
+        .frame(maxHeight: .infinity)
         .accessibilityLabel("Folders")
         .accessibilityIdentifier("favorites.folderList")
     }
@@ -228,6 +219,8 @@ struct AddFavoriteView: View {
         if case .mailbox(let id, _) = option.target { return SystemMailbox(labelID: id).color }
         return .secondary
     }
+
+    private func clearSearch() { query = ""; searchFocused = true }
 
     private func add() async {
         guard canAdd, let selectedTarget else { return }

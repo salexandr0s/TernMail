@@ -17,13 +17,26 @@ struct OriginalMessageWindow: View {
     @State private var subject = ""
     @State private var failure: String?
     @State private var saveFailure: String?
+    @State private var loadAttempt = 0
+
+    private struct LoadRequest: Hashable {
+        let link: MailLink?
+        let attempt: Int
+    }
 
     var body: some View {
         Group {
             if let bytes {
                 OriginalMessageText(bytes: bytes, limit: Self.previewLimit)
             } else if let failure {
-                TernEmptyState(title: "Couldn't Load the Original", systemImage: "doc.plaintext", message: failure)
+                VStack(spacing: Tokens.Space.s4) {
+                    TernEmptyState(title: "Couldn't Load the Original", systemImage: "doc.plaintext",
+                                   message: failure, fillsSpace: false)
+                    Button("Try Again") { loadAttempt += 1 }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("original-message.retry")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView("Loading original message…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -32,6 +45,7 @@ struct OriginalMessageWindow: View {
         .navigationTitle(subject.isEmpty ? "Original Message" : subject)
         .navigationSubtitle(subject.isEmpty ? "" : "Original Message")
         .frame(minWidth: Tokens.Layout.conversationMinWidth, minHeight: Tokens.Layout.conversationMinHeight)
+        .background(Tokens.Surface.canvas)
         .toolbar {
             ToolbarItemGroup {
                 Button("Copy", systemImage: "doc.on.doc") { copy() }
@@ -48,7 +62,7 @@ struct OriginalMessageWindow: View {
             Text(saveFailure ?? "Choose another location and try again.")
         }
         .onExitCommand { dismissWindow() }
-        .task(id: link) { await load() }
+        .task(id: LoadRequest(link: link, attempt: loadAttempt)) { await load() }
     }
 
     private func load() async {
@@ -95,19 +109,25 @@ private struct OriginalMessageText: View {
     let limit: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: 0) {
+            TernPageHeader(title: "Message source",
+                           subtitle: "Original .eml · \(ByteCountFormatter.string(fromByteCount: Int64(bytes.count), countStyle: .file))")
+                .padding(.horizontal, Tokens.Workspace.pageGutter)
+                .padding(.vertical, Tokens.Space.s4)
+            Divider()
             ScrollView([.horizontal, .vertical]) {
                 Text(String(decoding: bytes.prefix(limit), as: UTF8.self))
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(Tokens.Space.s4)
+                    .padding(Tokens.Workspace.pageGutter)
             }
             if bytes.count > limit {
+                Divider()
                 Text("Showing the first 2 MB. Copy and Save include the complete original.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .padding([.horizontal, .bottom], Tokens.Space.s4)
+                    .padding(Tokens.Space.s4)
             }
         }
     }

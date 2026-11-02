@@ -8,7 +8,7 @@ struct LabelColorPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack {
-                Text("Color").font(.subheadline.weight(.semibold))
+                Text("Color").font(.callout.bold())
                 Spacer()
                 Button("All Colors…") { showsAllColors = true }
                     .buttonStyle(.link)
@@ -22,17 +22,14 @@ struct LabelColorPicker: View {
             LabelColorGrid(selection: $selection, indices: Array(8..<16) + Array(24..<32))
         }
         .popover(isPresented: $showsAllColors, arrowEdge: .bottom) {
-            VStack(spacing: 0) {
-                PopupHeader(title: "Label Color", systemImage: "paintpalette")
+            SettingsEditorSheet(title: "Label Color", width: Tokens.Sheet.smallWidth) {
                 LabelColorGrid(selection: $selection, focusesSelection: true, onCancel: { showsAllColors = false })
-                    .padding(.horizontal, Tokens.Space.s4)
-                    .padding(.bottom, Tokens.Space.s4)
-                PopupFooter {
-                    Button("Done") { showsAllColors = false }
-                        .keyboardShortcut(.cancelAction)
-                }
+                    .padding(Tokens.Space.s3)
+                    .ternSurface(style: .grouped)
+            } actions: {
+                Button("Done") { showsAllColors = false }
+                    .keyboardShortcut(.cancelAction)
             }
-            .frame(width: Tokens.Popover.width)
         }
     }
 }
@@ -113,7 +110,7 @@ struct LabelColorGrid: View {
                             .foregroundStyle(Color(gmailHex: color.textColor) ?? .primary)
                     }
                 }
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
                 .padding(Tokens.Space.s1)
                 .overlay {
                     if selected {
@@ -184,8 +181,7 @@ struct LabelIconPicker: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s1), count: 6)
 
     var body: some View {
-        VStack(spacing: 0) {
-            PopupHeader(title: "Label Icon", systemImage: "square.grid.2x2")
+        SettingsEditorSheet(title: "Label Icon", width: Tokens.Sheet.smallWidth) {
             LazyVGrid(columns: columns, spacing: Tokens.Space.s2) {
                 ForEach(LabelAppearance.icons) { icon in
                     Button {
@@ -193,20 +189,27 @@ struct LabelIconPicker: View {
                         selection = icon.systemImage
                         onChoose()
                     } label: {
-                        Image(systemName: icon.systemImage)
-                            .font(.title3)
-                            .foregroundStyle(selection == icon.systemImage ? Color.accentColor : .primary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: Tokens.Control.iconButton)
-                            .background {
-                                if selection == icon.systemImage {
-                                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                                        .fill(Tokens.Surface.muted)
-                                        .strokeBorder(.tint, lineWidth: Tokens.Border.focus)
-                                }
+                        VStack(spacing: Tokens.Space.s2) {
+                            Image(systemName: icon.systemImage)
+                                .font(.title3)
+                                .foregroundStyle(selection == icon.systemImage ? Color.accentColor : .primary)
+                            Text(icon.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: Tokens.Space.s16)
+                        .background {
+                            if selection == icon.systemImage {
+                                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                                    .fill(Color.accentColor.opacity(Tokens.Opacity.wash))
+                                    .strokeBorder(.tint, lineWidth: Tokens.Border.focus)
                             }
-                            .contentShape(Rectangle())
-                            .accessibilityHidden(true)
+                        }
+                        .ternHover()
+                        .contentShape(Rectangle())
+                        .accessibilityHidden(true)
                     }
                     .buttonStyle(.plain)
                     .focusable()
@@ -221,14 +224,10 @@ struct LabelIconPicker: View {
                     .accessibilityAddTraits(selection == icon.systemImage ? .isSelected : [])
                 }
             }
-            .padding(.horizontal, Tokens.Space.s4)
-            .padding(.bottom, Tokens.Space.s4)
-            PopupFooter {
-                Button("Done", action: onChoose)
-                    .keyboardShortcut(.cancelAction)
-            }
+        } actions: {
+            Button("Done", action: onChoose)
+                .keyboardShortcut(.cancelAction)
         }
-        .frame(width: Tokens.Popover.width)
         .task {
             await Task.yield()
             focusedIcon = LabelAppearance.icons.first { $0.systemImage == selection }?.systemImage

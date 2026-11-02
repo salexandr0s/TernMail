@@ -55,108 +55,95 @@ struct LabelEditorSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PopupHeader(
-                title: title,
-                systemImage: draft.icon,
-                subtitle: "Click the icon to change it.",
-                iconForeground: draft.color == nil ? .accentColor : previewForeground,
-                iconBackground: previewBackground,
-                iconAction: { isChoosingIcon = true },
-                iconActionLabel: "Choose Label Icon"
-            )
-            .popover(isPresented: $isChoosingIcon, arrowEdge: .bottom) {
-                LabelIconPicker(selection: $draft.icon) { isChoosingIcon = false }
-            }
-
-            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+        SettingsEditorSheet(title: title, width: Tokens.Settings.editorWideWidth,
+                            messages: problem.map { [$0] } ?? []) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                 fields
-                Divider()
-                LabelColorPicker(selection: $draft.color)
-                preview
+                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    preview
+                    Divider()
+                    LabelColorPicker(selection: $draft.color)
+                }
+                .padding(Tokens.Space.s4)
+                .ternSurface(style: .grouped)
                 Text("Name and color sync with Gmail. Icons stay on this Mac.")
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, Tokens.Space.s5)
-            .padding(.bottom, Tokens.Space.s5)
-
-            PopupFooter {
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Button(saveTitle) { onSave(draft) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(isNameEmpty || problem != nil)
-            }
+        } actions: {
+            Button("Cancel", role: .cancel, action: onCancel)
+                .keyboardShortcut(.cancelAction)
+            Button(saveTitle) { onSave(draft) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isNameEmpty || problem != nil)
         }
-        .frame(width: Tokens.Sheet.smallWidth)
-        .fixedSize(horizontal: false, vertical: true)
         .onAppear { isNameFocused = true }
         .ternAnimation(value: problem)
     }
 
     private var fields: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Grid(alignment: .leading, horizontalSpacing: Tokens.Space.s3, verticalSpacing: Tokens.Space.s3) {
-                GridRow {
-                    Text("Name")
-                        .foregroundStyle(.secondary)
-                    TextField("Label name", text: $draft.name)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isNameFocused)
-                        .accessibilityLabel("Label name")
-                        .accessibilityHint(problem ?? "")
-                        .overlay {
-                            if problem != nil {
-                                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                                    .strokeBorder(Tokens.Status.error, lineWidth: Tokens.Border.hairline)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                }
-                GridRow {
-                    Text("Nest under")
-                        .foregroundStyle(.secondary)
-                    Picker("Nest under", selection: $draft.parent) {
-                        Text("None").tag(String?.none)
-                        ForEach(parentChoices, id: \.self) { name in
-                            Text(name).tag(Optional(name))
-                        }
-                    }
-                    .labelsHidden()
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .help(draft.parent ?? "None")
-                }
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Text("Name").font(.callout.bold()).foregroundStyle(.secondary)
+                TextField("Label name", text: $draft.name)
+                    .font(.title3.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .focused($isNameFocused)
+                    .accessibilityLabel("Label name")
+                    .accessibilityHint(problem ?? "")
             }
-            if let problem {
-                Label(problem, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(Tokens.Status.error)
-                    .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            HStack(spacing: Tokens.Space.s3) {
+                Text("Nest Under").font(.callout.bold()).foregroundStyle(.secondary)
+                Picker("Nest under", selection: $draft.parent) {
+                    Text("None").tag(String?.none)
+                    ForEach(parentChoices, id: \.self) { name in
+                        Text(name).tag(Optional(name))
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.large)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .help(draft.parent ?? "None")
             }
         }
+        .padding(Tokens.Space.s4)
+        .ternSurface(style: .grouped)
+        .ternOutline(radius: Tokens.Radius.lg,
+                     focus: problem != nil ? Tokens.Status.error : isNameFocused ? .accentColor : nil)
     }
 
     private var preview: some View {
         HStack(spacing: Tokens.Space.s3) {
-            Text("Preview")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Button { isChoosingIcon = true } label: {
+                Image(systemName: draft.icon)
+                    .font(.title2)
+                    .foregroundStyle(draft.color == nil ? .accentColor : previewForeground)
+                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+                    .background(previewBackground, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .ternOutline(radius: Tokens.Radius.md)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Choose Label Icon")
+            .help("Choose Label Icon")
+            .popover(isPresented: $isChoosingIcon, arrowEdge: .bottom) {
+                LabelIconPicker(selection: $draft.icon) { isChoosingIcon = false }
+            }
+            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                Text(isNameEmpty ? "Label name" : draft.fullName)
+                    .font(.headline)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(isNameEmpty ? "Label name" : draft.fullName)
+                Button("Change Icon…") { isChoosingIcon = true }
+                    .buttonStyle(.link)
+            }
             Spacer(minLength: 0)
-            Label(isNameEmpty ? "Label name" : draft.fullName, systemImage: draft.icon)
-                .font(.callout.weight(.medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, Tokens.Space.s3)
-                .padding(.vertical, Tokens.Space.s1_5)
-                .foregroundStyle(previewForeground)
-                .background(previewBackground, in: Capsule())
-                .overlay { Capsule().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
-                .help(isNameEmpty ? "Label name" : draft.fullName)
+            Text("Preview").font(.caption).foregroundStyle(.secondary)
         }
     }
 }
