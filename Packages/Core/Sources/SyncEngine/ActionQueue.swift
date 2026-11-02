@@ -164,11 +164,18 @@ extension SyncEngine {
     /// One receipt for the rows of one user command, so undo treats them as one.
     func register(_ rows: [PendingAction], snooze: SnoozeChange? = nil, messageSnooze: MessageSnoozeChange? = nil) -> ActionReceipt {
         let receipt = ActionReceipt(actions: rows, snooze: snooze, messageSnooze: messageSnooze)
-        undoReceipts = undoReceipts.filter { $0.value.value != nil }
+        undoReceipts = undoReceipts.mapValues { $0.filter { $0.value != nil } }.filter { !$0.value.isEmpty }
         for row in rows {
-            if let id = row.id { undoReceipts[id] = WeakActionReceipt(receipt) }
+            if let id = row.id { undoReceipts[id, default: []].append(WeakActionReceipt(receipt)) }
         }
         return receipt
+    }
+
+    /// Reused queue rows can belong to several reviews and an earlier Undo.
+    /// Each live receipt needs the same resolved IDs and adoption ownership.
+    func updateReceipts(_ row: PendingAction) {
+        guard let id = row.id else { return }
+        for receipt in undoReceipts[id] ?? [] { receipt.value?.update(row) }
     }
 
     /// Queues the reverse of `action` with no hold.
@@ -461,7 +468,7 @@ extension SyncEngine {
                     _ = try? await write { tx in try tx.deleteActionIfUndone(id: id) }
                     continue
                 }
-                undoReceipts[id]?.value?.update(prepared)
+                updateReceipts(prepared)
                 ready.append(prepared)
             } catch {
                 await finish(current, outcome: Self.outcome(for: error, of: current))
@@ -572,16 +579,18 @@ extension SyncEngine {
         let failed = if case .failed = outcome { true } else { false }
         // Undone during the request: its inverse is queued behind it, so the row
         // just goes, whatever Gmail answered.
-        let reported = await recordOutcome { [row] tx -> Bool in
-            if try tx.deleteActionIfUndone(id: id) { return false }
+        let recorded = await recordOutcome { [row] tx -> PendingAction? in
+            if try tx.deleteActionIfUndone(id: id) { return nil }
             if failed {
                 try tx.retainFailedAction(row, message: row.lastError ?? "Gmail refused this change.")
             } else {
                 try tx.updateAction(row)
             }
-            return failed
+            return row
         }
-        if reported == true {
+        let persisted = recorded ?? nil
+        if let persisted { updateReceipts(persisted) }
+        if failed, persisted != nil {
             unavailableUndoIDs.insert(id)
             continuation.yield(.actionFailed("Gmail didn't accept this change. The conversation was restored."))
         }

@@ -42,6 +42,7 @@ extension CacheTransaction {
         var affectedThreads = try overlayThreadIDs(of: row)
         if row.kind != .createLabel {
             let labels = [row.labelID, row.labelChange?.parentLabelID].compactMap { $0 } + row.addLabelIDs + row.removeLabelIDs
+                + (row.settingsChange?.requiredLabelIDs ?? [])
             for labelID in labels where LabelRules.isTemporary(labelID) {
                 if try resolvedLabelID(labelID, accountID: accountID) == labelID,
                    !active.contains(where: { $0.kind == .createLabel && $0.labelID == labelID }) {

@@ -132,6 +132,9 @@ extension SyncEngine {
             return
         }
         do {
+            guard !(row.settingsChange?.requiredLabelIDs ?? []).contains(where: LabelRules.isTemporary) else {
+                throw GmailError.invalidRequest("Filter label is unavailable")
+            }
             switch row.settingsChange {
             case .createFilter(let filter, let listedIDs):
                 let listed = try await settings.filters()
@@ -216,7 +219,7 @@ extension SyncEngine {
             try tx.updateAction(stored)
             return stored
         }
-        if let recorded { undoReceipts[id]?.value?.update(recorded) }
+        if let recorded { updateReceipts(recorded) }
         return recorded
     }
 
