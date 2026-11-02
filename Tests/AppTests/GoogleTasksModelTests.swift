@@ -1,10 +1,53 @@
 import Foundation
 import GmailAPI
 import MailStore
+import Observation
+import Synchronization
 import Testing
 @testable import Tern
 
 @Suite @MainActor struct GoogleTasksModelTests {
+    @Test func taskPresentationTracksValueChangesAndSkipsUnchangedSnapshots() throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let model = fixture.model(accounts: [], services: [:])
+        let parent = GoogleTask(id: "parent", title: "Project")
+        let child = GoogleTask(id: "child", title: "Review", parent: parent.id)
+        let done = GoogleTask(id: "done", title: "Sent", status: "completed")
+        model.tasks = [child, done, parent, GoogleTask(id: "deleted", title: "Removed", deleted: true)]
+        #expect(model.openTasks == [child, parent])
+        #expect(model.completedTasks == [done])
+        #expect(model.parentTitle(for: child) == "Project")
+
+        let changes = Mutex(0)
+        withObservationTracking {
+            _ = model.openTasks
+            _ = model.completedTasks
+            _ = model.parentTitle(for: child)
+        } onChange: { changes.withLock { $0 += 1 } }
+        let unchanged = model.tasks
+        model.tasks = unchanged
+        #expect(changes.withLock { $0 } == 0)
+
+        model.tasks[2].title = "Renamed project"
+        #expect(changes.withLock { $0 } == 1)
+        #expect(model.openTasks.map(\.title) == ["Review", "Renamed project"])
+        #expect(model.parentTitle(for: child) == "Renamed project")
+
+        model.tasks[0].status = "completed"
+        model.tasks[0].notes = "Updated under the same ID"
+        #expect(model.openTasks.map(\.id) == [parent.id])
+        #expect(model.completedTasks.map(\.id) == [child.id, done.id])
+        #expect(model.completedTasks.first?.notes == "Updated under the same ID")
+        model.tasks[0].deleted = true
+        #expect(model.completedTasks == [done])
+        model.tasks.removeAll { $0.id == parent.id }
+        #expect(model.parentTitle(for: child) == nil)
+        #expect(model.openTasks.isEmpty)
+        model.tasks = []
+        #expect(model.completedTasks.isEmpty)
+    }
+
     @Test(.timeLimit(.minutes(1))) func creationKeepsItsDestinationAndInsertsAtTheTopBeforeRefresh() async throws {
         let fixture = try TasksModelFixture()
         defer { fixture.clean() }

@@ -12,7 +12,15 @@ final class GoogleTasksModel {
     private(set) var selectedAccountID: String?
     private(set) var selectedListID: String?
     var lists: [GoogleTaskList] = []
-    var tasks: [GoogleTask] = []
+    var tasks: [GoogleTask] = [] {
+        didSet {
+            guard tasks != oldValue else { return }
+            prepareTaskPresentation()
+        }
+    }
+    private(set) var openTasks: [GoogleTask] = []
+    private(set) var completedTasks: [GoogleTask] = []
+    private var taskTitlesByID: [String: String] = [:]
     var isLoading = false
     var isConnecting = false
     var isCreating = false
@@ -66,11 +74,28 @@ final class GoogleTasksModel {
         return authorizedService(for: id) == nil || issue?.needsConnection == true
     }
     var canAdd: Bool { selectedListID != nil && !needsConnection && !isCreating && pendingCreation == nil && !stopped }
-    var openTasks: [GoogleTask] { tasks.filter { !$0.isCompleted && $0.deleted != true } }
-    var completedTasks: [GoogleTask] { tasks.filter { $0.isCompleted && $0.deleted != true } }
     var selectedLocation: GoogleTaskLocation? {
         guard let selectedAccountID, let selectedListID else { return nil }
         return GoogleTaskLocation(accountID: selectedAccountID, listID: selectedListID)
+    }
+
+    func parentTitle(for task: GoogleTask) -> String? {
+        task.parent.flatMap { taskTitlesByID[$0] }
+    }
+
+    /// Keep row inputs in server order and prepare them only when task values change.
+    private func prepareTaskPresentation() {
+        var open: [GoogleTask] = []
+        var completed: [GoogleTask] = []
+        var titles: [String: String] = [:]
+        for task in tasks {
+            if titles[task.id] == nil { titles[task.id] = task.title }
+            guard task.deleted != true else { continue }
+            if task.isCompleted { completed.append(task) } else { open.append(task) }
+        }
+        if openTasks != open { openTasks = open }
+        if completedTasks != completed { completedTasks = completed }
+        if taskTitlesByID != titles { taskTitlesByID = titles }
     }
 
     func creationState(for request: TaskCreationRequest) -> TaskCreationState {
