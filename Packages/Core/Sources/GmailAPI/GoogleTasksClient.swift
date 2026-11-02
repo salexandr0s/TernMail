@@ -100,7 +100,9 @@ public struct GoogleTasksClient: TasksService, Sendable {
     private func request(_ segments: [String], method: String = "GET", query: [URLQueryItem] = [],
                          body: Data? = nil, etag: String? = nil) throws -> URLRequest {
         guard !segments.contains(where: \.isEmpty) else { throw GmailError.invalidRequest("Task resource identity") }
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        // Google's fixed /users/@me route requires the literal @. Encoding it
+        // as %40 returns a routing 404 before authentication is checked.
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~@"))
         let encoded = try segments.map { segment in
             guard let value = segment.addingPercentEncoding(withAllowedCharacters: allowed) else {
                 throw GmailError.invalidRequest("Task resource identity")
