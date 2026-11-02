@@ -239,7 +239,12 @@ struct CalendarView: View {
                               selectedID: $model.selectedEventID, create: model.beginNew(in:), edit: model.edit,
                               change: prepareChange, delete: requestDelete, duplicate: model.duplicate, dropMail: dropMail)
                 .equatable()
-                .focusable().focused($hasKeyboardFocus)
+                .focusable()
+                .focusEffectDisabled()
+                .focused($hasKeyboardFocus)
+                .background(CalendarScrollNavigation(isEnabled: canHandleKeys) { direction in
+                    model.shift(periods: direction)
+                })
                 .onDeleteCommand { if isActive, let selected, selected.canEdit { requestDelete(selected) } }
                 .onCopyCommand { copyProviders() }
                 .onPasteCommand(of: [.plainText]) { providers in paste(providers) }
