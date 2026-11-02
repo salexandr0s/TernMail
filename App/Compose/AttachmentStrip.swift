@@ -23,6 +23,7 @@ struct AttachmentStrip: View {
     /// The files Quick Look pages through, so removing one closes it.
     @State private var previewIDs: Set<Int64> = []
     @FocusState private var focusedID: Int64?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -33,6 +34,8 @@ struct AttachmentStrip: View {
                     .accessibilityHidden(true)
                 Text(attachmentCount)
                     .font(.caption.weight(.medium))
+                    .contentTransition(reduceMotion ? .identity : .numericText(value: Double(attachments.count)))
+                    .ternAnimation(value: attachments.count)
                 if !attachments.isEmpty {
                     Text(totalSize).font(.caption)
                 }
@@ -50,16 +53,21 @@ struct AttachmentStrip: View {
                     ForEach(attachments) { attachment in
                         if let failure = failed.first(where: { $0.removedID == attachment.id }) {
                             failedChip(failure)
+                                .transition(chipTransition)
                         } else {
                             chip(attachment)
+                                .transition(chipTransition)
                         }
                     }
                     ForEach(failed.filter { !$0.isRemoval }) { failure in
                         failedChip(failure)
+                            .transition(chipTransition)
                     }
                 }
                 .padding(.horizontal, Tokens.Space.s5)
                 .padding(.vertical, Tokens.Space.s2)
+                .ternAnimation(value: attachments.compactMap(\.id))
+                .ternAnimation(value: failed.map(\.id))
             }
             .scrollIndicators(.automatic)
             .fixedSize(horizontal: false, vertical: true)
@@ -71,6 +79,10 @@ struct AttachmentStrip: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachmentCount)\(attachments.isEmpty ? "" : ", \(totalSize)")")
+    }
+
+    private var chipTransition: AnyTransition {
+        reduceMotion ? .identity : .opacity.combined(with: .offset(y: Tokens.Space.s1))
     }
 
     private var attachmentCount: String {

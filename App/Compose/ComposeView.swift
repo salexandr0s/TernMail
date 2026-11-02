@@ -109,6 +109,7 @@ struct ComposeView: View {
     @State private var senderAvatars = SenderAvatarModels()
     @Environment(AppModel.self) private var app
     @Environment(\.addressAvatarContext) private var avatarContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var showsQuote = false
     @State private var editsQuote = false
@@ -295,8 +296,9 @@ struct ComposeView: View {
                 .frame(maxWidth: Tokens.Compose.assistantMaxWidth)
                 .frame(maxWidth: .infinity)
                 .padding(Tokens.Space.s3)
+                .transition(disclosureTransition)
             }
-            if model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty {
+            if showsAttachments {
                 AttachmentStrip(
                     attachments: model.attachments.filter { $0.contentID == nil },
                     failed: model.failedAttachments,
@@ -307,6 +309,7 @@ struct ComposeView: View {
                 ) {
                     model.removeAttachment($0)
                 }
+                .transition(disclosureTransition)
             }
             if model.content.signatureAboveQuote { signature }
             if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
@@ -315,6 +318,8 @@ struct ComposeView: View {
             if !model.content.signatureAboveQuote { signature }
         }
         .ternAnimation(value: model.showsFormatting)
+        .ternAnimation(value: showsAssistant)
+        .ternAnimation(value: showsAttachments)
         // The AI bar consumes its own drops as context; the rest of the form attaches to mail.
         .composeFileDrop(isEnabled: model.isEditable, isTargeted: $isFileDropTargeted) { files in
             model.attach(files.map(Attachable.dropped))
@@ -339,6 +344,14 @@ struct ComposeView: View {
         .fileImporter(isPresented: $model.isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
         }
+    }
+
+    private var showsAttachments: Bool {
+        model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty
+    }
+
+    private var disclosureTransition: AnyTransition {
+        reduceMotion ? .identity : .opacity
     }
 
     private var signature: some View {
@@ -388,15 +401,19 @@ struct ComposeView: View {
             }
             if model.showsCc {
                 rowDivider
+                    .transition(disclosureTransition)
                 fieldRow("Cc:", field: .cc) {
                     recipientField("Cc", addresses: $model.content.cc, field: .cc)
                 }
+                .transition(disclosureTransition)
             }
             if model.showsBcc {
                 rowDivider
+                    .transition(disclosureTransition)
                 fieldRow("Bcc:", field: .bcc) {
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
                 }
+                .transition(disclosureTransition)
             }
             rowDivider
             fieldRow("Subject:", field: .subject) {
@@ -421,6 +438,8 @@ struct ComposeView: View {
         .background(Tokens.Surface.primary)
         .ternAnimation(value: focus)
         .ternAnimation(value: focusedRecipient)
+        .ternAnimation(value: model.showsCc)
+        .ternAnimation(value: model.showsBcc)
     }
 
     /// Hairlines follow the editable values, leaving the labels quiet.
@@ -626,9 +645,10 @@ struct ComposeView: View {
                 showsQuote.toggle()
             } label: {
                 HStack(spacing: Tokens.Space.s2) {
-                    Image(systemName: showsQuote ? "chevron.down" : "chevron.right")
+                    Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .frame(width: Tokens.Space.s3)
+                        .rotationEffect(.degrees(showsQuote ? 90 : 0))
                     Image(systemName: "text.quote")
                         .frame(width: Tokens.Control.icon)
                     Text(noun)
@@ -668,7 +688,7 @@ struct ComposeView: View {
                         .padding(.bottom, Tokens.Space.s2)
                 }
                 .frame(minHeight: Tokens.Space.s16, maxHeight: Tokens.Layout.quoteMaxHeight)
-                .transition(.opacity)
+                .transition(disclosureTransition)
             }
         }
         .background(Tokens.Surface.muted)

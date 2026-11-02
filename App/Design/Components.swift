@@ -178,9 +178,10 @@ private struct TernSurface: ViewModifier {
 private struct TernAnimation<Value: Equatable>: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let value: Value
+    let duration: Double
 
     func body(content: Content) -> some View {
-        content.animation(reduceMotion ? nil : Tokens.Motion.standard(), value: value)
+        content.animation(reduceMotion ? nil : Tokens.Motion.standard(duration: duration), value: value)
     }
 }
 
@@ -225,8 +226,8 @@ extension View {
         modifier(TernOutline(radius: radius, style: style, focus: focus))
     }
 
-    func ternAnimation<Value: Equatable>(value: Value) -> some View {
-        modifier(TernAnimation(value: value))
+    func ternAnimation<Value: Equatable>(value: Value, duration: Double = Tokens.Motion.base) -> some View {
+        modifier(TernAnimation(value: value, duration: duration))
     }
 
     /// Highlights the view under the pointer. Pass `.link` for views that open something.

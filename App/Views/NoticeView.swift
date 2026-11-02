@@ -63,6 +63,13 @@ struct NoticeView: View {
 struct MailNoticeOverlay: ViewModifier {
     let mailbox: MailboxModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var noticeTransition: AnyTransition {
+        reduceMotion ? .identity : .asymmetric(
+            insertion: .offset(y: Tokens.Space.s2).combined(with: .opacity),
+            removal: .opacity)
+    }
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottomTrailing) {
@@ -73,7 +80,7 @@ struct MailNoticeOverlay: ViewModifier {
                     } onDismiss: {
                         if mailbox.sendNotice?.id == notice.id { mailbox.sendNotice = nil }
                     }
-                    .transition(.opacity)
+                    .transition(noticeTransition)
                     .id(notice.id)
                 }
                 if let notice = mailbox.notice {
@@ -82,13 +89,13 @@ struct MailNoticeOverlay: ViewModifier {
                     } onDismiss: {
                         if mailbox.notice?.id == notice.id { mailbox.notice = nil }
                     }
-                    .transition(.opacity)
+                    .transition(noticeTransition)
                     .id(notice.id)
                 }
             }
             .padding(Tokens.Space.s4)
-            .ternAnimation(value: mailbox.notice)
-            .ternAnimation(value: mailbox.sendNotice)
+            .ternAnimation(value: mailbox.notice?.id)
+            .ternAnimation(value: mailbox.sendNotice?.id)
         }
     }
 

@@ -101,8 +101,10 @@ private struct MessageListVisualRow: View, Equatable {
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var showsSender = false
+    @FocusState private var starFocused: Bool
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.mailbox === rhs.mailbox && lhs.selected == rhs.selected && lhs.dateKey == rhs.dateKey
@@ -119,7 +121,7 @@ private struct MessageListVisualRow: View, Equatable {
     private var displayedLabels: [LabelRecord] { item.visibleLabels }
     /// Only the unread gutter spans the row; the avatar belongs to the header.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s2 + Tokens.Space.s1_5 }
-    private var showsStar: Bool { thread.isStarred || isHovered || selected }
+    private var showsStar: Bool { thread.isStarred || isHovered || selected || starFocused }
     private var showsAccount: Bool {
         mailbox.listPreferences.showsAccountBadges && mailbox.listMixesAccounts && accountMark != nil
     }
@@ -241,12 +243,16 @@ private struct MessageListVisualRow: View, Equatable {
                     Image(systemName: thread.isStarred ? "star.fill" : "star")
                         .font(scaledFont(.caption1))
                         .foregroundStyle(thread.isStarred ? Tokens.Status.star : Color.secondary)
+                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                        .ternAnimation(value: thread.isStarred, duration: Tokens.Motion.fast)
                         .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
+                .focused($starFocused)
                 // Keep the action's space even while hidden, so hover never moves the date.
                 .opacity(showsStar ? 1 : 0)
+                .ternAnimation(value: showsStar, duration: Tokens.Motion.fast)
                 .help(thread.isStarred ? "Remove Star" : "Star")
                 .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
                 Text(date).font(scaledFont(.caption1, weight: textWeight).monospacedDigit())
