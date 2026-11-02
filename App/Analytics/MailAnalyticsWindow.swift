@@ -20,17 +20,32 @@ struct MailAnalyticsWindow: View {
     }
 }
 
+enum MailAnalyticsSection: String, CaseIterable {
+    case activity, people, receipts, history
+
+    func title(isContact: Bool) -> String {
+        switch self {
+        case .activity: "Activity"
+        case .people: isContact ? "Profile" : "Contacts"
+        case .receipts: "Read receipts"
+        case .history: "History"
+        }
+    }
+}
+
 struct MailAnalyticsWorkspace: View {
     let route: MailAnalyticsRoute
     let mailbox: MailboxModel
     @State private var accountID: String
     @State private var period: MailAnalyticsPeriod = .year
+    @State private var section: MailAnalyticsSection
     @Environment(\.openWindow) private var openWindow
 
-    init(route: MailAnalyticsRoute, mailbox: MailboxModel) {
+    init(route: MailAnalyticsRoute, mailbox: MailboxModel, section: MailAnalyticsSection = .activity) {
         self.route = route
         self.mailbox = mailbox
         _accountID = State(initialValue: route.accountID ?? "")
+        _section = State(initialValue: section)
     }
 
     private var owners: [AccountMailbox] {
@@ -48,15 +63,16 @@ struct MailAnalyticsWorkspace: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: Tokens.Space.s5) {
                 heading
+                sectionPicker
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: Tokens.Space.s6) {
                         accountPicker
                         Spacer(minLength: Tokens.Space.s4)
-                        periodPicker
+                        dateScope
                     }
                     VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                         accountPicker
-                        periodPicker
+                        dateScope
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -73,12 +89,12 @@ struct MailAnalyticsWorkspace: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 MailAnalyticsDashboard(mailbox: mailbox, owners: owners, route: route,
-                    selectedAccountID: accountID.isEmpty ? nil : accountID, period: period)
+                    selectedAccountID: accountID.isEmpty ? nil : accountID, period: period, section: section)
                     .id(Scope(accountIDs: owners.map(\.account.id), address: route.address,
                               period: period, owners: owners.map(ObjectIdentifier.init)))
             }
         }
-        .background(Tokens.Surface.muted)
+        .background(Tokens.Surface.canvas)
         .navigationTitle(route.address == nil ? "Mail analytics" : "Sender analytics")
         .navigationSubtitle(route.name ?? route.address ?? "")
         .toolbar {
@@ -107,21 +123,41 @@ struct MailAnalyticsWorkspace: View {
                                 in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
                     .accessibilityHidden(true)
             }
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(title).font(.title.weight(.bold)).foregroundStyle(.primary).textSelection(.enabled)
-                    .lineLimit(2).help(title)
-                if let address = route.address {
-                    if title.caseInsensitiveCompare(address) != .orderedSame {
-                        Text(address).textSelection(.enabled).lineLimit(1).truncationMode(.middle).help(address)
-                    } else {
-                        Text("Correspondence activity")
-                    }
-                } else {
-                    Text("Sent, received and conversation history.")
-                }
+            TernPageHeader(title: title, subtitle: subtitle)
+                .textSelection(.enabled)
+                .help(route.address ?? title)
+        }
+    }
+
+    private var subtitle: String {
+        guard let address = route.address else { return "Your email, over time." }
+        return title.caseInsensitiveCompare(address) == .orderedSame ? "Correspondence activity" : address
+    }
+
+    private var sectionPicker: some View {
+        ViewThatFits(in: .horizontal) {
+            sectionChoices.pickerStyle(.segmented).fixedSize(horizontal: true, vertical: false)
+            sectionChoices.pickerStyle(.menu)
+        }
+        .accessibilityIdentifier("analytics-section-picker")
+    }
+
+    private var sectionChoices: some View {
+        Picker("Analytics section", selection: $section) {
+            ForEach(MailAnalyticsSection.allCases, id: \.self) { item in
+                Text(item.title(isContact: route.address != nil)).tag(item)
             }
-            .font(.callout).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+        }
+        .labelsHidden()
+        .accessibilityLabel("Analytics section")
+    }
+
+    @ViewBuilder private var dateScope: some View {
+        if section == .activity || (section == .people && route.address == nil) {
+            periodPicker
+        } else {
+            Label("All indexed mail", systemImage: "clock")
+                .font(.callout).foregroundStyle(.secondary)
         }
     }
 
@@ -169,6 +205,7 @@ private struct MailAnalyticsDashboard: View {
     let route: MailAnalyticsRoute
     let selectedAccountID: String?
     let period: MailAnalyticsPeriod
+    let section: MailAnalyticsSection
     @State private var model = MailAnalyticsModel()
     @State private var reload = UUID()
     @State private var calendarContext = AnalyticsCalendarContext()
@@ -179,9 +216,9 @@ private struct MailAnalyticsDashboard: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
+        ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s6) {
                     if model.isLoading {
                         ProgressView("Loading mail analytics…")
                             .frame(maxWidth: .infinity, minHeight: Tokens.Layout.editorMinHeight)
@@ -192,33 +229,33 @@ private struct MailAnalyticsDashboard: View {
                             Button("Try again") { reload = UUID() }
                         }
                     } else if let snapshot = model.snapshot {
-                        AnalyticsMetricsView(snapshot: snapshot, period: period)
-                        AnalyticsActivityChart(snapshot: snapshot)
-                        AnalyticsMilestonesView(snapshot: snapshot)
-                        if geometry.size.width >= Tokens.Analytics.twoColumnWidth {
-                            HStack(alignment: .top, spacing: Tokens.Space.s5) {
-                                VStack(spacing: Tokens.Space.s5) {
-                                    people(snapshot: snapshot)
-                                    receipts
-                                }
-                                .frame(maxWidth: .infinity)
-                                AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
-                                    .frame(maxWidth: .infinity)
-                            }
-                        } else {
-                            people(snapshot: snapshot)
+                        switch section {
+                        case .activity:
+                            AnalyticsMetricsView(snapshot: snapshot, period: period)
+                            AnalyticsActivityChart(snapshot: snapshot)
                             AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
+                        case .people:
+                            people(snapshot: snapshot)
+                        case .receipts:
                             receipts
+                        case .history:
+                            AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)
+                            AnalyticsMilestonesView(snapshot: snapshot)
                         }
-                        AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)
-                        Text("Drafts, spam and trash are excluded. Emails in multiple accounts count once per account. Dates use this Mac's time zone.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .padding(.horizontal, Tokens.Space.s1)
+                        if section == .activity || section == .people || section == .history {
+                            Text("Drafts, spam and trash are excluded. Emails in multiple accounts count once per account. Dates use this Mac's time zone.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
-                .padding(Tokens.Space.s6)
+                .id("analytics-top")
+                .padding(Tokens.Workspace.pageGutter)
                 .frame(maxWidth: Tokens.Analytics.contentWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
+            }
+            .onChange(of: section) {
+                proxy.scrollTo("analytics-top", anchor: .top)
             }
         }
         .task(id: ObservationIdentity(reload: reload, calendarContext: calendarContext)) {

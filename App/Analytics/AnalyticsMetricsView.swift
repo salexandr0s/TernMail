@@ -7,11 +7,12 @@ struct AnalyticsMetricsView: View {
     let period: MailAnalyticsPeriod
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s5) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline) { summary; Spacer(); coverage }
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) { summary; coverage }
             }
+            Divider()
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s3), count: 3),
                       spacing: Tokens.Space.s3) {
                 metric("Received", value: snapshot.receivedCount, symbol: "arrow.down.left",
@@ -22,14 +23,19 @@ struct AnalyticsMetricsView: View {
                        color: .secondary)
             }
         }
+        .padding(Tokens.Space.s6)
+        .analyticsPanel()
     }
 
     private var summary: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Text("Activity").font(.headline)
-            Text("· \(period.title)").font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            Text(period.title).font(.callout).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                Text(snapshot.totalCount, format: .number).font(.largeTitle.bold()).monospacedDigit()
+                Text("emails").font(.title3).foregroundStyle(.secondary)
+            }
         }
-        .fixedSize()
+        .accessibilityElement(children: .combine)
     }
 
     private var coverage: some View { AnalyticsCoverageLabel(coverage: snapshot.coverage) }
@@ -43,7 +49,7 @@ struct AnalyticsMetricsView: View {
                     .minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
             }
             .font(.callout.weight(.medium))
-            Text(value, format: .number).font(.largeTitle.weight(.semibold)).monospacedDigit()
+            Text(value, format: .number).font(.title2.bold()).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(value.formatted())
@@ -52,10 +58,9 @@ struct AnalyticsMetricsView: View {
                     miniChart(series: series, color: color)
                 } else {
                     VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text("\(snapshot.totalCount.formatted()) emails")
-                            .font(.callout.weight(.medium)).lineLimit(1)
-                            .minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
-                        Text("in this period").font(.caption).foregroundStyle(.secondary)
+                        Text("Threads with activity")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 }
@@ -63,13 +68,6 @@ struct AnalyticsMetricsView: View {
             .frame(height: Tokens.Analytics.sparklineHeight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Tokens.Space.s4)
-        .background(alignment: .top) {
-            LinearGradient(colors: [color.opacity(Tokens.Opacity.wash), .clear],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-        }
-        .analyticsPanel()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title): \(value.formatted()), \(period.title)\(series == nil ? ", \(snapshot.totalCount.formatted()) emails" : "")")
     }
@@ -97,7 +95,7 @@ struct AnalyticsMilestonesView: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: "clock").foregroundStyle(.secondary)
-                Text("Mail history").fontWeight(.semibold)
+                Text("First and latest emails").fontWeight(.semibold)
                 Spacer(minLength: 0)
                 Text("All indexed mail").foregroundStyle(.secondary)
             }

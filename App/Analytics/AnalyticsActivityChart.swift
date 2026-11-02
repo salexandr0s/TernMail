@@ -21,22 +21,15 @@ struct AnalyticsActivityChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-            HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Emails over time").font(.title3.weight(.semibold))
-                    Text(periodDescription).font(.caption).foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: Tokens.Space.s5) {
+                    heading
+                    Spacer(minLength: Tokens.Space.s3)
+                    displayPicker
                 }
-                Spacer(minLength: 0)
-                if snapshot.totalCount > 0 {
-                    Picker("Activity display", selection: $showsTable) {
-                        Image(systemName: "chart.bar.xaxis").tag(false)
-                            .accessibilityLabel("Show activity chart").help("Show activity chart")
-                        Image(systemName: "tablecells").tag(true)
-                            .accessibilityLabel("Show activity values").help("Show activity values")
-                    }
-                    .labelsHidden().pickerStyle(.segmented)
-                    .frame(width: Tokens.Space.s10 * 2)
-                    .accessibilityIdentifier("analytics-chart-display")
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    heading
+                    displayPicker
                 }
             }
             if snapshot.totalCount == 0 {
@@ -64,6 +57,27 @@ struct AnalyticsActivityChart: View {
         .padding(Tokens.Space.s6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            Text("Emails over time").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text(periodDescription).font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private var displayPicker: some View {
+        if snapshot.totalCount > 0 {
+            Picker("Activity display", selection: $showsTable) {
+                Text("Chart").tag(false)
+                Text("Values").tag(true)
+            }
+            .labelsHidden().pickerStyle(.segmented)
+            .fixedSize()
+            .accessibilityLabel("Activity display")
+            .accessibilityIdentifier("analytics-chart-display")
+        }
     }
 
     private var plot: some View {

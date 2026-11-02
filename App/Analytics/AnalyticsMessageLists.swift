@@ -11,7 +11,7 @@ struct AnalyticsCorrespondentsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            AnalyticsListHeading(title: "Frequent contacts", subtitle: "By email volume", count: min(correspondents.count, 10))
+            AnalyticsListHeading(title: "Frequent contacts", subtitle: "Most email in this period", symbol: "person.2", count: min(correspondents.count, 10))
             if correspondents.isEmpty {
                 AnalyticsListEmptyState(symbol: "person.2", title: "No contacts in this period",
                     detail: "Choose another date range or load more history.")
@@ -79,7 +79,8 @@ struct AnalyticsCorrespondentsView: View {
                 .accessibilityHidden(true)
             }
         }
-        .padding(Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s2)
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
     }
 
@@ -88,7 +89,7 @@ struct AnalyticsCorrespondentsView: View {
             Image(systemName: symbol).foregroundStyle(color)
             Text(value, format: .number).foregroundStyle(.secondary)
         }
-        .font(.caption2)
+        .font(.caption)
     }
 }
 
@@ -98,7 +99,7 @@ struct AnalyticsRecentMessagesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            AnalyticsListHeading(title: "Recent emails", subtitle: "Latest in this period", count: min(messages.count, 10))
+            AnalyticsListHeading(title: "Recent emails", subtitle: "Latest in this period", symbol: "tray", count: min(messages.count, 10))
             if messages.isEmpty {
                 AnalyticsListEmptyState(symbol: "tray", title: "No email in this period",
                     detail: "Choose another date range to see your messages.")
@@ -170,7 +171,7 @@ struct AnalyticsReceiptsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            AnalyticsListHeading(title: "Read receipts", subtitle: "Across all history", count: min(receipts.count, 10))
+            AnalyticsListHeading(title: "Read receipts", subtitle: "Across all history", symbol: "envelope.badge", count: min(receipts.count, 10))
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.caption).foregroundStyle(Tokens.Status.error)
@@ -210,13 +211,20 @@ struct AnalyticsReceiptsView: View {
 private struct AnalyticsListHeading: View {
     let title: String
     let subtitle: String
+    let symbol: String
     let count: Int
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
+            Image(systemName: symbol)
+                .font(.title3).foregroundStyle(Color.accentColor)
+                .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
+                .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Text(title).font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             if count > 0 {
@@ -256,7 +264,7 @@ private struct AnalyticsReceiptRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 if let threadID = receipt.threadID {
                     AnalyticsConversationButton(link: .init(accountID: receipt.accountID,
                         threadID: threadID, messageID: receipt.messageID), mailbox: mailbox) {
@@ -268,8 +276,7 @@ private struct AnalyticsReceiptRow: View {
                     Text(receipt.subject.isEmpty ? "No subject" : receipt.subject).lineLimit(2)
                         .help(receipt.subject)
                 }
-                Spacer(minLength: Tokens.Space.s2)
-                Text(receipt.sentAt, format: .dateTime.month(.abbreviated).day().year())
+                Text("Sent \(receipt.sentAt.formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption).foregroundStyle(.secondary).fixedSize()
                     .help("Sent \(receipt.sentAt.formatted(date: .complete, time: .shortened))")
             }
