@@ -46,7 +46,7 @@ struct AssistantMessageView: View {
                         .accessibilityLabel("You: \(message.text)")
                         .help(messageDate)
                 } else {
-                    AssistantMarkdownView(text: message.text)
+                    AssistantMarkdownView(markdown: message.markdown)
                         .help(messageDate)
                 }
             }

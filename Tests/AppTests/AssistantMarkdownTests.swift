@@ -3,6 +3,45 @@ import Testing
 @testable import Tern
 
 struct AssistantMarkdownTests {
+    @Test @MainActor func unchangedMessageTextReusesLazyPresentation() {
+        var message = AssistantMessage(isUser: false, text: "**Read** the proposal.", state: .streaming)
+        let presentation = message.markdown
+        #expect(presentation.preparationCount == 0)
+
+        _ = AssistantMarkdownView(markdown: message.markdown).body
+        #expect(presentation.preparationCount == 1)
+        let sameText = message.text
+        message.text = sameText
+        message.state = .completed
+        message.draftIDs.append("draft")
+        #expect(message.markdown === presentation)
+        for _ in 0..<100 { _ = AssistantMarkdownView(markdown: message.markdown).body }
+        #expect(presentation.preparationCount == 1)
+        #expect(String(presentation.blocks[0].text.characters) == "Read the proposal.")
+    }
+
+    @Test @MainActor func copiedMessageEditsAndRetryResetReplaceOnlyTheirPresentation() {
+        let original = AssistantMessage(isUser: false, text: "First paragraph.")
+        let presentation = original.markdown
+        _ = presentation.blocks
+        var edited = original
+        #expect(edited.markdown === presentation)
+
+        edited.text += "\n\nSecond paragraph."
+        #expect(edited.id == original.id)
+        #expect(edited.markdown !== presentation)
+        #expect(edited.markdown.preparationCount == 0)
+        #expect(edited.markdown.blocks.map { String($0.text.characters) } == ["First paragraph.", "Second paragraph."])
+        #expect(presentation.blocks.map { String($0.text.characters) } == ["First paragraph."])
+
+        edited.text = ""
+        #expect(edited.markdown.blocks.isEmpty)
+        edited.text = "# Retried reply"
+        #expect(edited.markdown.blocks.first?.kind == .heading)
+        #expect(edited.markdown.blocks.first.map { String($0.text.characters) } == "Retried reply")
+        #expect(presentation.preparationCount == 1)
+    }
+
     @Test func preservesHeadingsListsQuotesAndCodeAsSeparateBlocks() {
         let blocks = AssistantMarkdown.parse("""
         # Priorities
@@ -185,10 +224,11 @@ struct AssistantMarkdownTests {
         #expect(text == "Plan\n\nRead the proposal and reply.\n\n• First\n\t• Nested\n1. One\n\nName\tStatus\nAlex\tWaiting\n\nlet count = 2")
     }
 
-    @Test func copyingIgnoresTheDisplayLimits() {
+    @Test @MainActor func copyingIgnoresTheDisplayLimits() {
         let reply = (1...600).map { "- Item \($0)" }.joined(separator: "\n")
 
-        #expect(AssistantMarkdown.parse(reply).contains { $0.id < 0 })
+        let message = AssistantMessage(isUser: false, text: reply)
+        #expect(message.markdown.blocks.contains { $0.id < 0 })
         let text = AssistantMarkdown.plainText(reply)
         #expect(text.hasSuffix("• Item 600"))
         #expect(!text.contains("Response too long"))

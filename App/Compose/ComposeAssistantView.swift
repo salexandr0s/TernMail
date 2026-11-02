@@ -424,7 +424,7 @@ struct ComposeAssistantView: View {
         } else {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 Text("Assistant").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                if !message.text.isEmpty { AssistantMarkdownView(text: message.text) }
+                if !message.text.isEmpty { AssistantMarkdownView(markdown: message.markdown) }
                 if message.state == .streaming {
                     HStack(spacing: Tokens.Space.s2) {
                         ProgressView().controlSize(.small)
