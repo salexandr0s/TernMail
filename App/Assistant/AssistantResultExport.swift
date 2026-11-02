@@ -17,9 +17,9 @@ enum AssistantResultExport {
         var included = Set(message.emailResults.map { $0.source.id }
             + message.taskResults.map { $0.source.id } + message.eventResults.map { $0.source.id })
         parts += message.sources.filter { included.insert($0.id).inserted }.map(source)
-        parts += message.calendarProposals.map { "Calendar proposal: \($0.title) (not saved)" }
+        parts += message.calendarProposals.map { "Calendar proposal: \(literal($0.title)) (not saved)" }
         parts += message.availabilityChoices.map {
-            "Available time: \($0.displayTitle) (\($0.timeZoneIdentifier)); checked \($0.checkedAt.formatted(date: .abbreviated, time: .shortened)). Not reserved."
+            "Available time: \(literal($0.displayTitle)) (\(literal($0.timeZoneIdentifier))); checked \($0.checkedAt.formatted(date: .abbreviated, time: .shortened)). Not reserved."
         }
         if !message.draftIDs.isEmpty {
             parts.append("\(message.draftIDs.count) editable drafts prepared in Tern. Not sent.")
@@ -29,7 +29,7 @@ enum AssistantResultExport {
     }
 
     private static func email(_ result: AssistantEmailResult) -> String {
-        var lines = ["### \(literal(result.subject.isEmpty ? "No Subject" : result.subject))",
+        var lines = [heading(result.subject.isEmpty ? "No Subject" : result.subject),
                      "From: \(literal(result.senderName)) <\(literal(result.senderEmail))>",
                      "Account: \(literal(result.accountEmail))"]
         if let date = result.date { lines.append("Date: \(date.formatted(date: .complete, time: .shortened))") }
@@ -44,7 +44,7 @@ enum AssistantResultExport {
     }
 
     private static func task(_ result: AssistantTaskResult) -> String {
-        var lines = ["### \(literal(result.title))", "Due: \(result.dueDate ?? "No due date stated")"]
+        var lines = [heading(result.title), "Due: \(result.dueDate ?? "No due date stated")"]
         if let owner = result.owner { lines.append("Owner: \(literal(owner))") }
         if !result.notes.isEmpty { lines.append(literal(result.notes)) }
         lines.append("Source excerpt: \(literal(result.evidence))")
@@ -54,7 +54,7 @@ enum AssistantResultExport {
 
     private static func event(_ result: AssistantEventResult) -> String {
         let presentation = result.presentation()
-        var lines = ["### \(literal(result.title))", presentation.dateLine]
+        var lines = [heading(result.title), presentation.dateLine]
         if let original = presentation.originalTimeZoneLine { lines.append(original) }
         if let location = presentation.location { lines.append("Location: \(literal(location))") }
         if let notes = result.event.description, !notes.isEmpty { lines.append(literal(notes)) }
@@ -79,9 +79,21 @@ enum AssistantResultExport {
 
     /// Card metadata is plain text, including when exported through Markdown.
     private static func literal(_ value: String) -> String {
-        value.reduce(into: "") { output, character in
-            if "\\`*_{}[]<>#|".contains(character) { output.append("\\") }
-            output.append(character)
-        }
+        let normalized = value.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        return normalized.components(separatedBy: "\n").map { line in
+            // Entities preserve indentation without starting a Markdown code block.
+            let indentation = line.prefix { $0 == " " || $0 == "\t" }
+            var output = indentation.map { $0 == " " ? "&#32;" : "&#9;" }.joined()
+            for character in line.dropFirst(indentation.count) {
+                if "\\`*_{}[]<>#|+-.!=~()&".contains(character) { output.append("\\") }
+                output.append(character)
+            }
+            return output
+        }.joined(separator: "\\\n")
+    }
+
+    private static func heading(_ value: String) -> String {
+        let text = literal(value)
+        return value.contains(where: \.isNewline) ? "**\(text)**" : "### \(text)"
     }
 }

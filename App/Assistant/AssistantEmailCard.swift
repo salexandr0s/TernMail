@@ -11,41 +11,42 @@ struct AssistantEmailCard: View {
 
     var body: some View {
         Button { onOpen(email.source) } label: {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
                 HStack(alignment: .top, spacing: Tokens.Space.s2) {
                     avatar
                     VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                        Text(sender).font(.callout.weight(.semibold)).lineLimit(1)
+                        Text(sender).font(Tokens.AssistantFormatting.titleFont).lineLimit(1).help(sender)
                         if !email.senderEmail.isEmpty, sender != email.senderEmail {
-                            Text(email.senderEmail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(email.senderEmail).font(Tokens.AssistantFormatting.metadataFont)
+                                .foregroundStyle(.secondary).lineLimit(1).help(email.senderEmail)
                         }
                     }
                     Spacer(minLength: 0)
-                    VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
+                    HStack(spacing: Tokens.Space.s1) {
                         if let date = email.date {
                             Text(date, format: .dateTime.year().month(.abbreviated).day())
-                                .font(.caption2).foregroundStyle(.secondary)
+                                .font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
                                 .fixedSize()
                                 .help(date.formatted(date: .complete, time: .shortened))
                         }
                         if email.isUnread {
-                            Image(systemName: "circle.fill").font(.caption2).foregroundStyle(Color.accentColor)
+                            Image(systemName: "circle.fill").font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(Color.accentColor)
                                 .accessibilityLabel("Unread")
                         }
+                        if email.isStarred {
+                            Image(systemName: "star.fill").foregroundStyle(Tokens.Status.star).accessibilityLabel("Starred")
+                        }
                     }
+                    .font(Tokens.AssistantFormatting.metadataFont)
                 }
-                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s1) {
-                    Text(subject).font(.callout.weight(.semibold)).lineLimit(2)
-                    if email.isStarred {
-                        Image(systemName: "star.fill").foregroundStyle(Tokens.Status.star).accessibilityLabel("Starred")
-                    }
-                }
+                Text(subject).font(Tokens.AssistantFormatting.titleFont)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let reason = email.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(reason).font(.callout).lineLimit(3)
+                    Text(reason).font(Tokens.AssistantFormatting.supportingFont)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                if !email.snippet.isEmpty {
-                    Text(email.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                } else if !email.snippet.isEmpty {
+                    Text(email.snippet).font(Tokens.AssistantFormatting.metadataFont)
+                        .foregroundStyle(.secondary).lineLimit(2).help(email.snippet)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !email.labels.isEmpty {
@@ -56,13 +57,13 @@ struct AssistantEmailCard: View {
                                       tint: Color(gmailHex: label.backgroundColor) ?? .secondary)
                         }
                         if email.labels.count > 3 {
-                            Text("+\(email.labels.count - 3)").font(.caption).foregroundStyle(.secondary)
+                            Text("+\(email.labels.count - 3)").font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
+                                .help(email.labels.map(\.name).joined(separator: ", "))
                         }
                     }
                 }
-                Divider()
                 HStack(spacing: Tokens.Space.s1) {
-                    Text(email.accountEmail).lineLimit(1).truncationMode(.middle)
+                    Text(email.accountEmail).lineLimit(1).truncationMode(.middle).help(email.accountEmail)
                     Spacer(minLength: 0)
                     if email.messageCount > 1 {
                         Label("\(email.messageCount)", systemImage: "bubble.left.and.bubble.right")
@@ -70,23 +71,23 @@ struct AssistantEmailCard: View {
                     }
                     Image(systemName: "arrow.up.right").accessibilityHidden(true)
                 }
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
             }
             .foregroundStyle(.primary)
             .multilineTextAlignment(.leading)
-            .padding(Tokens.Space.s3)
+            .padding(Tokens.AssistantFormatting.inset)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+            .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius)
                     .strokeBorder(contrast == .increased ? Color.primary : (isHovered ? Color.accentColor : Tokens.Surface.border),
                                   lineWidth: Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
-            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
         }
         .buttonStyle(.plain)
-        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
         .onHover { isHovered = $0 }
         .ternAnimation(value: isHovered)
         .contextMenu {
@@ -98,16 +99,16 @@ struct AssistantEmailCard: View {
             }
             .labelStyle(.titleAndIcon)
         }
-        .help("Open \(subject)")
+        .help(email.snippet.isEmpty ? "Open \(subject)" : "Open \(subject)\n\(email.snippet)")
         .accessibilityElement(children: .combine)
         .accessibilityHint("Open this conversation in Tern")
     }
 
     @ViewBuilder private var avatar: some View {
         if let data = email.avatarData, let image = NSImage(data: data) {
-            AvatarImage(image: image)
+            AvatarImage(image: image, size: Tokens.Space.s6)
         } else {
-            DomainLogoAvatar(address: email.senderEmail) { TernAvatar(name: sender) }
+            DomainLogoAvatar(address: email.senderEmail, size: Tokens.Space.s6) { TernAvatar(name: sender, size: Tokens.Space.s6) }
         }
     }
 

@@ -42,12 +42,15 @@ extension AssistantMarkdown {
     }
 
     private static func richText(of block: Block, body: NSFont) -> NSAttributedString {
+        let content: NSAttributedString
         switch block.kind {
         case .rule:
             return NSAttributedString()
         case .code, .diagram:
-            let code = String(block.text.characters).trimmingCharacters(in: .newlines)
-            return NSAttributedString(string: code, attributes: [.font: monospaced(body)])
+            var code = String(block.text.characters)
+            // Foundation appends one terminal LF, including to unfinished fences.
+            if code.last == "\n" { code.removeLast() }
+            content = NSAttributedString(string: code, attributes: [.font: monospaced(body)])
         case .table:
             let output = NSMutableAttributedString()
             for (index, row) in block.rows.enumerated() {
@@ -57,22 +60,31 @@ extension AssistantMarkdown {
                     output.append(inline(cell, font: row.isHeader ? body.adding(.bold) : body))
                 }
             }
-            return output
+            content = output
         case .heading:
             let style: NSFont.TextStyle = block.headingLevel == 1 ? .title3 : .headline
-            return inline(block.text, font: NSFont.preferredFont(forTextStyle: style).adding(.bold))
+            content = inline(block.text, font: NSFont.preferredFont(forTextStyle: style).adding(.bold))
         case .paragraph:
-            let indent = String(repeating: "\t", count: max(block.listDepth - 1, 0))
-            let marker = block.isTaskCompleted.map { $0 ? "☑" : "☐" } ?? block.marker
-            let prefix = marker.map { "\(indent)\($0) " } ?? (block.isListContinuation ? indent + "\t" : "")
-            let output = NSMutableAttributedString(string: prefix, attributes: [.font: body])
-            output.append(inline(block.text, font: body))
-            if block.isTaskCompleted == true {
-                output.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
-                    range: NSRange(location: prefix.utf16.count, length: output.length - prefix.utf16.count))
-            }
-            return output
+            content = inline(block.text, font: body)
         }
+        let indent = String(repeating: "\t", count: max(block.listDepth - 1, 0))
+        let marker = block.isTaskCompleted.map { $0 ? "☑" : "☐" } ?? block.marker
+        let prefix = marker.map { "\(indent)\($0) " } ?? (block.isListContinuation ? indent + "\t" : "")
+        let output = NSMutableAttributedString(string: prefix, attributes: [.font: body])
+        output.append(content)
+        if block.isTaskCompleted == true {
+            output.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
+                range: NSRange(location: prefix.utf16.count, length: content.length))
+        }
+        if block.listDepth > 0 {
+            let continuation = NSAttributedString(string: String(repeating: "\t", count: block.listDepth), attributes: [.font: body])
+            let text = output.string as NSString
+            for index in stride(from: text.length - 2, through: prefix.utf16.count, by: -1)
+                where text.character(at: index) == 10 {
+                output.insert(continuation, at: index + 1)
+            }
+        }
+        return output
     }
 
     /// Strong and emphasized text, code spans and strikethrough keep their look.

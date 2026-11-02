@@ -22,6 +22,7 @@ struct AssistantMessageView: View {
             VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s2) {
                 bubble
                 footer
+                if showsSources, !sources.isEmpty { sourceList }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(message.isUser ? "Your message" : "Assistant response")
@@ -29,7 +30,7 @@ struct AssistantMessageView: View {
             .contextMenu { messageMenu }
             .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         }
-        .padding(.top, startsGroup ? Tokens.Space.s6 : Tokens.Space.s2)
+        .padding(.top, startsGroup ? Tokens.Space.s4 : Tokens.Space.s1_5)
         .task(id: copied) {
             guard copied else { return }
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
@@ -38,7 +39,7 @@ struct AssistantMessageView: View {
     }
 
     private var bubble: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
             if !message.text.isEmpty {
                 if message.isUser {
                     Text(message.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -55,7 +56,7 @@ struct AssistantMessageView: View {
                     ProgressView().controlSize(.mini)
                     Text(status ?? "Thinking…").font(.caption).foregroundStyle(.secondary)
                 }
-                .padding(.vertical, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s1)
                 .accessibilityElement(children: .combine)
             }
             if let model, !message.taskResults.isEmpty || !message.eventResults.isEmpty {
@@ -69,15 +70,19 @@ struct AssistantMessageView: View {
                         Text("\(emails.count)").monospacedDigit()
                     }
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                    ForEach(showsAllEmails ? emails : Array(emails.prefix(3))) { email in
+                    ForEach(showsAllEmails ? emails : Array(emails.prefix(Tokens.AssistantFormatting.resultPreviewCount))) { email in
                         AssistantEmailCard(email: email, onOpen: onOpenSource, onOpenInNewWindow: onOpenSourceInNewWindow)
                     }
-                    if emails.count > 3 {
-                        Button(showsAllEmails ? "Show fewer emails" : "Show \(emails.count - 3) more emails") {
+                    if emails.count > Tokens.AssistantFormatting.resultPreviewCount {
+                        Button {
                             showsAllEmails.toggle()
+                        } label: {
+                            Text(showsAllEmails ? "Show fewer emails" : "Show all \(emails.count) emails")
+                                .frame(minHeight: Tokens.Space.s6)
+                                .contentShape(Rectangle())
                         }
                         .font(.caption.weight(.medium)).buttonStyle(.borderless)
-                        .padding(.vertical, Tokens.Space.s1)
+                        .accessibilityValue(showsAllEmails ? "Expanded" : "Collapsed")
                     }
                 }
             }
@@ -90,7 +95,7 @@ struct AssistantMessageView: View {
                             Image(systemName: "arrow.up.right").font(.caption).accessibilityHidden(true)
                         }
                         .font(.callout.weight(.medium))
-                        .padding(Tokens.Space.s3)
+                        .padding(Tokens.AssistantFormatting.inset)
                         .background(Tokens.Assistant.userBubble, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                         .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
@@ -105,41 +110,18 @@ struct AssistantMessageView: View {
                     }
                 }
             }
-            if !sources.isEmpty {
-                DisclosureGroup(isExpanded: $showsSources) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        ForEach(sources) { source in
-                            let title = sourceTitle(source)
-                            Button { onOpenSource(source) } label: {
-                                Label(title, systemImage: source.systemImage)
-                                    .lineLimit(2).multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .font(.caption).buttonStyle(.link).help(title)
-                            .accessibilityLabel("Open source: \(title)")
-                        }
-                    }
-                    .padding(.top, Tokens.Space.s2)
-                } label: {
-                    Label("\(sources.count) \(sources.count == 1 ? "source" : "sources")", systemImage: "text.book.closed")
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                }
-                .padding(Tokens.Space.s3)
-                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
-            }
             if let error = message.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                    .padding(Tokens.Space.s3)
+                    .padding(Tokens.AssistantFormatting.inset)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Tokens.Surface.canvas, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                     .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
             }
         }
-        .padding(.horizontal, message.isUser ? Tokens.Space.s4 : 0)
-        .padding(.vertical, message.isUser ? Tokens.Space.s3 : 0)
+        .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
+        .padding(.vertical, message.isUser ? Tokens.AssistantFormatting.inset : 0)
         .foregroundStyle(.primary)
         .background(message.isUser ? Tokens.Assistant.chatBubble : .clear,
                     in: RoundedRectangle(cornerRadius: Tokens.Assistant.bubbleRadius))
@@ -156,6 +138,17 @@ struct AssistantMessageView: View {
         HStack(spacing: Tokens.Space.s2) {
             if message.state == .cancelled { Text("Stopped") }
             if message.state == .failed { Label("Incomplete", systemImage: "exclamationmark.circle") }
+            if !sources.isEmpty {
+                Button { showsSources.toggle() } label: {
+                    Label("\(sources.count) \(sources.count == 1 ? "source" : "sources")",
+                          systemImage: showsSources ? "chevron.up" : "text.book.closed")
+                        .frame(minHeight: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless).controlSize(.small)
+                .accessibilityValue(showsSources ? "Expanded" : "Collapsed")
+                .help(showsSources ? "Hide sources" : "Show sources")
+            }
             if !copyText.isEmpty {
                 Button { copy(.formatted) } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
@@ -180,6 +173,27 @@ struct AssistantMessageView: View {
         .font(.caption2).foregroundStyle(.secondary)
         .labelStyle(.titleAndIcon)
         .padding(.horizontal, message.isUser ? Tokens.Space.s2 : 0)
+    }
+
+    private var sourceList: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            ForEach(sources) { source in
+                let title = sourceTitle(source)
+                Button { onOpenSource(source) } label: {
+                    Label(title, systemImage: source.systemImage)
+                        .lineLimit(2).multilineTextAlignment(.leading)
+                        .frame(minHeight: Tokens.Space.s6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .font(Tokens.AssistantFormatting.metadataFont).buttonStyle(.link).help(title)
+                .accessibilityLabel("Open source: \(title)")
+            }
+        }
+        .padding(Tokens.AssistantFormatting.inset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
+        .ternOutline(radius: Tokens.AssistantFormatting.cornerRadius, style: .contrastOnly)
     }
 
     @ViewBuilder private var messageMenu: some View {

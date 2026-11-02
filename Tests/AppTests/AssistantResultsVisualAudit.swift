@@ -57,6 +57,117 @@ import Testing
         }
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["TERN_ASSISTANT_RESULTS_AUDIT_DIR"] != nil))
+    func renderOtherResponseFormats() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
+        for (width, scheme) in [(320.0, ColorScheme.dark), (380.0, .light), (720.0, .light)] {
+            let suffix = "\(Int(width))-\(scheme == .dark ? "dark" : "light")"
+            for sample in Self.markdownSamples {
+                try await capture(ScrollView {
+                    AssistantMarkdownView(text: sample.text).padding(Tokens.Space.s4)
+                }, size: NSSize(width: width, height: 900), scheme: scheme,
+                    name: "\(sample.name)-\(suffix)", captureBottom: true)
+            }
+            let email = AssistantEmailResult(source: Self.source, senderName: "Alex Morgan",
+                senderEmail: "alex@example.invalid", subject: "Revised plan and questions for next week's review",
+                snippet: "Please review the revised dates and reply with your preferred option.",
+                date: Date(timeIntervalSince1970: 1_793_664_000), isUnread: true, isStarred: true,
+                messageCount: 8, accountEmail: "work@example.invalid",
+                labels: [.init(accountID: "assistant-visual", id: "projects", name: "Projects", isSystem: false)],
+                reason: "Needs a decision before the next review.",
+                avatarData: NSImage(systemSymbolName: "person.fill", accessibilityDescription: nil)?.tiffRepresentation)
+            try await capture(AssistantEmailCard(email: email, onOpen: { _ in }, onOpenInNewWindow: { _ in })
+                .padding(Tokens.Space.s4), size: NSSize(width: width, height: 500), scheme: scheme,
+                name: "email-card-\(suffix)")
+        }
+    }
+
+    private static let markdownSamples: [(name: String, text: String)] = [
+        ("text-and-lists", #"""
+        # Weekly plan
+        Review **the proposal**, confirm *the dates*, and keep ~~outdated details~~ marked.
+
+        Use `status == ready` after reviewing the [supporting text](https://example.invalid).
+
+        7. Read the proposal
+        8. Compare the options
+           - Check the dates
+           - [ ] Confirm the budget
+           - [x] Send the notes
+
+        1. ## Decision to review
+        2. Keep the final answer with its supporting evidence.
+
+        > A quoted update stays distinct from the assistant's answer.
+        >
+        > | Item | Status |
+        > | --- | --- |
+        > | Proposal | Waiting for review |
+
+        ---
+
+        ![Image description](https://example.invalid/image.png) remains text.
+        """#),
+        ("tables-and-code", #"""
+        ## Compare the options
+
+        | Option | Notes | Decision |
+        | --- | --- | --- |
+        | **Morning** | A longer explanation that wraps inside a narrow sidebar. | Review |
+        | Afternoon | `a\|b` and an escaped \| remain in their cells. | |
+        | | No time confirmed | Waiting |
+
+        ## Code and literal whitespace
+
+        ```swift
+
+        let status = "needs review"
+        let details = ["dates", "budget", "source"]
+
+        ```
+
+        3. A code sample inside a list:
+
+           ```text
+           Keep [literal] brackets and **asterisks**.
+           ```
+
+        An unfinished code fence stays readable while the response streams:
+
+        ```json
+        { "status": "waiting"
+        """#),
+        ("diagrams-and-fallback", #"""
+        ## Separate crossing labels
+
+        ```mermaid
+        flowchart TD
+        A
+        B
+        C
+        D
+        A -->|Red| D
+        B -->|Blue| C
+        ```
+
+        ## Wrapped branch labels
+
+        ```mermaid
+        flowchart LR
+        A -->|Needs review before sending| B
+        A -->|Ready for immediate delivery| C
+        ```
+
+        Unsupported diagram syntax stays visible as source:
+
+        ```mermaid
+        flowchart TD
+        A --> B
+        B --> A
+        ```
+        """#)
+    ]
+
     private func taskCard(_ task: AssistantTaskResult, state: TaskCreationState) -> some View {
         AssistantTaskCard(task: task, state: state, isEnabled: true, onReview: {}, onOpenSource: { _ in })
     }
@@ -97,21 +208,27 @@ import Testing
         return .init(source: source, event: event, evidence: "Friday, 6 November is our team planning day.")
     }
     private static var undatedEvent: AssistantEventResult {
-        .init(source: source, event: GoogleCalendarEvent(summary: "Customer workshop"),
-            evidence: "We should arrange a customer workshop after the launch.",
-            uncertainties: ["Time and location are still being discussed."])
+        var event = GoogleCalendarEvent(summary: "Online private sale")
+        event.description = "3 November 2026, 12:00–23:00 online."
+        return .init(source: source, event: event,
+            evidence: "Join our online private sale on 3 November 2026, 12:00–23:00.",
+            uncertainties: ["Time zone not stated; confirm before adding."])
     }
 
-    private func capture<Content: View>(_ content: Content, size: NSSize, scheme: ColorScheme, name: String,
-                                       captureBottom: Bool = false, expandExcerpt: Bool = false,
-                                       waitFor: String? = nil) async throws {
+    func capture<Content: View>(_ content: Content, size: NSSize, scheme: ColorScheme, name: String,
+                               captureBottom: Bool = false, expandExcerpt: Bool = false,
+                               waitFor: String? = nil, increasedContrast: Bool = false,
+                               inspect: (@MainActor (NSWindow, NSView) async throws -> Void)? = nil) async throws {
         let controller = NSHostingController(rootView: content
-            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Tokens.Surface.primary).environment(\.colorScheme, scheme))
         controller.sizingOptions = []
         let window = NSWindow(contentViewController: controller)
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        let appearance: NSAppearance.Name = increasedContrast
+            ? (scheme == .dark ? .accessibilityHighContrastDarkAqua : .accessibilityHighContrastAqua)
+            : (scheme == .dark ? .darkAqua : .aqua)
+        window.appearance = NSAppearance(named: appearance)
         window.setContentSize(size)
         window.orderFront(nil)
         defer { window.close() }
@@ -135,6 +252,7 @@ import Testing
         }
         controller.view.layoutSubtreeIfNeeded()
         try attach(controller.view, name: name)
+        try await inspect?(window, controller.view)
         if captureBottom, let scroll = scrollView(in: controller.view), let document = scroll.documentView {
             scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
             scroll.reflectScrolledClipView(scroll.contentView)
@@ -144,7 +262,7 @@ import Testing
         }
     }
 
-    private func attach(_ view: NSView, name: String) throws {
+    func attach(_ view: NSView, name: String) throws {
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
@@ -154,11 +272,11 @@ import Testing
         try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
     }
 
-    private func scrollView(in view: NSView) -> NSScrollView? {
+    func scrollView(in view: NSView) -> NSScrollView? {
         (view as? NSScrollView) ?? view.subviews.lazy.compactMap { scrollView(in: $0) }.first
     }
 
-    private func find(_ text: String, in root: Any, needsPress: Bool = false) -> NSObject? {
+    func find(_ text: String, in root: Any, needsPress: Bool = false) -> NSObject? {
         var seen = Set<ObjectIdentifier>()
         func visit(_ item: Any) -> NSObject? {
             guard let object = item as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return nil }

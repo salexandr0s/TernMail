@@ -71,7 +71,7 @@ struct AssistantMarkdownTests {
         let blocks = AssistantMarkdown.parse("""
         <script>window.location = 'https://example.invalid'</script>
 
-        **Read** [this mail](https://example.invalid/mail) and ![remote image](https://example.invalid/image.png).
+        **Read** [this mail](https://example.invalid/mail) and ![remote image](https://example.invalid/image.png), *then* ~~remove~~ it.
 
         | Source | Detail |
         | --- | --- |
@@ -90,6 +90,8 @@ struct AssistantMarkdownTests {
             }
         }
         #expect(texts.contains { $0.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true } })
+        #expect(texts.contains { $0.runs.contains { $0.inlinePresentationIntent?.contains(.emphasized) == true } })
+        #expect(texts.contains { $0.runs.contains { $0.inlinePresentationIntent?.contains(.strikethrough) == true } })
     }
 
     @Test func preservesTableCellBoundariesAcrossInlineFormatting() throws {
@@ -106,6 +108,102 @@ struct AssistantMarkdownTests {
         #expect(table.rows.first?.isHeader == true)
         #expect(table.rows[1].cells.map { String($0.characters) } == ["Alex Kim", "", "Waiting"])
         #expect(table.rows.last?.cells.map { String($0.characters) } == ["", "Friday", ""])
+    }
+
+    @Test func nestedTablePreservesContainersEscapedPipesAndBackticks() throws {
+        let markdown = """
+        > 3. | Source | Detail |
+        >    | --- | --- |
+        >    | `a\\|b` | `` `quoted` `` |
+        """
+        let table = try #require(AssistantMarkdown.parse(markdown).first)
+        #expect(table.kind == .table)
+        #expect(table.quoteDepth == 1)
+        #expect(table.listDepth == 1)
+        #expect(table.marker == "3.")
+        #expect(table.rows[1].cells.map { String($0.characters) } == ["a|b", "`quoted`"])
+        #expect(AssistantMarkdown.plainText(markdown) == "3. Source\tDetail\n\ta|b\t`quoted`")
+    }
+
+    @Test func oversizedTablesFallBackBeforePaddingAndCopyAllSourceText() {
+        for (columns, rows) in [(40, 2), (2, 300), (32, 140)] {
+            let header = "| " + (1...columns).map { "Header \($0)" }.joined(separator: " | ") + " |"
+            let delimiter = "| " + Array(repeating: "---", count: columns).joined(separator: " | ") + " |"
+            let markdown = ([header, delimiter] + Array(repeating: "| x |", count: rows)).joined(separator: "\r\n")
+            let blocks = AssistantMarkdown.parse(markdown)
+            #expect(blocks.count == 1)
+            #expect(blocks[0].kind == .paragraph)
+            #expect(String(blocks[0].text.characters) == markdown)
+            #expect(AssistantMarkdown.plainText(markdown) == markdown)
+        }
+        let wide = "| " + Array(repeating: "Header", count: 40).joined(separator: " | ") + " |\n| "
+            + Array(repeating: "---", count: 40).joined(separator: " | ") + " |\n"
+        let reply = wide + String(repeating: "tail", count: 40_000)
+        let display = AssistantMarkdown.parse(reply)
+        #expect(String(display[0].text.characters) == String(reply.prefix(131_072)))
+        #expect(display.last?.id == -2)
+        #expect(AssistantMarkdown.plainText(reply) == reply)
+    }
+
+    @Test func indentedCodeCannotHideOversizedTablesFromPreflight() {
+        let header = "| " + Array(repeating: "Header", count: 33).joined(separator: " | ") + " |"
+        let delimiter = "| " + Array(repeating: "---", count: 33).joined(separator: " | ") + " |"
+        let table = header + "\n" + delimiter + "\n| x |"
+        let quotedTable = table.split(separator: "\n").map { "> " + $0 }.joined(separator: "\n")
+        for markdown in [
+            "    ```text\n\n" + table,
+            ">     ```text\n>\n" + quotedTable,
+            "- ```text\n  literal code\n  ```\n\n" + table,
+            "> ```text\n> literal code\n\n" + table,
+        ] {
+            // This guard runs before Foundation parses or pads any table cells.
+            #expect(AssistantMarkdown.tableNeedsRawFallback(in: markdown))
+            #expect(AssistantMarkdown.plainText(markdown) == markdown)
+        }
+        let fenced = "```text\n" + table + "\n```"
+        #expect(!AssistantMarkdown.tableNeedsRawFallback(in: fenced))
+        #expect(AssistantMarkdown.parse(fenced).first?.kind == .code)
+    }
+
+    @Test func tableFallbackPreservesExtraCellsAndEmptyRows() {
+        for markdown in [
+            "| A | B |\n| --- | --- |\n| x | y | extra |",
+            "| A | B |\n| --- | --- |\n| | |\n| x | y |",
+        ] {
+            #expect(AssistantMarkdown.parse(markdown).allSatisfy { $0.kind == .paragraph })
+            #expect(AssistantMarkdown.plainText(markdown) == markdown)
+        }
+    }
+
+    @Test func copyKeepsNumberedHeadingsCodeAndNestedDiagrams() {
+        let markdown = """
+        7. # First
+        8. ```swift
+           let count = 2
+           print(count)
+           ```
+        9. ```mermaid
+           flowchart TD
+           A --> B
+           ```
+        """
+        let blocks = AssistantMarkdown.parse(markdown)
+        #expect(blocks.map(\.marker) == ["7.", "8.", "9."])
+        #expect(blocks.map(\.kind) == [.heading, .code, .diagram])
+        #expect(AssistantMarkdown.plainText(markdown)
+            == "7. First\n8. let count = 2\n\tprint(count)\n9. flowchart TD\n\tA --> B")
+    }
+
+    @Test func codeCopyPreservesIntentionalBlankLinesAndUnfinishedFences() throws {
+        let closed = "```text\n\n  keep indent\n\n```"
+        let block = try #require(AssistantMarkdown.parse(closed).first)
+        #expect(block.kind == .code)
+        #expect(String(block.text.characters) == "\n  keep indent\n\n")
+        #expect(AssistantMarkdown.plainText(closed) == "\n  keep indent\n")
+        let unfinished = "```swift\nlet count = 2"
+        #expect(AssistantMarkdown.parse(unfinished).first?.kind == .code)
+        #expect(AssistantMarkdown.plainText(unfinished) == "let count = 2")
+        #expect(AssistantMarkdown.plainText(unfinished + "\n``` ") == "let count = 2")
     }
 
     @Test func checklistsPreserveCompletionFormattingAndLiteralBrackets() throws {
@@ -248,10 +346,7 @@ struct AssistantMarkdownTests {
         for edge in diagram.edges {
             let connection = try #require(layout.connections.first { $0.id == edge.id })
             for node in diagram.nodes where node.id != edge.source && node.id != edge.target {
-                let center = try #require(layout.centers[node.id])
-                let bounds = CGRect(x: center.x - layout.nodeSize.width / 2,
-                                    y: center.y - layout.nodeSize.height / 2,
-                                    width: layout.nodeSize.width, height: layout.nodeSize.height)
+                let bounds = try #require(layout.nodeBounds[node.id])
                 for (start, end) in zip(connection.route, connection.route.dropFirst()) {
                     for step in 1..<10 {
                         let fraction = CGFloat(step) / 10

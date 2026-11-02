@@ -90,6 +90,25 @@ enum Tokens {
         static let composerRadius = Space.s6
     }
 
+    /// Compact reading surfaces shared by chat, summaries and assistant previews.
+    enum AssistantFormatting {
+        static let bodyFont = Font.body
+        static let supportingFont = Font.callout
+        static let metadataFont = Font.caption
+        static let titleFont = Font.callout.weight(.semibold)
+        static let codeFont = Font.system(.callout, design: .monospaced)
+        static let blockGap = Space.s2
+        static let sectionGap = Space.s3
+        static let listGap = Space.s1
+        static let listIndent = Space.s2
+        static let inset = Space.s2
+        static let cornerRadius = Radius.md
+        static let codePreviewLines = 10
+        static let tablePreviewRows = 6
+        static let resultPreviewCount = 3
+        static let diagramPreviewHeight = Space.s16 * 3 + Space.s12
+    }
+
     enum Compose {
         static let gutter = Space.s5
         static let assistantMaxWidth = Assistant.contentWidth

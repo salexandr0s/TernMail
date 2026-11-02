@@ -9,28 +9,38 @@ struct AssistantResultCards: View {
     @State private var reviewingTask: AssistantTaskResult?
     @State private var reviewingEventID: String?
     @State private var eventErrors: [String: String] = [:]
+    @State private var showsAllTasks = false
+    @State private var showsAllEvents = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.sectionGap) {
             if !message.taskResults.isEmpty {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     sectionTitle("Tasks from mail", symbol: "checklist", count: message.taskResults.count)
-                    ForEach(message.taskResults) { task in
+                    ForEach(showsAllTasks ? message.taskResults : Array(message.taskResults.prefix(Tokens.AssistantFormatting.resultPreviewCount))) { task in
                         AssistantTaskCard(task: task,
                             state: model.taskDestinationModel?.creationState(for: task.request) ?? .idle,
                             isEnabled: model.canUseTaskResult(task) && model.taskDestinationModel != nil,
                             onReview: { reviewingTask = task }, onOpenSource: onOpenSource)
+                    }
+                    if message.taskResults.count > Tokens.AssistantFormatting.resultPreviewCount {
+                        expansionButton(isExpanded: $showsAllTasks,
+                            total: message.taskResults.count, kind: "tasks")
                     }
                 }
             }
             if !message.eventResults.isEmpty {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     sectionTitle("Events", symbol: "calendar", count: message.eventResults.count)
-                    ForEach(message.eventResults) { event in
+                    ForEach(showsAllEvents ? message.eventResults : Array(message.eventResults.prefix(Tokens.AssistantFormatting.resultPreviewCount))) { event in
                         AssistantEventCard(event: event, isEnabled: model.canUseEventResult(event),
                             isReviewing: reviewingEventID == event.id, error: eventErrors[event.id],
                             onReview: { review(event) }, onOpenSource: onOpenSource)
+                    }
+                    if message.eventResults.count > Tokens.AssistantFormatting.resultPreviewCount {
+                        expansionButton(isExpanded: $showsAllEvents,
+                            total: message.eventResults.count, kind: "events")
                     }
                 }
             }
@@ -49,8 +59,22 @@ struct AssistantResultCards: View {
             Spacer(minLength: Tokens.Space.s2)
             Text("\(count)").monospacedDigit()
         }
-        .font(.callout.weight(.semibold))
+        .font(Tokens.AssistantFormatting.titleFont)
         .accessibilityAddTraits(.isHeader)
+    }
+
+    private func expansionButton(isExpanded: Binding<Bool>, total: Int, kind: String) -> some View {
+        Button {
+            isExpanded.wrappedValue.toggle()
+        } label: {
+            Text(isExpanded.wrappedValue ? "Show fewer \(kind)" : "Show all \(total) \(kind)")
+                .frame(minHeight: Tokens.Space.s6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .font(Tokens.AssistantFormatting.metadataFont)
+        .controlSize(.small)
+        .accessibilityValue(isExpanded.wrappedValue ? "Expanded" : "Collapsed")
     }
 
     private func review(_ event: AssistantEventResult) {
@@ -78,19 +102,15 @@ struct AssistantTaskCard: View {
     let onOpenSource: (AssistantSource) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text(task.title).font(.callout.weight(.semibold))
+        VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
+            Text(task.title).font(Tokens.AssistantFormatting.titleFont)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            FlowLayout(spacing: Tokens.Space.s2) {
                 Label(dueLabel, systemImage: "calendar")
                 if let owner = task.owner { Label(owner, systemImage: "person") }
             }
-            .font(.caption).foregroundStyle(.secondary)
-            if !task.notes.isEmpty {
-                Text(task.notes).font(.callout).fixedSize(horizontal: false, vertical: true)
-            }
-            AssistantResultEvidence(source: task.source, evidence: task.evidence, onOpen: onOpenSource)
-            HStack(spacing: Tokens.Space.s2) {
+            .font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
+            AssistantResultFooter(source: task.source, evidence: task.evidence, notes: task.notes, onOpen: onOpenSource) {
                 if state == .added {
                     Label("Added to Tasks", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(Tokens.Status.success)
@@ -104,12 +124,11 @@ struct AssistantTaskCard: View {
                     if state == .adding { ProgressView().controlSize(.mini) }
                 }
             }
-            .font(.caption)
         }
-        .padding(Tokens.Space.s3)
+        .padding(Tokens.AssistantFormatting.inset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-        .ternOutline(radius: Tokens.Radius.lg)
+        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
+        .ternOutline(radius: Tokens.AssistantFormatting.cornerRadius)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Task: \(task.title)")
     }
@@ -130,41 +149,46 @@ struct AssistantEventCard: View {
 
     var body: some View {
         let presentation = event.presentation()
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+        let notes = event.event.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let showsStatedTime = presentation.start == nil
+        VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
                 VStack(spacing: Tokens.Space.s0_5) {
                     if let month = presentation.month, let day = presentation.day {
-                        Text(month).font(.caption2.weight(.semibold))
-                        Text(day).font(.title2.weight(.semibold)).monospacedDigit()
+                        Text(month).font(Tokens.AssistantFormatting.metadataFont.weight(.medium))
+                        Text(day).font(.headline).monospacedDigit()
                     } else {
-                        Image(systemName: "calendar").font(.title2)
+                        Image(systemName: "calendar").font(.headline)
                     }
                 }
                 .foregroundStyle(Color.accentColor)
-                .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+                .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
                 .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text(event.title).font(.callout.weight(.semibold))
-                    Text(presentation.dateLine).font(.caption).foregroundStyle(.secondary)
+                    Text(event.title).font(Tokens.AssistantFormatting.titleFont)
+                    Text(presentation.dateLine).font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
                     if let original = presentation.originalTimeZoneLine {
-                        Text(original).font(.caption).foregroundStyle(.secondary)
+                        Text(original).font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
             if let location = presentation.location {
                 Label(location, systemImage: "mappin.and.ellipse")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            ForEach(event.uncertainties, id: \.self) { warning in
+            if showsStatedTime, let notes, !notes.isEmpty {
+                Text(notes).font(Tokens.AssistantFormatting.supportingFont).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(event.uncertainties.filter { $0 != presentation.dateLine }, id: \.self) { warning in
                 Label(warning, systemImage: "questionmark.circle")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            AssistantResultEvidence(source: event.source, evidence: event.evidence, onOpen: onOpenSource)
-            HStack(spacing: Tokens.Space.s2) {
+            AssistantResultFooter(source: event.source, evidence: event.evidence,
+                                  notes: showsStatedTime ? nil : notes, onOpen: onOpenSource) {
                 Button(action: onReview) {
                     Label(event.isExistingEvent ? "Open in Calendar" : "Add to Calendar",
                           systemImage: event.isExistingEvent ? "calendar" : "calendar.badge.plus")
@@ -174,44 +198,89 @@ struct AssistantEventCard: View {
                 .help(event.isExistingEvent ? "Open the existing calendar event" : "Review event details before saving")
                 if isReviewing { ProgressView().controlSize(.mini) }
             }
-            .font(.caption)
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(.caption).foregroundStyle(Tokens.Status.error)
+                    .font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(Tokens.Space.s3)
+        .padding(Tokens.AssistantFormatting.inset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-        .ternOutline(radius: Tokens.Radius.lg)
+        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
+        .ternOutline(radius: Tokens.AssistantFormatting.cornerRadius)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Event: \(event.title)")
     }
 }
 
-private struct AssistantResultEvidence: View {
+private struct AssistantResultFooter<Action: View>: View {
     let source: AssistantSource
     let evidence: String?
+    let notes: String?
     let onOpen: (AssistantSource) -> Void
+    let action: Action
+    @State private var showsDetails = false
+
+    init(source: AssistantSource, evidence: String?, notes: String?, onOpen: @escaping (AssistantSource) -> Void,
+         @ViewBuilder action: () -> Action) {
+        self.source = source
+        self.evidence = evidence
+        self.notes = notes
+        self.onOpen = onOpen
+        self.action = action()
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Button { onOpen(source) } label: {
-                Label(source.title.isEmpty ? "Open source" : source.title, systemImage: source.systemImage)
-                    .lineLimit(2).multilineTextAlignment(.leading)
+        VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s2) {
+                    sourceControls.fixedSize()
+                    Spacer(minLength: Tokens.Space.s2)
+                    HStack(spacing: Tokens.Space.s1) { action }.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    sourceControls
+                    HStack(spacing: Tokens.Space.s1) { action }
+                }
             }
-            .buttonStyle(.link).help("Open source: \(source.title)")
-            if let evidence, !evidence.isEmpty {
-                DisclosureGroup("Source excerpt") {
-                    Text(evidence).textSelection(.enabled)
+            .controlSize(.small)
+            if showsDetails {
+                if let notes, !notes.isEmpty {
+                    Text(notes).font(Tokens.AssistantFormatting.supportingFont)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let evidence, !evidence.isEmpty {
+                    Text("Source excerpt").font(Tokens.AssistantFormatting.metadataFont.weight(.medium)).foregroundStyle(.secondary)
+                    Text(evidence).font(Tokens.AssistantFormatting.supportingFont).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, Tokens.Space.s1)
                 }
-                .foregroundStyle(.secondary)
             }
         }
-        .font(.caption)
+        .font(Tokens.AssistantFormatting.metadataFont)
+    }
+
+    private var sourceControls: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            Button { onOpen(source) } label: {
+                Label("Source", systemImage: source.systemImage)
+                    .frame(minHeight: Tokens.Space.s6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.link).help("Open source: \(source.title)")
+            .accessibilityLabel(source.title.isEmpty ? "Open source" : "Open source: \(source.title)")
+            if notes?.isEmpty == false || evidence?.isEmpty == false {
+                Button { showsDetails.toggle() } label: {
+                    Label("Details", systemImage: showsDetails ? "chevron.down" : "chevron.right")
+                        .frame(minHeight: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .help(showsDetails ? "Hide details and source excerpt" : "Show details and source excerpt")
+                .accessibilityLabel("Source excerpt and details")
+                .accessibilityValue(showsDetails ? "Expanded" : "Collapsed")
+            }
+        }
     }
 }

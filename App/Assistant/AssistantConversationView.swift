@@ -40,7 +40,7 @@ struct AssistantConversationView<Welcome: View>: View {
     private func conversationScroll(viewportHeight: CGFloat) -> some View {
         ScrollView {
             transcript
-                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.horizontal, Tokens.Space.s4)
                 .padding(.top, Tokens.Space.s2)
                 .padding(.bottom, Tokens.Space.s5)
                 .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
