@@ -1,6 +1,7 @@
 import MailStore
 import MessageContent
 import SwiftUI
+import TernAI
 
 /// A reading aid between the event cards and the original conversation.
 struct ThreadSummaryView: View {
@@ -108,10 +109,23 @@ struct ThreadSummaryContent: View {
     @State private var fullTextHeight: CGFloat = 0
     @State private var collapsedTextHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.locale) private var locale
 
     private var hasDetails: Bool {
         !report.summary.decisions.isEmpty || !report.summary.openTasks.isEmpty
             || fullTextHeight > collapsedTextHeight + Tokens.Border.hairline
+    }
+
+    private var disclosureTitle: String {
+        if isExpanded { return "Show less" }
+        let tasks = report.summary.openTasks.count
+        let decisions = report.summary.decisions.count
+        let counts = [
+            tasks > 0 ? "\(tasks) open \(tasks == 1 ? "task" : "tasks")" : nil,
+            decisions > 0 ? "\(decisions) \(decisions == 1 ? "decision" : "decisions")" : nil,
+        ].compactMap { $0 }
+        return counts.isEmpty ? "Show details" : counts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -176,13 +190,13 @@ struct ThreadSummaryContent: View {
                 Button {
                     withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) { isExpanded.toggle() }
                 } label: {
-                    Label(isExpanded ? "Show less" : "Show details", systemImage: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption)
-                        .padding(.vertical, Tokens.Space.s0_5)
+                    Label(disclosureTitle, systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.medium))
+                        .padding(.vertical, Tokens.Space.s1)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                .accessibilityLabel(isExpanded ? "Show less summary detail" : "Show summary details")
+                .accessibilityLabel(isExpanded ? "Show less summary detail" : "Show summary details: \(disclosureTitle)")
                 .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("summary-details")
             }
@@ -199,42 +213,104 @@ struct ThreadSummaryContent: View {
     }
 
     @ViewBuilder private var details: some View {
-        if !report.summary.decisions.isEmpty || !report.summary.openTasks.isEmpty {
-            Divider().padding(.vertical, Tokens.Space.s1)
-        }
-        if !report.summary.decisions.isEmpty {
-            sectionLabel("Decisions")
-            ForEach(report.summary.decisions.indices, id: \.self) { index in
-                let decision = report.summary.decisions[index]
-                evidenceRow(decision.text, ids: decision.sourceIDs, accessibilityID: "summary-decision-sources-\(index)")
-            }
-        }
         if !report.summary.openTasks.isEmpty {
-            sectionLabel("Open tasks")
-            ForEach(report.summary.openTasks.indices, id: \.self) { index in
-                let task = report.summary.openTasks[index]
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    evidenceRow(task.description, ids: task.sourceIDs, accessibilityID: "summary-task-sources-\(index)")
-                    let metadata = [task.owner, task.dueDate.map { "Due \($0)" }].compactMap { $0 }
-                    if !metadata.isEmpty {
-                        Text(metadata.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                sectionHeading("Open tasks", symbol: "list.bullet", count: report.summary.openTasks.count)
+                VStack(spacing: 0) {
+                    ForEach(report.summary.openTasks.indices, id: \.self) { index in
+                        if index > 0 {
+                            Divider().padding(.leading, Tokens.Space.s12)
+                        }
+                        taskRow(report.summary.openTasks[index], index: index)
+                    }
+                }
+                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .overlay {
+                    if contrast == .increased {
+                        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                            .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
+                            .allowsHitTesting(false)
                     }
                 }
             }
+            .padding(.top, Tokens.Space.s2)
+        }
+        if !report.summary.decisions.isEmpty {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                sectionHeading("Decisions", symbol: "checkmark.bubble", count: report.summary.decisions.count)
+                ForEach(report.summary.decisions.indices, id: \.self) { index in
+                    let decision = report.summary.decisions[index]
+                    HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                        Text("•").foregroundStyle(.secondary)
+                            .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                            .accessibilityHidden(true)
+                        Text(decision.text).font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, Tokens.Space.s1)
+                        sourceMenu(sources: report.sources.filter { decision.sourceIDs.contains($0.id) },
+                            title: "Sources for decision \(index + 1)", iconOnly: true,
+                            accessibilityID: "summary-decision-sources-\(index)")
+                    }
+                }
+            }
+            .padding(.top, Tokens.Space.s2)
         }
     }
 
-    private func sectionLabel(_ title: String) -> some View {
-        Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+    private func sectionHeading(_ title: String, symbol: String, count: Int) -> some View {
+        HStack(spacing: Tokens.Space.s1_5) {
+            Label(title, systemImage: symbol).font(.caption.weight(.semibold))
+            Text("\(count)").font(.caption.monospacedDigit())
+                .padding(.horizontal, Tokens.Space.s1_5)
+                .padding(.vertical, Tokens.Space.s0_5)
+                .background(Color.primary.opacity(Tokens.Opacity.hover), in: Capsule())
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
     }
 
-    private func evidenceRow(_ text: String, ids: [String], accessibilityID: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-            Text(text).font(.callout).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            Spacer(minLength: 0)
-            sourceMenu(sources: report.sources.filter { ids.contains($0.id) }, title: "Sources", iconOnly: true,
-                accessibilityID: accessibilityID)
+    private func taskRow(_ task: AssistantSummary.OpenTask, index: Int) -> some View {
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+            Text("\(index + 1)").font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .accessibilityLabel("Task \(index + 1)")
+            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                Text(task.description).font(.callout.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    .padding(.top, Tokens.Space.s1)
+                if task.owner != nil || task.dueDate != nil {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Tokens.Space.s3) { taskMetadata(task) }
+                            .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s1) { taskMetadata(task) }
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            sourceMenu(sources: report.sources.filter { task.sourceIDs.contains($0.id) },
+                title: "Sources for task \(index + 1)", iconOnly: true,
+                accessibilityID: "summary-task-sources-\(index)")
+        }
+        .padding(Tokens.Space.s3)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("summary-task-\(index)")
+    }
+
+    @ViewBuilder private func taskMetadata(_ task: AssistantSummary.OpenTask) -> some View {
+        if let owner = task.owner {
+            Label(owner, systemImage: "person")
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .accessibilityLabel("Owner: \(owner)")
+        }
+        if let date = task.dueDate {
+            Label("Due \(SummaryDueDate.formatted(date, locale: locale))", systemImage: "calendar")
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .help(date)
         }
     }
 
@@ -246,7 +322,11 @@ struct ThreadSummaryContent: View {
                     Button(sourceLabel(source)) { onOpenSource(source) }
                 }
             } label: {
-                if iconOnly { Label(title, systemImage: "text.quote").labelStyle(.iconOnly) }
+                if iconOnly {
+                    Label(title, systemImage: "text.quote").labelStyle(.iconOnly)
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
                 else { Text(title) }
             }
             .font(.caption)
@@ -254,7 +334,7 @@ struct ThreadSummaryContent: View {
             .foregroundStyle(.secondary)
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .fixedSize()
-            .accessibilityLabel(iconOnly ? "Sources for this item" : "Summary sources")
+            .accessibilityLabel(iconOnly ? title : "Summary sources")
             .accessibilityIdentifier(accessibilityID)
             .help("Open supporting messages")
         }
@@ -265,6 +345,26 @@ struct ThreadSummaryContent: View {
         let sender = EmailAddress.parseList(message.record.sender).first
         let name = sender?.name ?? sender?.address ?? message.record.sender
         return "\(name) · \(message.record.date.formatted(date: .abbreviated, time: .shortened))"
+    }
+}
+
+/// A due date is a calendar day, not an instant in the reader's time zone.
+enum SummaryDueDate {
+    static func formatted(_ value: String, locale: Locale) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.calendar = Calendar(identifier: .gregorian)
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd"
+        parser.isLenient = false
+        guard let date = parser.date(from: value), parser.string(from: date) == value else { return value }
+        let output = DateFormatter()
+        output.locale = locale
+        output.calendar = Calendar(identifier: .gregorian)
+        output.timeZone = TimeZone(secondsFromGMT: 0)
+        output.dateStyle = .medium
+        output.timeStyle = .none
+        return output.string(from: date)
     }
 }
 

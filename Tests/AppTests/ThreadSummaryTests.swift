@@ -10,6 +10,12 @@ import TernAI
     private static let key = ThreadKey(accountID: "a", threadID: "t")
     private static let source = AssistantSource(accountID: "a", threadID: "t", messageID: "m", partID: nil, title: "Proposal")
 
+    @Test func taskDueDatesUseLocalFormattingWithoutChangingTheCalendarDay() {
+        #expect(SummaryDueDate.formatted("2026-11-04", locale: Locale(identifier: "en_US")) == "Nov 4, 2026")
+        #expect(SummaryDueDate.formatted("2026-11-04", locale: Locale(identifier: "de_AT")) == "04.11.2026")
+        #expect(SummaryDueDate.formatted("2026-02-29", locale: Locale(identifier: "en_US")) == "2026-02-29")
+    }
+
     @Test func hostedSummaryKeepsItsReportAfterLoadingContentAppears() async throws {
         let provider = SummaryProvider(replies: [nil])
         let fixture = Fixture(provider: provider)

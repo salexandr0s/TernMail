@@ -31,6 +31,8 @@ The header uses AppKit click counts, which follow the system double-click settin
 
 - Use a lightly shaded compact surface with a small AI summary label and two lines of summary text.
 - Keep Sources visible. Show details only for clipped summary text, decisions, or tasks.
+- Show task and decision counts in the collapsed disclosure. Expanded summaries put numbered task rows first, with wrapping descriptions, owner labels, and localized due dates. Due dates stay on their original calendar day in every time zone.
+- Group tasks on one inset surface with separators; show decisions as a separate bullet list. Each item keeps its own source control and contextual accessibility label. Task numbers indicate list order and do not imply priority or completion state.
 - Keep partial-coverage qualifications visible when collapsed.
 - Retain the current report while refreshing the same content and access identity; show refresh errors beside it. Discard it immediately when that identity changes.
 - Keep asynchronous lifecycle ownership on a stable container when switching between loading and content.

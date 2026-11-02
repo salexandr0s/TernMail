@@ -212,7 +212,7 @@ import WebKit
     @Test func summarySourcesRemainAvailableAndDetailsFollowActualContent() async throws {
         let fixture = try await Fixture.make()
         defer { fixture.settings.removePersistentDomain(forName: fixture.suite) }
-        for variant in ["short", "long", "tasks"] {
+        for variant in ["short", "long", "tasks", "decisions"] {
             let report = try summary(for: fixture.detail, variant: variant)
             let state = HeaderState(expanded: false)
             let root = VStack {
@@ -220,7 +220,7 @@ import WebKit
                     onOpenSource: { _ in state.sourceActions += 1 }, onRefresh: {}, onSettings: {})
                 Spacer(minLength: 0)
             }.padding(Tokens.Space.s4).background(Tokens.Surface.canvas)
-            let window = makeWindow(root, width: variant == "long" ? 420 : 760, height: 300)
+            let window = makeWindow(root, width: variant == "long" ? 420 : 760, height: variant == "tasks" ? 560 : 300)
             defer { window.close() }
             try await settle()
             if element(id: "summary-sources", in: window) == nil {
@@ -234,9 +234,12 @@ import WebKit
             } else {
                 try #require(details != nil, "Clipped text and tasks must remain expandable")
                 if variant == "tasks" {
+                    #expect(details?.label?.contains("3 open tasks · 2 decisions") == true)
                     #expect(elements(in: window).contains {
                         $0.label == "Based on partial message content" || $0.value == "Based on partial message content"
                     })
+                } else if variant == "decisions" {
+                    #expect(details?.label?.contains("1 decision") == true)
                 }
             }
             for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
@@ -260,7 +263,36 @@ import WebKit
                 // Accessibility state changes before the disclosure animation finishes.
                 try await Task.sleep(for: .seconds(Tokens.Motion.base))
                 try await settle()
-                try capture(window, name: "summary-\(variant)-expanded.png")
+                for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                    window.appearance = NSAppearance(named: appearance)
+                    if variant == "tasks" { window.setContentSize(NSSize(width: 760, height: 560)) }
+                    try await settle()
+                    try capture(window, name: "summary-\(variant)-expanded-\(name).png")
+                    if variant == "tasks" {
+                        window.setContentSize(NSSize(width: 420, height: 740))
+                        try await settle()
+                        try capture(window, name: "summary-tasks-narrow-\(name).png")
+                        let lastTaskSource = try #require(element(id: "summary-task-sources-2", in: window))
+                        let content = try #require(window.contentView)
+                        let frame = content.convert(window.convertFromScreen(lastTaskSource.frame), from: nil)
+                        #expect(content.bounds.contains(frame), "Task sources must remain reachable after metadata wraps")
+                    }
+                }
+                if variant == "tasks" {
+                    let taskSource = try #require(element(id: "summary-task-sources-1", in: window))
+                    _ = try await menuTitles(open: { try clickControl(taskSource, in: window) }, selectingFirst: true)
+                    #expect(state.sourceActions == 2)
+                    let decisionSource = try #require(element(id: "summary-decision-sources-0", in: window))
+                    _ = try await menuTitles(open: { try clickControl(decisionSource, in: window) }, selectingFirst: true)
+                    #expect(state.sourceActions == 3)
+                    window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
+                    try await settle()
+                    try capture(window, name: "summary-tasks-increased-contrast.png")
+                }
+                let collapse = try #require(element(id: "summary-details", in: window))
+                try #require(collapse.press())
+                try await eventually { self.element(id: "summary-details", in: window)?.value == "Collapsed" }
+                try await eventually { self.element(id: "summary-task-sources-0", in: window) == nil }
             }
             window.close()
         }
@@ -274,10 +306,22 @@ import WebKit
         let text = variant == "long"
             ? String(repeating: "The revised route is ready for review. The team needs comments before confirming the equipment list. ", count: 5)
             : "The revised route is ready. Alexandra needs feedback on the equipment list."
-        let tasks: [[String: Any]] = variant == "tasks" ? [["description": "Review the equipment list",
-            "owner": "UI Audit", "due_date": NSNull(), "source_ids": [source.id]]] : []
+        let tasks: [[String: Any]] = variant == "tasks" ? [
+            ["description": "Review the equipment list and flag any items that need replacing before the field visit.",
+             "owner": "Alexandra Morgan", "due_date": "2026-11-04", "source_ids": [source.id]],
+            ["description": "Confirm the transport arrangements for the research team.",
+             "owner": "Sam Patel and the field operations coordination team", "due_date": "2026-11-06", "source_ids": [source.id]],
+            ["description": "Share the final route with everyone joining the visit.",
+             "owner": NSNull(), "due_date": NSNull(), "source_ids": [source.id]],
+        ] : []
+        let decisions: [[String: Any]] = variant == "tasks" ? [
+            ["text": "Use the revised north entrance route for the visit.", "source_ids": [source.id]],
+            ["text": "Keep the existing equipment budget; confirm any replacements before placing an order.", "source_ids": [source.id]],
+        ] : variant == "decisions" ? [
+            ["text": "Use the revised north entrance route for the visit.", "source_ids": [source.id]],
+        ] : []
         let data = try JSONSerialization.data(withJSONObject: ["summary": text, "source_ids": [source.id],
-            "decisions": [], "open_tasks": tasks])
+            "decisions": decisions, "open_tasks": tasks])
         return ThreadSummaryReport(summary: try AssistantSummary.decode(data, allowedSourceIDs: [source.id]),
             sources: [source], hasPartialCoverage: variant == "tasks")
     }
