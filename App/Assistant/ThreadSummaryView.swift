@@ -374,16 +374,18 @@ struct ThreadSummaryContent: View {
                     }
                     .font(.caption).foregroundStyle(.secondary)
                 }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: Tokens.Space.s0_5) {
+                sourceMenu(sources: report.sources.filter { task.sourceIDs.contains($0.id) },
+                    title: "Sources for task \(index + 1)",
+                    accessibilityID: "summary-task-sources-\(index)")
                 if let tasks, let onAddTask {
                     SummaryTaskAddButton(request: EmailTaskRequest.suggestion(task, report: report,
                         detail: detail, accountEmail: taskAccountEmail), model: tasks, onAdd: onAddTask)
                         .accessibilityIdentifier("summary-task-add-\(index)")
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            sourceMenu(sources: report.sources.filter { task.sourceIDs.contains($0.id) },
-                title: "Sources for task \(index + 1)",
-                accessibilityID: "summary-task-sources-\(index)")
         }
         .padding(.horizontal, Tokens.Space.s2)
         .padding(.vertical, Tokens.Space.s1_5)

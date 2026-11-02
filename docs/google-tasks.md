@@ -2,7 +2,7 @@
 
 Open **Google Tasks** from the toolbar beside Assistant. The two panels share the same resizable sidebar. Choose a Google account and task list at the top. Tern remembers the list for each account.
 
-Select text in an email, right-click, and choose **Add to Google Tasks**. In an expanded AI summary, choose **Add to Tasks** below a suggested task. Both actions use the email's Google account and save a link to the source email. AI suggestions keep their due date and put any named owner in the notes; they do not assign the task to another person.
+Select text in an email, right-click, and choose **Add to Google Tasks**. In an expanded AI summary, click the **+** beside a detected task. A spinner appears while it saves, then a checkmark confirms it was added. Both actions use the email's Google account and save a link to the source email. AI suggestions keep their due date and put any named owner in the notes; they do not assign the task to another person.
 
 Use the field above the list to add a task, or its details button to include notes and a due date. Click a task's title to edit it. The circle completes a task, and the Completed section lets you reopen it. A task's email link opens its source message; the options menu also includes deletion. Deletion removes subtasks in Google Tasks too.
 
