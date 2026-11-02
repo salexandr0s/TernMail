@@ -4,6 +4,44 @@ import Testing
 @testable import Tern
 
 @Suite struct CalendarInteractionTests {
+    @Test func calendarFilePreparationAndExportRoundTrip() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("events.ics")
+        let calendar = try calendar()
+        let original = event(start: try date(24, calendar: calendar), end: try date(26, calendar: calendar),
+                             allDay: true, calendar: calendar).event
+        try await CalendarImportExport.write([original], to: url)
+        let fileItems = try await CalendarImportExport.prepare(.file(url))
+        let textItems = try await CalendarImportExport.prepare(.text(String(contentsOf: url, encoding: .utf8)))
+        let restored = try #require(fileItems.first?.event)
+        #expect(fileItems.count == 1)
+        #expect(restored.summary == original.summary)
+        #expect(restored.start?.date == original.start?.date)
+        #expect(restored.end?.date == original.end?.date)
+        #expect(textItems.map(\.event) == fileItems.map(\.event))
+        await #expect(throws: CalendarImportExport.ImportError.self) {
+            try await CalendarImportExport.prepare(.text(String(repeating: "x", count: 4 * 1024 * 1024 + 1)))
+        }
+    }
+
+    @MainActor @Test func cancelledCalendarFileWorkDoesNotReadOrOverwrite() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let original = Data("keep existing content".utf8)
+        try original.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let write = Task { @MainActor in try await CalendarImportExport.write([], to: url) }
+        write.cancel()
+        await #expect(throws: CancellationError.self) { try await write.value }
+        #expect(try Data(contentsOf: url) == original)
+        let read = Task { @MainActor in
+            try await CalendarImportExport.prepare(.file(url.appendingPathExtension("missing")))
+        }
+        read.cancel()
+        await #expect(throws: CancellationError.self) { try await read.value }
+    }
+
     private func calendar() throws -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))

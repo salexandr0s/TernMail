@@ -16,6 +16,7 @@ struct CalendarView: View {
     var isActive = true
     @State private var showActivity = false
     @State private var showImport = false
+    @State private var importRequest: CalendarImportRequest?
     @State private var importEvents: [CalendarImportItem] = []
     @State private var showImportReview = false
     /// Repeating events ask for a scope; events with guests ask before notifying them.
@@ -62,7 +63,10 @@ struct CalendarView: View {
             sidebarState.updateCompact($0)
         }
         .onChange(of: isActive) { _, active in
-            if !active { sidebarState.isPopoverPresented = false }
+            if !active {
+                sidebarState.isPopoverPresented = false
+                importRequest = nil
+            }
         }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
@@ -92,6 +96,22 @@ struct CalendarView: View {
             guard isActive else { return }
             await model.searchEvents()
         }
+        .task(id: importRequest?.id) {
+            guard let request = importRequest else { return }
+            guard isActive else { importRequest = nil; return }
+            do {
+                let events = try await CalendarImportExport.prepare(request.source)
+                try Task.checkCancellation()
+                guard importRequest?.id == request.id else { return }
+                importEvents = events
+                showImportReview = true
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled, importRequest?.id == request.id else { return }
+                model.errorMessage = error.localizedDescription
+            }
+            if importRequest?.id == request.id { importRequest = nil }
+        }
         .sheet(item: $model.editor) { draft in
             CalendarEventEditor(draft: draft, calendars: model.calendars, calendar: model.calendar,
                                 knownExceptionCount: model.editor?.followingExceptionsCount,
@@ -109,11 +129,7 @@ struct CalendarView: View {
         }
         .fileImporter(isPresented: $showImport, allowedContentTypes: [UTType(filenameExtension: "ics") ?? .data]) { result in
             do {
-                let url = try result.get()
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                importEvents = try CalendarImportExport.read(url)
-                showImportReview = true
+                importRequest = CalendarImportRequest(source: .file(try result.get()))
             } catch { model.errorMessage = error.localizedDescription }
         }
         .confirmationDialog("Delete this repeating event?", isPresented: $recurringDeleteTarget.isPresent(),
@@ -458,8 +474,7 @@ struct CalendarView: View {
         _ = provider.loadObject(ofClass: String.self) { text, _ in
             guard let text else { return }
             Task { @MainActor in
-                do { importEvents = try CalendarImportExport.parse(Data(text.utf8)); showImportReview = true }
-                catch { model.errorMessage = error.localizedDescription }
+                importRequest = CalendarImportRequest(source: .text(text))
             }
         }
     }
