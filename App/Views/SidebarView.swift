@@ -627,30 +627,9 @@ private struct SyncStatusView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(spacing: Tokens.Space.s2) {
-            HStack(spacing: Tokens.Space.s2) {
-                SettingsLink {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: Tokens.Control.icon))
-                        .foregroundStyle(.primary)
-                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                }
-                .buttonStyle(.borderless)
-                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
-                .ternHover(radius: Tokens.Radius.md)
-                .help("Settings (⌘,)")
-                .accessibilityLabel("Settings")
-                .accessibilityIdentifier("sidebar.settings")
-
-                status
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .multilineTextAlignment(.trailing)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("sidebar.syncStatus")
-            }
-
+        SidebarFooter {
+            status
+        } details: {
             if case .failed(let message) = mailbox.syncStatus {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     Text(message)
@@ -669,10 +648,6 @@ private struct SyncStatusView: View {
                 .ternOutline(radius: Tokens.Radius.sm, style: .contrastOnly)
             }
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, Tokens.Space.s3)
-        .padding(.vertical, Tokens.Space.s2)
     }
 
     @ViewBuilder private var status: some View {

@@ -16,29 +16,48 @@ struct CalendarSidebar: View {
     /// Room for the compact popover: the mini month, a row per calendar and
     /// agenda entry plus headers, capped so it never outgrows the window.
     static func popoverHeight(for model: CalendarModel) -> CGFloat {
-        let agenda = model.presentation?.day(model.date)?.events.count
-            ?? CalendarLayout.events(model.events, on: model.date, calendar: model.calendar).count
+        let agenda = CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar).count
         let rows = model.calendars.isEmpty ? 0 : CGFloat(model.calendars.count + max(agenda, 1) + model.accounts.count + 1)
         let height = CalendarMiniMonth.height + rows * Tokens.Settings.rowHeight + Tokens.Space.s16
         return min(max(height, Tokens.Popover.maxListHeight), Tokens.Calendar.activityHeight)
     }
 
     var body: some View {
+        let monthCounts = Dictionary(grouping: monthEvents, by: \.calendarKey).mapValues(\.count)
         List(selection: $selection) {
-            CalendarMiniMonth(date: $model.date, calendar: model.calendar)
-                .listRowInsets(EdgeInsets(top: Tokens.Space.s2, leading: Tokens.Space.s2, bottom: Tokens.Space.s2, trailing: Tokens.Space.s2))
+            CalendarMiniMonth(date: $model.date, calendar: model.calendar, events: model.sidebarEvents)
+                .listRowInsets(EdgeInsets(top: Tokens.Space.s3, leading: Tokens.Space.s2, bottom: Tokens.Space.s3, trailing: Tokens.Space.s2))
                 .selectionDisabled()
-            // Until a calendar loads, the main area asks once for every account.
             if !model.calendars.isEmpty {
-                ForEach(model.accounts) { account in
-                    Section(account.title) {
+                Section {
+                    ForEach(model.accounts) { account in
+                        if model.accounts.count > 1 {
+                            Text(account.title)
+                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                                .padding(.top, Tokens.Space.s1)
+                                .selectionDisabled()
+                        }
                         let calendars = model.calendars.filter { $0.accountID == account.id }
                         if calendars.isEmpty || model.connectionState(for: account.id).issue != nil {
                             CalendarConnectionControl(model: model, account: account, connect: connect).selectionDisabled()
                         }
                         ForEach(calendars) { calendar in
-                            calendarRow(calendar).tag(CalendarSidebarItem.calendar(calendar.id))
+                            calendarRow(calendar, count: monthCounts[calendar.id] ?? 0)
+                                .tag(CalendarSidebarItem.calendar(calendar.id))
                         }
+                    }
+                } header: {
+                    HStack {
+                        Text("Calendars")
+                        Spacer()
+                        Button(action: manage) {
+                            Image(systemName: "slider.horizontal.3")
+                                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Manage Calendars")
+                        .accessibilityLabel("Manage Calendars")
                     }
                 }
                 Section {
@@ -51,9 +70,17 @@ struct CalendarSidebar: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                if agendaEvents.isEmpty, !upcomingEvents.isEmpty {
+                    Section("Later this month") {
+                        ForEach(upcomingEvents) { event in
+                            eventRow(event, showsDate: true)
+                        }
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
+        .accessibilityLabel("Calendars and daily agenda")
         .contextMenu(forSelectionType: CalendarSidebarItem.self) { items in
             if items.contains(where: { if case .event = $0 { true } else { false } }) {
                 Button("Open Event") { open(items) }
@@ -62,36 +89,45 @@ struct CalendarSidebar: View {
         } primaryAction: { items in
             open(items)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !model.calendars.isEmpty {
-                Button(action: manage) { Label("Manage Calendars…", systemImage: "slider.horizontal.3") }
-                    .buttonStyle(.borderless).controlSize(.small)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
-                    .background(.bar)
+        .safeAreaBar(edge: .bottom) {
+            SidebarFooter(accessibilityPrefix: "calendar.sidebar") {
+                CalendarSidebarSyncStatus(model: model)
             }
         }
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
         .onChange(of: selection) { _, item in
-            if case .event(let id) = item { model.selectedEventID = id }
+            if case .event(let id) = item, let event = event(withID: id) {
+                if !agendaEvents.contains(where: { $0.id == id }) { model.date = event.start }
+                model.selectedEventID = id
+            }
         }
         .onChange(of: model.selectedEventID) { _, id in
             if let id, agendaEvents.contains(where: { $0.id == id }) { selection = .event(id) }
             else if case .event = selection { selection = nil }
         }
-        .accessibilityLabel("Calendars and daily agenda")
     }
 
-    private func calendarRow(_ calendar: CalendarDisplayCalendar) -> some View {
+    private func calendarRow(_ calendar: CalendarDisplayCalendar, count: Int) -> some View {
         HStack(spacing: Tokens.Space.s2) {
             Toggle(calendar.title, isOn: model.visibility(of: calendar))
-                .toggleStyle(.checkbox).labelsHidden().tint(calendar.color)
-            Text(calendar.title).lineLimit(1)
+                .toggleStyle(.checkbox).controlSize(.small).labelsHidden().tint(calendar.color)
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                Text(calendar.title).font(.callout.weight(.medium)).lineLimit(1)
+                    .foregroundStyle(calendar.isVisible ? .primary : .secondary)
+                if !calendar.isVisible {
+                    Text("Hidden").font(.caption).foregroundStyle(.secondary)
+                } else if model.sidebarPresentation != nil, !model.sidebarHasStaleEvents {
+                    Text(count == 1 ? "1 event this month" : "\(count) events this month")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Spacer(minLength: 0)
             if !calendar.canWrite {
                 Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary)
                     .accessibilityLabel("Read only")
             }
         }
+        .padding(.vertical, Tokens.Space.s1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .ternHover(isEnabled: selection != .calendar(calendar.id))
@@ -99,53 +135,54 @@ struct CalendarSidebar: View {
     }
 
     private var agendaEvents: [CalendarDisplayEvent] {
-        if let presentation = model.presentation, presentation.matches(model.calendar) {
-            return presentation.day(model.date)?.events ?? []
-        }
-        return CalendarLayout.events(model.events, on: model.date, calendar: model.calendar)
+        CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar)
+    }
+
+    private var monthEvents: [CalendarDisplayEvent] {
+        guard let month = model.calendar.dateInterval(of: .month, for: model.date) else { return [] }
+        return model.sidebarEvents.filter { $0.start < month.end && max($0.end, $0.start.addingTimeInterval(1)) > month.start }
+    }
+
+    private var upcomingEvents: [CalendarDisplayEvent] {
+        let start = model.calendar.startOfDay(for: model.date)
+        guard let nextDay = model.calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
+        return Array(monthEvents.filter { $0.start >= nextDay }.sorted {
+            $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start
+        }.prefix(3))
     }
 
     @ViewBuilder private var agendaRows: some View {
         let events = agendaEvents
         if events.isEmpty {
-            Text(model.isLoading ? "Loading events…" : "No events shown for this day.")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            CalendarSidebarEmptyDay(model: model)
                 .selectionDisabled()
         } else {
             ForEach(events) { event in
-                HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                    RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                        .fill(event.color).frame(width: Tokens.Space.s1)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                        Text(event.title).font(.callout.weight(.medium)).lineLimit(2)
-                        Text(event.isAllDay ? "All day" : timeRange(event))
-                            .font(.caption).foregroundStyle(.secondary)
-                        if let location = event.event.location, !location.isEmpty {
-                            Label(location, systemImage: "mappin.and.ellipse")
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, Tokens.Space.s1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .ternHover(isEnabled: selection != .event(event.id))
-                .tag(CalendarSidebarItem.event(event.id))
-                .draggable(CalendarEventTransfer(event))
-                .help("Open \(event.title)")
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(model.selectedEventID == event.id ? .isSelected : [])
+                eventRow(event)
             }
         }
+    }
+
+    private func eventRow(_ event: CalendarDisplayEvent, showsDate: Bool = false) -> some View {
+        CalendarSidebarEventRow(event: event, calendar: model.calendar, showsDate: showsDate)
+            .ternHover(isEnabled: selection != .event(event.id))
+            .tag(CalendarSidebarItem.event(event.id))
+            .draggable(CalendarEventTransfer(event))
+            .help("Open \(event.title)")
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(model.selectedEventID == event.id ? .isSelected : [])
+    }
+
+    private func event(withID id: String) -> CalendarDisplayEvent? {
+        model.sidebarEvents.first { $0.id == id } ?? model.events.first { $0.id == id }
     }
 
     private func open(_ items: Set<CalendarSidebarItem>) {
         guard let item = items.first else { return }
         switch item {
         case .event(let id):
-            guard let event = model.events.first(where: { $0.id == id }) else { return }
+            guard let event = event(withID: id) else { return }
+            if !agendaEvents.contains(where: { $0.id == id }) { model.date = event.start }
             model.selectedEventID = id
             model.edit(event)
         case .calendar:
@@ -157,14 +194,6 @@ struct CalendarSidebar: View {
         model.calendar.isDateInToday(model.date) ? "Today" : CalendarLayout.format(model.date, style: .dateTime.weekday(.wide), calendar: model.calendar)
     }
 
-    private func timeRange(_ event: CalendarDisplayEvent) -> String {
-        let formatter = DateIntervalFormatter()
-        formatter.calendar = model.calendar
-        formatter.timeZone = model.calendar.timeZone
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter.string(from: event.start, to: event.end)
-    }
 }
 
 /// An account's calendar status and the action that fixes it. In the sidebar

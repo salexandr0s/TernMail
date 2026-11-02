@@ -107,6 +107,112 @@ import Testing
         }
     }
 
+    @Test(arguments: [CalendarDisplayMode.day, .week])
+    func sidebarLoadsTheWholeMonthWithoutReplacingTheMainRange(mode: CalendarDisplayMode) async throws {
+        try await withFixture { fixture in
+            let current = Self.event(id: "current")
+            var later = Self.event(id: "later-in-month")
+            later.start = CalendarDateTime(dateTime: "2030-01-24T10:00:00+01:00", timeZone: "Europe/Vienna")
+            later.end = CalendarDateTime(dateTime: "2030-01-24T11:00:00+01:00", timeZone: "Europe/Vienna")
+            let allDay = GoogleCalendarEvent(id: "overnight", summary: "Away",
+                start: CalendarDateTime(date: "2030-01-30"), end: CalendarDateTime(date: "2030-02-01"))
+            fixture.model.mode = mode
+            fixture.model.date = try #require(current.startDate)
+            for event in [current, later, allDay] { await fixture.service.put(event) }
+            await fixture.model.activateRange()
+            let main = try #require(fixture.model.presentation)
+            let request = fixture.model.sidebarRequest
+
+            await fixture.model.activateSidebarMonth()
+
+            #expect(Set(fixture.model.sidebarEvents.map(\.event.id)) == Set([current.id, later.id, allDay.id]))
+            #expect(fixture.model.events.map(\.event.id) == [current.id])
+            #expect(fixture.model.presentation?.id == main.id)
+            let sidebar = try #require(fixture.model.sidebarPresentation)
+            #expect(sidebar.interval == request.range.interval)
+            let allDayEnd = try #require(allDay.end?.resolvedDate(fallbackTimeZone: fixture.model.calendar.timeZone))
+            #expect(sidebar.day(allDayEnd)?.events.contains(where: { $0.event.id == allDay.id }) != true)
+            #expect(!fixture.model.sidebarHasStaleEvents)
+            #expect(!fixture.model.sidebarIsLoading)
+            let requests = await fixture.service.rangeRequestCount
+
+            fixture.model.date = try #require(later.startDate)
+            #expect(fixture.model.sidebarRequest == request)
+            await fixture.model.activateSidebarMonth()
+            #expect(fixture.model.sidebarPresentation?.id == sidebar.id)
+            #expect(await fixture.service.rangeRequestCount == requests)
+        }
+    }
+
+    @Test func sidebarVisibilityInvalidationDropsHiddenEventsWithoutAnotherRequest() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "hidden")
+            fixture.model.date = try #require(event.startDate)
+            fixture.model.events = [fixture.display(event)]
+            await fixture.service.put(event)
+            await fixture.model.activateSidebarMonth()
+            let request = fixture.model.sidebarRequest
+            #expect(fixture.model.sidebarEvents.count == 1)
+
+            fixture.model.calendars[0].isVisible = false
+
+            #expect(fixture.model.sidebarRequest != request)
+            #expect(fixture.model.sidebarEvents.isEmpty)
+            #expect(fixture.model.sidebarPresentation == nil)
+            await fixture.model.activateSidebarMonth()
+            #expect(fixture.model.sidebarEvents.isEmpty)
+            #expect(await fixture.service.rangeRequestCount == 1)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func invalidatedSidebarCannotPublishALateMonth(revoked: Bool) async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "private-month")
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.service.suspendNextRange()
+            let activation = Task { await fixture.model.activateSidebarMonth() }
+            #expect(await fixture.waitForSuspendedRange())
+            #expect(fixture.model.sidebarIsLoading)
+
+            if revoked { fixture.model.accessExpired(fixture.accountID) }
+            else { fixture.model.invalidateRangeSnapshots() }
+            await fixture.service.resumeRange()
+            await activation.value
+
+            #expect(fixture.model.sidebarPresentation == nil)
+            #expect(fixture.model.sidebarEvents.isEmpty)
+            #expect(!fixture.model.sidebarIsLoading)
+            #expect(fixture.model.activeSidebarTask == nil)
+        }
+    }
+
+    @Test func footerVerificationTracksFreshStaleAndInvalidatedRanges() async throws {
+        try await withFixture { fixture in
+            let event = Self.event(id: "verification")
+            fixture.model.date = try #require(event.startDate)
+            await fixture.service.put(event)
+            await fixture.model.reloadOccurrences()
+            #expect(fixture.model.lastCheckedAt != nil)
+            #expect(!fixture.model.hasStaleEvents)
+
+            await fixture.service.setOffline(true)
+            await fixture.model.reloadOccurrences()
+            #expect(fixture.model.lastCheckedAt == nil)
+            #expect(fixture.model.hasStaleEvents)
+            #expect(fixture.model.events.map(\.event) == [event])
+
+            fixture.model.invalidateRangeSnapshots()
+            #expect(fixture.model.lastCheckedAt == nil)
+            #expect(!fixture.model.hasStaleEvents)
+            await fixture.model.stop()
+            await fixture.model.activateSidebarMonth()
+            #expect(fixture.model.sidebarPresentation == nil)
+            #expect(fixture.model.sidebarEvents.isEmpty)
+        }
+    }
+
     @Test func adjacentLocalDaysPrepareWithoutPublishingOrRequestingAndActivateWarm() async throws {
         try await withFixture { fixture in
             let center = try await fixture.cacheDayNeighborhood()

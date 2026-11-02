@@ -45,6 +45,11 @@ struct CalendarRangeSnapshot: Sendable {
     let byteCost: Int
 }
 
+struct CalendarSidebarRequest: Hashable, Sendable {
+    let range: CalendarRangeIdentity
+    let revision: Int
+}
+
 private struct CalendarOwnerRange: Sendable {
     let owner: CalendarDisplayCalendar
     let result: CalendarOccurrenceResult?
@@ -86,15 +91,124 @@ extension CalendarModel {
 
     func invalidateRangeSnapshots() {
         cancelAdjacentRangePreparation()
+        invalidateSidebarMonth()
         rangeSnapshots.removeAll()
         rangeSnapshotOrder.removeAll()
         completedSearch = nil
         searchCompletedAt = nil
+        lastCheckedAt = nil
+        hasStaleEvents = false
     }
 
     func cancelAdjacentRangePreparation() {
         adjacentRangeTask?.task.cancel()
         adjacentRangeTask = nil
+    }
+
+    var sidebarRequest: CalendarSidebarRequest {
+        CalendarSidebarRequest(range: CalendarRangeIdentity(
+            interval: CalendarRangeIdentity.displayInterval(containing: date, mode: .month, calendar: calendar),
+            timeZone: calendar.timeZone.identifier, firstWeekday: calendar.firstWeekday,
+            mode: CalendarDisplayMode.month.rawValue, lifecycle: lifecycleRevision,
+            owners: calendars.filter(\.isVisible).map(\.id).sorted()), revision: sidebarRevision)
+    }
+
+    var sidebarPresentation: CalendarPresentationSnapshot? {
+        sidebarSnapshotRequest == sidebarRequest ? sidebarSnapshot?.presentation : nil
+    }
+
+    var sidebarHasStaleEvents: Bool {
+        sidebarSnapshotRequest == sidebarRequest && sidebarSnapshot?.stale == true
+    }
+
+    var sidebarEvents: [CalendarDisplayEvent] {
+        guard !isStopped else { return [] }
+        if let sidebarPresentation { return sidebarPresentation.events }
+        let request = sidebarRequest
+        let owners = Set(request.range.owners)
+        return events.filter { owners.contains($0.calendarKey)
+            && $0.start < request.range.interval.end && $0.end > request.range.interval.start }
+    }
+
+    func invalidateSidebarMonth() {
+        activeSidebarTask?.task.cancel()
+        activeSidebarTask = nil
+        sidebarSnapshot = nil
+        sidebarSnapshotRequest = nil
+        sidebarIsLoading = false
+        sidebarRevision += 1
+    }
+
+    /// Keep one month of indicators independently of the selected day or week.
+    /// The view cancels this work when the sidebar leaves the active surface.
+    func activateSidebarMonth() async {
+        guard !isStopped, !Task.isCancelled else { return }
+        let request = sidebarRequest
+        if sidebarSnapshotRequest == request, let checked = sidebarSnapshot?.checkedAt,
+           Date.now.timeIntervalSince(checked) < 60 { return }
+        if let activeSidebarTask, activeSidebarTask.key == request, !activeSidebarTask.task.isCancelled {
+            await withTaskCancellationHandler { await activeSidebarTask.task.value }
+                onCancel: { activeSidebarTask.task.cancel() }
+            return
+        }
+        activeSidebarTask?.task.cancel()
+        let id = UUID()
+        sidebarIsLoading = true
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await reloadSidebarMonth(request)
+        }
+        activeSidebarTask = (request, id, task)
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        if activeSidebarTask?.id == id {
+            activeSidebarTask = nil
+            sidebarIsLoading = false
+        }
+    }
+
+    private func reloadSidebarMonth(_ request: CalendarSidebarRequest) async {
+        let allCalendars = calendars
+        let sources = calendars.filter(\.isVisible).map { ($0, engines[$0.accountID]) }
+        let pending = operations
+        let displayCalendar = calendar
+        let interval = request.range.interval
+        func isCurrent() -> Bool {
+            !isStopped && !Task.isCancelled && request == sidebarRequest
+                && allCalendars == calendars && pending == operations
+        }
+        var cached: [CalendarOwnerRange] = []
+        for refresh in [false, true] {
+            guard isCurrent() else { return }
+            var loaded = await Self.readRange(sources, interval: interval, refresh: refresh)
+            guard isCurrent() else { return }
+            let denied = loaded.filter(\.accessDenied)
+            if !denied.isEmpty {
+                for item in denied {
+                    handleCalendarAccessFailure(CalendarEngineError.permissionDenied,
+                        accountID: item.owner.accountID, calendarID: item.owner.calendarID)
+                }
+                return
+            }
+            if refresh {
+                loaded = loaded.map { item in
+                    guard item.result == nil,
+                          let saved = cached.first(where: { $0.owner.id == item.owner.id })?.result else { return item }
+                    return CalendarOwnerRange(owner: item.owner, result: CalendarOccurrenceResult(
+                        events: saved.events, fetchedAt: saved.fetchedAt, isStale: true, isComplete: saved.isComplete))
+                }
+            } else { cached = loaded }
+            let preparedRanges = loaded
+            let preparation = Task.detached(priority: .utility) {
+                try Self.prepareRangeSnapshot(preparedRanges, operations: pending, calendars: allCalendars,
+                    interval: interval, calendar: displayCalendar, buildsTimeAxis: false)
+            }
+            let snapshot = await withTaskCancellationHandler { try? await preparation.value }
+                onCancel: { preparation.cancel() }
+            guard let snapshot, isCurrent() else { return }
+            sidebarSnapshotRequest = request
+            sidebarSnapshot = snapshot
+            if let checked = snapshot.checkedAt, Date.now.timeIntervalSince(checked) < 60 { return }
+        }
     }
 
     /// Synthetic fixtures and externally restored event arrays use the same
@@ -288,6 +402,8 @@ extension CalendarModel {
     }
 
     private func publish(_ snapshot: CalendarRangeSnapshot) {
+        lastCheckedAt = snapshot.checkedAt
+        hasStaleEvents = snapshot.stale
         guard presentation?.id != snapshot.presentation.id else { return }
         let changed = presentation?.interval != snapshot.presentation.interval
             || presentation?.calendar != snapshot.presentation.calendar || events != snapshot.presentation.events

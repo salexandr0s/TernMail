@@ -95,6 +95,7 @@
 		29CA8194A885564D66501125 /* InboxWatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C54F02FC1F2E5456AA8A7DCB /* InboxWatcherTests.swift */; };
 		2A088D514AE312839DE56D83 /* CalendarWeekdayHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 546D9643F116D75E1C3F5A92 /* CalendarWeekdayHeader.swift */; };
 		2A33143D7C4E8849349DF1BC /* CalendarEventMenuItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA235831D99907D2840860A /* CalendarEventMenuItems.swift */; };
+		2AA0F120879BA0BF57F64528 /* SidebarFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA0A515E71103D6C870FCB49 /* SidebarFooter.swift */; };
 		2C5D3D7718C073EF6FC3B4EB /* TernAI in Frameworks */ = {isa = PBXBuildFile; productRef = A98EAE975A66BB4128C1753A /* TernAI */; };
 		2C89D8CC4D0AA8E180253506 /* MessagePrefetchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 211CCB052F53DE7A1CC9E260 /* MessagePrefetchTests.swift */; };
 		2CCBFB7751D4C61BD7DA3CB2 /* CalendarPresentationBenchmarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88DB0B89EA7BF0AF314BFD6 /* CalendarPresentationBenchmarks.swift */; };
@@ -288,6 +289,7 @@
 		93FD4744D1FF24F1388A2485 /* CalendarTimelinePlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4F4F942D1C093DBBE2538BF /* CalendarTimelinePlacement.swift */; };
 		94FC0BF2A2519CA66D5A71EF /* MessageListItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84FE8D373C9C774ECC5F7D01 /* MessageListItem.swift */; };
 		9522E75CC690A67A8FA4BB03 /* CacheMaintenanceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5DAFC452FA3A678AD4F536 /* CacheMaintenanceModel.swift */; };
+		954022C1C0F2B98769D5B14B /* CalendarSidebarRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDF1D95FEDFB09B8282AD93E /* CalendarSidebarRows.swift */; };
 		967922D7F6060CDF43D34828 /* EmailCalendarSuggestionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A25BBD7C1147A6D7DB414268 /* EmailCalendarSuggestionsView.swift */; };
 		97158050EEF68C1A3D6265F8 /* PublicSuffix.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEDAD2351D4D9A40BCC4E155 /* PublicSuffix.swift */; };
 		985D89B99281301931019026 /* MailboxModel+MessageSnooze.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E2A1E39DCE1990D585B19A /* MailboxModel+MessageSnooze.swift */; };
@@ -452,6 +454,7 @@
 		F2363F53FE38E99423D519FB /* AssistantDiagramLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167830634175ACE25ADE4A4D /* AssistantDiagramLayout.swift */; };
 		F30F3479CE1DB2800A01C2DA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19D12B162EB349AF712B075 /* OnboardingView.swift */; };
 		F54AC79D5C044CB2AD107655 /* AttachmentChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FB78A80DB609E8F1B551E96 /* AttachmentChip.swift */; };
+		F5607B390E7F91BA8BFA7F32 /* CalendarSidebarVisualAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41076FA773ACDDF11C3071BE /* CalendarSidebarVisualAudit.swift */; };
 		F5829BFC12FE1A6E22977C5D /* MailboxModel+Reading.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD5BAE3966376BC09D235ABB /* MailboxModel+Reading.swift */; };
 		F5D78A8E257DB917FCE51B9E /* SnoozePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91CA7FF62FB26BF0EC5327A /* SnoozePicker.swift */; };
 		F6CB987865FBC24AC2082174 /* ComposeAssistantAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DA08DC3A9C3D42B4C577EB /* ComposeAssistantAttachment.swift */; };
@@ -588,6 +591,7 @@
 		3FDCDDE34F91C20282F8386C /* QuitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuitTests.swift; sourceTree = "<group>"; };
 		407CAE53559248BE4CB909D9 /* InFlightTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InFlightTasks.swift; sourceTree = "<group>"; };
 		40D6C73B88219FEA3708EA95 /* OriginalMessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OriginalMessageView.swift; sourceTree = "<group>"; };
+		41076FA773ACDDF11C3071BE /* CalendarSidebarVisualAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSidebarVisualAudit.swift; sourceTree = "<group>"; };
 		4154FA36100D7D066F989912 /* TernTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TernTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4172995FC119127D71181B90 /* OnboardingFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowTests.swift; sourceTree = "<group>"; };
 		41869617703A57E061659DB4 /* ComposeImageAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeImageAttachment.swift; sourceTree = "<group>"; };
@@ -816,6 +820,7 @@
 		B89F4CCD840B639853FA8A00 /* AssistantMarkdown+Copy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AssistantMarkdown+Copy.swift"; sourceTree = "<group>"; };
 		B91CA7FF62FB26BF0EC5327A /* SnoozePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnoozePicker.swift; sourceTree = "<group>"; };
 		B9D4EBA728A21DC19F434C87 /* CalendarModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarModelTests.swift; sourceTree = "<group>"; };
+		BA0A515E71103D6C870FCB49 /* SidebarFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarFooter.swift; sourceTree = "<group>"; };
 		BA57438AA2BEF861C115161B /* SettingsPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanes.swift; sourceTree = "<group>"; };
 		BA99ABC2C2D0B4B9748D3663 /* NotificationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPolicy.swift; sourceTree = "<group>"; };
 		BB049BBEE2C540F7C3442B28 /* LiveApplyScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveApplyScheduler.swift; sourceTree = "<group>"; };
@@ -825,6 +830,7 @@
 		BC7311C0C3BAF5B0A8A043ED /* CalendarModel+EmailResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CalendarModel+EmailResponses.swift"; sourceTree = "<group>"; };
 		BCCE3B70E5FA0CF8A2FD63BB /* RecipientSuggestionsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientSuggestionsPanel.swift; sourceTree = "<group>"; };
 		BD343125E2C2DCFA85277B01 /* GoogleTasksModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleTasksModel.swift; sourceTree = "<group>"; };
+		BDF1D95FEDFB09B8282AD93E /* CalendarSidebarRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSidebarRows.swift; sourceTree = "<group>"; };
 		BE892D00A83688026D463D87 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BFB43A4335E7ABDB1EC4172C /* MailOrganizationDeliveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailOrganizationDeliveryView.swift; sourceTree = "<group>"; };
 		BFF820052928534F90024685 /* CalendarTimeAxis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimeAxis.swift; sourceTree = "<group>"; };
@@ -1119,6 +1125,7 @@
 				B26C8CFD6D65A9D13C484DE9 /* SenderFilterActions.swift */,
 				76B124379B5808528D2CE7BC /* SettingsView.swift */,
 				3D21AE1FAF3C9D7FAA76DB9B /* SidebarExpansion.swift */,
+				BA0A515E71103D6C870FCB49 /* SidebarFooter.swift */,
 				173D506011927D98CAD6B66B /* SidebarSelection.swift */,
 				A6D8838A1076B284CD96E711 /* SidebarSettingsView.swift */,
 				CDCFFB1C109D3321AAD08DBF /* SidebarView.swift */,
@@ -1239,6 +1246,7 @@
 				B9D4EBA728A21DC19F434C87 /* CalendarModelTests.swift */,
 				D88DB0B89EA7BF0AF314BFD6 /* CalendarPresentationBenchmarks.swift */,
 				581972631DE7881F64355784 /* CalendarScrollNavigationTests.swift */,
+				41076FA773ACDDF11C3071BE /* CalendarSidebarVisualAudit.swift */,
 				E58168BBE9F19A18A62CE8E1 /* ChatGPTConnectionTests.swift */,
 				3FA77B4F0A4C3E3B0981C7BC /* ComposeAssistantTests.swift */,
 				47FA19EC10F8AFB2B976FF9F /* ComposeFeatureModelTests.swift */,
@@ -1492,6 +1500,7 @@
 				558BC298EF99BF1AE09BEC08 /* CalendarSearchResults.swift */,
 				C5CCACB4E202DBA913F46E36 /* CalendarShareList.swift */,
 				E369609B58005DA935BBD452 /* CalendarSidebar.swift */,
+				BDF1D95FEDFB09B8282AD93E /* CalendarSidebarRows.swift */,
 				BB727595A340EC6A57243F87 /* CalendarSidebarState.swift */,
 				BFF820052928534F90024685 /* CalendarTimeAxis.swift */,
 				79DAD2C1B0EF8F5161349C1D /* CalendarTimeGrid.swift */,
@@ -1810,6 +1819,7 @@
 				6E14A37E0304843643EC3E78 /* CalendarModelTests.swift in Sources */,
 				2CCBFB7751D4C61BD7DA3CB2 /* CalendarPresentationBenchmarks.swift in Sources */,
 				E1A973E4C03E42A8F428712F /* CalendarScrollNavigationTests.swift in Sources */,
+				F5607B390E7F91BA8BFA7F32 /* CalendarSidebarVisualAudit.swift in Sources */,
 				2E41BE8DEC34702C71C79DCC /* ChatGPTConnectionTests.swift in Sources */,
 				5BBA04B93006B1D77BA44E4A /* ComposeAssistantTests.swift in Sources */,
 				B8EAFAB0B00375BDCAF36EC2 /* ComposeFeatureModelTests.swift in Sources */,
@@ -1994,6 +2004,7 @@
 				1FDD93965A0E764BF1F48377 /* CalendarSearchResults.swift in Sources */,
 				47E2541E90732372C5E808AC /* CalendarShareList.swift in Sources */,
 				88B80DF79331FCA7A77B6976 /* CalendarSidebar.swift in Sources */,
+				954022C1C0F2B98769D5B14B /* CalendarSidebarRows.swift in Sources */,
 				CC241A7D34FA5F2BE5D8A72C /* CalendarSidebarState.swift in Sources */,
 				8DBD9DD078DE9B6660D1FB38 /* CalendarTimeAxis.swift in Sources */,
 				B57308E8538A858404E02EE4 /* CalendarTimeGrid.swift in Sources */,
@@ -2204,6 +2215,7 @@
 				FCB2F6AD3C28DE6BEA9B7276 /* ShortcutCatalog.swift in Sources */,
 				22D886A27E9AA061307613F2 /* ShortcutMonitor.swift in Sources */,
 				2E488D4DC768DE1D79F635CA /* SidebarExpansion.swift in Sources */,
+				2AA0F120879BA0BF57F64528 /* SidebarFooter.swift in Sources */,
 				8673D074BA3846010D0B1562 /* SidebarSelection.swift in Sources */,
 				472F55A7C6973F61690CF807 /* SidebarSettingsView.swift in Sources */,
 				08064BC9FC3A5D0A97BB423D /* SidebarView.swift in Sources */,

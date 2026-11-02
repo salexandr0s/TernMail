@@ -6,6 +6,24 @@ import Testing
 @testable import Tern
 
 @Suite struct CalendarLayoutTests {
+    @MainActor @Test func miniMonthMarkersCountOvernightEventsAndKeepAllDayEndsExclusive() throws {
+        let calendar = try calendar("Europe/Vienna")
+        let day = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 25)))
+        let next = try #require(calendar.date(byAdding: .day, value: 1, to: day))
+        let allDay = CalendarDisplayEvent(event: GoogleCalendarEvent(id: "away", summary: "Away",
+            start: CalendarDateTime(date: "2026-10-25"), end: CalendarDateTime(date: "2026-10-26")),
+            accountID: "account", calendarID: "calendar", colorHex: "#FF0000", fallbackTimeZoneID: "Europe/Vienna")
+        let overnight = event("overnight", start: next.addingTimeInterval(-1800), end: next.addingTimeInterval(1800))
+        let duplicateColor = event("same-calendar", start: day, end: day.addingTimeInterval(3600))
+        let activity = CalendarMiniMonth.activity(events: [allDay, overnight, duplicateColor],
+            days: CalendarLayout.monthDays(containing: day, calendar: calendar), calendar: calendar)
+
+        #expect(activity[day]?.count == 3)
+        #expect(activity[day]?.colors == ["#ff0000", "#4285f4"])
+        #expect(activity[next]?.count == 1)
+        #expect(activity[next]?.colors == ["#4285f4"])
+    }
+
     @Test func monthDragFindsDaysAcrossWeekRowsAndRejectsOutsideCanvas() {
         #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 699, y: 99), width: 700, rowHeight: 100) == 6)
         #expect(CalendarMonthHitTesting.index(at: CGPoint(x: 0, y: 100), width: 700, rowHeight: 100) == 7)

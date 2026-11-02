@@ -3,6 +3,11 @@ import MessageContent
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct CalendarSidebarLoadRequest: Hashable {
+    let month: CalendarSidebarRequest
+    let isVisible: Bool
+}
+
 struct CalendarView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openSettings) private var openSettings
@@ -45,9 +50,9 @@ struct CalendarView: View {
                         }
                 }
                 calendarPane(compact: sidebarState.isCompact)
+                    .safeAreaInset(edge: .bottom, spacing: 0) { footer }
                     .frame(minWidth: sidebarState.isCompact ? nil : Tokens.Calendar.contentMinWidth)
             }
-            footer
         }
         // Keep the native split inside the toolbar's safe area before clipping
         // the sidebar material, which otherwise extends into the title bar.
@@ -80,6 +85,9 @@ struct CalendarView: View {
         }
         .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
         .task(id: rangeRequest) { if isActive { await model.activateRange() } }
+        .task(id: CalendarSidebarLoadRequest(month: model.sidebarRequest, isVisible: loadsSidebar)) {
+            if loadsSidebar { await model.activateSidebarMonth() }
+        }
         .task(id: searchRequest) {
             guard isActive else { return }
             await model.searchEvents()
@@ -327,6 +335,10 @@ struct CalendarView: View {
     private var rangeRequest: [String] {
         [String(isActive), model.mode.rawValue, String(model.date.timeIntervalSince1970),
          model.calendar.timeZone.identifier, String(model.firstWeekday)]
+    }
+
+    private var loadsSidebar: Bool {
+        isActive && (sidebarState.showsSidebar || sidebarState.isPopoverPresented)
     }
 
     private var currentGridIdentity: CalendarGridIdentity {

@@ -24,6 +24,12 @@ final class CalendarModel {
     }
     var presentation: CalendarPresentationSnapshot?
     var presentationRevision = 0
+    var lastCheckedAt: Date?
+    var hasStaleEvents = false
+    var sidebarSnapshot: CalendarRangeSnapshot?
+    var sidebarSnapshotRequest: CalendarSidebarRequest?
+    var sidebarIsLoading = false
+    var sidebarRevision = 0
     var accounts: [CalendarAccountOption] = []
     var connectionStates: [String: CalendarConnectionState] = [:]
     var isLoading = false
@@ -96,11 +102,12 @@ final class CalendarModel {
     @ObservationIgnored var rangeSnapshotOrder: [CalendarRangeIdentity] = []
     @ObservationIgnored var activeRangeTask: (key: CalendarRangeIdentity, id: UUID, task: Task<Void, Never>)?
     @ObservationIgnored var adjacentRangeTask: (key: CalendarRangeIdentity, revision: Int, task: Task<Void, Never>)?
+    @ObservationIgnored var activeSidebarTask: (key: CalendarSidebarRequest, id: UUID, task: Task<Void, Never>)?
     @ObservationIgnored var completedSearch: CalendarSearchIdentity?
     @ObservationIgnored var searchCompletedAt: Date?
     @ObservationIgnored private var rangeMemoryPressure: CalendarRangeMemoryPressure?
     @ObservationIgnored private var isStarted = false
-    @ObservationIgnored private var isStopped = false
+    @ObservationIgnored var isStopped = false
     @ObservationIgnored private var startGeneration = 0
     @ObservationIgnored private var stopping: Task<Void, Never>?
     @ObservationIgnored private let storeLoader: (@MainActor () async throws -> CalendarStore)?
@@ -381,6 +388,7 @@ final class CalendarModel {
                 do { try await engine.flush() } catch { issues.append("Pending changes are waiting for a connection.") }
             }
             guard revision == lifecycleRevision else { return }
+            invalidateSidebarMonth()
             await reloadOccurrences()
             guard revision == lifecycleRevision else { return }
             if !issues.isEmpty { statusText = Set(issues).sorted().joined(separator: " ") }
