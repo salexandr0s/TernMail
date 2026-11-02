@@ -64,7 +64,8 @@ struct CalendarGridViews: View, Equatable {
                                 }.contentShape(Rectangle())
                             }.buttonStyle(.plain)
                                 .accessibilityLabel("Show " + CalendarLayout.format(monthDate, style: .dateTime.month(.wide).year(), calendar: calendar))
-                            CalendarMiniMonth(date: $date, calendar: calendar, fixedMonth: monthDate, events: events) { chosen in
+                            CalendarMiniMonth(date: $date, calendar: calendar, fixedMonth: monthDate,
+                                              events: events, presentation: presentation) { chosen in
                                 date = chosen; mode = .day
                             }
                         }

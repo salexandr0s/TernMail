@@ -5,6 +5,7 @@ struct CalendarMiniMonth: View {
     let calendar: Calendar
     var fixedMonth: Date?
     var events: [CalendarDisplayEvent] = []
+    var presentation: CalendarPresentationSnapshot?
     var select: ((Date) -> Void)?
 
     private static let cellHeight = Tokens.Space.s6 + Tokens.Space.s0_5 + Tokens.Space.s1
@@ -68,7 +69,7 @@ struct CalendarMiniMonth: View {
 
     private func dateGrid(month: Date) -> some View {
         let days = CalendarLayout.monthDays(containing: month, calendar: calendar)
-        let activity = Self.activity(events: events, days: days, calendar: calendar)
+        let activity = Self.activity(events: events, days: days, calendar: calendar, presentation: presentation)
         return GeometryReader { geometry in
             let columnWidth = geometry.size.width / 7
             VStack(spacing: Tokens.Space.s1) {
@@ -136,33 +137,15 @@ struct CalendarMiniMonth: View {
 
     private func shift(_ amount: Int) { date = calendar.date(byAdding: .month, value: amount, to: date) ?? date }
 
-    struct DayActivity: Equatable {
-        var count = 0
-        var colors: [String] = []
-        var description: String { count == 1 ? "1 event" : "\(count) events" }
-    }
+    typealias DayActivity = CalendarPresentationSnapshot.DayActivity
 
     /// Build each day's markers once from the supplied range, including events
     /// crossing midnight. Calendar arithmetic keeps all-day ends exclusive at DST.
-    static func activity(events: [CalendarDisplayEvent], days: [Date], calendar: Calendar) -> [Date: DayActivity] {
-        guard let first = days.first, let last = days.last,
-              let end = calendar.date(byAdding: .day, value: 1, to: last) else { return [:] }
-        var result: [Date: DayActivity] = [:]
-        for event in events {
-            let eventEnd = max(event.end, event.start.addingTimeInterval(1))
-            guard event.start < end, eventEnd > first else { continue }
-            var day = calendar.startOfDay(for: max(first, event.start))
-            let lastMoment = min(end, eventEnd)
-            while day < lastMoment {
-                var activity = result[day, default: DayActivity()]
-                activity.count += 1
-                let color = event.colorHex.lowercased()
-                if activity.colors.count < 3, !activity.colors.contains(color) { activity.colors.append(color) }
-                result[day] = activity
-                guard let next = calendar.date(byAdding: .day, value: 1, to: day), next > day else { break }
-                day = next
-            }
+    static func activity(events: [CalendarDisplayEvent], days: [Date], calendar: Calendar,
+                         presentation: CalendarPresentationSnapshot? = nil) -> [Date: DayActivity] {
+        if let presentation, presentation.covers(days, calendar: calendar) {
+            return presentation.dayActivities
         }
-        return result
+        return CalendarPresentationSnapshot.makeDayActivities(events: events, days: days, calendar: calendar)
     }
 }
