@@ -133,6 +133,19 @@ struct AnalyticsActivityChart: View {
         HStack(spacing: Tokens.Space.s3) {
             if !showsTable, let bucket = selectedBucket {
                 selectedSummary(bucket)
+                Button {
+                    selectedDate = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .ternHover()
+                .help("Clear selection")
+                .accessibilityLabel("Clear selection")
+                .accessibilityIdentifier("analytics-clear-selection")
             } else {
                 Label(showsTable ? "Individual emails per \(bucketHeading.lowercased())" : "Select a bar to see its counts",
                       systemImage: showsTable ? "number" : "cursorarrow")
@@ -141,7 +154,7 @@ struct AnalyticsActivityChart: View {
             }
         }
         .font(.caption).monospacedDigit()
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private func selectedSummary(_ bucket: MailAnalyticsBucket) -> some View {

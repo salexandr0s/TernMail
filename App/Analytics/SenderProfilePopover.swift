@@ -25,6 +25,11 @@ struct SenderProfilePopover: View {
 
     private var isAvailable: Bool { mailbox.presentedAccounts.contains { $0.account.id == accountID } }
 
+    private var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? address : trimmed
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             identity
@@ -81,7 +86,7 @@ struct SenderProfilePopover: View {
             Divider()
             Button {
                 openWindow(id: MailAnalyticsWindow.sceneID,
-                    value: MailAnalyticsRoute(accountID: accountID, address: address, name: name))
+                    value: MailAnalyticsRoute(accountID: accountID, address: address, name: displayName))
                 dismiss()
             } label: {
                 HStack(spacing: Tokens.Space.s3) {
@@ -131,14 +136,14 @@ struct SenderProfilePopover: View {
 
     private var identity: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            ContactAvatar(accountID: accountID, address: address, name: name,
+            ContactAvatar(accountID: accountID, address: address, name: displayName,
                 cache: mailbox.cache, accounts: mailbox.accountStore, size: Tokens.Space.s12)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(name.isEmpty ? address : name).font(.title2.weight(.semibold))
+                Text(displayName).font(.title2.weight(.semibold))
                     .lineLimit(2).truncationMode(.middle)
-                    .textSelection(.enabled).help(name.isEmpty ? address : name)
-                if !name.isEmpty, name.caseInsensitiveCompare(address) != .orderedSame {
+                    .textSelection(.enabled).help(displayName)
+                if displayName.caseInsensitiveCompare(address) != .orderedSame {
                     Text(address).font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                         .textSelection(.enabled).help(address)
@@ -230,8 +235,11 @@ struct SenderProfileLinksView: View {
     let links: [SenderProfileEvidence]
     var compact = false
 
+    private var iconSize: CGFloat { compact ? Tokens.Space.s6 : Tokens.Analytics.symbolSize }
+    private var rowSpacing: CGFloat { compact ? Tokens.Space.s2 : Tokens.Space.s3 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: compact ? Tokens.Space.s2 : Tokens.Space.s3) {
             if !compact || !links.isEmpty {
                 HStack {
                     Text("Profiles and websites").font(compact ? .subheadline.weight(.semibold) : .headline)
@@ -250,10 +258,10 @@ struct SenderProfileLinksView: View {
                 VStack(spacing: 0) {
                     ForEach(links) { evidence in
                         Link(destination: evidence.link.url) {
-                            HStack(spacing: Tokens.Space.s3) {
+                            HStack(spacing: rowSpacing) {
                                 Image(systemName: symbol(for: evidence.link.kind))
-                                    .font(.callout).foregroundStyle(Color.accentColor)
-                                    .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
+                                    .font(compact ? .caption : .callout).foregroundStyle(Color.accentColor)
+                                    .frame(width: iconSize, height: iconSize)
                                     .background(Color.accentColor.opacity(Tokens.Opacity.wash),
                                         in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                                 VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
@@ -264,7 +272,8 @@ struct SenderProfileLinksView: View {
                                 Spacer(minLength: 0)
                                 Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
                             }
-                            .padding(Tokens.Space.s2)
+                            .padding(.horizontal, Tokens.Space.s2)
+                            .padding(.vertical, compact ? Tokens.Space.s1 : Tokens.Space.s2)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -272,7 +281,7 @@ struct SenderProfileLinksView: View {
                         .help("\(evidence.link.url.absoluteString)\nFound in an email signature from \(evidence.date.formatted(date: .abbreviated, time: .omitted))")
                         .accessibilityLabel("\(evidence.link.label), \(evidence.link.url.absoluteString)")
                         if evidence.id != links.last?.id {
-                            Divider().padding(.leading, Tokens.Analytics.symbolSize + Tokens.Space.s3 + Tokens.Space.s2)
+                            Divider().padding(.leading, iconSize + rowSpacing + Tokens.Space.s2)
                         }
                     }
                 }

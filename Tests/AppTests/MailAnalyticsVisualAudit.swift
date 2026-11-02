@@ -41,6 +41,13 @@ import Testing
                 size: NSSize(width: width, height: 950), scheme: scheme, waitFor: "Emails over time",
                 name: "analytics-\(name)", captureBottom: true)
         }
+        let previousYear = try #require(Calendar.current.date(byAdding: .year, value: -1, to: now))
+        let olderMessage = MailAnalyticsMessage(accountID: account.id, messageID: "older", threadID: "t0",
+            date: previousYear, subject: "Planning the next project phase",
+            sender: "Alex Morgan <alex@example.invalid>", direction: .received)
+        try await capture(AnalyticsRecentMessagesView(messages: [olderMessage], mailbox: mailbox)
+            .padding(Tokens.Space.s5), size: NSSize(width: 400, height: 220), scheme: .light,
+            waitFor: "Planning the next project phase", name: "recent-email-previous-year", captureBottom: false)
         let snapshot = try await cache.mailAnalytics(query: .init(accountIDs: [account.id], period: .year, now: now))
         let largeSnapshot = MailAnalyticsSnapshot(sentCount: snapshot.sentCount * 50_000,
             receivedCount: snapshot.receivedCount * 50_000, threadCount: snapshot.threadCount * 50_000,
@@ -75,7 +82,7 @@ import Testing
             name: "sender-analytics", captureBottom: true)
         for scheme in [ColorScheme.light, .dark] {
             try await capture(SenderProfilePopover(accountID: account.id, address: "alex@example.invalid",
-                name: "Alex Morgan with a longer display name", mailbox: mailbox),
+                name: "  Alex Morgan with a longer display name  ", mailbox: mailbox),
                 size: NSSize(width: 400, height: 520), scheme: scheme, waitFor: "linkedin.com/in/alex-morgan-example",
                 name: "sender-card-\(scheme == .light ? "light" : "dark")", captureBottom: true)
             try await capture(SenderProfilePopover(accountID: account.id, address: "jordan@example.invalid",

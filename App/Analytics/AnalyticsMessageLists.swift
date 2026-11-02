@@ -128,6 +128,11 @@ struct AnalyticsRecentMessagesView: View {
     private func messageRow(_ message: MailAnalyticsMessage) -> some View {
         let sent = message.direction == .sent
         let color = sent ? Tokens.Analytics.sent : Tokens.Analytics.received
+        let sender = EmailAddress.parseList(message.sender).first
+        let name = sender?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let displayName = name.isEmpty ? (sender?.address ?? message.sender) : name
+        let dateFormat: Date.FormatStyle = Calendar.current.isDate(message.date, equalTo: .now, toGranularity: .year)
+            ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year()
         return HStack(alignment: .top, spacing: Tokens.Space.s3) {
             Image(systemName: sent ? "arrow.up.right" : "arrow.down.left")
                 .font(.callout.weight(.medium)).foregroundStyle(color)
@@ -136,11 +141,13 @@ struct AnalyticsRecentMessagesView: View {
                 .accessibilityLabel(sent ? "Sent" : "Received")
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
-                    Text(message.sender).font(.caption).foregroundStyle(.secondary)
+                    Text(displayName).font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
+                        .help(message.sender).accessibilityLabel(message.sender)
                     Spacer(minLength: 0)
-                    Text(message.date, format: .dateTime.month(.abbreviated).day())
+                    Text(message.date, format: dateFormat)
                         .font(.caption).foregroundStyle(.secondary).fixedSize()
+                        .accessibilityLabel(message.date.formatted(date: .complete, time: .shortened))
                 }
                 Text(message.subject.isEmpty ? "No subject" : message.subject)
                     .font(.callout.weight(.medium)).foregroundStyle(.primary)

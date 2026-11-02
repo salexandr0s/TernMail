@@ -102,9 +102,13 @@ struct AnalyticsMilestonesView: View {
                 Text("All indexed mail").foregroundStyle(.secondary)
             }
             .font(.caption)
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: Tokens.Space.s6) { milestones }
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) { milestones }
+            if snapshot.firstReceivedAt == nil, snapshot.firstSentAt == nil, snapshot.lastContactAt == nil {
+                Text("No indexed email yet").font(.callout).foregroundStyle(.secondary)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: Tokens.Space.s6) { milestones }
+                    VStack(alignment: .leading, spacing: Tokens.Space.s3) { milestones }
+                }
             }
         }
         .padding(Tokens.Space.s5)
