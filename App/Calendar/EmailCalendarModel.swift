@@ -18,9 +18,31 @@ struct EmailCalendarMessage: Sendable, Equatable {
     /// Seconds east of UTC in the message's `Date` header. Nil when the header
     /// names no zone, and for messages cached before the offset was stored.
     var dateHeaderOffset: Int?
+    var forwardedText: String? = nil
 }
 
 extension EmailCalendarMessage {
+    static let forwardedEvidenceWarning = "Date and time come from forwarded mail. Check the latest details."
+
+    /// Formatting whitespace can differ in an excerpt; quoted mail stays excluded.
+    func supportsCalendarEvidence(_ evidence: String) -> Bool {
+        func normalized(_ value: String) -> String {
+            value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
+        let excerpt = normalized(evidence)
+        return !excerpt.isEmpty && normalized(CalendarDetection.unquotedText(text)).contains(excerpt)
+    }
+
+    func supportsForwardedCalendarEvidence(_ evidence: String, start: CalendarDateTime?) -> Bool {
+        guard let forwardedText, let start, start.resolvedDate() != nil,
+              let writtenStart = start.date ?? start.dateTime else { return false }
+        let excerpt = evidence.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let source = CalendarDetection.unquotedText(forwardedText)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return !excerpt.isEmpty && source.contains(excerpt)
+            && CalendarForwardedText.containsExplicitDay(String(writtenStart.prefix(10)), in: evidence)
+    }
+
     /// A time without a zone is worth checking only when the sender's clock
     /// read differently from the reader's. Nil when nothing suggests that.
     func timeZoneWarning(readerTimeZone: TimeZone) -> String? {
@@ -221,16 +243,18 @@ final class EmailCalendarModel {
         let currentRevision = revision
         isInterpreting = true
         interpretationError = nil
+        defer {
+            if generation == currentGeneration { isInterpreting = false }
+        }
         do {
             let interpreted = try await service.extract(messages: messages, timeZone: timeZone)
             guard generation == currentGeneration, !Task.isCancelled else { return }
             _ = restoreInterpretation(interpreted, for: currentRevision)
         } catch is CancellationError {
         } catch {
-            guard generation == currentGeneration else { return }
+            guard generation == currentGeneration, !Task.isCancelled else { return }
             interpretationError = error.localizedDescription
         }
-        if generation == currentGeneration { isInterpreting = false }
     }
 
     @discardableResult
@@ -239,7 +263,11 @@ final class EmailCalendarModel {
               interpreted.allSatisfy({ item in
                   item.id.hasPrefix("interpreted:") && item.invitation == nil && !item.evidence.isEmpty &&
                   [.proposed, .updated, .cancelled].contains(item.kind) &&
-                  messages.contains { $0.id == item.messageID && CalendarDetection.unquotedText($0.text).contains(item.evidence) } &&
+                  messages.contains { source in
+                      source.id == item.messageID && (source.supportsCalendarEvidence(item.evidence) ||
+                          source.supportsForwardedCalendarEvidence(item.evidence, start: item.event?.start)
+                              && item.uncertainties.contains(EmailCalendarMessage.forwardedEvidenceWarning))
+                  } &&
                   item.relatedMessageIDs.allSatisfy { id in messages.contains { $0.id == id } }
               }) else { return false }
         mergeInterpretation(interpreted)
@@ -298,7 +326,7 @@ final class EmailCalendarModel {
 
     /// Part of every revision. Raise it when the same mail should give different
     /// cards, so readings the assistant cached under the old rules are not reused.
-    nonisolated private static let rulesVersion = 1
+    nonisolated private static let rulesVersion = 3
 
     nonisolated static func fingerprint(_ messages: [EmailCalendarMessage], timeZone: TimeZone) -> String {
         var hash = SHA256()
@@ -308,7 +336,8 @@ final class EmailCalendarModel {
         hash.update(data: Data(timeZone.identifier.utf8))
         for message in messages {
             let offset = message.dateHeaderOffset.map { String($0) } ?? ""
-            for part in [message.id, message.subject, String(message.date.timeIntervalSince1970), message.text, message.sender, offset] {
+            for part in [message.id, message.subject, String(message.date.timeIntervalSince1970), message.text,
+                         message.sender, offset, message.forwardedText ?? ""] {
                 hash.update(data: Data("\(part.utf8.count):".utf8))
                 hash.update(data: Data(part.utf8))
             }

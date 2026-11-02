@@ -147,6 +147,29 @@ import TernAI
         }
     }
 
+    @Test func anUnstatedTimeZoneDoesNotPreventDisplayingAnEventCard() throws {
+        let tools = Self.tools()
+        let source = Self.source()
+        let evidence = "Private sale on 3 November 2026, 12:00–23:00 online."
+        tools.register(Self.read(source, text: evidence), from: try Self.call("read_thread", [:]))
+        var proposal = Self.proposal()
+        proposal["title"] = .string("Online private sale")
+        proposal["start"] = .null
+        proposal["end"] = .null
+        proposal["evidence"] = .string(evidence)
+        proposal["notes"] = .string("3 November 2026, 12:00–23:00")
+        proposal["uncertainties"] = .array([.string("Time zone not stated; confirm before adding.")])
+
+        let result = try tools.execute(Self.eventCall(source, proposal: proposal))
+        let card = try #require(result.eventResults.first)
+        #expect(card.event.description == "3 November 2026, 12:00–23:00")
+        #expect(card.event.start == nil)
+        #expect(!card.uncertainties.isEmpty)
+        #expect(!card.canAddToCalendar)
+        #expect(result.calendarProposals.isEmpty)
+        #expect(result.data["saved"] == .bool(false))
+    }
+
     @Test func presentationRejectsExtraFieldsAndBoundsTheResultList() throws {
         let tools = Self.tools()
         let source = Self.source()
@@ -163,6 +186,38 @@ import TernAI
         #expect(duplicate.taskResults.count == 1)
     }
 
+    @Test func presentationAcceptsLargeValidBatchesWithinTheTransportLimit() throws {
+        let tools = Self.tools()
+        let source = Self.source()
+        let evidence = String(String(repeating: "Please review the proposal. ", count: 40).prefix(1_000))
+        tools.register(Self.read(source, text: evidence), from: try Self.call("read_thread", [:]))
+        func request(notes: String) throws -> AIToolCall {
+            let rows = (0..<12).map { index -> AIJSON in
+                var fields = Self.task(source, evidence: evidence)
+                fields["title"] = .string("Review proposal \(index)")
+                fields["notes"] = .string(notes)
+                return .object(fields)
+            }
+            return try Self.call("present_tasks", ["tasks": .array(rows)])
+        }
+        let accepted = try request(notes: String(repeating: "A", count: 2_000))
+        #expect(accepted.arguments.utf8.count > 32_768)
+        #expect(accepted.arguments.utf8.count <= AssistantResultTools.maximumArgumentBytes)
+        let result = try tools.execute(accepted)
+        #expect(result.taskResults.count == 12)
+        #expect(result.data["saved"] == .bool(false))
+        #expect(result.calendarProposals.isEmpty)
+
+        // Each note still meets its character limit, but its UTF-8 representation
+        // makes this complete batch too large for one provider tool call.
+        let oversized = try request(notes: String(repeating: "📝", count: 2_000))
+        #expect(oversized.arguments.utf8.count > AssistantResultTools.maximumArgumentBytes)
+        #expect(throws: AssistantResultTools.ToolError.batchTooLarge) { try tools.execute(oversized) }
+        let guidance = AssistantResultTools.ToolError.batchTooLarge.localizedDescription
+        #expect(guidance.contains("65,536 UTF-8 bytes"))
+        #expect(guidance.contains("smaller calls"))
+    }
+
     private static let evidence = "Please send the proposal by Friday."
 
     private static func tools(selectedThreads: Set<ThreadKey>? = nil, calendarDetails: Bool = true) -> AssistantResultTools {
@@ -175,11 +230,11 @@ import TernAI
         .init(accountID: account, threadID: thread, messageID: message, partID: nil, title: "Proposal")
     }
 
-    private static func read(_ source: AssistantSource) -> AssistantToolResult {
+    private static func read(_ source: AssistantSource, text: String = evidence) -> AssistantToolResult {
         .init(data: .object([
             "account_id": .string(source.accountID), "thread_id": .string(source.threadID),
             "messages": .array([.object(["message_id": .string(source.messageID ?? ""),
-                                         "thread_id": .string(source.threadID), "text": .string(evidence)])])
+                                         "thread_id": .string(source.threadID), "text": .string(text)])])
         ]), sources: [source])
     }
 

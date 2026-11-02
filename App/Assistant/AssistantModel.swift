@@ -703,6 +703,8 @@ final class AssistantModel {
         var callCount = 0
         var answerNext = false
         var finalizeNext = false
+        var pendingPresentationRepairs = Set<String>()
+        var didRepairPresentation = false
         let hasPreparedDraft = messages.first(where: { $0.id == messageID })?.draftIDs.isEmpty == false
         let definitions = isRetry && hasPreparedDraft ? tools.definitions.filter { $0.name != "prepare_draft" } : tools.definitions
         do {
@@ -710,19 +712,30 @@ final class AssistantModel {
             if isRetry {
                 instructions += "\nContinue the existing user request from the completed tool results in this history. Do not repeat completed actions. If a draft was already prepared, describe it so the user can open it; preparing another draft requires a new user request."
             }
-            for round in 0..<Self.maximumRounds {
+            // A failed presentation gets one repair request and a final answer.
+            // Successful turns retain the normal number of reading rounds.
+            for round in 0...Self.maximumRounds {
                 try ensureCurrent(snapshot, turn: turn)
                 try checkHistory(input)
                 refreshWritingStyleAccess()
                 let styleRound = writingStyle.round(accountIDs: snapshot.accountIDs, requestID: turn)
                 let styleInstructions = try styleRound.promptContext()
-                let answerOnly = answerNext || round == Self.maximumRounds - 1
-                let presentationOnly = !answerOnly && (finalizeNext || round >= Self.maximumRounds - 2 || callCount >= Self.maximumToolCalls - 3)
-                let roundDefinitions = answerOnly ? [] : (presentationOnly ? definitions.filter { Self.presentationToolNames.contains($0.name) } : definitions)
-                let allowance = answerOnly ? 0 : (presentationOnly ? min(3, Self.maximumToolCalls - callCount) : Self.maximumToolCalls - 3 - callCount)
+                let repairToolNames = pendingPresentationRepairs
+                pendingPresentationRepairs.removeAll()
+                let isRepairRound = !repairToolNames.isEmpty
+                let answerOnly = answerNext || (round >= Self.maximumRounds - 1 && !isRepairRound)
+                let presentationOnly = !answerOnly && (isRepairRound || finalizeNext || round >= Self.maximumRounds - 2 || callCount >= Self.maximumToolCalls - 4)
+                let presentationNames = isRepairRound ? repairToolNames : Self.presentationToolNames
+                let roundDefinitions = answerOnly ? [] : (presentationOnly ? definitions.filter { presentationNames.contains($0.name) } : definitions)
+                // Reserve three presentation calls and one correction call.
+                let allowance = answerOnly ? 0 : (presentationOnly
+                    ? min(3, Self.maximumToolCalls - (isRepairRound ? 0 : 1) - callCount)
+                    : Self.maximumToolCalls - 4 - callCount)
                 let budgetInstructions: String
                 if answerOnly {
                     budgetInstructions = "This is the final response. No tools remain. Answer from completed results and displayed conversations. State any incomplete coverage or skipped operations; never claim a skipped action succeeded."
+                } else if isRepairRound {
+                    budgetInstructions = "Retry the failed presentation using its validation error. Correct invalid fields or use a smaller set of supported results. Keep unknown details null and preserve uncertainty. Only the failed presentation tools are available; do not request reads or actions. Previously displayed event cards are retained. Then give the final answer and explain any results that still could not be displayed."
                 } else if presentationOnly {
                     budgetInstructions = "Reading and action time is over. Use up to three presentation calls (present_tasks, present_events, or present_emails) for the relevant completed results, then answer. Do not request more reads or actions. If no cards are useful, answer directly."
                 } else {
@@ -777,6 +790,7 @@ final class AssistantModel {
                     call.namespace == "tern" && roundDefinitions.contains(where: { $0.name == call.name })
                 }) else { throw AssistantError.invalidTool }
                 var attemptedThisRound = 0
+                var failedPresentationTools = Set<String>()
                 for (index, call) in response.toolCalls.enumerated() {
                     try ensureCurrent(snapshot, turn: turn)
                     guard attemptedThisRound < allowance else {
@@ -815,9 +829,18 @@ final class AssistantModel {
                             for source in result.sources where !message.sources.contains(where: { $0.id == source.id }) { message.sources.append(source) }
                             if let id = result.createdDraftID, !message.draftIDs.contains(id) { message.draftIDs.append(id) }
                             if let id = result.createdDraftID, let note = result.draftStyleNote { message.draftStyleNotes[id] = note }
-                            if call.name == "present_emails" { message.emailResults = result.emailResults }
-                            if call.name == "present_tasks" { message.taskResults = result.taskResults }
-                            if call.name == "present_events" { message.eventResults = result.eventResults }
+                            if call.name == "present_emails" { Self.mergeResults(result.emailResults, into: &message.emailResults) }
+                            if call.name == "present_tasks" { Self.mergeResults(result.taskResults, into: &message.taskResults) }
+                            if call.name == "present_events" {
+                                Self.mergeResults(result.eventResults, into: &message.eventResults)
+                                message.eventResults = message.eventResults.enumerated().sorted { lhs, rhs in
+                                    let first = lhs.element.event.start?.resolvedDate()
+                                    let second = rhs.element.event.start?.resolvedDate()
+                                    if let first, let second, first != second { return first < second }
+                                    if (first == nil) != (second == nil) { return first != nil }
+                                    return lhs.offset < rhs.offset
+                                }.map(\.element)
+                            }
                             for proposal in result.calendarProposals where !message.calendarProposals.contains(where: { $0.id == proposal.id }) {
                                 message.calendarProposals.append(proposal)
                             }
@@ -828,6 +851,7 @@ final class AssistantModel {
                         acceptedResult = result
                     } catch {
                         try ensureCurrent(snapshot, turn: turn)
+                        if Self.presentationToolNames.contains(call.name) { failedPresentationTools.insert(call.name) }
                         output = .object(["error": .string(Self.toolMessage(for: error))])
                     }
                     input.append(try Self.toolOutput(call.id, data: output))
@@ -839,7 +863,11 @@ final class AssistantModel {
                         tools.acknowledge(call.id)
                     }
                 }
-                if presentationOnly { answerNext = true }
+                if presentationOnly, !failedPresentationTools.isEmpty, !didRepairPresentation,
+                   round < Self.maximumRounds - 1, callCount < Self.maximumToolCalls {
+                    pendingPresentationRepairs = failedPresentationTools
+                    didRepairPresentation = true
+                } else if presentationOnly { answerNext = true }
                 statusText = "Thinking…"
             }
             throw AssistantError.toolLimit
@@ -858,6 +886,16 @@ final class AssistantModel {
     private func update(_ id: UUID, _ change: (inout AssistantMessage) -> Void) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         change(&messages[index])
+    }
+
+    private static func mergeResults<Result: Identifiable>(_ incoming: [Result], into retained: inout [Result]) {
+        for result in incoming {
+            if let index = retained.firstIndex(where: { $0.id == result.id }) {
+                retained[index] = result
+            } else {
+                retained.append(result)
+            }
+        }
     }
 
     private static func joinReply(_ earlier: String, _ later: String) -> String {
@@ -891,7 +929,8 @@ final class AssistantModel {
         .object(["type": .string("function_call_output"), "call_id": .string(callID), "output": .string(try data.jsonString())])
     }
     private static func toolMessage(for error: any Error) -> String {
-        if error is AttachmentTextReader.ReadError || error is AssistantMailError || error is MailAssistantTools.ToolError || error is CalendarAssistantTools.ToolError {
+        if error is AttachmentTextReader.ReadError || error is AssistantMailError || error is MailAssistantTools.ToolError
+            || error is CalendarAssistantTools.ToolError || error is AssistantResultTools.ToolError {
             return error.localizedDescription
         }
         return "This operation did not complete. Narrow the request or explain the limitation to the user."

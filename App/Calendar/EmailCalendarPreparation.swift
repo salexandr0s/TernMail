@@ -78,14 +78,17 @@ actor EmailCalendarPreparation {
                 entry = cached
             } else {
                 let text = CalendarDetection.readableText(html: source.html, plainText: source.plainText)
+                let forwardedText = CalendarForwardedText.extract(html: source.html, plainText: source.plainText)
                 try Task.checkCancellation()
                 let message = EmailCalendarMessage(id: source.id, subject: source.subject, date: source.date,
                     text: text, invitations: source.invitations, sender: source.sender,
-                    allowsDateDetection: source.allowsDateDetection, dateHeaderOffset: source.dateHeaderOffset)
+                    allowsDateDetection: source.allowsDateDetection, dateHeaderOffset: source.dateHeaderOffset,
+                    forwardedText: forwardedText)
                 let found = source.invitations.isEmpty && source.allowsDateDetection
                     ? CalendarDetection.suggestions(in: text, messageDate: source.date, timeZone: timeZone, locale: locale) : []
                 try Task.checkCancellation()
                 let bytes = 512 + text.utf8.count + source.subject.utf8.count + source.sender.utf8.count
+                    + (forwardedText?.utf8.count ?? 0)
                     + ((try? JSONEncoder().encode(source.invitations).count) ?? 0)
                 entry = Entry(message: message, detections: found,
                     cost: bytes + found.reduce(0) { $0 + $1.sourceText.utf8.count + 256 }, used: sequence)

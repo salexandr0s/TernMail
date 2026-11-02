@@ -11,6 +11,7 @@ struct EmailCalendarSuggestionsView: View {
     let onOpenExisting: (EmailCalendarItem) -> Void
     let onRespond: (EmailCalendarItem, InvitationReply.Answer) -> Void
     var onDismiss: (String) -> Void = { _ in }
+    var onRetry: (() -> Void)? = nil
     var tasks: GoogleTasksModel? = nil
     var taskRequest: (EmailCalendarItem) -> TaskCreationRequest? = { _ in nil }
     var onAddTask: (TaskCreationRequest) -> Void = { _ in }
@@ -70,11 +71,21 @@ struct EmailCalendarSuggestionsView: View {
                     .accessibilityValue(showsAll ? "Expanded" : "Collapsed")
                 }
                 if let error = model.interpretationError {
-                    Text("Some events could not be checked. \(error)")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, Tokens.Space.s3)
-                        .padding(.vertical, Tokens.Space.s2)
+                    HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                        Text("Some events could not be checked. \(error)")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Spacer(minLength: 0)
+                        if let onRetry {
+                            Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
+                                .controlSize(.small)
+                                .disabled(model.isInterpreting)
+                                .help("Check events in this conversation again")
+                                .accessibilityIdentifier("calendar-interpretation-retry")
+                        }
+                    }
+                    .padding(.horizontal, Tokens.Space.s3)
+                    .padding(.vertical, Tokens.Space.s2)
                 }
             }
             .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,

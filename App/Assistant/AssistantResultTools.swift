@@ -6,12 +6,14 @@ import TernAI
 /// tasks or calendar events; those actions belong to the user's review controls.
 @MainActor
 final class AssistantResultTools {
-    enum ToolError: Error, LocalizedError {
-        case invalidArguments, unreadSource, unsupportedEvidence
+    enum ToolError: Error, LocalizedError, Equatable {
+        case invalidArguments, batchTooLarge, invalidEventDates, unreadSource, unsupportedEvidence
 
         var errorDescription: String? {
             switch self {
             case .invalidArguments: "The result has missing or invalid fields. Check its dates and source details."
+            case .batchTooLarge: "This presentation exceeds 65,536 UTF-8 bytes across all arguments. Split it into smaller calls, with fewer results or shorter notes and excerpts. Earlier displayed cards are retained."
+            case .invalidEventDates: "Use real YYYY-MM-DD dates for all-day events, or RFC3339 timestamps with seconds and explicit offsets for timed events. The end must follow the start. Use an IANA time zone or null. If the date is unknown, or a timed event's time zone is unknown, set both start and end to null and preserve the stated date and time in notes and uncertainties. Retry the affected events with present_events."
             case .unreadSource: "Read the supporting email or calendar event before displaying this result."
             case .unsupportedEvidence: "The supporting excerpt must come from the email or attachment that was read."
             }
@@ -27,6 +29,7 @@ final class AssistantResultTools {
     private var mail: [String: ReadMail] = [:]
     private var events: [String: AssistantEventResult] = [:]
     private var storedCharacters = 0
+    static let maximumArgumentBytes = 65_536
     static let toolNames: Set<String> = ["present_tasks", "present_events"]
     private static let taskFields: Set<String> = ["source_id", "title", "owner", "notes", "due_date", "evidence"]
     private static let proposalFields: Set<String> = ["title", "start", "end", "all_day", "time_zone", "location", "notes", "evidence", "uncertainties"]
@@ -69,9 +72,9 @@ final class AssistantResultTools {
     }
 
     func execute(_ call: AIToolCall) throws -> AssistantToolResult {
-        guard call.namespace == "tern", !call.id.isEmpty, call.arguments.utf8.count <= 32_768,
-              Self.toolNames.contains(call.name),
-              let args = try AIJSON.decode(Data(call.arguments.utf8)).objectValue else { throw ToolError.invalidArguments }
+        guard call.namespace == "tern", !call.id.isEmpty, Self.toolNames.contains(call.name) else { throw ToolError.invalidArguments }
+        guard call.arguments.utf8.count <= Self.maximumArgumentBytes else { throw ToolError.batchTooLarge }
+        guard let args = try AIJSON.decode(Data(call.arguments.utf8)).objectValue else { throw ToolError.invalidArguments }
         if call.name == "present_tasks" { return try presentTasks(args) }
         return try presentEvents(args)
     }
@@ -149,15 +152,15 @@ final class AssistantResultTools {
         let start = try optionalString(fields, "start", limit: 64)
         let end = try optionalString(fields, "end", limit: 64)
         let zone = try optionalString(fields, "time_zone", limit: 128)
-        if let zone { guard TimeZone(identifier: zone) != nil else { throw ToolError.invalidArguments } }
-        guard start != nil || end == nil else { throw ToolError.invalidArguments }
+        if let zone { guard TimeZone(identifier: zone) != nil else { throw ToolError.invalidEventDates } }
+        guard start != nil || end == nil else { throw ToolError.invalidEventDates }
         let startValue = try start.map { try dateValue($0, allDay: allDay, zone: zone) }
         let endValue = try end.map { try dateValue($0, allDay: allDay, zone: zone) }
         if let start, let end {
-            if allDay { guard end > start else { throw ToolError.invalidArguments } }
+            if allDay { guard end > start else { throw ToolError.invalidEventDates } }
             else {
                 guard let first = CalendarDateCoding.date(start), let last = CalendarDateCoding.date(end), last > first else {
-                    throw ToolError.invalidArguments
+                    throw ToolError.invalidEventDates
                 }
             }
         }
@@ -170,7 +173,7 @@ final class AssistantResultTools {
 
     private static func dateValue(_ value: String, allDay: Bool, zone: String?) throws -> CalendarDateTime {
         if allDay {
-            guard isDay(value) else { throw ToolError.invalidArguments }
+            guard isDay(value) else { throw ToolError.invalidEventDates }
             return CalendarDateTime(date: value)
         }
         guard value.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"#,
@@ -179,7 +182,7 @@ final class AssistantResultTools {
               let hour = Int(value.dropFirst(11).prefix(2)), (0...23).contains(hour),
               let minute = Int(value.dropFirst(14).prefix(2)), (0...59).contains(minute),
               let second = Int(value.dropFirst(17).prefix(2)), (0...59).contains(second),
-              CalendarDateCoding.date(value) != nil else { throw ToolError.invalidArguments }
+              CalendarDateCoding.date(value) != nil else { throw ToolError.invalidEventDates }
         return CalendarDateTime(dateTime: value, timeZone: zone)
     }
 
@@ -235,7 +238,7 @@ final class AssistantResultTools {
         let evidence = text("An exact supporting excerpt from the read message or attachment text; whitespace may be normalized.", limit: 1_000)
         let proposal = object([
             "title": text("Short event title supported by the source.", limit: 240),
-            "start": text("Known start: YYYY-MM-DD for all-day, or RFC3339 with explicit offset for timed events. Null when unknown; never guess a date.", limit: 64, nullable: true),
+            "start": text("Known start: YYYY-MM-DD for all-day, or RFC3339 with seconds and explicit offset for timed events. If the date is unknown, or a timed event's time zone is unknown, set start and end null; preserve stated local dates and times in notes and uncertainties so the card still displays them. Never guess an offset.", limit: 64, nullable: true),
             "end": text("Known exclusive end in the same format as start; null when duration is unknown.", limit: 64, nullable: true),
             "all_day": .object(["type": .string("boolean"), "description": .string("True only for an all-day event, not a timed event whose time is missing.")]),
             "time_zone": text("IANA time zone if known, otherwise null. Timed dates still require explicit offsets.", limit: 128, nullable: true),
@@ -246,7 +249,7 @@ final class AssistantResultTools {
                 "items": text("A missing or ambiguous detail the user should review.", limit: 280)])
         ], nullable: true)
         return [
-            .init(name: "present_tasks", description: "Display open tasks extracted from emails as task cards with due dates, evidence and Add to Tasks review controls. Read supporting messages first and check later replies for completion. Include tasks assigned to the user; identify another owner only when relevant to the request. This tool does not save tasks.", parameters: object([
+            .init(name: "present_tasks", description: "Display open tasks extracted from emails as task cards with due dates, evidence and Add to Tasks review controls. Read supporting messages first and check later replies for completion. Include tasks assigned to the user; identify another owner only when relevant to the request. Keep each call's complete arguments within 65,536 UTF-8 bytes; split larger batches into smaller calls. Earlier cards are retained and matching tasks are updated. This tool does not save tasks.", parameters: object([
                 "tasks": array(object([
                     "source_id": source, "title": text("Concrete action to take.", limit: 240),
                     "owner": text("Named person responsible, or null when unstated.", limit: 240, nullable: true),
@@ -255,7 +258,7 @@ final class AssistantResultTools {
                     "evidence": evidence
                 ]))
             ])),
-            .init(name: "present_events", description: "Display a readable agenda of events from mail or calendars. Existing calendar events require proposal:null and use their retrieved metadata. Mail events require a proposal supported by an exact excerpt. Keep unknown dates null and describe uncertainty. Do not invent attendees or treat a listing request as permission to book. Cards provide user review actions; this tool saves nothing.", parameters: object([
+            .init(name: "present_events", description: "Display a readable agenda of events from mail or calendars. Existing calendar events require proposal:null and use their retrieved metadata. Mail events require a proposal supported by an exact excerpt. Keep unknown dates null and describe uncertainty. Do not invent attendees or treat a listing request as permission to book. Keep each call's complete arguments within 65,536 UTF-8 bytes; split larger batches into smaller calls. Earlier cards are retained and matching events are updated. Cards provide user review actions; this tool saves nothing.", parameters: object([
                 "events": array(object(["source_id": source, "proposal": proposal]))
             ]))
         ]

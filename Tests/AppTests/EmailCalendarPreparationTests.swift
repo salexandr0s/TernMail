@@ -53,6 +53,32 @@ import Testing
         #expect(await worker.cost == 0)
     }
 
+    @Test func forwardedBookingHasSeparateEvidenceAndCountsTowardTheCacheBudget() async throws {
+        func booking(_ day: Int, padding: String = "") -> EmailCalendarSource {
+            EmailCalendarSource(id: "forward", subject: "Fwd: Booking", date: Date(timeIntervalSince1970: 1_790_000_000),
+                html: """
+                <p>Sharing my booking.</p><div class="gmail_quote">
+                <p>---------- Forwarded message ---------<br>From: Airline<br>Date: July 1, 2031<br>Subject: Booking</p>
+                <p>Flight to Vienna July \(day), 2031 at 14:00 UTC. \(padding)</p></div>
+                """, plainText: nil, invitations: [], sender: "Passenger <passenger@example.invalid>",
+                allowsDateDetection: true, dateHeaderOffset: 0)
+        }
+        let worker = EmailCalendarPreparation()
+        let first = try await worker.prepare([booking(15)], accountID: "a", lifetime: "one", timeZone: .gmt)
+        let message = try #require(first.messages.first)
+        #expect(!message.text.contains("Flight to Vienna"))
+        #expect(message.forwardedText?.contains("Flight to Vienna July 15, 2031") == true)
+        #expect(first.detections[message.id]?.isEmpty == true)
+        let changed = try await worker.prepare([booking(16)], accountID: "a", lifetime: "one", timeZone: .gmt)
+        #expect(first.revision != changed.revision)
+        #expect(await worker.preparationCount == 2)
+
+        let bounded = EmailCalendarPreparation(capacity: 1_000)
+        _ = try await bounded.prepare([booking(15, padding: String(repeating: "x", count: 1_000))],
+                                      accountID: "a", lifetime: "one", timeZone: .gmt)
+        #expect(await bounded.cost == 0)
+    }
+
     private func source(offset: Int? = nil) -> EmailCalendarSource {
         EmailCalendarSource(id: "message", subject: "Planning", date: Date(timeIntervalSince1970: 1_790_000_000),
             html: "<p>Planning meeting on November 4, 2027 at 10 am in Room 2.</p><blockquote>quoted date: May 5, 2028</blockquote>",

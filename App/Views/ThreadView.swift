@@ -26,6 +26,7 @@ struct ThreadView: View {
     @State private var bodyLoadFailed = false
     @State private var loadAttempt = 0
     @State private var calendarSuggestions = EmailCalendarModel()
+    @State private var calendarInterpretationAttempt = 0
     @State private var responseReview: EmailCalendarResponseReview?
     @State private var calendarNotice: String?
     @State private var calendarReplyBusy = false
@@ -63,6 +64,7 @@ struct ThreadView: View {
 
     private struct CalendarInterpretationIdentity: Equatable {
         let revision: String
+        let attempt: Int
         let access: Int
         let storeReady: Bool
         let isActive: Bool
@@ -221,6 +223,7 @@ struct ThreadView: View {
                                         catch { calendarNotice = error.localizedDescription }
                                     }
                                 }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } },
+                                onRetry: { calendarInterpretationAttempt += 1 },
                                 tasks: app.tasks,
                                 taskRequest: { item in
                                     EmailTaskRequest.calendarSuggestion(item, detail: detail, calendar: app.calendar.calendar,
@@ -258,8 +261,7 @@ struct ThreadView: View {
                                 }
                             }
                         }
-                        .frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
                         .background(PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive))
                     }
@@ -446,6 +448,7 @@ struct ThreadView: View {
             await app.calendar.observeEmailSuggestions(calendarSuggestions, detail: detail, key: key)
         }
         .task(id: CalendarInterpretationIdentity(revision: calendarSuggestions.revision,
+            attempt: calendarInterpretationAttempt,
             access: app.assistant.calendarExtractionRevision, storeReady: app.calendar.store != nil, isActive: isReaderActive && primaryBodyReady)) {
             guard isReaderActive, primaryBodyReady, !calendarSuggestions.messages.isEmpty, app.calendar.store != nil else { return }
             guard let service = try? app.assistant.calendarExtractionService(for: key) else {

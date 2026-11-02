@@ -491,6 +491,81 @@ import TernAI
         #expect(fixture.model.messages.isEmpty)
     }
 
+    @Test(arguments: ["present_tasks", "present_emails"])
+    func smallerPresentationRetriesRetainTaskAndEmailCards(toolName: String) async throws {
+        let source = Self.source("a")
+        let evidence = "Send the proposal. Confirm the date. Review the budget."
+        let titles = ["Send the proposal", "Confirm the date", "Review the budget"]
+        let emails = (0..<3).map { Self.email("a", thread: "priority-\($0)") }
+        let reads = (0..<6).map { AIToolCall(id: "read-\($0)", namespace: "tern", name: "read_thread", arguments: "{}") }
+        func presentation(_ id: String, indices: [Int], updated: Bool = false, invalid: Bool = false) throws -> AIToolCall {
+            let rows = indices.map { index -> AIJSON in
+                if toolName == "present_emails" {
+                    return .object(["source_id": .string(emails[index].source.id),
+                                    "reason": .string(updated && index == 0 ? "Updated reason" : "Needs review")])
+                }
+                return .object(["source_id": .string(source.id), "title": .string(titles[index]),
+                    "owner": .null, "notes": updated && index == 0 ? .string("Updated details") : .null,
+                    "due_date": .null, "evidence": .string(invalid ? "Evidence that was not read." : evidence)])
+            }
+            let key = toolName == "present_emails" ? "emails" : "tasks"
+            return .init(id: id, namespace: "tern", name: toolName,
+                         arguments: try AIJSON.object([key: .array(rows)]).jsonString())
+        }
+        let first = try presentation("first", indices: [0])
+        let second = try presentation("second", indices: [1])
+        let invalid = try presentation("invalid", indices: [2], invalid: true)
+        let repair = try presentation("repair", indices: [0, 2], updated: true)
+        let initial = [first, second, invalid]
+        let batch = AIResponse(output: initial.flatMap { Self.callResponse($0).output }, text: "", toolCalls: initial)
+        var replies = reads.map { AssistantProviderFixture.Reply.complete(Self.callResponse($0)) }
+        replies += [.complete(batch), .complete(Self.callResponse(repair)), .complete(Self.answer("Three suggestions are ready to review."))]
+        let provider = AssistantProviderFixture(replies: replies)
+        var underlyingCalls: [String] = []
+        let fixture = try Fixture(provider: provider, execute: { call in
+            underlyingCalls.append(call.name)
+            if call.name == "present_emails" {
+                if call.id == "invalid" { throw MailAssistantTools.ToolError.invalidArguments }
+                let indices = call.id == "first" ? [0] : call.id == "second" ? [1] : [0, 2]
+                let cards = indices.map { index -> AssistantEmailResult in
+                    var card = emails[index]
+                    card.reason = call.id == "repair" && index == 0 ? "Updated reason" : "Needs review"
+                    return card
+                }
+                return .init(data: .null, sources: cards.map(\.source), emailResults: cards)
+            }
+            return .init(data: .object(["account_id": .string("a"), "thread_id": .string("t"),
+                "messages": .array([.object(["message_id": .string("m"), "thread_id": .string("t"), "text": .string(evidence)])])]),
+                sources: [source])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show the suggestions I should review")
+        await fixture.model.waitForCurrentTurn()
+
+        let requests = await provider.requests
+        #expect(requests.count == AssistantModel.maximumRounds + 1)
+        #expect(requests[7].tools.map(\.name) == [toolName])
+        #expect(requests[8].tools.isEmpty)
+        let message = try #require(fixture.model.messages.last)
+        #expect(message.state == .completed)
+        if toolName == "present_emails" {
+            #expect(message.emailResults.map(\.id) == emails.map(\.id))
+            #expect(message.emailResults.first?.reason == "Updated reason")
+            #expect(message.taskResults.isEmpty)
+        } else {
+            #expect(message.taskResults.map(\.title) == titles)
+            #expect(message.taskResults.first?.notes == "Updated details")
+            #expect(message.emailResults.isEmpty)
+            let task = try #require(message.taskResults.first)
+            #expect(fixture.model.canUseTaskResult(task))
+        }
+        #expect(underlyingCalls.allSatisfy { $0 == "read_thread" || $0 == "present_emails" })
+        #expect(message.calendarProposals.isEmpty)
+        #expect(message.draftIDs.isEmpty)
+        #expect(fixture.model.errorMessage == nil)
+    }
+
     @Test func presentedCardCannotExposeAnotherAccountsMetadata() async throws {
         let call = AIToolCall(id: "present", namespace: "tern", name: "present_emails", arguments: "{}")
         let provider = AssistantProviderFixture(replies: [.complete(Self.callResponse(call)), .complete(Self.answer("I could not show that conversation."))])
@@ -547,7 +622,7 @@ import TernAI
         var draftCount = 0
         let fixture = try Fixture(provider: provider, execute: { call in
             executions += 1
-            if call.id == "read-19" { throw AttachmentTextReader.ReadError.noPDFText }
+            if call.id == "read-18" { throw AttachmentTextReader.ReadError.noPDFText }
             if call.name == "prepare_draft" {
                 draftCount += 1
                 return .init(data: .object(["draft_id": .string("saved-draft")]), createdDraftID: "saved-draft")
@@ -562,17 +637,134 @@ import TernAI
         #expect(requests.count == 3)
         #expect(Set(requests[1].tools.map(\.name)) == ["present_emails", "present_tasks", "present_events"])
         #expect(requests[2].tools.isEmpty)
-        #expect(executions == AssistantModel.maximumToolCalls)
+        #expect(executions == AssistantModel.maximumToolCalls - 1)
         #expect(draftCount == 1)
         let outputs = requests[2].input.filter { $0["type"]?.stringValue == "function_call_output" }
         #expect(Set(outputs.compactMap { $0["call_id"]?.stringValue }) == Set((calls + present).map(\.id)))
-        for id in ["read-20", "read-21", "late-0", "late-1", "present-3"] {
+        for id in ["read-19", "read-20", "read-21", "late-0", "late-1", "present-3"] {
             let output = try #require(outputs.first { $0["call_id"]?.stringValue == id }?["output"]?.stringValue)
             #expect(try AIJSON.decode(Data(output.utf8))["status"]?.stringValue == "not_run")
         }
         #expect(fixture.model.messages.last?.state == .completed)
         #expect(fixture.model.messages.last?.draftIDs == ["saved-draft"])
         #expect(fixture.model.messages.last?.emailResults == [email])
+    }
+
+    @Test func anEarlyPresentationFailureCanReadItsMissingSourceBeforeRetrying() async throws {
+        let source = Self.source("a")
+        let evidence = "Meet on November 9 at 10:00 UTC."
+        let arguments = try AIJSON.object(["events": .array([.object([
+            "source_id": .string(source.id), "proposal": .object([
+                "title": .string("Planning meeting"), "start": .string("2026-11-09T10:00:00Z"),
+                "end": .null, "all_day": .bool(false), "time_zone": .string("UTC"),
+                "location": .null, "notes": .null, "evidence": .string(evidence), "uncertainties": .array([])
+            ])
+        ])])]).jsonString()
+        let unread = AIToolCall(id: "unread", namespace: "tern", name: "present_events", arguments: arguments)
+        let read = AIToolCall(id: "read", namespace: "tern", name: "read_thread", arguments: "{}")
+        let retry = AIToolCall(id: "retry", namespace: "tern", name: "present_events", arguments: arguments)
+        let provider = AssistantProviderFixture(replies: [
+            .complete(Self.callResponse(unread)), .complete(Self.callResponse(read)),
+            .complete(Self.callResponse(retry)), .complete(Self.answer("The event is ready to review."))
+        ])
+        var underlyingCalls: [String] = []
+        let fixture = try Fixture(provider: provider, execute: { call in
+            underlyingCalls.append(call.name)
+            return .init(data: .object(["account_id": .string("a"), "thread_id": .string("t"),
+                "messages": .array([.object(["message_id": .string("m"), "thread_id": .string("t"), "text": .string(evidence)])])]),
+                sources: [source])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show my upcoming events")
+        await fixture.model.waitForCurrentTurn()
+
+        let requests = await provider.requests
+        #expect(requests.count == 4)
+        #expect(requests[1].tools.contains { $0.name == "read_thread" })
+        let output = try #require(requests[1].input.last?["output"]?.stringValue)
+        #expect(try AIJSON.decode(Data(output.utf8))["error"]?.stringValue == AssistantResultTools.ToolError.unreadSource.localizedDescription)
+        #expect(underlyingCalls == ["read_thread"])
+        #expect(fixture.model.messages.last?.state == .completed)
+        #expect(fixture.model.messages.last?.eventResults.map(\.title) == ["Planning meeting"])
+        #expect(fixture.model.messages.last?.calendarProposals.isEmpty == true)
+    }
+
+    @Test(arguments: [false, true])
+    func failedEventPresentationGetsOneRepairAtTheBudgetLimit(repairSucceeds: Bool) async throws {
+        let source = Self.source("a")
+        let evidence = "Meet on November 8 and 9 at 10:00 UTC. Another meeting has no date yet."
+        let reads = (0..<20).map { AIToolCall(id: "read-\($0)", namespace: "tern", name: "read_thread", arguments: "{}") }
+        func proposal(_ title: String, start: String? = "2026-11-09T10:00:00Z", notes: String? = nil) -> AIJSON {
+            .object(["source_id": .string(source.id), "proposal": .object([
+                "title": .string(title), "start": start.map(AIJSON.string) ?? .null, "end": .null,
+                "all_day": .bool(false), "time_zone": .string("UTC"), "location": .null,
+                "notes": notes.map(AIJSON.string) ?? .null,
+                "evidence": .string(evidence), "uncertainties": .array([])
+            ])])
+        }
+        func presentation(_ id: String, _ rows: [AIJSON]) throws -> AIToolCall {
+            .init(id: id, namespace: "tern", name: "present_events",
+                  arguments: try AIJSON.object(["events": .array(rows)]).jsonString())
+        }
+        func batch(_ calls: [AIToolCall]) -> AIResponse {
+            .init(output: calls.flatMap { Self.callResponse($0).output }, text: "", toolCalls: calls)
+        }
+        let invalid = proposal("Third meeting", start: "2026-11-08T10:00:00")
+        let presentations = try [
+            presentation("first", [proposal("First meeting", start: nil)]),
+            presentation("second", [proposal("Second meeting")]),
+            presentation("invalid", [invalid])
+        ]
+        let repair = try presentation("repair", repairSucceeds
+            ? [proposal("First meeting", start: nil, notes: "Reviewed details"), proposal("Third meeting", start: "2026-11-08T10:00:00Z")]
+            : [invalid])
+        var replies: [AssistantProviderFixture.Reply] = [.complete(batch(Array(reads.prefix(15))))]
+        replies += reads.suffix(5).map { .complete(Self.callResponse($0)) }
+        replies += [.complete(batch(presentations)), .complete(Self.callResponse(repair)),
+                    .complete(Self.answer(repairSucceeds ? "Three events are ready to review." : "Two events are ready to review. Another could not be displayed."))]
+        let provider = AssistantProviderFixture(replies: replies)
+        var underlyingCalls: [String] = []
+        let fixture = try Fixture(provider: provider, execute: { call in
+            underlyingCalls.append(call.name)
+            return .init(data: .object(["account_id": .string("a"), "thread_id": .string("t"),
+                "messages": .array([.object(["message_id": .string("m"), "thread_id": .string("t"), "text": .string(evidence)])])]),
+                sources: [source])
+        })
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Show my upcoming events")
+        await fixture.model.waitForCurrentTurn()
+
+        let requests = await provider.requests
+        #expect(requests.count == AssistantModel.maximumRounds + 1)
+        #expect(Set(requests[6].tools.map(\.name)) == ["present_emails", "present_tasks", "present_events"])
+        #expect(requests[7].tools.map(\.name) == ["present_events"])
+        #expect(requests[8].tools.isEmpty)
+        let failedOutput = requests[7].input.first {
+            $0["type"]?.stringValue == "function_call_output" && $0["call_id"]?.stringValue == "invalid"
+        }
+        let errorOutput = try #require(failedOutput?["output"]?.stringValue)
+        let validationError = try #require(AIJSON.decode(Data(errorOutput.utf8))["error"]?.stringValue)
+        #expect(validationError != "This operation did not complete. Narrow the request or explain the limitation to the user.")
+        #expect(!validationError.isEmpty)
+        let outputs = requests[8].input.filter { $0["type"]?.stringValue == "function_call_output" }
+        #expect(outputs.count == AssistantModel.maximumToolCalls)
+        let outputIDs = Set(outputs.compactMap { $0["call_id"]?.stringValue })
+        let executedCalls = reads + presentations + [repair]
+        let expectedIDs = Set(executedCalls.map(\.id))
+        #expect(outputIDs == expectedIDs)
+        #expect(underlyingCalls == Array(repeating: "read_thread", count: reads.count))
+        let message = try #require(fixture.model.messages.last)
+        #expect(message.state == .completed)
+        #expect(message.eventResults.map(\.title) == (repairSucceeds ? ["Third meeting", "Second meeting", "First meeting"] : ["Second meeting", "First meeting"]))
+        #expect(message.eventResults.last?.event.description == (repairSucceeds ? "Reviewed details" : nil))
+        let datedCardsAreActionable = message.eventResults.dropLast().allSatisfy { $0.canAddToCalendar }
+        #expect(datedCardsAreActionable)
+        #expect(message.eventResults.last?.canAddToCalendar == false)
+        #expect(message.calendarProposals.isEmpty)
+        #expect(message.draftIDs.isEmpty)
+        #expect(fixture.model.errorMessage == nil)
     }
 
     @Test func emptyTerminalPreservesEarlierFormattedTextAndCards() async throws {

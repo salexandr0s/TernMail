@@ -19,6 +19,122 @@ import TernAI
         }
     }
 
+    @Test func extractionAndCachedInterpretationRejectQuotedAndEmptyEvidence() async throws {
+        let quote = "Meet July 15, 2031 at 14:00."
+        let sources = [
+            EmailCalendarMessage(id: "message", subject: "Planning", date: message().date,
+                text: "No meeting planned.\n> Meet July 15, 2031 at 14:00."),
+            EmailCalendarMessage(id: "message", subject: "Planning", date: message().date,
+                text: "Sharing an old message.\n---------- Forwarded message ---------\nMeet July 15, 2031 at 14:00."),
+        ]
+        for source in sources {
+            let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response(quote: quote)),
+                                                         model: "fixture", isScopeValid: { true })
+            await #expect(throws: AIProviderError.invalidResponse) { try await service.extract(messages: [source], timeZone: .current) }
+            let model = EmailCalendarModel()
+            model.update(messages: [source], addresses: [])
+            let cached = EmailCalendarItem(id: "interpreted:fixture", messageID: source.id, title: "Planning",
+                evidence: quote, kind: .proposed)
+            #expect(!model.restoreInterpretation([cached], for: model.revision))
+            #expect(!source.supportsCalendarEvidence(" \n\t"))
+        }
+    }
+
+    @Test func interpretedPromotionInvitationAcceptsWrappedSourceEvidence() async throws {
+        let source = EmailCalendarMessage(id: "sale", subject: "Your private sale invitation", date: message().date,
+            text: "Private sale invitation: July 15,\n2031 at\t14:00.", allowsDateDetection: false)
+        let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response(source: source.id,
+            quote: "Private sale invitation: July 15, 2031 at 14:00.", title: "Private sale")),
+            model: "fixture", isScopeValid: { true })
+        let model = EmailCalendarModel()
+        model.update(messages: [source], addresses: [])
+        #expect(model.items.isEmpty)
+        await model.interpret(using: service)
+        let proposal = try #require(model.items.first)
+        #expect(proposal.kind == .proposed)
+        #expect(proposal.title == "Private sale")
+        #expect(proposal.canReview)
+        let reopened = EmailCalendarModel()
+        reopened.update(messages: [source], addresses: [])
+        let cached = try #require(model.cachedInterpretation)
+        #expect(reopened.restoreInterpretation(cached, for: model.revision))
+        #expect(reopened.items == model.items)
+    }
+
+    @Test func forwardedBookingPreservesWrapperSourceAndWarnsWithoutUsingWrapperClock() async throws {
+        let body = "Confirmed flight departs July 15, 2031 at 14:00."
+        let source = EmailCalendarMessage(id: "forward", subject: "Fw: Booking confirmation", date: message().date,
+            text: "Here is my booking.", dateHeaderOffset: -28_800, forwardedText: body)
+        let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response(source: source.id,
+            quote: body, timeZone: nil, title: "Flight")), model: "fixture", isScopeValid: { true })
+        let model = EmailCalendarModel()
+        model.update(messages: [source], addresses: [], timeZone: try #require(TimeZone(identifier: "Europe/Paris")))
+        #expect(model.items.isEmpty)
+        await model.interpret(using: service)
+        let item = try #require(model.items.first)
+        #expect(item.messageID == source.id)
+        #expect(item.evidence == body)
+        #expect(item.canReview)
+        #expect(item.uncertainties.contains(EmailCalendarMessage.forwardedEvidenceWarning))
+        #expect(item.uncertainties.contains("Confirm the time zone for this forwarded booking."))
+        #expect(!item.uncertainties.contains { $0.hasPrefix("Check the time zone. The sender's clock") })
+        let cached = try #require(model.cachedInterpretation)
+        let reopened = EmailCalendarModel()
+        reopened.update(messages: [source], addresses: [], timeZone: try #require(TimeZone(identifier: "Europe/Paris")))
+        #expect(reopened.restoreInterpretation(cached, for: model.revision))
+        var withoutWarning = item
+        withoutWarning.uncertainties.removeAll { $0 == EmailCalendarMessage.forwardedEvidenceWarning }
+        #expect(!reopened.restoreInterpretation([withoutWarning], for: model.revision))
+        var changedSource = source
+        changedSource.forwardedText = nil
+        #expect(EmailCalendarModel.fingerprint([changedSource], timeZone: .current)
+            != EmailCalendarModel.fingerprint([source], timeZone: .current))
+    }
+
+    @Test func forwardedBookingRejectsInferredDatesAndInventedEvidence() async throws {
+        let explicit = "Confirmed flight departs July 15, 2031 at 14:00."
+        let cases: [(body: String, quote: String, start: String?)] = [
+            ("Confirmed flight departs July 15 at 14:00.", "Confirmed flight departs July 15 at 14:00.", "2031-07-15T14:00:00Z"),
+            ("Confirmed flight departs tomorrow at 14:00.", "Confirmed flight departs tomorrow at 14:00.", "2031-07-15T14:00:00Z"),
+            (explicit, "Confirmed flight departs July 16, 2031 at 14:00.", "2031-07-16T14:00:00Z"),
+            (explicit, explicit, "2031-07-16T14:00:00Z"),
+            (explicit, explicit, nil),
+        ]
+        for example in cases {
+            let source = EmailCalendarMessage(id: "forward", subject: "Fw: Booking confirmation", date: message().date,
+                text: "Here is my booking.", forwardedText: example.body)
+            let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response(source: source.id,
+                quote: example.quote, start: example.start)), model: "fixture", isScopeValid: { true })
+            await #expect(throws: AIProviderError.invalidResponse) { try await service.extract(messages: [source], timeZone: .current) }
+            let model = EmailCalendarModel()
+            model.update(messages: [source], addresses: [])
+            let event = GoogleCalendarEvent(summary: "Flight", start: example.start.map { CalendarDateTime(dateTime: $0) })
+            let cached = EmailCalendarItem(id: "interpreted:forward", messageID: source.id, title: "Flight",
+                evidence: example.quote, kind: .proposed, event: event,
+                uncertainties: [EmailCalendarMessage.forwardedEvidenceWarning])
+            #expect(!model.restoreInterpretation([cached], for: model.revision))
+        }
+    }
+
+    @Test func failedInterpretationCanRetryWithoutLosingLocalCandidates() async throws {
+        let model = EmailCalendarModel()
+        model.update(messages: [message()], addresses: [])
+        let local = model.items
+        #expect(!local.isEmpty)
+        await model.interpret(using: EmailCalendarExtractionService(provider: FailedEmailCalendarProvider(),
+            model: "fixture", isScopeValid: { true }))
+        #expect(model.items == local)
+        #expect(model.interpretationError != nil)
+        #expect(!model.isInterpreting)
+        #expect(model.cachedInterpretation == nil)
+        await model.interpret(using: EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response()),
+            model: "fixture", isScopeValid: { true }))
+        #expect(model.items.map(\.kind) == [.proposed])
+        #expect(model.interpretationError == nil)
+        #expect(!model.isInterpreting)
+        #expect(model.cachedInterpretation != nil)
+    }
+
     @Test func extractionChecksAccessAfterProviderSuspension() async throws {
         var checks = 0
         let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response()), model: "fixture", isScopeValid: {
@@ -26,6 +142,32 @@ import TernAI
             return checks == 1
         })
         await #expect(throws: AssistantError.self) { try await service.extract(messages: [message()], timeZone: .current) }
+    }
+
+    @Test(arguments: [false, true])
+    func cancellationAtExtractionCompletionClearsProgressAndAllowsRetry(scopeRemainsValid: Bool) async throws {
+        let model = EmailCalendarModel()
+        model.update(messages: [message()], addresses: [])
+        let local = model.items
+        var pending: Task<Void, Never>?
+        var checks = 0
+        let service = EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response()),
+            model: "fixture", isScopeValid: {
+                checks += 1
+                if checks == 3 { pending?.cancel() }
+                return checks != 3 || scopeRemainsValid
+            })
+        pending = Task { await model.interpret(using: service) }
+        await pending?.value
+        #expect(pending?.isCancelled == true)
+        #expect(!model.isInterpreting)
+        #expect(model.interpretationError == nil)
+        #expect(model.items == local)
+        #expect(model.cachedInterpretation == nil)
+        await model.interpret(using: EmailCalendarExtractionService(provider: EmailCalendarProvider(text: try response()),
+            model: "fixture", isScopeValid: { true }))
+        #expect(model.items.map(\.kind) == [.proposed])
+        #expect(model.cachedInterpretation != nil)
     }
 
     @Test func suggestionsRemainReviewableAndDismissalsSurviveRefresh() async throws {
@@ -249,13 +391,21 @@ import TernAI
     }
 
     private func response(source: String = "message", quote: String = "Meet July 15, 2031 at 14:00.",
-                          start: String? = "2031-07-15T14:00:00Z", timeZone: String? = "Etc/UTC") throws -> String {
+                          start: String? = "2031-07-15T14:00:00Z", timeZone: String? = "Etc/UTC",
+                          title: String = "Planning") throws -> String {
         try AIJSON.object(["events": .array([.object([
-            "title": .string("Planning"), "source_message_id": .string(source), "supporting_text": .string(quote),
+            "title": .string(title), "source_message_id": .string(source), "supporting_text": .string(quote),
             "superseded_message_ids": .array([]), "status": .string("proposed"),
             "start": start.map(AIJSON.string) ?? .null, "end": .null, "all_day": .bool(false),
             "time_zone": timeZone.map(AIJSON.string) ?? .null, "uncertainties": .array([.string("Choose a duration.")]),
         ])])]).jsonString()
+    }
+}
+
+private struct FailedEmailCalendarProvider: AIProvider {
+    func models() async throws -> [AIModel] { [] }
+    func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
+        AsyncThrowingStream { $0.finish(throwing: AIProviderError.streamInterrupted) }
     }
 }
 
