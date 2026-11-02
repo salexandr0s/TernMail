@@ -41,18 +41,17 @@ import Testing
         func expectBoundary() async throws {
             try await settle()
             let split = try calendarSplit()
-            let railWidth = expectedRailWidth(in: window)
             try expectDestinationControl(in: window)
-            try expectCalendarPageControls(in: window)
-            if window.frame.width - railWidth < Tokens.Calendar.compactWidth {
+            try expectCalendarToolbarControls(in: window)
+            if window.frame.width < Tokens.Calendar.compactWidth {
                 #expect(split.arrangedSubviews.count == 1)
                 let content = try #require(split.arrangedSubviews.last)
-                #expect(abs(content.convert(content.bounds, to: nil).minX - railWidth) <= 1)
+                #expect(abs(content.convert(content.bounds, to: nil).minX) <= 1)
             } else {
                 try #require(split.arrangedSubviews.count == 2)
                 let sidebar = try #require(split.arrangedSubviews.first)
                 let frame = sidebar.convert(sidebar.bounds, to: nil)
-                for identifier in leadingToolbarIdentifiers(in: window, section: .calendar) {
+                for identifier in leadingToolbarIdentifiers {
                     let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
                     let view = try #require(item.view)
                     #expect(view.convert(view.bounds, to: nil).minX >= frame.maxX - 1,
@@ -76,12 +75,12 @@ import Testing
         }
         app.calendar.date = .now.addingTimeInterval(-30 * 24 * 60 * 60)
         try await settle()
-        try pressPageControl("calendar.today", in: window)
+        try await pressToolbarButton(in: window, identifier: "calendar.today")
         #expect(app.calendar.calendar.isDateInToday(app.calendar.date), "Today must change the visible calendar date")
         let remainsWritable = app.calendar.calendars.contains { $0.canWrite }
         try #require(remainsWritable, "The fixture must still allow event creation")
-        try pressPageControl("calendar.newEvent", in: window)
-        #expect(app.calendar.editor != nil, "The page's New Event button must open the event editor")
+        try await pressToolbarButton(in: window, identifier: "mail.compose")
+        #expect(app.calendar.editor != nil, "The toolbar's New Event button must open the event editor")
         app.calendar.editor = nil
         await app.signOut()
     }
@@ -132,9 +131,8 @@ import Testing
             try #require(split.arrangedSubviews.count == (showsSidebar ? 2 : 1))
             let firstPane = try #require(split.arrangedSubviews.first)
             let frame = firstPane.convert(firstPane.bounds, to: nil)
-            let railWidth = expectedRailWidth(in: window)
-            let sidebarEdge = showsSidebar ? frame.maxX : railWidth
-            for identifier in leadingToolbarIdentifiers(in: window) {
+            let sidebarEdge = showsSidebar ? frame.maxX : 0
+            for identifier in leadingToolbarIdentifiers {
                 let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
                 let view = try #require(item.view)
                 let control = view.convert(view.bounds, to: nil)
@@ -144,7 +142,7 @@ import Testing
             #expect(abs(frame.maxY - (window.contentLayoutRect.maxY - Tokens.Border.hairline)) <= 1,
                 "Attachments must start below the toolbar without an extra gap: \(frame)")
             if !showsSidebar {
-                #expect(abs(frame.minX - railWidth) <= 1 && abs(frame.maxX - window.frame.width) <= 1,
+                #expect(abs(frame.minX) <= 1 && abs(frame.maxX - window.frame.width) <= 1,
                     "Attachments must use the sidebar's space when it is hidden")
             }
         }
@@ -202,7 +200,7 @@ import Testing
         split = try await openAttachments()
         for width in [1_280, 1_079, 1_080, 1_081, 960, 720, 1_280] {
             window.setContentSize(NSSize(width: width, height: 760))
-            let compact = CGFloat(width) - expectedRailWidth(in: window) < Tokens.Layout.sidebarCompactWidth
+            let compact = CGFloat(width) < Tokens.Layout.sidebarCompactWidth
             try await expectBoundary(split, showsSidebar: !compact)
             if compact {
                 var sidebarPopover = try await attachmentSidebarPopover(in: window)
@@ -400,7 +398,6 @@ import Testing
         }
         let heading = try headerFrame("mail.list.heading")
         let messageHeader = try headerFrame("mail.list.header")
-        let sidebarHeader = try headerFrame("mail.sidebar.heading")
         let headings = WorkspaceAuditAccessibility.elements(in: rootView).filter { $0.role == "AXHeading" }
         let title = headings.first {
             $0.label == mailboxTitle && $0.isVisible(in: window) && heading.insetBy(dx: -1, dy: -1).contains($0.frame(in: window))
@@ -412,17 +409,15 @@ import Testing
         #expect(visibleTitle.hasHitTarget(in: window), "The mailbox heading must be unobscured")
         #expect(messageHeader.insetBy(dx: -1, dy: -1).contains(heading),
             "The mailbox heading must remain inside the message-list header")
-        for header in [sidebarHeader, messageHeader] {
-            #expect(abs(header.maxY - window.contentLayoutRect.maxY) <= 1,
-                "Page headers must start directly below the toolbar: \(header)")
-        }
-        // AppKit keeps each scroll view beneath its safe-area header. Compare
-        // rows with the measured header edge, not the scroll view's outer frame.
+        #expect(abs(messageHeader.maxY - window.contentLayoutRect.maxY) <= 1,
+            "The message-list header must start directly below the toolbar: \(messageHeader)")
+        // The restored sidebar starts under the toolbar. The message list retains
+        // its mailbox heading, so its first row must clear that measured header.
         for (index, table) in mailTables.enumerated() {
             try #require(table.numberOfRows > 0)
             let row = table.convert(table.rect(ofRow: 0), to: nil)
             #expect(row.maxY <= window.contentLayoutRect.maxY + 1, "First row is covered by the toolbar at width \(width)")
-            let expectedTop = index == 0 ? sidebarHeader.minY : messageHeader.minY
+            let expectedTop = index == 0 ? window.contentLayoutRect.maxY : messageHeader.minY
             #expect(row.maxY <= expectedTop + 1, "The first message row must clear the mailbox heading")
             #expect(row.maxY >= expectedTop - Tokens.Space.s4, "The toolbar or heading inset must not be counted twice")
             #expect(row.minY >= window.contentLayoutRect.minY - 1)
@@ -552,9 +547,8 @@ import Testing
     /// nothing, so a click that changes nothing within three seconds is sent
     /// once more.
     private func toggleAssistant(in window: NSWindow, rootView: NSView, opens: Bool) async throws {
-        // The rail occupies window space even when the assistant is closed.
         func isOpen() throws -> Bool {
-            try mailSplit(in: rootView).frame.width < window.frame.width - expectedRailWidth(in: window) - Tokens.Border.hairline
+            try mailSplit(in: rootView).frame.width < window.frame.width - Tokens.Border.hairline
         }
         for _ in 0..<2 {
             guard try isOpen() != opens else { break }
@@ -606,23 +600,29 @@ import Testing
         try #require(descendants(in: view).contains(where: press), "The rendered \(identifier) button must support accessibility Press")
     }
 
-    private func expectCalendarPageControls(in window: NSWindow) throws {
-        for identifier in ["calendar.today", "calendar.goToDate", "calendar.newEvent"] {
-            _ = try pageControl(identifier, in: window)
+    private func expectCalendarToolbarControls(in window: NSWindow) throws {
+        for identifier in ["mail.compose", "calendar.navigation", "calendar.today", "calendar.mode"] {
+            let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier },
+                "Calendar's \(identifier) command must remain in the visible toolbar")
+            // A native ControlGroup owns child toolbar items, not a group view.
+            let controls = (item as? NSToolbarItemGroup)?.subitems ?? [item]
+            try #require(!controls.isEmpty, "Calendar's \(identifier) must render its toolbar controls")
+            if identifier == "calendar.navigation" {
+                #expect(controls.count == 2, "Calendar must expose both previous and next period controls")
+            }
+            for control in controls {
+                let view = try #require(control.view, "Calendar's \(identifier) child must have a native view")
+                let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+                let hit = window.contentView?.superview?.hitTest(point)
+                #expect(view.window === window && !item.isHidden && !control.isHidden && !view.isHiddenOrHasHiddenAncestor)
+                #expect(hit === view || hit?.isDescendant(of: view) == true,
+                    "Each \(identifier) toolbar control must receive clicks")
+            }
         }
-        let mode = try #require(WorkspaceAuditAccessibility.matching("calendar.viewMode", in: window).first,
-            "Calendar view selection must remain visible in the page header")
-        #expect(mode.hasHitTarget(in: window), "Calendar view selection must receive clicks")
     }
 
     private func pageControl(_ identifier: String, in window: NSWindow) throws -> WorkspaceAuditAccessibility.Element {
         let candidate = WorkspaceAuditAccessibility.matching(identifier, in: window).first { $0.supportsPress }
-        if candidate == nil, identifier.hasPrefix("calendar."), let root = window.contentView {
-            let controls = WorkspaceAuditAccessibility.elements(in: root).filter {
-                $0.identifier?.hasPrefix("calendar.") == true || $0.label == "New Event"
-            }
-            print("Calendar control lookup \(identifier): \(controls.map { $0.diagnosticDescription(in: window) })")
-        }
         let control = try #require(candidate,
             "The visible \(identifier) control must support accessibility Press")
         try #require(control.hasHitTarget(in: window), "The \(identifier) control must have an unobscured hit target")
@@ -665,24 +665,16 @@ import Testing
         "\(MailWindowPreferences.toolbarID).\(UUID().uuidString)"
     }
 
-    private func expectedRailWidth(in window: NSWindow) -> CGFloat {
-        window.contentLayoutRect.width >= Tokens.Workspace.railBreakpoint ? Tokens.Workspace.railWidth : 0
-    }
-
-    private func leadingToolbarIdentifiers(in window: NSWindow, section: WorkspaceSection = .mail) -> [String] {
-        ["workspace.sidebar"] + (expectedRailWidth(in: window) == 0 ? ["workspace.destination"] : [])
-            + (section == .calendar ? [] : ["mail.compose"])
+    private var leadingToolbarIdentifiers: [String] {
+        ["workspace.sidebar", "workspace.destination", "mail.compose"]
     }
 
     private func expectDestinationControl(in window: NSWindow) throws {
         let item = try #require(window.toolbar?.items.first { $0.itemIdentifier.rawValue == "workspace.destination" },
-            "The compact destination control must retain its toolbar identity")
-        let showsRail = expectedRailWidth(in: window) > 0
-        #expect(item.isHidden == showsRail, "Only one global destination control should be visible")
-        if !showsRail {
-            #expect(window.toolbar?.visibleItems?.contains { $0 === item } == true,
-                "Compact windows must keep the destination control out of overflow")
-        }
+            "The destination control must retain its toolbar identity")
+        #expect(!item.isHidden, "Destination navigation must remain visible at every window width")
+        #expect(window.toolbar?.visibleItems?.contains { $0 === item } == true,
+            "The destination control must stay out of toolbar overflow")
     }
 
     @Test func mailboxExpansionKeepsSidebarViewportAndInboxInPlace() async throws {
@@ -893,9 +885,7 @@ import Testing
             #expect(window.toolbar?.identifier == toolbarIdentifier, "Hosted toolbar state must stay separate from other windows")
             let width = Int(window.frame.width)
             try expectDestinationControl(in: window)
-            let section: WorkspaceSection = app.destination == .calendar ? .calendar
-                : mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID ? .attachments : .mail
-            let identifiers = leadingToolbarIdentifiers(in: window, section: section)
+            let identifiers = leadingToolbarIdentifiers
                 + ["workspace.search", "workspace.tasks", "workspace.assistant"]
             if sharedFrames[width] == nil {
                 // Toolbar membership settles before its native backing views finish sizing.
@@ -969,13 +959,8 @@ import Testing
         try await expectSharedPositions()
         app.destination = .calendar
         for width in [CGFloat(1_280), 960, Tokens.Layout.windowMinWidth] {
-            window.setContentSize(NSSize(width: width, height: 760))
-            try await settle()
-            try expectCalendarPageControls(in: window)
-            let visible = window.toolbar?.visibleItems?.filter { !$0.isHidden }.map(\.itemIdentifier.rawValue) ?? []
-            #expect(visible.contains("workspace.search"), "Calendar search must stay out of toolbar overflow")
-            #expect(!visible.contains("mail.compose") && !visible.contains { $0.hasPrefix("calendar.") },
-                "Calendar's page commands must not be duplicated in the default toolbar")
+            try await expectToolbar(in: window, width: width, section: "calendar.", spacesAfter: ["calendar.mode"])
+            try expectCalendarToolbarControls(in: window)
             try await expectSharedPositions()
         }
         app.destination = .mail

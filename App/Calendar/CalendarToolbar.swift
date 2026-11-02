@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Optional toolbar copies of the commands in Calendar's page header.
-/// Keep their identifiers available for existing toolbar customizations.
+/// Calendar's period navigation, Today and view switcher. New Event uses
+/// the workspace's shared create button.
 struct CalendarToolbar: CustomizableToolbarContent {
     @Bindable var model: CalendarModel
 
@@ -18,12 +18,10 @@ struct CalendarToolbar: CustomizableToolbarContent {
                 .help("Next \(model.mode.title.lowercased())")
             }
         }
-        .defaultCustomization(.hidden)
         ToolbarItem(id: "calendar.today", placement: .primaryAction) {
             Button("Today") { model.date = .now }
                 .help("Today (\(ShortcutCatalog.today.label))")
         }
-        .defaultCustomization(.hidden)
         ToolbarItem(id: "calendar.mode", placement: .primaryAction) {
             // A bare menu picker shows no title in the toolbar, so the menu
             // carries the current mode as its label.
@@ -44,6 +42,5 @@ struct CalendarToolbar: CustomizableToolbarContent {
             .accessibilityLabel("Calendar view")
             .accessibilityValue(model.mode.title)
         }
-        .defaultCustomization(.hidden)
     }
 }

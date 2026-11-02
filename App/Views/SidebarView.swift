@@ -13,7 +13,8 @@ struct SidebarView: View {
     @State private var expandedMore: Set<String> = []
 
     var body: some View {
-        // Workspace destinations live in the navigation rail. During a search this shows no
+        // Calendar and Attachments live in the toolbar's section switcher, so
+        // the sidebar starts with Favorites. During a search it shows no
         // selection, since results can come from outside the selected mailbox.
         List(selection: selection) {
             FavoritesView(mailbox: mailbox, isCollapsed: $favoritesCollapsed, isAddingFavorite: $isAddingFavorite)
@@ -24,7 +25,7 @@ struct SidebarView: View {
                 let combined = boxes(showingOutbox: mailbox.showsOutbox(.combined(MailboxModel.outboxID)))
                 // Favorites can hold every system mailbox, which leaves no rows here.
                 if !combined.isEmpty {
-                    Section("All Accounts") {
+                    Section("Mailboxes") {
                         ForEach(combined) { box in
                             CombinedMailboxRows(
                                 mailbox: mailbox, box: box, colors: colors, names: names, isExpanded: expansion(of: box.id)
@@ -80,7 +81,6 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .environment(\.selectedSidebarRow, selection.wrappedValue)
         .contentMargins(.horizontal, 0, for: .scrollContent)
-        .safeAreaBar(edge: .top) { navigationAccess }
         // A Section can apply its sheet to every row, queuing repeated presentations.
         .sheet(isPresented: $isAddingFavorite) {
             AddFavoriteView(mailbox: mailbox) { favoritesCollapsed = false }
@@ -133,35 +133,6 @@ struct SidebarView: View {
         ) { _ in
             mailbox.deleteConfirmedLabel()
         }
-    }
-
-    private var navigationAccess: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            if let owner = mailbox.presentedAccounts.first, mailbox.presentedAccounts.count == 1 {
-                Label(mailbox.accountTitle(owner.account), systemImage: "person.crop.circle")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(owner.account.email)
-            } else {
-                Label("^[\(mailbox.presentedAccounts.count) account](inflect: true)", systemImage: "person.2")
-            }
-            Button {
-                mailbox.navigation.isShowingSwitcher = true
-            } label: {
-                Label("Go to Mailbox…", systemImage: "magnifyingglass")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.bordered)
-            .help("Find a mailbox, label or saved search")
-            .accessibilityIdentifier("mail.sidebar.switcher")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(Tokens.Space.s3)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Mail navigation")
-        .accessibilityIdentifier("mail.sidebar.heading")
-        .auditLayoutBounds("mail.sidebar.heading")
     }
 
     /// System mailboxes in sidebar order, with the Outbox after Drafts.
@@ -548,21 +519,12 @@ private struct AccountHeader: View {
                     .imageScale(.small)
                     .foregroundStyle(color)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                    // The start of an address tells accounts apart, so a narrow sidebar cuts the end.
-                    Text(mailbox.accountTitle(owner.account))
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if mailbox.accountTitle(owner.account) != email {
-                        Text(email)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .help(email)
+                // The start of an address tells accounts apart, so a narrow sidebar cuts the end.
+                Text(mailbox.accountTitle(owner.account))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(email)
                 if !needsSignIn, case .failed(let message) = owner.syncStatus {
                     Image(systemName: "exclamationmark.triangle")
                         .help(message)

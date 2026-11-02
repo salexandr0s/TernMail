@@ -9,15 +9,19 @@ struct FavoritesView: View {
     @Binding var isCollapsed: Bool
     @Binding var isAddingFavorite: Bool
     @State private var hoveredFavorite: String?
+    @State private var isHeaderHovered = false
+    @FocusState private var focusedControl: HeaderControl?
+    @AccessibilityFocusState private var isHeaderAccessibilityFocused: Bool
+
+    private enum HeaderControl: Hashable { case add, disclosure }
+
+    private var showsHeaderControls: Bool {
+        isHeaderHovered || focusedControl != nil || isHeaderAccessibilityFocused || isAddingFavorite
+    }
 
     var body: some View {
         Section {
             if !isCollapsed {
-                if mailbox.navigation.favorites.isEmpty {
-                    Button("Add a Favorite", systemImage: "star") { isAddingFavorite = true }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                }
                 ForEach(mailbox.navigation.favorites) { favorite in
                     if let box = mailbox.favoriteMailboxID(favorite.target) {
                         favoriteRows(favorite, box: box)
@@ -42,9 +46,11 @@ struct FavoritesView: View {
                     .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                     .contentShape(Rectangle())
                     .ternHover()
+                    .opacity(showsHeaderControls ? 1 : 0)
             }
             .buttonStyle(.borderless)
             .focusable()
+            .focused($focusedControl, equals: .add)
             .onKeyPress(keys: [.return, .space]) { _ in
                 isAddingFavorite = true
                 return .handled
@@ -60,10 +66,12 @@ struct FavoritesView: View {
                     .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                     .contentShape(Rectangle())
                     .ternHover()
+                    .opacity(showsHeaderControls ? 1 : 0)
                     .ternAnimation(value: isCollapsed)
             }
             .buttonStyle(.borderless)
             .focusable()
+            .focused($focusedControl, equals: .disclosure)
             .onKeyPress(keys: [.return, .space]) { _ in
                 isCollapsed.toggle()
                 return .handled
@@ -80,8 +88,10 @@ struct FavoritesView: View {
         .accessibilityLabel("Favorites")
         .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
         .accessibilityIdentifier("favorites.header")
+        .accessibilityFocused($isHeaderAccessibilityFocused)
         .accessibilityAction(named: Text("Add Favorite")) { isAddingFavorite = true }
         .accessibilityAction(named: Text(isCollapsed ? "Expand Favorites" : "Collapse Favorites")) { isCollapsed.toggle() }
+        .onHover { isHeaderHovered = $0 }
         .contextMenu {
             Button("Add Favorite…", systemImage: "plus") { isAddingFavorite = true }
             Button("Add Current Mailbox") { addCurrent() }

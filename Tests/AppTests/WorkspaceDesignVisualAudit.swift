@@ -6,9 +6,21 @@ import Testing
 @testable import Tern
 
 @Suite(.serialized) @MainActor struct WorkspaceDesignVisualAudit {
-    @Test func railNavigationAndResizePreserveMail() async throws {
-        let host = try await WorkspaceDesignHost(width: 1_079, height: 480, scheme: .light)
+    @Test func toolbarNavigationAndResizePreserveMail() async throws {
+        let host = try await WorkspaceDesignHost(width: 1_280, height: 760, scheme: .light,
+            restoredMailbox: .combined(AttachmentLibraryModel.mailboxID))
         defer { host.close() }
+        // Restoration happens before the first host layout. A selected segment
+        // alone must never leave the retained Mail panes exposed underneath.
+        for width in [CGFloat(1_280), 720, 1_280] {
+            host.window.setContentSize(NSSize(width: width, height: 760))
+            try await host.expectSectionVisible(.attachments)
+            _ = try host.expectDestinationControl()
+            #expect(abs(host.window.contentLayoutRect.width - width) <= 1)
+        }
+        try await host.select(.mail)
+        host.window.setContentSize(NSSize(width: 1_079, height: 480))
+        try await host.expectSectionVisible(.mail)
         let list = try #require(host.mailTable(pane: .list))
         let scroll = try #require(list.enclosingScrollView)
         let selected = try #require(host.mailbox.listItems.first?.id.threadKey)
@@ -18,51 +30,35 @@ import Testing
         let initialOffset = scroll.contentView.bounds.origin
         let destination = try #require(host.window.toolbar?.items.first { $0.itemIdentifier.rawValue == "workspace.destination" })
 
-        for width in [CGFloat(1_080), 1_081, 1_079, 1_080, 1_079] {
+        for width in [CGFloat(720), 960, 1_080, 1_081, 1_280, 1_079] {
             host.window.setContentSize(NSSize(width: width, height: 480))
-            let showsRail = width >= Tokens.Workspace.railBreakpoint
-            try await host.waitUntil("Destination navigation after resizing") {
-                destination.isHidden == showsRail
-                    && (host.element("workspace.rail.mail") != nil) == showsRail
-            }
+            try await host.expectSectionVisible(.mail)
+            _ = try host.expectDestinationControl()
             #expect(abs(host.window.contentLayoutRect.width - width) <= 1,
-                "Crossing the rail breakpoint must not enlarge the window")
+                "Resizing must not enlarge the requested window")
             #expect(host.mailTable(pane: .list) === list, "Resizing must retain the native message list")
             #expect(list.enclosingScrollView === scroll, "Resizing must retain its scroll view")
             #expect(list.window === host.window)
             #expect(list.selectedRow == selectedRow)
             #expect(host.mailbox.selectedThreadIDs == [selected])
             #expect(host.window.toolbar?.items.first { $0.itemIdentifier.rawValue == "workspace.destination" } === destination,
-                "The compact destination control must keep its native toolbar identity")
-            if showsRail {
-                try host.expectControl("workspace.rail.mail", label: "Mail")
-                try host.expectControl("workspace.rail.calendar", label: "Calendar")
-                try host.expectControl("workspace.rail.attachments", label: "Attachments")
-                try host.expectControl("workspace.rail.settings", label: "Settings")
-            } else {
-                #expect(destination.isVisible && !destination.isHidden,
-                    "Compact windows need a visible destination picker")
-            }
+                "The destination control must keep its native toolbar identity")
         }
         #expect(abs(scroll.contentView.bounds.origin.y - initialOffset.y) <= 1,
             "Returning to the original size must preserve the message list's scroll position")
 
-        host.window.setContentSize(NSSize(width: 1_280, height: 760))
-        try await host.waitUntil("Labeled navigation") { host.element("workspace.rail.calendar") != nil }
-        try host.press("workspace.rail.calendar")
-        try await host.waitUntil("Calendar destination") { host.app.destination == .calendar }
-        try host.press("workspace.rail.mail")
-        try await host.waitUntil("Mail destination") { host.app.destination == .mail }
-        #expect(host.mailbox.selectedThreadIDs == [selected], "Calendar must retain the selected mail conversation")
-        try host.press("workspace.rail.attachments")
-        try await host.waitUntil("Attachment library destination") {
-            host.app.destination == .mail && host.mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
+        for width in [CGFloat(1_280), 720] {
+            host.window.setContentSize(NSSize(width: width, height: 760))
+            host.mailbox.selectedThreadIDs = [selected]
+            try await host.select(.calendar)
+            try await host.select(.mail)
+            #expect(host.mailbox.selectedThreadIDs == [selected], "Calendar must retain the selected mail conversation")
+            try await host.select(.attachments)
+            try await host.select(.mail)
+            #expect(host.mailbox.selectedLabelID == SystemLabel.inbox)
+            #expect(host.mailTable(pane: .list) === list)
+            #expect(list.enclosingScrollView === scroll && list.window === host.window)
         }
-        try host.press("workspace.rail.mail")
-        try await host.waitUntil("Inbox after attachment library") {
-            host.app.destination == .mail && host.mailbox.selectedLabelID == SystemLabel.inbox
-        }
-        #expect(host.mailTable(pane: .list) === list)
         await host.app.signOut()
     }
 
@@ -296,7 +292,7 @@ import Testing
             await host.app.calendar.seedCalendarAudit()
             let theme = scheme == .light ? "light" : "dark"
             for section in WorkspaceSection.allCases {
-                section.select(in: host.app, mailbox: host.mailbox)
+                try await host.select(section)
                 var attachmentTable: NSTableView?
                 if section == .mail, let selected = host.mailbox.listItems.first?.id.threadKey {
                     host.mailbox.selectedThreadIDs = [selected]
@@ -317,7 +313,7 @@ import Testing
                     try await host.capture("\(section.rawValue)-\(Int(size.width))-\(theme)", directory: directory)
                 }
             }
-            WorkspaceSection.mail.select(in: host.app, mailbox: host.mailbox)
+            try await host.select(.mail)
             for width in [CGFloat(1_079), 1_080, 1_081] {
                 host.window.setContentSize(NSSize(width: width, height: 760))
                 try await host.settle()
@@ -384,12 +380,15 @@ private actor WorkspaceVisualTasksService: TasksService {
     private let defaults: UserDefaults
     private let suite: String
 
-    init(width: CGFloat, height: CGFloat, scheme: ColorScheme) async throws {
+    init(width: CGFloat, height: CGFloat, scheme: ColorScheme,
+         restoredMailbox: MailboxID = .combined(SystemLabel.inbox)) async throws {
         try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"),
             "Workspace design checks require synthetic accounts")
         let app = AppModel()
         await app.start()
         let mailbox = try #require(app.mailbox)
+        app.destination = .mail
+        mailbox.restoreMailbox(restoredMailbox)
         let suite = "WorkspaceDesignVisualAudit.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
@@ -412,11 +411,10 @@ private actor WorkspaceVisualTasksService: TasksService {
         self.controller = controller
         self.defaults = defaults
         self.suite = suite
-        app.destination = .mail
-        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         try await waitUntil("Synthetic mail and native toolbar") {
             mailbox.accounts.count == 2 && mailbox.accounts.allSatisfy(\.hasSyncedOnce)
-                && (self.mailTable(pane: .list)?.numberOfRows ?? 0) > 0
+                && (mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
+                    || (self.mailTable(pane: .list)?.numberOfRows ?? 0) > 0)
                 && window.toolbar?.items.contains { $0.itemIdentifier.rawValue == "workspace.destination" } == true
         }
         try await prepareWorkspaceAuditAttachments(mailbox)
@@ -537,36 +535,68 @@ private actor WorkspaceVisualTasksService: TasksService {
         #expect(total.frame(in: window).minY >= window.contentLayoutRect.minY - 1)
     }
 
-    func element(_ identifier: String) -> NSObject? {
-        var seen = Set<ObjectIdentifier>()
-        func visit(_ item: Any) -> NSObject? {
-            guard let object = item as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return nil }
-            if let view = object as? NSView, view.isHiddenOrHasHiddenAncestor { return nil }
-            if property("accessibilityIdentifier", of: object) as? String == identifier { return object }
-            let children = property("accessibilityChildren", of: object) as? [Any] ?? []
-            for child in children + NSAccessibility.unignoredChildren(from: children) + ((object as? NSView)?.subviews ?? []) {
-                if let found = visit(child) { return found }
-            }
-            return nil
+    private func destinationControl() -> NSSegmentedControl? {
+        guard let item = window.toolbar?.visibleItems?.first(where: { $0.itemIdentifier.rawValue == "workspace.destination" }),
+              !item.isHidden, let view = item.view else { return nil }
+        return descendants(view).compactMap { $0 as? NSSegmentedControl }.first {
+            $0.window === window && !$0.isHiddenOrHasHiddenAncestor && $0.segmentCount == WorkspaceSection.allCases.count
         }
-        return visit(controller.view)
     }
 
-    func expectControl(_ identifier: String, label: String) throws {
-        let control = try #require(element(identifier), "Missing \(identifier)")
-        #expect(property("accessibilityLabel", of: control) as? String == label)
-        #expect(control.responds(to: NSSelectorFromString("accessibilityPerformPress")),
-            "The visible \(label) control must support accessibility activation")
+    func expectDestinationControl() throws -> NSSegmentedControl {
+        let control = try #require(destinationControl(), "All destinations must remain in the native Section toolbar control")
+        let point = control.convert(NSPoint(x: control.bounds.midX, y: control.bounds.midY), to: nil)
+        let hit = window.contentView?.superview?.hitTest(point)
+        #expect(control.isEnabled && (hit === control || hit?.isDescendant(of: control) == true),
+            "The native Section control must be visible and receive clicks")
+        return control
     }
 
-    func press(_ identifier: String) throws {
-        let control = try #require(element(identifier), "Missing \(identifier)")
-        let selector = NSSelectorFromString("accessibilityPerformPress")
-        try #require(control.responds(to: selector))
-        let implementation = try #require(control.method(for: selector))
-        // SwiftUI AX nodes expose the public AppKit BOOL action with this ABI.
-        typealias Press = @convention(c) (AnyObject, Selector) -> Bool
-        try #require(unsafeBitCast(implementation, to: Press.self)(control, selector))
+    func select(_ section: WorkspaceSection) async throws {
+        try await waitUntil("Native Section control") { self.destinationControl() != nil }
+        let control = try expectDestinationControl()
+        let index = try #require(WorkspaceSection.allCases.firstIndex(of: section))
+        control.selectedSegment = index
+        let action = try #require(control.action, "The native Section picker must have an action")
+        let dispatched = control.sendAction(action, to: control.target)
+        try #require(dispatched, "The native Section picker must dispatch its selection")
+        try await expectSectionVisible(section)
+        #expect(destinationControl()?.selectedSegment == index)
+    }
+
+    func expectSectionVisible(_ section: WorkspaceSection) async throws {
+        try await waitUntil("The selected \(section.title) workspace must actually receive clicks") {
+            switch section {
+            case .mail:
+                return self.app.destination == .mail && self.mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID
+                    && (self.mailTable(pane: .list)?.numberOfRows ?? 0) > 0 && self.mailPaneReceivesClicks(.list)
+            case .calendar:
+                let calendarSplit = self.descendants(self.controller.view).compactMap { $0 as? NSSplitView }.first {
+                    $0.isVertical && !self.descendants($0).contains { $0 is MailColumnProbe.ProbeView || $0 is AttachmentToolbarInsetProbe.Probe }
+                }
+                return self.app.destination == .calendar && calendarSplit.map { self.contentReceivesClicks($0) } == true
+                    && !self.mailPaneReceivesClicks(.list) && !self.mailPaneReceivesClicks(.navigation)
+            case .attachments:
+                return self.app.destination == .mail && self.mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
+                    && self.attachmentPane().map { self.contentReceivesClicks($0) } == true
+                    && !self.mailPaneReceivesClicks(.list) && !self.mailPaneReceivesClicks(.navigation)
+            }
+        }
+        if section == .attachments { try await expectAttachmentControlsVisible() }
+    }
+
+    private func mailPaneReceivesClicks(_ pane: AssistantMailPaneSizing.Pane) -> Bool {
+        guard let scroll = mailTable(pane: pane)?.enclosingScrollView else { return false }
+        return contentReceivesClicks(scroll)
+    }
+
+    private func contentReceivesClicks(_ view: NSView) -> Bool {
+        guard view.window === window, !view.isHiddenOrHasHiddenAncestor else { return false }
+        let frame = view.convert(view.bounds, to: nil).intersection(window.contentLayoutRect)
+        guard !frame.isEmpty else { return false }
+        let point = NSPoint(x: frame.midX, y: frame.midY)
+        let hit = window.contentView?.superview?.hitTest(point)
+        return hit === view || hit?.isDescendant(of: view) == true
     }
 
     func capture(_ name: String, directory: String) async throws {

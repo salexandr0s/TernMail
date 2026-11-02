@@ -33,10 +33,6 @@ enum Tokens {
     }
 
     enum Workspace {
-        static let railWidth = Space.s16 + Space.s8
-        static let railBreakpoint: CGFloat = 1080
-        static let destinationHeight = Space.s16
-        static let destinationIcon = Space.s5
         static let pageGutter = Space.s6
         static let pageTitle: Font = .title2.bold()
     }

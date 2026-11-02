@@ -269,7 +269,12 @@ import Testing
     }
 
     private func visibleToolbarItems(in window: NSWindow) -> [NSToolbarItem] {
-        (window.toolbar?.visibleItems ?? []).filter { item in
+        func isRendered(_ item: NSToolbarItem) -> Bool {
+            guard !item.isHidden else { return false }
+            if let group = item as? NSToolbarItemGroup {
+                // Native ControlGroup parents have no view; their children render the controls.
+                return !group.subitems.isEmpty && group.subitems.allSatisfy(isRendered)
+            }
             guard let view = item.view, view.window === window,
                   !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return false }
             var current: NSView? = view
@@ -280,24 +285,17 @@ import Testing
             let frame = view.convert(view.bounds, to: nil)
             return frame.intersects(NSRect(origin: .zero, size: window.frame.size))
         }
+        return (window.toolbar?.visibleItems ?? []).filter(isRendered)
     }
 
     private func toolbarShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
         let visibleIDs = visibleToolbarItems(in: window).map { $0.itemIdentifier.rawValue }
-        guard visibleIDs.contains("workspace.search"),
-              !visibleIDs.contains(where: { $0.hasPrefix("calendar.") }) else { return false }
+        guard ["workspace.destination", "mail.compose", "workspace.search"].allSatisfy(visibleIDs.contains) else { return false }
         if destination == .mail {
-            return visibleIDs.contains("mail.compose") && visibleIDs.contains("mail.archive")
+            return visibleIDs.contains("mail.archive") && !visibleIDs.contains { $0.hasPrefix("calendar.") }
         }
-        guard !visibleIDs.contains("mail.compose"), !visibleIDs.contains("mail.archive"),
-              let root = window.contentView else { return false }
-        let controls = WorkspaceAuditAccessibility.elements(in: root).filter { $0.isVisible(in: window) }
-        let buttonsReady = ["calendar.today", "calendar.goToDate", "calendar.newEvent"].allSatisfy { identifier in
-            controls.contains { $0.identifier == identifier && $0.supportsPress && $0.hasHitTarget(in: window) }
-        }
-        return buttonsReady && controls.contains {
-            $0.identifier == "calendar.viewMode" && $0.hasHitTarget(in: window)
-        }
+        return !visibleIDs.contains("mail.archive")
+            && ["calendar.navigation", "calendar.today", "calendar.mode"].allSatisfy(visibleIDs.contains)
     }
 
     private struct NativeLayout {

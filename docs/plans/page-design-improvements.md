@@ -1,12 +1,12 @@
 # Tern page-by-page design improvements
 
-Status: complete. Implementation, page review, Debug/Release validation and reviewable commits are recorded on `codex/page-design-improvements`. Requested 2026-11-02. The user chose a bolder visual redesign with stronger identity and larger layout changes. This goal covers implementation, not just a review.
+Status: design pass completed, followed by the user-requested navigation rollback recorded below. Implementation, page review, Debug/Release validation and reviewable commits are recorded on `codex/page-design-improvements`. Requested 2026-11-02. The user chose a bolder visual redesign with stronger identity and larger layout changes. This goal covers implementation, not just a review.
 
 ## Direction
 
 Give Tern a recognizable workspace with labeled destinations, strong page titles, clear account and filter context, and a distinct writing and reading surface. Use space and typography to separate primary work from supporting details. Keep native Mac controls, keyboard commands, semantic colors, and the existing performance safeguards. Each page must offer a clear starting action, an understandable current state, and an appropriate next step when work is empty, loading, unavailable, or unsuccessful.
 
-Labeled navigation appears in wide windows; compact windows retain the native destination switcher. Content trees stay mounted when switching sections or resizing. Shared page headers establish a consistent hierarchy.
+The user rejected the added navigation rail after installation. Global destinations now remain in the native toolbar at every width, and the Mail sidebar and Calendar toolbar/header use their pre-redesign layouts. Content trees stay mounted when switching sections or resizing.
 
 ## Work and integration
 
@@ -22,7 +22,7 @@ Every inventoried page and major sheet has been reviewed. The rows record implem
 
 | Order | Pages and flows | Status | Outcome / evidence |
 | --- | --- | --- | --- |
-| 1 | Workspace navigation; narrow layout; Tasks/Assistant panels | Verified | All six Sidebar tests pass with exact geometry, native accessible headings, hit targets, pane restoration and stable toolbar width. Rail/compact navigation and retained content pass. |
+| 1 | Workspace navigation; narrow layout; Tasks/Assistant panels | Verified | All six Sidebar tests pass with exact geometry, native accessible headings, hit targets, pane restoration and stable toolbar width. The rail was subsequently removed at the user's request; new toolbar/retention verification is recorded in the current handoff. |
 | 2 | Inbox and other mailboxes; search; saved search; filters; label/move/snooze sheets | Verified | Mailbox/list/navigation hierarchy and label/move/snooze/editors improved. Favorites interaction passes after updating the renamed search-field locator. Independent support-route review complete. |
 | 3 | Conversation reader; message details; summaries; source/export; detached reader | Verified | Uncapped conversation/summary and centered headers: 24 tests pass at 320–1600 points. Native light/dark captures inspected; source Retry reviewed and built. |
 | 4 | Compose; recipients; attachments; signatures/quotes; AI draft review; Drafts/Outbox | Verified | Short Compose and Ask AI native audit passes. Templates/Signatures and compact assistant pass 11 interaction tests. Outbox recovery reviewed. |
@@ -82,7 +82,7 @@ This checklist records the secondary-route review on the combined functional and
 
 | Area | Routes to account for | Status |
 | --- | --- | --- |
-| Main workspace | Rail/compact switcher, sidebar toggle, profile selection, Tasks/Assistant panels, window resizing and section switching | Reviewed; implementation or retention decision complete. See owning-area evidence below. |
+| Main workspace | Native toolbar section switcher, sidebar toggle, profile selection, Tasks/Assistant panels, window resizing and section switching | Reviewed; implementation or retention decision complete. See owning-area evidence below. |
 | Mail navigation | Combined/account mailboxes, system/category/custom labels, favorites, Add Favorite, label editor/icon picker, sidebar menus | Reviewed; implementation or retention decision complete. See owning-area evidence below. |
 | Mail search and triage | Search field/suggestions/scope/results, advanced filters, saved-search new/edit, label picker, Move To, snooze choices, bulk/destructive review | Reviewed; implementation or retention decision complete. See owning-area evidence below. |
 | Mail list | Inbox and other folders, unread/read rows, selection, quick filters, pagination/loading/empty/error, Drafts and Outbox | Reviewed; implementation or retention decision complete. See owning-area evidence below. |
@@ -107,7 +107,7 @@ Run focused behavior tests when navigation, editor lifecycle, or actions change.
 
 For Settings, capture every destination and Keyboard Shortcuts at least once with synthetic loaded data. Add representative minimum-width/wide, light/dark, long-account/name, empty/error/permission, and editor states. Exercise search navigation, external pane requests, account/source/item switching, save/cancel/discard, rich-text focus, and keyboard traversal. Preserve existing Settings and shortcut regressions; add behavior tests only for changed navigation or editor lifecycle. The 740-point Settings minimum leaves roughly 530 points after its sidebar, so management layouts must adapt within that space.
 
-For the workspace foundation, inspect 1079/1080/1081-point widths and resize across the breakpoint with Tasks and Assistant open. Assert native table identity, selection/scroll, toolbar item identity/visibility, shared-control alignment, and the compact switcher's availability. Wide-window tests should expect the rail to replace the visible section item without weakening the remaining native layout assertions.
+For the restored workspace, inspect narrow/wide resizing with Tasks and Assistant open. Assert native table identity, selection/scroll, toolbar item identity/visibility, shared-control alignment, and the section switcher's availability at every width. Include an Attachments destination restored before first layout, then switch destinations through the native toolbar.
 
 ## Results and evidence
 
@@ -129,3 +129,9 @@ Evidence is under `build/Verification/page-design/`. Runtime checks use syntheti
 Evidence limits: live provider sign-in, delivery and destructive remote operations were not performed. Calendar time-zone popovers, the following-occurrences choice and the final lazy busy-sidebar row were source-reviewed but not separately captured. Some editor captures include compositor padding outside the visible sheet. Failed Changes has empty-state capture plus source/action review. Vacation lower recipient controls and Filter lower actions were source-reviewed within their bounded native forms.
 
 Implementation, source review, native layout/interaction verification, Release validation and page-level decisions are complete. Changes are split into navigation, Mail, Compose, Calendar, workspace tools, insights, Settings, verification and documentation commits. `SESSION_HANDOFF.md` records the final state; the local commit manifest is `build/Verification/page-design/design-commits.json`. Main integration preserves both histories, including the other session's `1ef2af2` completion. `SESSION_HANDOFF.md` records the integration proof and generated rebuild-evidence paths.
+
+## User-requested navigation rollback
+
+After installation of `815dd71`, the user explicitly rejected the added rail and requested the previous sidebar and top toolbar. The rollback restores WorkspaceView, MainView, the section switcher, Mail sidebar/Favorites, and Calendar toolbar/header to their `1ef2af2` layouts. Rail-only code and tokens are removed. The consistent sidebar-button hit area and corrected compact Attachment filter popover remain functional fixes within the original toolbar layout. Reader expansion, centered message headers, and the other functionality fixes are unchanged. This supersedes the earlier navigation design decision; do not reintroduce the rail without an explicit user request.
+
+Rollback validation: Debug builds and all 13 selected interaction/layout cases passed across native runs and focused reruns. Eighteen workspace captures were produced and representative dark layouts inspected. A native toolbar-group test helper was corrected to inspect real child controls; no geometry tolerance was weakened. The optional Attachment Filters popup image failed with ScreenCaptureKit -3811, while its compact navigation interaction passed without optional capture. See the current `SESSION_HANDOFF.md` and `build/Verification/navigation-restore/` in the main checkout.

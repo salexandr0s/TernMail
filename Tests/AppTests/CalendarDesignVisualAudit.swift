@@ -25,7 +25,7 @@ import Testing
                 .defaultAppStorage(fixture.defaults), size: NSSize(width: 1_280, height: 800), scheme: scheme)
             defer { host.close() }
             try await host.waitUntil("Calendar header") {
-                !WorkspaceAuditAccessibility.matching("calendar.newEvent", in: host.window).isEmpty
+                host.contains("Go to date,")
             }
             for mode in CalendarDisplayMode.allCases {
                 try await fixture.show(mode)
@@ -83,8 +83,9 @@ import Testing
 
     private func captureEditors(model: CalendarModel, recurring: CalendarDisplayEvent, readOnly: CalendarDisplayEvent,
                                 host: CalendarDesignCaptureHost, theme: String, directory: String) async throws {
-        let newEvent = try #require(WorkspaceAuditAccessibility.matching("calendar.newEvent", in: host.window).first)
-        try #require(newEvent.press())
+        // SidebarLayoutTests exercises the window toolbar's New Event action.
+        // This standalone host verifies the same model's presented editor.
+        model.beginNew(on: model.date)
         try await host.waitUntil("New event sheet") { model.editor?.isNew == true && host.window.sheets.first != nil }
         try await captureSheet("editor-new-\(theme)", host: host, directory: directory)
         model.editor = nil

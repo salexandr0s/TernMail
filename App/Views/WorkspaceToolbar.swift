@@ -61,7 +61,6 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             .disabled(section == .calendar && !calendar.calendars.contains(where: \.canWrite))
         }
         .customizationBehavior(.disabled)
-        .mailToolbarVisible(section != .calendar)
 
         ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(id: "mail.profile", placement: .primaryAction) {
