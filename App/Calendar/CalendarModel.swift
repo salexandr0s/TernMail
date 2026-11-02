@@ -36,6 +36,7 @@ final class CalendarModel {
     var statusText = ""
     var errorMessage: String?
     var editor: CalendarEditorDraft?
+    var recoveryOperation: CalendarOperation?
     var selectedEventID: String?
     var undoConfirmation: [String]?
     /// The window's undo manager, so Edit ▸ Undo names and reverts calendar changes.
@@ -196,6 +197,7 @@ final class CalendarModel {
     }
 
     func stop() async {
+        recoveryOperation = nil
         isStopped = true
         isStarted = false
         startGeneration += 1
@@ -241,6 +243,7 @@ final class CalendarModel {
             for task in tasks { await task.value }
             await notifications.remove(accountID: accountID)
         }
+        if recoveryOperation?.accountID == accountID { recoveryOperation = nil }
         if editor?.source?.accountID == accountID || calendars.contains(where: { $0.accountID == accountID && $0.id == editor?.calendarKey }) { editor = nil }
         calendars.removeAll { $0.accountID == accountID }
         events.removeAll { $0.accountID == accountID }

@@ -66,6 +66,8 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
     public var sender: String
     public var recipients: String
     public var cc: String?
+    /// Nil until Gmail has supplied this header; an empty string means no Bcc.
+    public var bcc: String?
     public var subject: String
     public var sizeEstimate: Int
     /// The `Message-ID` header. Nil for rows cached before replies needed it.
@@ -85,7 +87,7 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
         accountID: String, id: String, threadID: String, historyID: Int64, date: Date,
         snippet: String, sender: String, recipients: String, cc: String?, subject: String, sizeEstimate: Int,
         rfcMessageID: String? = nil, inReplyTo: String? = nil, referencesHeader: String? = nil, replyTo: String? = nil,
-        dateHeaderOffset: Int? = nil, addressedToMe: Bool = false
+        dateHeaderOffset: Int? = nil, addressedToMe: Bool = false, bcc: String? = nil
     ) {
         self.accountID = accountID
         self.id = id
@@ -96,6 +98,7 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
         self.sender = sender
         self.recipients = recipients
         self.cc = cc
+        self.bcc = bcc
         self.subject = subject
         self.sizeEstimate = sizeEstimate
         self.rfcMessageID = rfcMessageID

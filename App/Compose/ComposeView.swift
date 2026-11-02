@@ -39,9 +39,9 @@ struct ComposeWindow: View {
             }
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
-        .background(WindowEditedMarker(isEdited: isEdited))
-        .background(WindowCloseGuard { [closer] _ in closer.shouldClose() })
-        .background(ComposeWindowCascade())
+        .background { WindowEditedMarker(isEdited: isEdited) }
+        .background { WindowCloseGuard { [closer] _ in closer.shouldClose() } }
+        .background { ComposeWindowCascade() }
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
         }
@@ -109,8 +109,10 @@ struct ComposeView: View {
     @State private var senderAvatars = SenderAvatarModels()
     @Environment(AppModel.self) private var app
     @Environment(\.addressAvatarContext) private var avatarContext
-    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var showsQuote = false
+    @State private var editsQuote = false
+    @State private var editsSignature = false
     @State private var hasPlacedFocus = false
     @FocusState private var focus: Field?
     /// The recipient field to move the cursor to. Token fields are AppKit
@@ -208,6 +210,12 @@ struct ComposeView: View {
         .onChange(of: senderAvatarIdentity) { _, _ in configureSenderAvatars() }
         .onDisappear { composeAssistant?.clear(); senderAvatars.stop(); model.windowClosed() }
         .focusedSceneValue(\.composeModel, model)
+        .sheet(isPresented: $editsQuote, onDismiss: { model.isEditingSupplement = false }) {
+            ComposeQuoteEditor(text: model.draft?.quotedPlainText ?? "") { await model.replaceQuote(with: $0) }
+        }
+        .sheet(isPresented: $editsSignature, onDismiss: { model.isEditingSupplement = false }) {
+            ComposeSignatureEditor(html: model.content.signatureHTML) { model.replaceSignature(with: $0) }
+        }
     }
 
     private var form: some View {
@@ -333,9 +341,10 @@ struct ComposeView: View {
         }
     }
 
-    @ViewBuilder private var signature: some View {
-        if let html = model.content.signatureHTML, !html.isEmpty {
-            ComposeSignatureView(html: (model.content.signatureSeparator ? "<div>-- </div>" : "") + html)
+    private var signature: some View {
+        ComposeSignatureView(model: model) {
+            model.isEditingSupplement = true
+            editsSignature = true
         }
     }
 
@@ -585,6 +594,7 @@ struct ComposeView: View {
             directorySuggestions: { [model] text in await model.directorySuggestions(for: text) },
             groupSuggestions: { [model] text in await model.groupSuggestions(for: text) },
             expandGroup: { [model] group in await model.expandGroup(group) },
+            groupExpansionChanged: model.groupExpansionChanged,
             blockSuggestion: { [model] address in await model.blockSuggestion(address) }
         ) { [model] text in
             await model.suggestions(for: text)
@@ -636,6 +646,18 @@ struct ComposeView: View {
             .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
             .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
             if showsQuote {
+                HStack(spacing: Tokens.Space.s2) {
+                    Button("Edit Quotation") {
+                        model.isEditingSupplement = true
+                        editsQuote = true
+                    }
+                    .accessibilityIdentifier("compose-edit-quote")
+                    Spacer()
+                }
+                .controlSize(.small)
+                .disabled(!model.isEditable)
+                .padding(.horizontal, Tokens.Compose.gutter)
+                .padding(.bottom, Tokens.Space.s2)
                 ScrollView {
                     Text(quote)
                         .font(.callout)

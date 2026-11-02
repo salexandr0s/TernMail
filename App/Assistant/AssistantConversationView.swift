@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 struct AssistantConversationView<Welcome: View>: View {
@@ -51,7 +52,7 @@ struct AssistantConversationView<Welcome: View>: View {
                     }
                 }
         }
-        .coordinateSpace(name: "assistant-scroll")
+        .coordinateSpace(.named("assistant-scroll"))
         .onPreferenceChange(AssistantScrollFrameKey.self) { frame in
             scrollTracking.update(frame: frame, viewportHeight: viewportHeight)
         }
@@ -60,8 +61,10 @@ struct AssistantConversationView<Welcome: View>: View {
     private var transcript: some View {
         LazyVStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if model.messages.isEmpty { welcome().id("assistant-welcome") }
-            ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                messageRow(message, at: index)
+            ForEach(model.messages.enumerated(), id: \.element.id) { index, message in
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    messageRow(message, at: index)
+                }
             }
             if let error = model.errorMessage, error != model.messages.last?.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -141,13 +144,14 @@ struct AssistantConversationView<Welcome: View>: View {
 
 /// Separate layout growth from cumulative reader movement. Small trackpad steps
 /// must add up even when a streamed text update arrives between them.
-struct AssistantScrollTracking {
+@MainActor @Observable
+final class AssistantScrollTracking {
     private(set) var followsLatest = true
-    private var previousFrame: CGRect?
-    private var previousViewportHeight: CGFloat?
-    private var upwardDistance: CGFloat = 0
+    @ObservationIgnored private var previousFrame: CGRect?
+    @ObservationIgnored private var previousViewportHeight: CGFloat?
+    @ObservationIgnored private var upwardDistance: CGFloat = 0
 
-    mutating func update(frame: CGRect, viewportHeight: CGFloat) {
+    func update(frame: CGRect, viewportHeight: CGFloat) {
         guard frame.height > 0, viewportHeight > 0 else { return }
         defer {
             previousFrame = frame
@@ -163,14 +167,14 @@ struct AssistantScrollTracking {
         // Pause on the first upward step off the bottom; waiting for a larger
         // gesture would let the next streamed token undo a slow reader scroll.
         if upwardDistance > 0, distanceFromBottom > 0 {
-            followsLatest = false
+            if followsLatest { followsLatest = false }
         } else if distanceFromBottom <= Tokens.Border.hairline {
-            followsLatest = true
+            if !followsLatest { followsLatest = true }
         }
     }
 
-    mutating func followLatest() {
-        followsLatest = true
+    func followLatest() {
+        if !followsLatest { followsLatest = true }
         upwardDistance = 0
         previousFrame = nil
         previousViewportHeight = nil

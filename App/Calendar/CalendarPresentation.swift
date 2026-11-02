@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import GmailAPI
 import SwiftUI
+import SyncEngine
 
 enum CalendarDisplayMode: String, CaseIterable, Identifiable {
     case day, week, month, year, schedule
@@ -135,6 +136,7 @@ struct CalendarEditorDraft: Identifiable {
     var sourceTitle: String?
     var sourceID: String?
     var operationID: String?
+    var recovery: CalendarOperationRecovery?
     var seriesMaster: GoogleCalendarEvent?
     var additionalNotificationRecipients: [String] = []
     var sourceEvent: GoogleCalendarEvent? { source?.event }

@@ -66,6 +66,85 @@ import Testing
         app.accountPreferences?.stop()
     }
 
+    @Test func assistantCitationsPreserveExactAttachmentInBothWindowsWithoutOnlineLoading() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+        let accountID = mailbox.defaultAccount.account.id
+        let source = AssistantSource(accountID: accountID, threadID: "cited-thread", messageID: "cited-message",
+                                     partID: "1.2", title: "Cited file")
+        let link = MailLink(accountID: accountID, threadID: source.threadID, messageID: source.messageID, partID: source.partID)
+        try await mailbox.cache.write { tx in
+            _ = try tx.upsertMessages([.init(record: MessageRecord(accountID: accountID, id: "cited-message",
+                threadID: "cited-thread", historyID: 1, date: .distantPast, snippet: "", sender: "sender@example.invalid",
+                recipients: "audit@example.invalid", cc: nil, subject: "Cited file", sizeEstimate: 10), labelIDs: [SystemLabel.trash])])
+            try tx.rebuildThreads(["cited-thread"], accountID: accountID)
+            try tx.replaceAttachments([.init(accountID: accountID, messageID: "cited-message", partID: "1.2",
+                attachmentID: "file", filename: "Source.pdf", mimeType: "application/pdf", size: 10, isInline: false)],
+                messageID: "cited-message", accountID: accountID)
+        }
+        app.assistant.setAccountEnabled(accountID, enabled: true)
+        // A stopped engine proves cached citations do not need a network fetch.
+        await mailbox.defaultAccount.engine.stop()
+        let selection = mailbox.selectedMailbox
+        app.openAssistantSource(source)
+        await app.assistantNavigationTask?.value
+        #expect(app.mailURLs.conversationWindowLink == link)
+        #expect(mailbox.selectedMailbox == selection)
+        mailbox.selectedThreadIDs = []
+        #expect(app.mailURLs.conversationWindowLink == link)
+        var detached: MailLink?
+        app.openAssistantSourceInNewWindow(source) { detached = $0 }
+        await app.assistantNavigationTask?.value
+        #expect(detached == link)
+
+        app.assistant.setAccountEnabled(accountID, enabled: false)
+        detached = nil
+        app.openAssistantSourceInNewWindow(source) { detached = $0 }
+        await app.assistantNavigationTask?.value
+        #expect(detached == nil)
+        await app.prepareToQuit()
+        await mailbox.stop()
+        app.accountPreferences?.stop()
+    }
+
+    @Test func sourceResolutionRechecksAuthorizationAfterAttachmentHydration() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !mailbox.hasSyncedOnce, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(mailbox.hasSyncedOnce)
+        let accountID = mailbox.defaultAccount.account.id
+        try await mailbox.cache.write { tx in
+            try tx.replaceAttachments([], messageID: "m3", accountID: accountID)
+        }
+        let link = MailLink(accountID: accountID, threadID: "t2", messageID: "m3", partID: "1")
+        var accessChecks = 0
+        await #expect(throws: CancellationError.self) {
+            _ = try await app.mailURLs.resolveConversation(link) {
+                accessChecks += 1
+                return accessChecks < 4
+            }
+        }
+        #expect(accessChecks == 4)
+        #expect(app.mailURLs.conversationWindowLink == nil)
+        #expect(try await mailbox.cache.read { try $0.attachments(messageID: "m3", accountID: accountID).contains { $0.partID == "1" } })
+        #expect(try await app.mailURLs.resolveConversation(link) == link)
+        let wrongMessage = MailLink(accountID: accountID, threadID: "t2", messageID: "m1")
+        await #expect(throws: (any Error).self) { _ = try await app.mailURLs.resolveConversation(wrongMessage) }
+        await app.prepareToQuit()
+        await mailbox.stop()
+        app.accountPreferences?.stop()
+    }
+
     private func fixture() async throws -> (MailboxModel, MailCache) {
         let account = AccountRecord(id: "a", email: "me@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
         let cache = try MailCache.inMemory()

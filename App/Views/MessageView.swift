@@ -6,6 +6,7 @@ import WebKit
 
 struct MessageView: View {
     let message: MessageDetail
+    var selectedAttachmentPartID: String? = nil
     let blocker: WKContentRuleList?
     let isExpanded: Bool
     /// Keyboard navigation in the reader rests on this message.
@@ -77,8 +78,14 @@ struct MessageView: View {
                 Divider()
                     .padding(.horizontal, Tokens.Space.s3)
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    // A cited file is visible immediately, above a potentially
+                    // long body. Normal reading keeps files below the message.
+                    if selectedAttachmentPartID != nil, !message.attachments.isEmpty {
+                        ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox,
+                                                selectedPartID: selectedAttachmentPartID)
+                    }
                     content
-                    if !message.attachments.isEmpty {
+                    if selectedAttachmentPartID == nil, !message.attachments.isEmpty {
                         ReceivedAttachmentsView(attachments: message.attachments, mailbox: mailbox)
                     }
                 }

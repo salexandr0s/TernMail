@@ -74,7 +74,7 @@ import Testing
         _ = try await engine.searchGmail(SearchQuery("in:trash after:2026/01/15"), timeZone: newYork, pageToken: first.nextPageToken)
         _ = try await engine.loadOlder(labelID: SystemLabel.trash)
         _ = try await engine.loadOlder(labelID: "Label_1", pageToken: "4")
-        _ = try await engine.loadOlder(labelID: SystemLabel.sent, before: Date(timeIntervalSince1970: 1_768_453_200.5))
+        _ = try await engine.loadOlder(labelID: SystemLabel.allMail)
 
         #expect(first.nextPageToken == "1")
         #expect(await gmail.threadSearches == [
@@ -82,8 +82,67 @@ import Testing
             ThreadSearch(query: "in:trash after:1768453200", labelIDs: [], includeSpamTrash: true, pageToken: "1"),
             ThreadSearch(query: nil, labelIDs: [SystemLabel.trash], includeSpamTrash: true, pageToken: nil),
             ThreadSearch(query: nil, labelIDs: ["Label_1"], includeSpamTrash: false, pageToken: "4"),
-            ThreadSearch(query: "before:1768453201", labelIDs: [SystemLabel.sent], includeSpamTrash: false, pageToken: nil),
+            ThreadSearch(query: nil, labelIDs: [], includeSpamTrash: false, pageToken: nil),
         ])
+    }
+
+    @Test func mailboxPaginationCrossesSparseCachedDatesAndSkipsCachedPages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("recent", "recent-thread", [SystemLabel.inbox]), ("old", "old-thread", [])])
+        await gmail.setThreadPages("", [["recent-thread"], ["missing-thread"], ["old-thread"]])
+        await gmail.setThread(try thread("recent-thread", [("recent", [SystemLabel.inbox])]))
+        await gmail.setThread(try thread("old-thread", [("old", [])]))
+        await gmail.setThread(try thread("missing-thread", [("middle", [])]))
+        let first = try await engine.loadOlder(labelID: SystemLabel.allMail)
+        #expect(first.threadIDs == ["recent-thread", "missing-thread"])
+        #expect(first.nextPageToken == "2")
+        #expect(await gmail.threadSearches.map(\.query) == [nil, nil])
+        #expect(await gmail.threadSearches.map(\.labelIDs) == [[], []])
+        #expect(try await cache.read { try $0.message(id: "middle", accountID: account) } != nil)
+        let last = try await engine.loadOlder(labelID: SystemLabel.allMail, pageToken: first.nextPageToken)
+        #expect(last.threadIDs == ["old-thread"])
+        #expect(last.nextPageToken == nil)
+    }
+
+    @Test func inboxPaginationYieldsAfterTenCachedPagesAndResumes() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let ids = (0..<11).map { "t\($0)" }
+        try await seed(cache, ids.map { ("m" + $0, $0, [SystemLabel.inbox]) })
+        await gmail.setThreadPages(SystemLabel.inbox, ids.map { [$0] } + [["beyond-sync-cap"]])
+        for id in ids { await gmail.setThread(try thread(id, [("m" + id, [SystemLabel.inbox])])) }
+        await gmail.setThread(try thread("beyond-sync-cap", [("older-inbox", [SystemLabel.inbox])]))
+        let first = try await engine.loadOlder(labelID: SystemLabel.inbox)
+        #expect(await gmail.threadSearches.count == 10)
+        #expect(first.nextPageToken == "10")
+        let second = try await engine.loadOlder(labelID: SystemLabel.inbox, pageToken: first.nextPageToken)
+        #expect(second.threadIDs == ["t10", "beyond-sync-cap"])
+        #expect(second.nextPageToken == nil)
+        #expect(try await cache.read { try $0.message(id: "older-inbox", accountID: account) } != nil)
+    }
+
+    @Test func mailboxPaginationFetchesMissingSiblingsInAnAlreadyCachedThread() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("newer", "partial", [SystemLabel.inbox])])
+        await gmail.setThreadPages(SystemLabel.inbox, [["partial"], ["next-thread"]])
+        await gmail.setThread(try thread("partial", [("newer", [SystemLabel.inbox]), ("older-sibling", [SystemLabel.inbox])]))
+        let page = try await engine.loadOlder(labelID: SystemLabel.inbox)
+        #expect(page.threadIDs == ["partial"])
+        #expect(page.nextPageToken == "1")
+        #expect(await gmail.threadSearches.count == 1)
+        #expect(try await cache.read { try $0.messages(threadID: "partial", accountID: account).count } == 2)
+    }
+
+    @Test func cancellingMailboxPaginationDoesNotContinueCachedPages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("cached", "thread", [SystemLabel.inbox])])
+        await gmail.setThreadPages(SystemLabel.inbox, [["thread"], ["later"]])
+        await gmail.holdNextThreadList()
+        let loading = Task { try await engine.loadOlder(labelID: SystemLabel.inbox) }
+        while await !gmail.isHoldingThreadList { await Task.yield() }
+        loading.cancel()
+        await gmail.releaseThreadList()
+        await #expect(throws: CancellationError.self) { try await loading.value }
+        #expect(await gmail.threadSearches.count == 1)
     }
 
     @Test func aCancelledSearchStoresNothing() async throws {

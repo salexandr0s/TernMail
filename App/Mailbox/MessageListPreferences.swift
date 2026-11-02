@@ -88,6 +88,7 @@ final class MessageListPreferences {
     var showsAccountBadges: Bool { didSet { defaults.set(showsAccountBadges, forKey: "mailShowsAccountBadges") } }
     var showsImportance: Bool { didSet { defaults.set(showsImportance, forKey: "mailShowsImportance") } }
     var showsQuickFilters: Bool { didSet { defaults.set(showsQuickFilters, forKey: "mailShowsQuickFilters") } }
+    var presentsQuickFilters: Bool { showsQuickFilters || !filters.isEmpty }
     var nextSelection: MailNextSelection { didSet { defaults.set(nextSelection.rawValue, forKey: "mailNextSelection") } }
     var leadingFirst: MailSwipeAction { didSet { defaults.set(leadingFirst.rawValue, forKey: "mailLeadingFirst") } }
     var leadingSecond: MailSwipeAction { didSet { defaults.set(leadingSecond.rawValue, forKey: "mailLeadingSecond") } }

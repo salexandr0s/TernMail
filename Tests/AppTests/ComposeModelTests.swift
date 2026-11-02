@@ -327,6 +327,101 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func pendingGroupProtectsCloseMoveAndQuitUntilRecipientsArrive() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let second = AccountRecord(id: "other", email: "other@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(.second))
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.content.subject = "Group plan"
+        model.expandingGroups = 1
+        await model.requestClose()
+        #expect(model.phase == .open)
+        #expect(model.alert?.title == "Recipients Are Still Loading")
+        model.move(to: second.id)
+        #expect(model.phase == .open)
+        #expect(await model.prepareToQuit() == false)
+        #expect(try await cache.read { try $0.localDraft(id: id)?.state } == .editing)
+        model.content.to = [.init(address: "member@example.invalid")]
+        model.expandingGroups = 0
+        await model.requestClose()
+        #expect(model.phase == .closed)
+        #expect(try await cache.read { try $0.localDraft(id: id)?.to.first?.address } == "member@example.invalid")
+        await mailbox.stop()
+    }
+
+    @Test func failedDiscardExplainsFailureAndRestartsPendingPersistence() async throws {
+        let file = CacheFile()
+        let (mailbox, cache) = try await makeMailbox(in: file)
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        try file.refuse("INSERT", on: "pendingAction")
+        model.content.subject = "Keep after failed discard"
+        #expect(await model.discard() == false)
+        #expect(model.isEditable && model.phase == .open)
+        #expect(model.alert?.title == "Couldn't Discard Draft")
+        try file.allow("INSERT", on: "pendingAction")
+        try await waitUntil { !model.hasPendingEdits }
+        #expect(try await cache.read { try $0.localDraft(id: id)?.subject } == "Keep after failed discard")
+        await model.requestClose()
+        await mailbox.stop()
+    }
+
+    @Test func quotationAndSignatureChangesPersistWithoutChangingThreadingOrDefaults() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let draft = LocalDraft(accountID: "audit", kind: .reply,
+            content: DraftContent(to: [.init(address: "pat@example.invalid")], subject: "Reply",
+                body: ComposeDocument(plainText: "My answer"), signatureHTML: "<p>Default signature</p>"),
+            rfcMessageID: "<quote-editor@example.invalid>", threadID: "original-thread",
+            inReplyTo: "<source@example.invalid>", quotedHTML: "<blockquote>Private history</blockquote>",
+            quotedPlainText: "Private history", now: .now)
+        try await mailbox.cache.write { try $0.insertLocalDraft(draft) }
+        let model = ComposeModel(localDraftID: draft.id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.isEditingSupplement = true
+        #expect(await model.send() == false)
+        #expect(await model.replaceQuote(with: "Public excerpt"))
+        model.isEditingSupplement = false
+        #expect(try await cache.read { try $0.localDraft(id: draft.id)?.quotedPlainText } == "Public excerpt")
+        #expect(await model.replaceQuote(with: "  "))
+        model.chooseSignature(nil)
+        #expect(model.content.signatureHTML == nil)
+        model.isEditingSupplement = true
+        model.replaceSignature(with: ComposeDocument(plainText: "For this message"))
+        await model.requestClose()
+        let stored = try #require(try await cache.read { try $0.localDraft(id: draft.id) })
+        #expect(stored.quotedHTML == nil && stored.quotedPlainText == nil)
+        #expect(stored.signatureHTML?.contains("For this message") == true)
+        #expect(stored.body.plainText() == "My answer")
+        #expect(stored.threadID == "original-thread" && stored.inReplyTo == "<source@example.invalid>")
+        await mailbox.stop()
+    }
+
+    @Test func attachmentBudgetUsesEditorDeletionBeforeItsDelayedStore() async throws {
+        let (mailbox, _) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        let bytes = Data(count: 14_000_000)
+        model.attach([.data(bytes, filename: "large.png", mimeType: "image/png")], inlineImages: true)
+        try await waitUntil { model.attachments.count == 1 && model.progressText == nil }
+        #expect(model.content.body.blocks.flatMap(\.runs).contains { $0.image != nil })
+        model.content.body = ComposeDocument()
+        // Attach immediately, before the 500 ms store timer can run.
+        model.attach([.data(bytes, filename: "replacement.bin", mimeType: "application/octet-stream")])
+        try await waitUntil { model.progressText == nil }
+        #expect(model.failedAttachments.isEmpty)
+        #expect(model.attachments.count == 2)
+        await model.requestClose()
+        await mailbox.stop()
+    }
+
     /// A mailbox whose cache is in memory, or in `file` for a test that breaks it.
     private func makeMailbox(in file: CacheFile? = nil) async throws -> (MailboxModel, MailCache) {
         let cache = try file.map { try MailCache.open(at: $0.url) } ?? MailCache.inMemory()

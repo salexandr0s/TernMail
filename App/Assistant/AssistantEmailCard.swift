@@ -23,9 +23,10 @@ struct AssistantEmailCard: View {
                     Spacer(minLength: 0)
                     VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
                         if let date = email.date {
-                            Text(date, format: .dateTime.month(.abbreviated).day())
+                            Text(date, format: .dateTime.year().month(.abbreviated).day())
                                 .font(.caption2).foregroundStyle(.secondary)
                                 .fixedSize()
+                                .help(date.formatted(date: .complete, time: .shortened))
                         }
                         if email.isUnread {
                             Image(systemName: "circle.fill").font(.caption2).foregroundStyle(Color.accentColor)
@@ -112,7 +113,8 @@ struct AssistantEmailCard: View {
 
     /// The same tern: link the message list's Copy Link writes.
     private func copyLink() {
-        guard let url = MailLink(accountID: email.source.accountID, threadID: email.source.threadID).ternURL else { return }
+        guard let url = MailLink(accountID: email.source.accountID, threadID: email.source.threadID,
+                                 messageID: email.source.messageID, partID: email.source.partID).ternURL else { return }
         NSPasteboard.general.replaceContents(with: url.absoluteString)
     }
 

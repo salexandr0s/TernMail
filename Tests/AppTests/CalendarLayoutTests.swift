@@ -15,13 +15,62 @@ import Testing
             accountID: "account", calendarID: "calendar", colorHex: "#FF0000", fallbackTimeZoneID: "Europe/Vienna")
         let overnight = event("overnight", start: next.addingTimeInterval(-1800), end: next.addingTimeInterval(1800))
         let duplicateColor = event("same-calendar", start: day, end: day.addingTimeInterval(3600))
-        let activity = CalendarMiniMonth.activity(events: [allDay, overnight, duplicateColor],
-            days: CalendarLayout.monthDays(containing: day, calendar: calendar), calendar: calendar)
+        let events = [allDay, overnight, duplicateColor]
+        let days = CalendarLayout.monthDays(containing: day, calendar: calendar)
+        let activity = CalendarMiniMonth.activity(events: events, days: days, calendar: calendar)
+        let first = try #require(days.first)
+        let last = try #require(days.last)
+        let end = try #require(calendar.date(byAdding: .day, value: 1, to: last))
+        let interval = DateInterval(start: first, end: end)
+        let snapshot = CalendarPresentationSnapshot(events: events, interval: interval,
+            calendar: calendar, buildsTimeAxis: false)
+        #expect(CalendarMiniMonth.activity(events: events, days: days, calendar: calendar, presentation: snapshot) == activity)
 
         #expect(activity[day]?.count == 3)
         #expect(activity[day]?.colors == ["#ff0000", "#4285f4"])
         #expect(activity[next]?.count == 1)
         #expect(activity[next]?.colors == ["#4285f4"])
+    }
+
+    @MainActor @Test func preparedMarkersAndAgendaPreserveSourceOrderAndRequireCoverage() throws {
+        let calendar = try calendar()
+        let january = try #require(calendar.date(from: DateComponents(year: 2027, month: 1, day: 1)))
+        let year = try #require(calendar.dateInterval(of: .year, for: january))
+        let events = zip(["z", "a", "y", "b"], ["#FF0000", "#00FF00", "#0000FF", "#FFFF00"]).map { id, color in
+            CalendarDisplayEvent(event: GoogleCalendarEvent(id: id, summary: id,
+                start: CalendarDateTime(date: january), end: CalendarDateTime(date: january.addingTimeInterval(3600))),
+                accountID: "account", calendarID: id, colorHex: color)
+        }
+        let snapshot = CalendarPresentationSnapshot(events: events, interval: year,
+            calendar: calendar, buildsTimeAxis: false)
+        #expect(snapshot.dayActivities[january]?.count == 4)
+        #expect(snapshot.dayActivities[january]?.colors == ["#ff0000", "#00ff00", "#0000ff"])
+        #expect(snapshot.agenda(on: january, calendar: calendar) == events)
+        #expect(snapshot.agenda(on: january, calendar: calendar) == CalendarLayout.events(events, on: january, calendar: calendar))
+
+        let monthDays = CalendarLayout.monthDays(containing: january, calendar: calendar)
+        let spillover = try #require(monthDays.first)
+        #expect(spillover < year.start)
+        #expect(!snapshot.covers(monthDays, calendar: calendar))
+        let outside = event("previous-year", start: spillover, end: spillover.addingTimeInterval(3600))
+        let fallback = CalendarMiniMonth.activity(events: [outside] + events, days: monthDays,
+            calendar: calendar, presentation: snapshot)
+        #expect(fallback[spillover]?.count == 1)
+        #expect(snapshot.agenda(on: spillover, calendar: calendar) == nil)
+
+        var otherZone = calendar
+        otherZone.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        #expect(!snapshot.covers([january], calendar: otherZone))
+        #expect(snapshot.agenda(on: january, calendar: otherZone) == nil)
+        let changedZoneDays = CalendarLayout.monthDays(containing: january, calendar: otherZone)
+        #expect(CalendarMiniMonth.activity(events: events, days: changedZoneDays, calendar: otherZone, presentation: snapshot)
+            == CalendarMiniMonth.activity(events: events, days: changedZoneDays, calendar: otherZone))
+
+        var otherWeekStart = calendar
+        otherWeekStart.firstWeekday = 1
+        #expect(!snapshot.covers([january], calendar: otherWeekStart))
+        let emptyDay = try #require(calendar.date(byAdding: .day, value: 1, to: january))
+        #expect(snapshot.agenda(on: emptyDay, calendar: calendar) == [])
     }
 
     @Test func monthDragFindsDaysAcrossWeekRowsAndRejectsOutsideCanvas() {

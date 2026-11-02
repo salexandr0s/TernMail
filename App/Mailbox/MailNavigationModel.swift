@@ -172,6 +172,16 @@ extension MailboxModel {
         }
     }
 
+    /// The count's meaning follows the same preferences as its visible badge.
+    func sidebarBadgeDescription(_ box: MailboxID) -> String {
+        let count = sidebarBadgeCount(box)
+        guard count > 0 else { return "" }
+        if box.id == Self.outboxID { return "\(count) outgoing" }
+        let total = (box.id == SystemLabel.starred && listPreferences.starredTotal)
+            || (box.id == SystemLabel.draft && listPreferences.draftsTotal)
+        return "\(count) \(total ? "total" : "unread")"
+    }
+
     func isVisibleInSidebar(_ label: LabelRecord) -> Bool {
         switch label.labelListVisibility {
         case "labelHide": return false

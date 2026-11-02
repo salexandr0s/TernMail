@@ -16,16 +16,21 @@ struct CalendarSidebar: View {
     /// Room for the compact popover: the mini month, a row per calendar and
     /// agenda entry plus headers, capped so it never outgrows the window.
     static func popoverHeight(for model: CalendarModel) -> CGFloat {
-        let agenda = CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar).count
+        let agenda = (model.sidebarPresentation?.agenda(on: model.date, calendar: model.calendar)
+            ?? CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar)).count
         let rows = model.calendars.isEmpty ? 0 : CGFloat(model.calendars.count + max(agenda, 1) + model.accounts.count + 1)
         let height = CalendarMiniMonth.height + rows * Tokens.Settings.rowHeight + Tokens.Space.s16
         return min(max(height, Tokens.Popover.maxListHeight), Tokens.Calendar.activityHeight)
     }
 
     var body: some View {
+        let monthEvents = self.monthEvents
         let monthCounts = Dictionary(grouping: monthEvents, by: \.calendarKey).mapValues(\.count)
+        let agenda = agendaEvents
+        let upcoming = agenda.isEmpty ? upcomingEvents(in: monthEvents) : []
         List(selection: $selection) {
-            CalendarMiniMonth(date: $model.date, calendar: model.calendar, events: model.sidebarEvents)
+            CalendarMiniMonth(date: $model.date, calendar: model.calendar, events: model.sidebarEvents,
+                presentation: model.sidebarPresentation)
                 .listRowInsets(EdgeInsets(top: Tokens.Space.s3, leading: Tokens.Space.s2, bottom: Tokens.Space.s3, trailing: Tokens.Space.s2))
                 .selectionDisabled()
             if !model.calendars.isEmpty {
@@ -61,7 +66,7 @@ struct CalendarSidebar: View {
                     }
                 }
                 Section {
-                    agendaRows
+                    agendaRows(agenda)
                 } header: {
                     HStack {
                         Text(calendarDayTitle)
@@ -70,9 +75,9 @@ struct CalendarSidebar: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if agendaEvents.isEmpty, !upcomingEvents.isEmpty {
+                if !upcoming.isEmpty {
                     Section("Later this month") {
-                        ForEach(upcomingEvents) { event in
+                        ForEach(upcoming) { event in
                             eventRow(event, showsDate: true)
                         }
                     }
@@ -135,7 +140,8 @@ struct CalendarSidebar: View {
     }
 
     private var agendaEvents: [CalendarDisplayEvent] {
-        CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar)
+        model.sidebarPresentation?.agenda(on: model.date, calendar: model.calendar)
+            ?? CalendarLayout.events(model.sidebarEvents, on: model.date, calendar: model.calendar)
     }
 
     private var monthEvents: [CalendarDisplayEvent] {
@@ -143,7 +149,7 @@ struct CalendarSidebar: View {
         return model.sidebarEvents.filter { $0.start < month.end && max($0.end, $0.start.addingTimeInterval(1)) > month.start }
     }
 
-    private var upcomingEvents: [CalendarDisplayEvent] {
+    private func upcomingEvents(in monthEvents: [CalendarDisplayEvent]) -> [CalendarDisplayEvent] {
         let start = model.calendar.startOfDay(for: model.date)
         guard let nextDay = model.calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
         return Array(monthEvents.filter { $0.start >= nextDay }.sorted {
@@ -151,8 +157,7 @@ struct CalendarSidebar: View {
         }.prefix(3))
     }
 
-    @ViewBuilder private var agendaRows: some View {
-        let events = agendaEvents
+    @ViewBuilder private func agendaRows(_ events: [CalendarDisplayEvent]) -> some View {
         if events.isEmpty {
             CalendarSidebarEmptyDay(model: model)
                 .selectionDisabled()

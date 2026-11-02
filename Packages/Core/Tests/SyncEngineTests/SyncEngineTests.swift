@@ -904,7 +904,8 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         }
         #expect(try await cache.read { tx in try tx.outgoingAttachments(localDraftID: draft.id) }.isEmpty)
         let folder = await engine.outgoingDirectory.appending(path: draft.id)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).isEmpty)
+        let files = try? FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false))
+        #expect(files?.isEmpty ?? !FileManager.default.fileExists(atPath: folder.path(percentEncoded: false)))
     }
 
     @Test func aSendWhoseResponseWasLostIsReconciledWithoutSendingAgain() async throws {

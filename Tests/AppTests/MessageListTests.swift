@@ -100,6 +100,25 @@ import Testing
         #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m2"])
     }
 
+    @Test func hiddenFilterControlsRemainAvailableAndExplainFilteredSearchResults() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.showsQuickFilters = false
+        mailbox.listPreferences.filters = [.important]
+        #expect(mailbox.listPreferences.presentsQuickFilters)
+        mailbox.search.update("Planning")
+        try await awaitListState("filtered search", details: { mailbox.searchResultsSubtitle }) {
+            mailbox.search.hasLocalAnswer && mailbox.isListPresentationReady && !mailbox.search.results.isEmpty
+        }
+        #expect(mailbox.listItems.isEmpty)
+        #expect(mailbox.searchResultsHiddenByFilters)
+        #expect(mailbox.searchResultsSubtitle == "Results hidden by filters")
+        mailbox.listPreferences.filters = []
+        #expect(!mailbox.listPreferences.presentsQuickFilters)
+        #expect(!mailbox.searchResultsHiddenByFilters)
+        #expect(!mailbox.listItems.isEmpty)
+    }
+
     @Test func projectedRowsRefreshMetadataAndSendingAliasesWithoutChangingMessageIDs() async throws {
         let (mailbox, _) = try await fixture()
         defer { Task { await mailbox.stop() } }
@@ -442,9 +461,13 @@ import Testing
         window.contentViewController = controller
         window.orderBack(nil)
         defer { window.close() }
+        // Inbox can contain uncached mail. Its Gmail pagination footer is a
+        // native table row after the 42 tagged conversation rows.
+        let paginationFooterRows = 1
+        #expect(mailbox.offersOlderConversations)
         try await awaitListState("native conversation table", details: {
             "tableRows=\(self.listTables(in: controller.view).map(\.numberOfRows))"
-        }) { self.listTables(in: controller.view).first?.numberOfRows == 42 }
+        }) { self.listTables(in: controller.view).first?.numberOfRows == 42 + paginationFooterRows }
         let table = try #require(listTables(in: controller.view).first)
         let scroll = try #require(table.enclosingScrollView)
         try await awaitListState("fixed mailbox fixture viewport and initial realized rows", details: {
@@ -578,7 +601,7 @@ import Testing
         mailbox.listPreferences.conversations = false
         try await awaitListState("message mode table and cleared selection", details: {
             "rows=\(table.numberOfRows), selected=\(mailbox.selectedListRowIDs.sorted())"
-        }) { table.numberOfRows == 43 && mailbox.selectedListRowIDs.isEmpty }
+        }) { table.numberOfRows == 43 + paginationFooterRows && mailbox.selectedListRowIDs.isEmpty }
         let first = MailListRowID(accountID: "a", threadID: "t", messageID: "m1")
         let sibling = MailListRowID(accountID: "a", threadID: "t", messageID: "m2")
         let other = MailListRowID(accountID: "b", threadID: "t", messageID: "m1")
@@ -731,10 +754,12 @@ import Testing
             }
             return nil
         }
+        // Two mail rows plus the Inbox's Gmail pagination footer.
+        #expect(mailbox.offersOlderConversations)
         try await awaitListState("production mail-columns native table", details: {
             "rows=\(nativeTable()?.numberOfRows ?? -1), viewport=\(String(describing: nativeTable()?.visibleRect))"
                 + ", listProbes=\(listProbes(in: controller.view).count), allTableRows=\(listTables(in: controller.view).map(\.numberOfRows))"
-        }) { nativeTable()?.numberOfRows == 2 && (nativeTable()?.visibleRect.width ?? 0) > 200 }
+        }) { nativeTable()?.numberOfRows == 3 && (nativeTable()?.visibleRect.width ?? 0) > 200 }
         let table = try #require(nativeTable())
         let scroll = try #require(table.enclosingScrollView)
         func selected(_ row: MailListRowID) -> Bool {

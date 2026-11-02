@@ -8,6 +8,7 @@ struct OnboardingPreferencesStep: View {
     @AppStorage(ComposePreferences.defaultAccountKey) private var defaultAccount = ""
     @AppStorage(UndoSendDelay.key) private var undoSendDelay = UndoSendDelay.defaultSeconds
     @AppStorage(ReadingPreferences.blockImagesKey) private var blocksImages = true
+    @AppStorage(DomainLogoPreferences.key) private var showsCompanyLogos = DomainLogoPreferences.defaultEnabled
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @State private var requestingNotifications = false
     @State private var notificationError: String?
@@ -49,11 +50,18 @@ struct OnboardingPreferencesStep: View {
                     .accessibilityIdentifier("onboarding.undoSend")
                 }
                 rowDivider
-                OnboardingPreferenceRow("Block remote images", detail: "Load images only when you choose to.", symbol: "hand.raised") {
+                OnboardingPreferenceRow("Block remote images", detail: "Load images inside messages only when you choose to.", symbol: "hand.raised") {
                     Toggle("Block remote images", isOn: $blocksImages)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .accessibilityIdentifier("onboarding.blockImages")
+                }
+                rowDivider
+                OnboardingPreferenceRow("Show company logos", detail: "Look for sender website icons. Websites receive your IP address, but no email address or message content.", symbol: "building.2") {
+                    Toggle("Show company logos", isOn: $showsCompanyLogos)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("onboarding.companyLogos")
                 }
                 rowDivider
                 OnboardingPreferenceRow("Single-key shortcuts", detail: "Use letter keys to act on mail while you aren't typing.", symbol: "keyboard") {

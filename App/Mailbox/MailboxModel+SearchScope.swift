@@ -36,6 +36,7 @@ extension MailboxModel {
     /// and subtitle, which the Window menu and Mission Control show and saved
     /// window state can keep. The field shows it.
     var searchResultsSubtitle: String {
+        if searchResultsHiddenByFilters { return "Results hidden by filters" }
         let count = listItems.count
         // Until this Mac answers, the rows belong to the previous query.
         if count > 0, search.hasLocalAnswer {
@@ -48,6 +49,11 @@ extension MailboxModel {
         case .searchedThisMac: return "No matches on this Mac"
         case .searchedEverywhere: return "No results"
         }
+    }
+
+    var searchResultsHiddenByFilters: Bool {
+        search.isActive && search.hasLocalAnswer && isListPresentationReady
+            && !listPreferences.filters.isEmpty && !search.results.isEmpty && listItems.isEmpty
     }
 
     /// The sidebar's selection. Empty during a search, except for a saved

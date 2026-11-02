@@ -104,12 +104,16 @@ struct ThreadListView: View {
             VStack(spacing: Tokens.Space.s3) {
                 TernEmptyState(title: "No Matching Mail", systemImage: "line.3.horizontal.decrease.circle", message: "Try different filters or clear them to see all mail.", fillsSpace: false)
                 Button("Clear Filters") { mailbox.listPreferences.filters = [] }
+                if mailbox.offersOlderConversations {
+                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, failedAccounts: mailbox.olderFailureAccounts,
+                        action: mailbox.loadOlderConversations)
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if mailbox.selectedHaveSyncedOnce {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No Conversations", systemImage: "tray", message: emptyDescription, fillsSpace: false)
                 if mailbox.offersOlderConversations {
-                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
+                    GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, failedAccounts: mailbox.olderFailureAccounts, action: mailbox.loadOlderConversations)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -131,34 +135,45 @@ struct ThreadListView: View {
     @ViewBuilder
     private var emptySearch: some View {
         let search = mailbox.search
-        switch search.status {
-        case .unreadable:
-            TernEmptyState(
-                title: "Can't Search",
-                systemImage: "exclamationmark.magnifyingglass",
-                message: "Tern couldn't read the mail saved on this Mac."
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .searching:
-            ProgressView {
-                Text(search.gmailState == .loading ? "Searching Gmail…" : "Searching…")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .searchedThisMac, .searchedEverywhere:
-            VStack(spacing: Tokens.Space.s4) {
-                TernEmptyState(
-                    title: "No Results",
-                    systemImage: "magnifyingglass",
-                    message: search.status == .searchedEverywhere
-                        ? "No matches on this Mac or in Gmail."
-                        : "No matches on this Mac.",
-                    fillsSpace: false
-                )
-                if search.status == .searchedThisMac {
+        if mailbox.searchResultsHiddenByFilters {
+            VStack(spacing: Tokens.Space.s3) {
+                TernEmptyState(title: "Results Hidden by Filters", systemImage: "line.3.horizontal.decrease.circle",
+                    message: "Clear the filters to see the matching mail.", fillsSpace: false)
+                Button("Clear Filters") { mailbox.listPreferences.filters = [] }
+                if search.gmailState != .finished {
                     GmailRow(kind: .search, state: search.gmailState, action: search.askGmail)
                 }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            switch search.status {
+            case .unreadable:
+                TernEmptyState(
+                    title: "Can't Search",
+                    systemImage: "exclamationmark.magnifyingglass",
+                    message: "Tern couldn't read the mail saved on this Mac."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .searching:
+                ProgressView {
+                    Text(search.gmailState == .loading ? "Searching Gmail…" : "Searching…")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .searchedThisMac, .searchedEverywhere:
+                VStack(spacing: Tokens.Space.s4) {
+                    TernEmptyState(
+                        title: "No Results",
+                        systemImage: "magnifyingglass",
+                        message: search.status == .searchedEverywhere
+                            ? "No matches on this Mac or in Gmail."
+                            : "No matches on this Mac.",
+                        fillsSpace: false
+                    )
+                    if search.status == .searchedThisMac {
+                        GmailRow(kind: .search, state: search.gmailState, action: search.askGmail)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -193,9 +208,9 @@ struct ThreadListView: View {
     }
 
     private var emptyDescription: String {
-        if mailbox.selectedLabelID == SystemLabel.inbox { return "Your inbox is empty." }
+        if mailbox.selectedLabelID == SystemLabel.inbox { return mailbox.older?.state == .finished ? "Your inbox is empty." : "No inbox conversations are saved on this Mac." }
         if mailbox.showsSnoozed { return "Snoozed conversations wait here until they return to the Inbox." }
-        return "Tern keeps your inbox and the last 30 days of mail on this Mac."
+        return "No conversations are saved on this Mac for this mailbox."
     }
 }
 
@@ -275,7 +290,7 @@ private struct MessageListRows: View, Equatable {
                     GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
                 }
             } else if mailbox.offersOlderConversations {
-                GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, action: mailbox.loadOlderConversations)
+                GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, failedAccounts: mailbox.olderFailureAccounts, action: mailbox.loadOlderConversations)
             }
         }
     }
@@ -352,10 +367,14 @@ private struct GmailRow: View {
 
     let kind: Kind
     let state: GmailPager.State
+    var failedAccounts: String? = nil
     let action: () -> Void
 
     var body: some View {
         VStack(spacing: Tokens.Space.s2) {
+            if kind == .older, state != .finished {
+                Text("More mail may be available in Gmail.").foregroundStyle(.secondary)
+            }
             switch state {
             case .ready, .more:
                 Button(action: action) {
@@ -366,11 +385,11 @@ private struct GmailRow: View {
                 HStack(spacing: Tokens.Space.s2) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(kind == .search ? "Searching Gmail…" : "Loading older conversations…")
+                    Text(kind == .search ? "Searching Gmail…" : "Checking Gmail for more mail…")
                         .foregroundStyle(.secondary)
                 }
             case .busy, .failed:
-                Text(failure)
+                Text(failedAccounts.map { "\(failure) Accounts: \($0)." } ?? failure)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 Button("Try Again", action: action)
@@ -388,7 +407,7 @@ private struct GmailRow: View {
         switch (kind, state) {
         case (.search, .ready): "Search Gmail"
         case (.search, _): "Load More from Gmail"
-        case (.older, _): "Load Older Conversations"
+        case (.older, _): "Load More from Gmail"
         }
     }
 

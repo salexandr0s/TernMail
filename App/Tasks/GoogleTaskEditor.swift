@@ -196,6 +196,9 @@ struct GoogleTaskEditor: View {
     }
 
     @ViewBuilder private var errorMessage: some View {
+        if session.needsConflictReview {
+            GoogleTaskConflictReview(session: session)
+        }
         if let error = session.error {
             Label(error, systemImage: "exclamationmark.circle")
                 .font(isInline ? .caption : .callout).foregroundStyle(Tokens.Status.error)

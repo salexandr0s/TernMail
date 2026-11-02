@@ -4,10 +4,20 @@ import MessageContent
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct CalendarImportItem: Identifiable {
+struct CalendarImportItem: Identifiable, Sendable {
     var id = UUID()
     var event: GoogleCalendarEvent
     var exceptions: [GoogleCalendarEvent] = []
+}
+
+struct CalendarImportRequest: Identifiable, Sendable {
+    enum Source: Sendable {
+        case file(URL)
+        case text(String)
+    }
+
+    let id = UUID()
+    let source: Source
 }
 
 /// An event dragged out of Tern. Finder and other calendars receive an .ics
@@ -40,15 +50,58 @@ enum CalendarImportExport {
     /// The iCalendar file type, falling back to the generic event type.
     static let icsType = UTType(filenameExtension: "ics") ?? .calendarEvent
 
+    static func prepare(_ source: CalendarImportRequest.Source) async throws -> [CalendarImportItem] {
+        try await inBackground {
+            switch source {
+            case .file(let url):
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                return try read(url)
+            case .text(let text):
+                return try parse(Data(text.utf8))
+            }
+        }
+    }
+
+    static func write(_ events: [GoogleCalendarEvent], to url: URL) async throws {
+        try await inBackground {
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            let data = try CalendarInterchange.exportEvents(events)
+            try Task.checkCancellation()
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
+    private static func inBackground<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let result = try operation()
+            try Task.checkCancellation()
+            return result
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await worker.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: { worker.cancel() }
+    }
+
     static func read(_ url: URL) throws -> [CalendarImportItem] {
+        try Task.checkCancellation()
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 4 * 1024 * 1024 else { throw ImportError.tooLarge }
         return try parse(Data(contentsOf: url))
     }
 
     static func parse(_ data: Data) throws -> [CalendarImportItem] {
+        try Task.checkCancellation()
         guard data.count <= 4 * 1024 * 1024 else { throw ImportError.tooLarge }
         return try CalendarInterchange.importGroups(data).map { group in
+            try Task.checkCancellation()
             guard let master = group.master else { throw CalendarInterchangeError.recurrenceExceptionNeedsSeries }
             let event = try CalendarInterchange.googleEvent(from: master)
             let exceptions = try group.exceptions.map {
@@ -90,8 +143,7 @@ enum CalendarImportExport {
         panel.nameFieldStringValue = "Calendar.ics"
         let response = if let window { await panel.beginSheetModal(for: window) } else { panel.runModal() }
         guard response == .OK, let url = panel.url else { return }
-        let data = try CalendarInterchange.exportEvents(events)
-        try data.write(to: url, options: .atomic)
+        try await write(events, to: url)
     }
 
     /// Prints the shown events on the user's paper size with the system text styles.

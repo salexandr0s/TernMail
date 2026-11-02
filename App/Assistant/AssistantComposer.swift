@@ -9,13 +9,18 @@ struct AssistantComposer: View {
     @FocusState.Binding var isFocused: Bool
     let onSubmit: () -> Void
     let onSettings: () -> Void
+    let onSetup: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             input
             if let setup, !model.messages.isEmpty {
-                Button(setup.action, action: onSettings)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(setup.detail).font(.caption).foregroundStyle(.secondary)
+                    Button(setup.action, action: onSetup)
                     .buttonStyle(.link).font(.caption)
+                        .disabled(model.isLoadingModels)
+                }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Tokens.Space.s2) {
@@ -77,7 +82,7 @@ struct AssistantComposer: View {
             Divider()
             Button("Manage Mail & Calendar Access…", systemImage: "slider.horizontal.3", action: onSettings)
         } label: {
-            Label(model.selectedScope.title, systemImage: "envelope")
+            Label(model.usesPreviousMailScope ? "Previous mail scope" : model.selectedScope.title, systemImage: "envelope")
                 .lineLimit(1)
             .padding(.horizontal, Tokens.Space.s1)
             .frame(minHeight: Tokens.Control.iconButton)
@@ -85,9 +90,9 @@ struct AssistantComposer: View {
         }
         .menuIndicator(.visible).menuStyle(.borderlessButton)
         .font(.caption).foregroundStyle(.secondary)
-        .accessibilityLabel("Mail scope").accessibilityValue(model.selectedScope.title)
+        .accessibilityLabel("Mail scope").accessibilityValue(model.conversationScopeDescription)
         .accessibilityIdentifier("assistant.scope")
-        .help("Mail scope: \(model.selectedScope.title). Calendar access is managed separately in settings.")
+        .help("Mail scope: \(model.conversationScopeDescription). Calendar access is managed separately in settings.")
     }
 
     private var modelMenu: some View {

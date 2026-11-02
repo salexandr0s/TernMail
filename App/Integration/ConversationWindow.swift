@@ -15,6 +15,7 @@ struct ConversationWindow: View {
     private struct ReaderIdentity: Hashable {
         let key: ThreadKey
         let messageID: String?
+        let partID: String?
         let owner: ObjectIdentifier
         let lifecycle: Int
     }
@@ -24,11 +25,11 @@ struct ConversationWindow: View {
             if let link, let mailbox = app.mailbox, let owner = mailbox.account(id: link.accountID) {
                 let key = ThreadKey(accountID: link.accountID, threadID: link.threadID)
                 ReaderSessionContainer(key: key, messageID: link.messageID, mailbox: mailbox, isActive: true,
-                                       reportsNavigation: false) { detail in
+                                       attachmentPartID: link.partID, reportsNavigation: false) { detail in
                     subject = detail.thread.subject
                     participants = detail.thread.participants
                 }
-                    .id(ReaderIdentity(key: key, messageID: link.messageID, owner: ObjectIdentifier(owner),
+                    .id(ReaderIdentity(key: key, messageID: link.messageID, partID: link.partID, owner: ObjectIdentifier(owner),
                                        lifecycle: ReaderCacheLifecycle.shared.revision))
                     .onAppear { app.conversationBecameVisible(key) }
                     .onDisappear { app.conversationStoppedBeingVisible(key) }

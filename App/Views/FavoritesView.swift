@@ -137,6 +137,7 @@ struct FavoritesView: View {
         .accessibilityLabel(title(favorite))
         .help(title(favorite))
         .modifier(SidebarDisclosureAccessibility(isExpanded: canExpand ? isExpanded : nil,
+            badgeDescription: canExpand && isExpanded ? "" : mailbox.sidebarBadgeDescription(box),
             toggle: { toggleExpansion(of: box) }))
         .contextMenu {
             MailboxContextMenu(mailbox: mailbox, box: box, isSystemMailbox: favorite.target.isSystemMailbox)
@@ -166,6 +167,7 @@ struct FavoritesView: View {
                     .sidebarHover(SidebarRowSelection(source: source, mailbox: accountBox))
                     .tag(SidebarRowSelection(source: source, mailbox: accountBox))
                     .accessibilityLabel("\(title(favorite)), \(name)")
+                    .accessibilityValue(mailbox.sidebarBadgeDescription(accountBox))
                 if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id, source: source) }
             }
         } else if box.id == SystemLabel.inbox, accounts(for: box).count == 1, let owner = accounts(for: box).first {
@@ -284,6 +286,7 @@ struct InboxCategoryRows: View {
                 .contentShape(Rectangle())
                 .sidebarHover(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
+                .accessibilityValue(mailbox.sidebarBadgeDescription(.account(accountID, category.labelID)))
                 .tag(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
         }
     }

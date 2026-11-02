@@ -243,7 +243,11 @@ struct GoogleTasksSidebar: View {
     }
 
     @ViewBuilder private var taskContent: some View {
-        if openTasks.isEmpty && pendingTask == nil {
+        let open = displayedTasks(completed: false)
+        let completed = displayedTasks(completed: true)
+        let pendingTask = self.pendingTask
+        let lastOpenID = open.last?.id
+        if open.isEmpty && pendingTask == nil {
             emptyState(model.completedTasks.isEmpty ? "A fresh list" : "All caught up",
                 detail: model.completedTasks.isEmpty ? "Add your first task above, or turn a line from an email into a task."
                     : "Everything in this list is complete. New tasks will appear here.", symbol: "checkmark.circle")
@@ -252,13 +256,13 @@ struct GoogleTasksSidebar: View {
                 if let pendingTask {
                     GoogleTaskRow(task: pendingTask, parentTitle: nil, isBusy: true, isPending: true,
                         onComplete: {}, onEdit: {}, onDelete: {})
-                    if !openTasks.isEmpty {
+                    if !open.isEmpty {
                         Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
                     }
                 }
-                ForEach(openTasks) { task in
+                ForEach(open) { task in
                     row(task)
-                    if task.id != openTasks.last?.id {
+                    if task.id != lastOpenID {
                         Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
                     }
                 }
@@ -266,7 +270,7 @@ struct GoogleTasksSidebar: View {
             .padding(Tokens.Space.s1)
             .ternSurface(style: .grouped)
         }
-        if !completedTasks.isEmpty {
+        if !completed.isEmpty {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Button { showsCompleted.toggle() } label: {
                     HStack(spacing: Tokens.Space.s2) {
@@ -290,7 +294,7 @@ struct GoogleTasksSidebar: View {
                 .accessibilityIdentifier("google-tasks-completed-toggle")
                 .disabled(inlineEditor?.context.task?.isCompleted == true)
                 if showsCompleted {
-                    LazyVStack(spacing: 0) { ForEach(completedTasks) { row($0) } }
+                    LazyVStack(spacing: 0) { ForEach(completed) { row($0) } }
                         .padding(Tokens.Space.s1)
                         .ternSurface(style: .grouped)
                 }
@@ -304,7 +308,7 @@ struct GoogleTasksSidebar: View {
            inlineEditor.context.task?.id == task.id {
             editingRow(inlineEditor)
         } else {
-            GoogleTaskRow(task: task, parentTitle: task.parent.flatMap { id in model.tasks.first { $0.id == id }?.title },
+            GoogleTaskRow(task: task, parentTitle: model.parentTitle(for: task),
                 isBusy: model.taskIsBusy(task), allowsEditing: inlineEditor == nil,
                 onComplete: { Task { await model.setCompleted(task, completed: !task.isCompleted) } },
                 onEdit: {
@@ -323,9 +327,6 @@ struct GoogleTasksSidebar: View {
         }
         .id(session.context.id)
     }
-
-    private var openTasks: [GoogleTask] { displayedTasks(completed: false) }
-    private var completedTasks: [GoogleTask] { displayedTasks(completed: true) }
 
     /// A refresh may complete or remove the task. Keep its editor in the
     /// original section until Save or Cancel so the draft stays reachable.

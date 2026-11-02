@@ -10,7 +10,9 @@ extension CalendarModel {
 
     func edit(_ display: CalendarDisplayEvent) { edit(display, proposedEvent: nil) }
 
-    func edit(_ display: CalendarDisplayEvent, proposedEvent: GoogleCalendarEvent?) {
+    func edit(_ display: CalendarDisplayEvent, proposedEvent: GoogleCalendarEvent?,
+              isAuthorized: @escaping @MainActor () -> Bool = { true }) {
+        guard !Task.isCancelled, isAuthorized() else { return }
         var display = display
         display.canEdit = display.canEdit && calendars.first(where: { $0.id == display.calendarKey })
             .map { CalendarEventPermissions.canEdit(display.event, in: $0) } == true
@@ -27,7 +29,7 @@ extension CalendarModel {
                 guard let engine = engines[display.accountID] else { throw CalendarModelError.unavailable }
                 let id = display.event.recurringEventId ?? display.event.id
                 let master = try await engine.readEvent(calendarID: display.calendarID, eventID: id, refresh: false)
-                guard revision == editRevision else { return }
+                guard !Task.isCancelled, revision == editRevision, isAuthorized() else { return }
                 var sourceEvent = display.event
                 sourceEvent.recurrence = master.recurrence
                 let source = display.replacingEvent(sourceEvent)
@@ -37,9 +39,9 @@ extension CalendarModel {
                 draft.seriesMaster = master
                 draft.additionalNotificationRecipients = (master.attendees ?? []).map(\.email)
                 editor = draft
-                await loadSeriesReview(draftID: draft.id, source: source, masterID: id)
+                await loadSeriesReview(draftID: draft.id, source: source, masterID: id, isAuthorized: isAuthorized)
             } catch {
-                guard revision == editRevision else { return }
+                guard !Task.isCancelled, revision == editRevision, isAuthorized() else { return }
                 // A cached occurrence can still be changed offline. Series-wide
                 // options require the master and its reviewed version.
                 var draft = CalendarEditorDraft(event: proposedEvent ?? display.event, calendarKey: display.calendarKey, source: display)
@@ -50,19 +52,21 @@ extension CalendarModel {
         }
     }
 
-    func loadSeriesReview(draftID: UUID, source: CalendarDisplayEvent, masterID: String) async {
+    func loadSeriesReview(draftID: UUID, source: CalendarDisplayEvent, masterID: String,
+                          isAuthorized: @escaping @MainActor () -> Bool = { true }) async {
+        guard !Task.isCancelled, isAuthorized() else { return }
         let revision = lifecycleRevision
         guard let engine = engines[source.accountID] else { return }
         do {
             let exceptions = try await engine.futureExceptions(calendarID: source.calendarID, eventID: masterID, from: .distantPast)
-            guard revision == lifecycleRevision, editor?.id == draftID else { return }
+            guard !Task.isCancelled, isAuthorized(), revision == lifecycleRevision, editor?.id == draftID else { return }
             let start = source.event.originalStartTime?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? source.start
             editor?.followingExceptionsCount = exceptions.filter {
                 ($0.originalStartTime?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? .distantPast) >= start
             }.count
             editor?.additionalNotificationRecipients += exceptions.flatMap { ($0.attendees ?? []).map(\.email) }
         } catch {
-            if revision == lifecycleRevision, editor?.id == draftID { statusText = "Future exceptions could not be checked. Refresh before changing following events." }
+            if !Task.isCancelled, isAuthorized(), revision == lifecycleRevision, editor?.id == draftID { statusText = "Future exceptions could not be checked. Refresh before changing following events." }
         }
     }
 
@@ -156,7 +160,13 @@ extension CalendarModel {
         guard revision == lifecycleRevision else { throw CalendarModelError.unavailable }
         let operation: CalendarOperation
         let reviewedSource = draft.editScope == .occurrence ? draft.source?.event : draft.seriesMaster
-        if let previous = draft.operationID {
+        if let recovery = draft.recovery {
+            guard recovery.operation.accountID == owner.accountID,
+                  recovery.operation.calendarID == targetCalendarID else {
+                throw CalendarModelError.unsupported("Keep this request on its original calendar while reviewing it.")
+            }
+            operation = try await engine.reviseRecovery(recovery, mutation: change)
+        } else if let previous = draft.operationID {
             operation = try await engine.revise(operationID: previous, mutation: change,
                 calendarID: targetCalendarID, sendUpdates: draft.isImport ? "none" : "all", sourceSuggestionID: draft.sourceID,
                 beforeEvent: reviewedSource)

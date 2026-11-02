@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MailStore
 import Testing
 @testable import Tern
@@ -35,6 +36,59 @@ import Testing
         #expect(model.snapshot?.coverage.map(\.accountID) == ["b"])
         #expect(model.snapshot?.receivedCount == 1)
         #expect(model.error == nil)
+    }
+
+    @Test func failedAndPausedAccountsDoNotPreventOtherHistoryFromLoading() async throws {
+        let mailbox = try await historyMailbox()
+        var requests: [(String, Bool)] = []
+        let model = MailAnalyticsModel { owner, restart in
+            requests.append((owner.account.id, restart))
+            if owner.account.id == "failed" { throw GmailError.unauthorized }
+            return MailAnalyticsCoverage(accountID: owner.account.id, indexedMessageCount: 1,
+                isComplete: requests.filter { $0.0 == owner.account.id }.count == 2)
+        }
+        defer { model.stop() }
+        model.loadHistory(accounts: mailbox.accounts, restart: true)
+        try await waitUntil { !model.isLoadingHistory }
+        #expect(requests.map(\.0) == ["failed", "healthy", "healthy"])
+        #expect(requests.map(\.1) == [true, true, false])
+        #expect(model.historyPagesLoaded == 2)
+        #expect(model.historyAccountName == nil)
+        #expect(model.historyError?.contains("failed@example.invalid: Sign in again") == true)
+        #expect(model.historyError?.contains("paused@example.invalid: Mail sync is paused") == true)
+        #expect(model.historyError?.contains("healthy@example.invalid") == false)
+        await mailbox.stop()
+    }
+
+    @Test func cancellingHistoryStopsBeforeTheNextAccountWithoutReportingFailure() async throws {
+        let mailbox = try await historyMailbox()
+        var requests: [String] = []
+        let model = MailAnalyticsModel { owner, _ in
+            requests.append(owner.account.id)
+            try await Task.sleep(for: .seconds(30))
+            return MailAnalyticsCoverage(accountID: owner.account.id, indexedMessageCount: 0, isComplete: true)
+        }
+        defer { model.stop() }
+        model.loadHistory(accounts: mailbox.accounts, restart: false)
+        try await waitUntil { !requests.isEmpty }
+        model.cancelHistory()
+        try await waitUntil { !model.isLoadingHistory }
+        #expect(requests == ["failed"])
+        #expect(model.historyError == nil)
+        #expect(model.historyPagesLoaded == 0)
+        await mailbox.stop()
+    }
+
+    private func historyMailbox() async throws -> MailboxModel {
+        let account = AccountRecord(id: "failed", email: "failed@example.invalid", displayName: nil,
+            grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: try MailCache.inMemory(), gmail: AuditGmail(),
+            outgoingDirectory: FileManager.default.temporaryDirectory)
+        for id in ["healthy", "paused"] {
+            await mailbox.addAccount(AccountRecord(id: id, email: "\(id)@example.invalid", displayName: nil,
+                grantedScopes: [], addedAt: .now), gmail: AuditGmail(), syncEnabled: id != "paused")
+        }
+        return mailbox
     }
 
     nonisolated private static func message(account: String, id: String) -> CacheTransaction.MessageUpdate {

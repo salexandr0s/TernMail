@@ -35,17 +35,10 @@ actor NativeMailNotificationScheduler: MailNotificationScheduling {
         content.categoryIdentifier = MailNotificationCategories.identifier(for: delivery.action)
         content.filterCriteria = "tern.mail.profile:" + (delivery.profileID ?? "all")
         content.userInfo = ["mailAccountID": delivery.accountID, "mailThreadID": delivery.threadID, "mailMessageID": delivery.messageID]
-        let effectsEnabled = await MainActor.run { UserDefaults.standard.bool(forKey: MailSounds.enabledKey) }
-        let usesEffect = delivery.playsSound && effectsEnabled
-        if delivery.playsSound && !usesEffect { content.sound = .default }
+        // Notification audio belongs to macOS so its sound permission and
+        // Focus delivery policy also apply when Tern's action sounds are on.
+        content.sound = delivery.playsSound ? .default : nil
         try await center.add(UNNotificationRequest(identifier: delivery.id, content: content, trigger: nil))
-        if usesEffect {
-            await MainActor.run {
-                // The system mutes alerts for a conversation on screen; Tern's own sound does too.
-                guard !MailNotificationRouter.shared.isShowing(accountID: delivery.accountID, threadID: delivery.threadID) else { return }
-                MailSounds.play(.newMail)
-            }
-        }
     }
 
     func removeNotifications(accountID: String) async {

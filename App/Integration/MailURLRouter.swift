@@ -72,18 +72,8 @@ final class MailURLRouter {
     func stop() { generation += 1; task?.cancel(); task = nil; conversationWindowLink = nil }
 
     private func open(_ link: MailLink, in app: AppModel, mailbox: MailboxModel, generation current: Int) async throws {
+        _ = try await resolveConversation(link)
         guard let owner = mailbox.account(id: link.accountID) else { throw MailRoutingError.accountMissing }
-        let needsSource = try await mailbox.cache.read { tx in
-            if try tx.thread(id: link.threadID, accountID: link.accountID) == nil { return true }
-            if let messageID = link.messageID { return try tx.message(id: messageID, accountID: link.accountID) == nil }
-            return false
-        }
-        if needsSource {
-            guard !app.accountsNeedingSignIn.contains(link.accountID), owner.syncEnabled else { throw MailRoutingError.accountMissing }
-            try await owner.engine.loadAttachmentSource(link.threadID)
-        }
-        try Task.checkCancellation()
-        guard app.mailbox === mailbox, mailbox.account(id: link.accountID) === owner else { throw CancellationError() }
         let labelID = try await mailbox.cache.read { tx in
             let members = try tx.currentLabels(threadID: link.threadID, accountID: link.accountID)
             let labels: [Set<String>]
@@ -110,6 +100,64 @@ final class MailURLRouter {
         // A linked conversation may fall outside the current list's loaded page,
         // or the viewing pane may be hidden. Its window retains the validated scope.
         conversationWindowLink = link
+    }
+
+    /// Shared by mail links and assistant citations, including detached windows.
+    /// Authorization is checked again after every suspension before presentation.
+    func resolveConversation(_ link: MailLink,
+                             isAuthorized: @escaping @MainActor () -> Bool = { true }) async throws -> MailLink {
+        guard isAuthorized(), let app, let mailbox = app.mailbox,
+              let owner = mailbox.account(id: link.accountID),
+              link.partID == nil || link.messageID != nil else { throw MailRoutingError.invalidLink }
+        func checkAccess() throws {
+            try Task.checkCancellation()
+            guard isAuthorized(), app.mailbox === mailbox,
+                  mailbox.account(id: link.accountID) === owner else { throw CancellationError() }
+        }
+        let needsSource = try await mailbox.cache.read { tx in
+            if try tx.thread(id: link.threadID, accountID: link.accountID) == nil { return true }
+            if let messageID = link.messageID { return try tx.message(id: messageID, accountID: link.accountID) == nil }
+            return false
+        }
+        try checkAccess()
+        if needsSource {
+            guard !app.accountsNeedingSignIn.contains(link.accountID), owner.syncEnabled else { throw MailRoutingError.accountMissing }
+            try await owner.engine.assistantLoadSource(link.threadID)
+            try checkAccess()
+        }
+        if let messageID = link.messageID, let partID = link.partID {
+            let hasAttachment = try await mailbox.cache.read { tx in
+                try tx.message(id: messageID, accountID: link.accountID)?.threadID == link.threadID
+                    && tx.attachments(messageID: messageID, accountID: link.accountID).contains { $0.partID == partID }
+            }
+            try checkAccess()
+            if !hasAttachment {
+                guard !app.accountsNeedingSignIn.contains(link.accountID), owner.syncEnabled else { throw MailRoutingError.accountMissing }
+                try await owner.engine.assistantLoadAttachmentSource(threadID: link.threadID, messageID: messageID, partID: partID)
+                try checkAccess()
+            }
+        }
+        let isValid = try await mailbox.cache.read { tx in
+            guard try tx.thread(id: link.threadID, accountID: link.accountID) != nil else { return false }
+            if let messageID = link.messageID {
+                guard try tx.message(id: messageID, accountID: link.accountID)?.threadID == link.threadID else { return false }
+                if let partID = link.partID {
+                    return try tx.attachments(messageID: messageID, accountID: link.accountID).contains { $0.partID == partID }
+                }
+            }
+            return true
+        }
+        try checkAccess()
+        guard isValid else { throw MailRoutingError.invalidLink }
+        return link
+    }
+
+    /// Called synchronously after resolution so opening a source neither depends
+    /// on a loaded list page nor silently changes the assistant's mail scope.
+    func presentResolvedConversation(_ link: MailLink) {
+        conversationWindowLink = link
+        openMainWindow?()
+        NSApp.activate()
     }
 
     private enum MailRoutingError: Error { case invalidLink, accountMissing }

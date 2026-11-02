@@ -9,8 +9,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     case organizeMail, filters, blocked, vacation, calendar
     case assistant, failedChanges, maintenance
     var id: String { rawValue }
-    /// The `UserDefaults` key holding the pane the window shows. Other windows
-    /// write a raw value here before opening Settings to land on that pane.
+    /// The last accepted pane. Other windows use SettingsNavigationRequests
+    /// so an open editor can refuse navigation before this preference changes.
     static let storageKey = "settingsDestination"
 
     /// The stored pane, or General when the value is missing or unknown.
@@ -172,7 +172,25 @@ struct SettingsNavigationSection: Identifiable, Sendable {
 final class SettingsUnsavedChanges {
     /// What the edits belong to, in sentence case for the confirmation. `nil` when nothing waits.
     private(set) var subject: String?
+    var pendingChange: PendingChange?
+
+    struct PendingChange {
+        let subject: String
+        let apply: @MainActor () -> Void
+    }
 
     func set(_ subject: String) { self.subject = subject }
     func clear() { subject = nil }
+
+    /// Every route that replaces an editor asks before mutating its identity.
+    func request(_ change: @escaping @MainActor () -> Void) {
+        guard let subject else { change(); return }
+        pendingChange = PendingChange(subject: subject, apply: change)
+    }
+
+    func discardAndApply(_ change: PendingChange) {
+        pendingChange = nil
+        clear()
+        change.apply()
+    }
 }

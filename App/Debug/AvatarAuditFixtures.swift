@@ -6,7 +6,7 @@ import SwiftUI
 
 /// Explicit UI preview with synthetic identities and no mail or calendar service.
 struct AvatarAuditFixtures: View {
-    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var section = 0
     @State private var to = [EmailAddress(name: "Example Bank", address: "team@harbor.example.invalid")]
     @State private var cc = [EmailAddress(name: "Alex Example", address: "alex@example.invalid")]

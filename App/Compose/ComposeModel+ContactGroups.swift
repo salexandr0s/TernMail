@@ -3,6 +3,10 @@ import MailStore
 import MessageContent
 
 extension ComposeModel {
+    func groupExpansionChanged(_ isExpanding: Bool) {
+        expandingGroups = max(0, expandingGroups + (isExpanding ? 1 : -1))
+    }
+
     func groupSuggestions(for text: String) async -> [ContactGroupSuggestion] {
         guard let owner, let store = mailbox.accountStore,
               let account = try? await store.accounts().first(where: { $0.id == owner.account.id }),
@@ -15,8 +19,6 @@ extension ComposeModel {
 
     func expandGroup(_ group: ContactGroupSuggestion) async -> [EmailAddress]? {
         guard isEditable, let owner, group.accountID == owner.account.id else { return nil }
-        expandingGroups += 1
-        defer { expandingGroups -= 1 }
         do {
             let result = try await owner.engine.expandContactGroup(group)
             guard !Task.isCancelled, isEditable, draft?.accountID == group.accountID else { return nil }

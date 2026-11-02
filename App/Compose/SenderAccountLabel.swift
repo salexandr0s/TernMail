@@ -8,7 +8,7 @@ struct SenderAccountLabel: View {
     var address: String?
     var avatarModel: AddressAvatarModel?
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
 
     private static let avatarSize = Tokens.Space.s5
 

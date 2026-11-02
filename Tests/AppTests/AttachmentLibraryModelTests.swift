@@ -57,6 +57,48 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func deletingTheLastPageRestartsObservationOnTheLastValidPage() async throws {
+        let mailbox = try mailbox()
+        try await mailbox.cache.write { tx in
+            for index in 0..<101 {
+                let message = MessageRecord(accountID: "audit", id: "page-\(index)", threadID: "page-\(index)",
+                    historyID: 1, date: Date(timeIntervalSince1970: Double(index)), snippet: "", sender: "Example",
+                    recipients: "", cc: nil, subject: "Files", sizeEstimate: 32)
+                let file = AttachmentRecord(accountID: "audit", messageID: message.id, partID: "1", attachmentID: nil,
+                    filename: "file-\(index).txt", mimeType: "text/plain", size: 32, isInline: false)
+                try tx.replaceLibraryAttachments([file], message: message, labelIDs: [])
+            }
+        }
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        let firstPage = Task { await model.reload() }
+        try await waitUntil { model.totalCount == 101 }
+        firstPage.cancel()
+        await firstPage.value
+        await model.loadMore()
+        let lastPage = Task { await model.reload() }
+        defer { lastPage.cancel() }
+        try await waitUntil { model.items.count == 1 }
+        let removed = try #require(model.items.first)
+        model.selection = [removed.id]
+        let previousKey = model.observationKey
+        try await mailbox.cache.write { try $0.deleteLibraryAttachments(messageIDs: [removed.messageID], accountID: "audit") }
+        try await waitUntil { model.pageOffset == 0 }
+        #expect(model.observationKey != previousKey)
+        #expect(model.isLoading)
+        #expect(model.selection.isEmpty)
+        await lastPage.value
+
+        // The view's task(id:) follows the changed key; verify the replacement observation stays live.
+        let clamped = Task { await model.reload() }
+        defer { clamped.cancel() }
+        try await waitUntil { model.items.count == 100 && !model.isLoading }
+        #expect(!model.hasPreviousPage && !model.hasMore)
+        #expect(model.rangeSummary == "100 attachments")
+        try await mailbox.cache.write { try $0.deleteLibraryAttachments(messageIDs: ["page-1"], accountID: "audit") }
+        try await waitUntil { model.totalCount == 99 }
+        await mailbox.stop()
+    }
+
     @Test func calendarRangeIncludesTheWholeFinalDayAndClearRemovesEveryFilter() throws {
         let model = AttachmentLibraryModel(mailbox: try mailbox())
         let day = Date(timeIntervalSince1970: 1_700_000_000)

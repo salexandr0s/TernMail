@@ -70,7 +70,7 @@ struct CalendarTimeGrid: View {
             }
             .calendarTimelineFrame(.canvas)
         }
-        .coordinateSpace(name: Self.coordinateSpace)
+        .coordinateSpace(.named(Self.coordinateSpace))
         .dropDestination(for: ConversationDragItem.self) { items, location in
             guard let item = items.first, let range = dropRange(at: location) else { return false }
             dropMail(item.link, range)
@@ -80,7 +80,7 @@ struct CalendarTimeGrid: View {
             frames = value
             if let drag, !dragCancelled { updateDrag(at: drag.pointer) }
         }
-        .background(CalendarDragCancellation(isActive: drag != nil) { cancelDrag() })
+        .background { CalendarDragCancellation(isActive: drag != nil) { cancelDrag() } }
         .onChange(of: pointerIsDown) { _, isDown in
             if !isDown { drag = nil; dragCancelled = false }
         }
@@ -124,8 +124,8 @@ struct CalendarTimeGrid: View {
                     ForEach(days, id: \.self) { day in dayColumn(day, width: columnWidth, axis: axis) }
                 }
                 .calendarTimelineFrame(.content)
-                .background(CalendarDragAutoScroll(direction: scrollDirection))
-                .background(PerformanceScrollSurfaceMarker(name: "calendar", isActive: true))
+                .background { CalendarDragAutoScroll(direction: scrollDirection) }
+                .background { PerformanceScrollSurfaceMarker(name: "calendar", isActive: true) }
                 .padding(.top, Tokens.Space.s2)
             }
             .scrollPosition($hourScroll)

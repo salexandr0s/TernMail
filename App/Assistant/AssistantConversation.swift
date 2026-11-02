@@ -20,7 +20,12 @@ struct AssistantMessage: Identifiable {
     let id: UUID
     let isUser: Bool
     let createdAt: Date
-    var text: String
+    var text: String {
+        didSet {
+            if text != oldValue { markdown = AssistantMessageMarkdown(text: text) }
+        }
+    }
+    private(set) var markdown: AssistantMessageMarkdown
     var sources: [AssistantSource]
     var emailResults: [AssistantEmailResult]
     var taskResults: [AssistantTaskResult] = []
@@ -36,8 +41,29 @@ struct AssistantMessage: Identifiable {
          sources: [AssistantSource] = [], emailResults: [AssistantEmailResult] = [],
          draftIDs: [String] = [], state: State = .completed, errorMessage: String? = nil) {
         self.id = id; self.isUser = isUser; self.text = text
+        self.markdown = AssistantMessageMarkdown(text: text)
         self.createdAt = createdAt; self.emailResults = emailResults; self.errorMessage = errorMessage
         self.sources = sources; self.draftIDs = draftIDs; self.state = state
+    }
+}
+
+/// Message copies share presentation for the same immutable text. Editing a
+/// copy replaces its helper, so parsing cannot change another copy's output.
+final class AssistantMessageMarkdown {
+    let text: String
+    @MainActor private var cachedBlocks: [AssistantMarkdown.Block]?
+    @MainActor private(set) var preparationCount = 0
+
+    init(text: String) { self.text = text }
+
+    /// Only displayed messages pay the parsing cost. Retained blocks keep the
+    /// parser's display limits and are released with this text revision.
+    @MainActor var blocks: [AssistantMarkdown.Block] {
+        if let cachedBlocks { return cachedBlocks }
+        let blocks = AssistantMarkdown.parse(text)
+        cachedBlocks = blocks
+        preparationCount += 1
+        return blocks
     }
 }
 

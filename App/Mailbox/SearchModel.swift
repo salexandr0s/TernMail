@@ -325,6 +325,7 @@ final class GmailPager {
     /// failed if any is, then more if any has more.
     private(set) var state: State = .ready
     private(set) var revision = 0
+    private(set) var failedAccountIDs: Set<String> = []
     @ObservationIgnored private var sources: [String: Source]
     /// Every conversation Gmail returned so far, by account.
     @ObservationIgnored private var returned: [String: Set<String>] = [:]
@@ -350,7 +351,7 @@ final class GmailPager {
     func next(onPage: @escaping @MainActor ([ThreadKey]) -> Void) {
         let due: Set<State> = switch state {
         case .ready, .more: [.ready, .more]
-        case .busy, .failed: [.busy, .failed]
+        case .busy, .failed: [.ready, .more, .busy, .failed]
         case .loading, .finished: []
         }
         for (accountID, source) in sources where due.contains(source.state) {
@@ -394,6 +395,7 @@ final class GmailPager {
     }
 
     private func updateState() {
+        failedAccountIDs = Set(sources.filter { [.busy, .failed].contains($0.value.state) }.keys)
         let states = sources.values.map(\.state)
         state = if states.contains(.loading) {
             .loading

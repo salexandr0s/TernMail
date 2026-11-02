@@ -484,6 +484,38 @@ enum Schema {
         }
         MailAnalyticsSchema.register(in: &migrator)
         ReadReceiptSchema.register(in: &migrator)
+        migrator.registerMigration("recipient-bcc-v1") { db in
+            try db.alter(table: "message") { $0.add(column: "bcc", .text) }
+            try db.alter(table: "mailAnalyticsMessage") { $0.add(column: "bcc", .text) }
+            try db.create(table: "recipientHeaderBackfill") { t in
+                t.column("accountID", .text).notNull()
+                t.column("messageID", .text).notNull()
+                t.primaryKey(["accountID", "messageID"])
+            }
+            try db.execute(sql: """
+                INSERT INTO recipientHeaderBackfill (accountID,messageID)
+                SELECT accountID,id FROM message WHERE id NOT LIKE 'local-send:%'
+                UNION SELECT accountID,messageID FROM mailAnalyticsMessage
+                """)
+            // Provisional mail has no provider copy. Recover its recipients
+            // from the durable draft and keep its already-enriched local body.
+            let drafts = try LocalDraft.fetchCursor(db, sql: """
+                SELECT d.* FROM localDraft d JOIN message m
+                ON m.accountID = d.accountID AND m.id = 'local-send:' || d.id
+                """)
+            while let draft = try drafts.next() {
+                try db.execute(sql: "UPDATE message SET bcc = ? WHERE accountID = ? AND id = ?",
+                    arguments: [LocalSend.header(draft.bcc.filter(\.isValid)), draft.accountID, LocalSend.messageID(localDraftID: draft.id)])
+            }
+            // Existing provider bodies need one metadata enrichment when opened.
+            // Background sync also fills headers in bounded batches, including analytics.
+            try db.execute(sql: "UPDATE messageBody SET enrichedAt = NULL WHERE messageID NOT LIKE 'local-send:%'")
+            try db.execute(sql: """
+                UPDATE mailAnalyticsState SET isComplete = 0, nextPageToken = NULL,
+                generation = lower(hex(randomblob(16))),
+                lastError = 'Reload history to include Bcc recipients.'
+                """)
+        }
         return migrator
     }
 

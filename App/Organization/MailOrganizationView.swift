@@ -31,7 +31,6 @@ private struct MailOrganizationAccountView: View {
     @Binding var selectedAccount: String
     @State private var model: MailOrganizationModel
     @State private var connection: SettingsAccountState
-    @AppStorage(SettingsDestination.storageKey) private var destination = SettingsDestination.organizeMail.rawValue
 
     init(app: AppModel, accountID: String, accounts: [AccountRecord], selectedAccount: Binding<String>) {
         self.app = app; self.accountID = accountID; self.accounts = accounts
@@ -63,7 +62,11 @@ private struct MailOrganizationAccountView: View {
             .padding(Tokens.Space.s5)
             Divider()
             MailOrganizationExperience(model: model, canCreateFilters: access.canCreateFilters,
-                requirement: requirement, onOpenSettings: { destination = $0.rawValue })
+                requirement: requirement, onOpenSettings: { SettingsNavigationRequests.shared.request($0) },
+                onOpenMessage: { message in
+                    app.openAssistantSource(.init(accountID: accountID, threadID: message.threadID,
+                        messageID: message.messageID, partID: nil, title: message.subject))
+                })
         }
         .task {
             try? await connection.refresh()

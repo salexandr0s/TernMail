@@ -15,7 +15,7 @@ struct CalendarRecurrenceControl: View {
         _rules = rules
         self.allDay = allDay
         self.timeZone = timeZone
-        _selection = State(initialValue: RecurrenceSelection(rules: rules.wrappedValue))
+        _selection = State(initialValue: RecurrenceSelection(rules: rules.wrappedValue, allDay: allDay, timeZone: timeZone))
     }
 
     var body: some View {

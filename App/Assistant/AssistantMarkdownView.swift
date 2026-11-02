@@ -3,11 +3,15 @@ import SwiftUI
 
 /// Model output is text. Validated result cards provide navigation and actions.
 struct AssistantMarkdownView: View {
-    let text: String
+    private let markdown: AssistantMessageMarkdown
     @Environment(\.colorSchemeContrast) private var contrast
 
+    init(markdown: AssistantMessageMarkdown) { self.markdown = markdown }
+
+    init(text: String) { markdown = AssistantMessageMarkdown(text: text) }
+
     var body: some View {
-        let blocks = AssistantMarkdown.parse(text)
+        let blocks = markdown.blocks
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
                 blockView(block).padding(.top, spacing(before: index, in: blocks))

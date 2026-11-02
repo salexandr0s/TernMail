@@ -106,6 +106,7 @@ import TernAI
     @Test func cacheReusesNavigationButNeverBypassesScopeOrAccessChanges() async throws {
         let provider = SummaryProvider(replies: try (1...7).map { try Self.response("Summary \($0)") })
         let fixture = Fixture(provider: provider)
+        fixture.model.selectedScope = .selectedThreads
         await fixture.model.refreshConnection()
         let first = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
         fixture.context.selectedThreads = [.init(accountID: "a", threadID: "other")]

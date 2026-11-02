@@ -78,10 +78,21 @@ final class AppModel {
 
     private var spotlight: MailSpotlightIndexer {
         if let spotlightIndexer { return spotlightIndexer }
-        let indexer = MailSpotlightIndexer(app: self)
+        let isolated = AssistantRuntimeEnvironment.isTestHost
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit")
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar")
+        let defaults = isolated
+            ? UserDefaults(suiteName: "tern.audit.spotlight.\(UUID().uuidString)") ?? UserDefaults()
+            : .standard
+        let removal = isolated ? MailSpotlightRemoval(defaults: defaults, remove: { _ in }) : nil
+        let indexer = MailSpotlightIndexer(app: self, defaults: defaults,
+                                         removal: removal, allowsIndexing: !isolated)
         spotlightIndexer = indexer
         return indexer
     }
+
+    var spotlightRemoval: MailSpotlightRemoval { spotlight.removal }
+    func retrySpotlightRemoval() { spotlight.retryRemoval() }
 
     var maintenance: CacheMaintenanceModel {
         if let maintenanceModel { return maintenanceModel }
@@ -371,8 +382,7 @@ final class AppModel {
     func calendarStoreURL() throws -> URL {
         try Self.dataDirectory().appending(path: "calendar.sqlite")
     }
-    /// Accounts whose Google session ended while the others carry on. With
-    /// one account the window shows sign-in instead.
+    /// Accounts needing renewed Google access. Their cached mail stays open.
     private(set) var accountsNeedingSignIn: Set<String> = []
     /// Sign Out of every account, waiting for confirmation.
     var isConfirmingSignOut = false
@@ -460,6 +470,7 @@ final class AppModel {
 
     func start() async {
         observeActivity()
+        spotlight.retryRemoval()
         await changeAccounts { [self] in await restoreAccounts() }
     }
 
@@ -474,6 +485,7 @@ final class AppModel {
                 let onboardingAudit = arguments.contains("--ui-audit")
                     && (arguments.contains("--ui-audit-onboarding") || arguments.contains("--ui-audit-onboarding-connected"))
                 let emptyOnboarding = onboardingAudit && !arguments.contains("--ui-audit-onboarding-connected")
+                let cachedReauthentication = arguments.contains("--ui-audit-cached-reauth")
                 onboarding.resolve(hasExistingAccounts: !onboardingAudit)
                 if onboardingAudit {
                     let requested = arguments.first { $0.hasPrefix("--ui-audit-onboarding-step=") }
@@ -486,7 +498,7 @@ final class AppModel {
                 let second = AccountRecord(id: "ui-audit-2", email: "second@example.invalid", displayName: "Second Audit", grantedScopes: [], addedAt: .now)
                 if !emptyOnboarding {
                     try await accounts.save(account)
-                    try await accounts.save(second)
+                    if !cachedReauthentication { try await accounts.save(second) }
                 }
                 self.cache = cache
                 self.accounts = accounts
@@ -514,12 +526,15 @@ final class AppModel {
                     accountsNeedingSignIn.insert(second.id)
                 }
                 Task {
-                    mailNotifications?.prepareAccount(second.id)
-                    await mailbox.addAccount(second, gmail: AuditGmail(.second), onCreate: configureMailRuntime)
-                    mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+                    if !cachedReauthentication {
+                        mailNotifications?.prepareAccount(second.id)
+                        await mailbox.addAccount(second, gmail: AuditGmail(.second), onCreate: configureMailRuntime)
+                        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+                    }
                     schedulePreferenceReconciliation()
                     spotlight.start()
                     await mailbox.start()
+                    if cachedReauthentication { sessionExpired(account.id) }
                     await PerformanceAudit.runIfRequested(app: self)
                 }
                 return
@@ -543,7 +558,7 @@ final class AppModel {
                 adopt(session ?? AccountSession(accountID: account.id))
             }
             let signedIn = try await correctGrants(of: stored, in: accounts)
-            guard let first = signedIn.first else {
+            guard !signedIn.isEmpty else {
                 phase = .signedOut
                 return
             }
@@ -554,24 +569,19 @@ final class AppModel {
             }
             let expired = signedIn.filter { sessions[$0.id]?.isSignedIn != true }
             accountsNeedingSignIn = Set(expired.map(\.id))
-            if signedIn.count == 1, !expired.isEmpty {
-                phase = .signInRequired(first)
-                return
-            }
             await openMailbox(for: signedIn)
         } catch {
             phase = .failed(error.localizedDescription)
         }
     }
 
-    /// Sign-in from the sign-in screen, including after the only account's
-    /// session ended.
+    /// Sign-in from a screen that has no open cached workspace.
     func signIn() async {
         let returning: AccountRecord? = if case .signInRequired(let old) = phase { old } else { nil }
         await signIn(as: returning)
     }
 
-    /// Sign-in for one of several accounts whose session ended.
+    /// Renew access for any account without closing its cached workspace.
     func signInAgain(to accountID: String) async {
         guard let owner = mailbox?.account(id: accountID) else { return }
         await signIn(as: owner.account)
@@ -907,10 +917,6 @@ final class AppModel {
         let session = sessions.removeValue(forKey: accountID)
         accountsNeedingSignIn.remove(accountID)
         phase = .signedIn(mailbox.account)
-        if !mailbox.hasSeveralAccounts, accountsNeedingSignIn.remove(mailbox.account.id) != nil {
-            // The account left needs sign-in, which one account shows in the window.
-            phase = .signInRequired(mailbox.account)
-        }
         do {
             try await removeAccountData(account, session: session, from: accounts)
         } catch {
@@ -960,8 +966,7 @@ final class AppModel {
         sessions[accountID] = session
     }
 
-    /// Saves, sends and label changes retry until the user signs in again.
-    /// With several accounts only this one's section asks for sign-in.
+    /// Keep local work accessible while this account waits for renewed access.
     private func sessionExpired(_ accountID: String) {
         guard let mailbox, mailbox.account(id: accountID) != nil else { return }
         inboxReconciliationRevision += 1
@@ -970,11 +975,7 @@ final class AppModel {
             await watcher?.stop()
             await self?.refreshInboxUpdates()
         }
-        if mailbox.hasSeveralAccounts {
-            accountsNeedingSignIn.insert(accountID)
-        } else if case .signedIn(let account) = phase {
-            phase = .signInRequired(account)
-        }
+        accountsNeedingSignIn.insert(accountID)
         assistantModel?.refreshAccess()
         calendarModel?.accessExpired(accountID)
         tasksModel?.invalidateAccount(accountID)
@@ -1115,7 +1116,6 @@ final class AppModel {
         self.mailbox = mailbox
         bindMailNotificationRoutes()
         phase = .signedIn(first)
-        if records.count == 1, let session = sessions[first.id], !session.isSignedIn { phase = .signInRequired(first) }
         schedulePreferenceReconciliation()
         mailURLRouter?.resume()
         await refreshInboxUpdates()

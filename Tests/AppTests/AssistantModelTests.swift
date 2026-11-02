@@ -50,6 +50,7 @@ import TernAI
         await fixture.model.waitForCurrentTurn()
         fixture.context.currentAccounts = ["b"]
         fixture.model.refreshAccess()
+        fixture.model.startChatWithCurrentScope()
         fixture.model.send("Draft for this account.")
         await fixture.model.waitForCurrentTurn()
 
@@ -66,6 +67,117 @@ import TernAI
         }
         #expect(requests.first?.input.first?["content"]?.stringValue == explicitRequest)
         #expect(sampledAccounts == ["a", "b"])
+    }
+
+    @Test func navigationKeepsUnfinishedWorkWithoutWideningConversationAccess() async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Private answer.")), .complete(Self.answer("Follow-up."))])
+        let fixture = try Fixture(provider: provider, restoredAccountIDs: ["a", "b"])
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Private account question")
+        await fixture.model.waitForCurrentTurn()
+        fixture.model.composerText = "Unfinished follow-up"
+        fixture.context.currentAccounts = ["b"]
+        fixture.model.refreshAccess()
+        #expect(fixture.model.hasPendingScopeChange)
+        #expect(fixture.model.messages.count == 2)
+        #expect(fixture.model.composerText == "Unfinished follow-up")
+        fixture.model.send("Must wait for scope choice")
+        #expect(await provider.requests.count == 1)
+
+        fixture.model.keepConversationScope()
+        fixture.model.send(fixture.model.composerText)
+        await fixture.model.waitForCurrentTurn()
+        let request = try #require(await provider.requests.last)
+        #expect(request.instructions.contains("a@example.invalid"))
+        #expect(!request.instructions.contains("b@example.invalid"))
+        #expect(try AIJSON.array(request.input).jsonString().contains("Private account question"))
+        #expect(fixture.model.usesPreviousMailScope)
+
+        fixture.model.setAccountEnabled("a", enabled: false)
+        #expect(fixture.model.messages.isEmpty)
+        #expect(fixture.model.composerText.isEmpty)
+    }
+
+    @Test func choosingNewScopeKeepsThePromptAndDiscardsEarlierProviderHistory() async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Private answer.")), .complete(Self.answer("New answer."))])
+        let fixture = try Fixture(provider: provider, restoredAccountIDs: ["a", "b"])
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Private account question")
+        await fixture.model.waitForCurrentTurn()
+        fixture.model.composerText = "Unfinished question"
+        fixture.context.currentAccounts = ["b"]
+        fixture.model.refreshAccess()
+        fixture.model.startChatWithCurrentScope()
+        #expect(fixture.model.messages.isEmpty)
+        #expect(fixture.model.composerText == "Unfinished question")
+        #expect(!fixture.model.hasPendingScopeChange)
+        fixture.model.send(fixture.model.composerText)
+        await fixture.model.waitForCurrentTurn()
+        let request = try #require(await provider.requests.last)
+        #expect(request.input.count == 1)
+        #expect(request.instructions.contains("b@example.invalid"))
+        #expect(!request.instructions.contains("a@example.invalid"))
+        #expect(try AIJSON.array(request.input).jsonString().contains("Private") == false)
+    }
+
+    @Test func navigationCancelsAnActiveTurnAndRetainsItsDraft() async throws {
+        let provider = AssistantProviderFixture(replies: [.suspended])
+        let fixture = try Fixture(provider: provider, restoredAccountIDs: ["a", "b"])
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("First request")
+        await provider.waitForRequests(1)
+        let completion = Task { await fixture.model.waitForCurrentTurn() }
+        await Task.yield()
+        fixture.model.composerText = "Next question"
+        fixture.context.currentAccounts = ["b"]
+        fixture.model.refreshAccess()
+        await provider.release(Self.answer("Late private response"))
+        await completion.value
+        #expect(!fixture.model.isRunning)
+        #expect(fixture.model.hasPendingScopeChange)
+        #expect(fixture.model.composerText == "Next question")
+        #expect(fixture.model.messages.last?.state == .cancelled)
+        #expect(fixture.model.messages.last?.text.contains("Late private response") == false)
+    }
+
+    @Test func savedModelDoesNotClaimReadinessAfterCatalogueFailureAndRetryRestoresIt() async throws {
+        let provider = AssistantProviderFixture(replies: [.complete(Self.answer("Ready again."))])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        #expect(fixture.model.isModelReady)
+        await provider.setModelsUnavailable(true)
+        await fixture.model.refreshConnection()
+        #expect(fixture.model.selectedModelID == "test")
+        #expect(!fixture.model.isModelReady)
+        #expect(fixture.model.modelErrorMessage != nil)
+        fixture.model.composerText = "Keep this question"
+        fixture.model.send(fixture.model.composerText)
+        #expect(await provider.requests.isEmpty)
+        #expect(fixture.model.composerText == "Keep this question")
+        await provider.setModelsUnavailable(false)
+        await fixture.model.refreshConnection()
+        #expect(fixture.model.isModelReady)
+        fixture.model.send(fixture.model.composerText)
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.messages.last?.state == .completed)
+    }
+
+    @Test func sourceAuthorizationRejectsRevokeAndRegrantButIgnoresNavigation() throws {
+        let provider = AssistantProviderFixture(replies: [])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        let authorization = try #require(fixture.model.sourceNavigationAuthorization(accountID: "a"))
+        fixture.context.currentAccounts = ["b"]
+        fixture.model.refreshAccess()
+        #expect(authorization())
+        fixture.model.setAccountEnabled("a", enabled: false)
+        fixture.model.setAccountEnabled("a", enabled: true)
+        #expect(!authorization())
+        #expect(fixture.model.sourceNavigationAuthorization(accountID: "a")?() == true)
     }
 
     @Test func revokingAnAccountClearsDisplayAndProviderHistory() async throws {
@@ -290,6 +402,7 @@ import TernAI
         #expect(await provider.requests.count == 1)
 
         fixture.model.selectedScope = .currentAccount
+        fixture.model.startChatWithCurrentScope()
         fixture.model.run(suggestion)
         await fixture.model.waitForCurrentTurn()
         let second = try #require(await provider.requests.last)
@@ -794,7 +907,12 @@ private actor AssistantProviderFixture: AIProvider {
     private var requestWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     init(replies: [Reply]) { self.replies = replies }
-    func models() async throws -> [AIModel] { [.init(id: "test", displayName: "Test model")] }
+    private var modelsUnavailable = false
+    func setModelsUnavailable(_ value: Bool) { modelsUnavailable = value }
+    func models() async throws -> [AIModel] {
+        if modelsUnavailable { throw AIProviderError.network }
+        return [.init(id: "test", displayName: "Test model")]
+    }
     nonisolated func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task { await self.start(request, continuation: continuation) }

@@ -63,7 +63,7 @@ struct TriagePreferencesPane: View {
                 .padding(.vertical, Tokens.Space.s2)
             }
             Section("Sound") {
-                SettingsToggleRow("Play mail sounds", detail: "Use macOS sounds for archive, Trash, sent mail and new mail.", isOn: $sounds)
+                SettingsToggleRow("Play mail sounds", detail: "Use macOS sounds for archive, Trash and sent mail.", isOn: $sounds)
             }
         }
     }

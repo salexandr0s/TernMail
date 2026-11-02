@@ -152,6 +152,15 @@ import Testing
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         try await settleMail(in: controller.view, window: window)
         #expect(try mailSplit(in: controller.view) === mail)
+        // Rows and toolbar insets can settle before the retained split applies
+        // its deferred divider restoration. Keep the original width assertion.
+        let restorationDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while zip(mailPanes, mailWidths).contains(where: { abs($0.0.frame.width - $0.1) > 1 }),
+              ContinuousClock.now < restorationDeadline {
+            window.layoutIfNeeded()
+            controller.view.layoutSubtreeIfNeeded()
+            try await settle()
+        }
         for (pane, width) in zip(mailPanes, mailWidths) {
             #expect(abs(pane.frame.width - width) <= 1, "Returning from Attachments must restore Mail's pane widths")
         }

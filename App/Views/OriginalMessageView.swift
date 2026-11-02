@@ -16,6 +16,7 @@ struct OriginalMessageWindow: View {
     @State private var bytes: Data?
     @State private var subject = ""
     @State private var failure: String?
+    @State private var saveFailure: String?
 
     var body: some View {
         Group {
@@ -40,6 +41,11 @@ struct OriginalMessageWindow: View {
                     .help("Save the complete original as an .eml file")
                     .disabled(bytes == nil)
             }
+        }
+        .alert("Couldn't Save Original", isPresented: $saveFailure.isPresent()) {
+            Button("OK", role: .cancel) { saveFailure = nil }
+        } message: {
+            Text(saveFailure ?? "Choose another location and try again.")
         }
         .onExitCommand { dismissWindow() }
         .task(id: link) { await load() }
@@ -78,7 +84,7 @@ struct OriginalMessageWindow: View {
         let response = if let window = NSApp.keyWindow { await panel.beginSheetModal(for: window) } else { await panel.begin() }
         guard response == .OK, let url = panel.url else { return }
         do { try bytes.write(to: url, options: .atomic) }
-        catch { failure = "The original message could not be saved." }
+        catch { saveFailure = "Choose a writable location with enough free space, then try again." }
     }
 }
 

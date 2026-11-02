@@ -1,5 +1,6 @@
 import Foundation
 import GmailAPI
+import MailOrganization
 
 /// Progress counts attempted metadata reads, including unavailable messages.
 /// The selected total becomes final when reading begins.
@@ -34,6 +35,18 @@ public struct MailOrganizationSamples: Sendable, Equatable {
         self.selectedCount = selectedCount
         self.unavailableCount = unavailableCount
         self.isPartial = isPartial
+    }
+
+    /// Excluding one of a sender's examples must also exclude its broad future
+    /// rule. Use the same complete-sample evidence as the action queue.
+    public func eligibleRuleSenders(_ candidates: [String], selectedMessageIDs: Set<String>) -> [String] {
+        guard !isPartial else { return [] }
+        let evidence = OrganizationEvidence(messages: messages.map {
+            .init(id: $0.messageID, threadID: $0.threadID, sender: $0.sender, recipients: $0.recipients,
+                  date: $0.date, isSent: $0.isSent, hasMailingListHeaders: $0.hasMailingListHeaders,
+                  isAutomated: $0.isAutomated)
+        })
+        return candidates.filter { evidence.supportsRule(sender: $0, classifiedMessageIDs: selectedMessageIDs) }
     }
 }
 

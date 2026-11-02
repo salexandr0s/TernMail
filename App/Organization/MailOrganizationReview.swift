@@ -1,10 +1,12 @@
 import SwiftUI
+import SyncEngine
 
 /// Review content is independent of account connections and can render a
 /// prepared plan without reading mail or starting an assistant request.
 struct MailOrganizationReviewSections: View {
     @Bindable var model: MailOrganizationModel
     let canCreateFilters: Bool
+    var onOpenMessage: ((MailOrganizationSample) -> Void)? = nil
 
     private var isReviewing: Bool { model.phase == .review }
     private var allSelected: Bool { model.selectedCount == model.categories.count }
@@ -57,7 +59,7 @@ struct MailOrganizationReviewSections: View {
                         if isReviewing || category.isSelected {
                             MailOrganizationCategoryRow(category: $category, samples: samples,
                                 canCreateFilters: canCreateFilters && !samples.isPartial,
-                                isEditable: isReviewing, isApplied: model.phase == .complete)
+                                isEditable: isReviewing, isApplied: model.phase == .complete, onOpenMessage: onOpenMessage)
                         }
                     }
                 }

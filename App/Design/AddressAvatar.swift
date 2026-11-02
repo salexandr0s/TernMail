@@ -27,7 +27,7 @@ struct AddressAvatar<Placeholder: View>: View {
     private let contextOverride: AddressAvatarContext?
     private let placeholder: Placeholder
     @Environment(\.addressAvatarContext) private var environmentContext
-    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = true
+    @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var model = AddressAvatarModel()
     @State private var configuredIdentity: String?
 

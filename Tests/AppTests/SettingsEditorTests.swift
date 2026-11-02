@@ -6,6 +6,31 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct SettingsEditorTests {
+    @Test func dirtyEditorSurvivesCancelledAccountAndExternalNavigation() throws {
+        let edits = SettingsUnsavedChanges()
+        let requests = SettingsNavigationRequests()
+        var account = "first"
+        var pane = SettingsDestination.vacation
+        edits.set("vacation responder")
+        edits.request { account = "second" }
+        #expect(account == "first")
+        edits.pendingChange = nil // Cancel the confirmation.
+        #expect(edits.subject == "vacation responder")
+
+        requests.request(.calendar) // May arrive before the Settings window opens.
+        let requested = try #require(requests.takeRequest())
+        edits.request { pane = requested }
+        #expect(pane == .vacation)
+        #expect(requests.takeRequest() == nil)
+        let pending = try #require(edits.pendingChange)
+        edits.discardAndApply(pending)
+        #expect(pane == .calendar)
+        #expect(edits.subject == nil)
+        #expect(edits.pendingChange == nil)
+        edits.request { account = "second" }
+        #expect(account == "second")
+    }
+
     @Test func liveSettingsPermissionChangesWithoutRebuildingTheAccount() async throws {
         let store = try AccountStore.inMemory()
         try await store.save(AccountRecord(id: "account", email: "me@example.com", displayName: nil, grantedScopes: [], addedAt: .now))

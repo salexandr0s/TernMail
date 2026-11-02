@@ -207,7 +207,11 @@ final class MailboxModel {
         )
         defaultAccount = first
         search = SearchModel(cache: cache, sources: [.init(accountID: account.id, engine: first.engine)])
-        search.onResultsChange = { [weak self] in self?.observeSearchPage() }
+        search.onResultsChange = { [weak self] in
+            guard let self else { return }
+            if search.isActive { resetOlderConversations() }
+            observeSearchPage()
+        }
         wire(first)
         search.setMessageMode(!self.listPreferences.conversations)
     }
@@ -239,6 +243,7 @@ final class MailboxModel {
         } else {
             if previousSearchIDs != Set(searchedAccounts.map(\.account.id)) { updateSearchSources() }
             if previousMailboxIDs != Set(selectedAccounts.map(\.account.id)) {
+                resetOlderConversations()
                 endUnreadReadingVisit()
                 threads = []
                 mailboxPage = .empty
@@ -564,36 +569,46 @@ final class MailboxModel {
         observeThreads()
     }
 
-    /// Whether the list ends with Load Older Conversations: the cache has
-    /// nothing more for this mailbox, and Gmail may. The cache holds all of
-    /// the Inbox and Drafts.
+    /// Initial sync is bounded, including Inbox. Only a completed Gmail
+    /// listing establishes that this visit has reached the end of a mailbox.
     var offersOlderConversations: Bool {
-        // Gmail pages one account at a time.
-        guard case .account(_, let id)? = selectedMailbox,
-              ![SystemLabel.inbox, SystemLabel.draft, Self.outboxID, Self.snoozedID].contains(id),
-              threads.count < threadLimit
-        else { return false }
+        guard !search.isActive, let id = selectedLabelID,
+              ![SystemLabel.draft, Self.outboxID, Self.snoozedID, AttachmentLibraryModel.mailboxID].contains(id),
+              !id.hasPrefix(MailNavigationModel.searchPrefix), !selectedAccounts.isEmpty,
+              threads.count < threadLimit else { return false }
         return older?.state != .finished
     }
 
-    /// Asks Gmail for the mailbox's next page older than the list, stores it
-    /// and shows it at the end of the list.
+    var olderFailureAccounts: String? {
+        guard let failed = older?.failedAccountIDs, !failed.isEmpty else { return nil }
+        return selectedAccounts.filter { failed.contains($0.account.id) }
+            .map { accountTitle($0.account) }.joined(separator: ", ")
+    }
+
     func loadOlderConversations() {
-        guard case .account(let accountID, let labelID)? = selectedMailbox, offersOlderConversations,
-              let engine = self.account(id: accountID)?.engine
-        else { return }
-        let mailbox = selectedMailbox
+        guard offersOlderConversations, let labelID = selectedLabelID else { return }
         if older == nil {
-            let cutoff = threads.map(\.lastDate).min()
-            older = GmailPager(accountID: accountID) { token in
-                try await engine.loadOlder(labelID: labelID, before: cutoff, pageToken: token)
+            var sources: [String: GmailPager.Fetch] = [:]
+            for owner in selectedAccounts {
+                let engine = owner.engine
+                sources[owner.account.id] = { token in
+                    try await engine.loadOlder(labelID: labelID, pageToken: token)
+                }
             }
+            older = GmailPager(sources: sources)
         }
-        older?.next { [weak self] page in
-            guard let self, selectedMailbox == mailbox else { return }
-            threadLimit = max(threadLimit, threads.count + page.count)
+        guard let pager = older else { return }
+        pager.next { [weak self, weak pager] page in
+            guard let self, let pager, older === pager, !search.isActive else { return }
+            threadLimit = max(threadLimit, threads.count + page.count + 1)
             observeThreads()
         }
+    }
+
+    private func resetOlderConversations() {
+        older?.cancel()
+        older = nil
+        threadLimit = Self.pageSize
     }
 
     // MARK: Compose
@@ -1117,6 +1132,7 @@ final class MailboxModel {
 
     /// Keeps search and a combined mailbox's list in step with the accounts.
     private func accountsChanged() {
+        resetOlderConversations()
         endUnreadReadingVisit()
         listContextRevision &+= 1
         listPages.stop()

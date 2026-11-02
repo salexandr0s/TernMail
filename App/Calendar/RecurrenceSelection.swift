@@ -13,22 +13,45 @@ struct RecurrenceSelection: Equatable {
     var count = 10
     var until = Date.now
     var custom = ""
+    private var originalUntil: String?
+    private var originalUntilDate: Date?
+    private var originalAllDay = false
+    private var originalTimeZoneID = ""
 
-    init(rules: [String]) {
+    init(rules: [String], allDay: Bool = false, timeZone: TimeZone = .autoupdatingCurrent) {
         custom = rules.joined(separator: "\n")
-        if rules.isEmpty { frequency = "NONE" }
-        else if rules.count == 1, let rule = rules.first, rule.hasPrefix("RRULE:") {
-            let pairs = rule.dropFirst(6).split(separator: ";").map { $0.split(separator: "=", maxSplits: 1).map(String.init) }
-            let fields = Dictionary(pairs.filter { $0.count == 2 }.map { ($0[0], $0[1]) }, uniquingKeysWith: { first, _ in first })
-            let supported = Set(["FREQ", "INTERVAL", "BYDAY", "COUNT"])
-            if Set(fields.keys).isSubset(of: supported), let freq = fields["FREQ"], ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].contains(freq),
-               fields["BYDAY"] == nil || freq == "WEEKLY" && (fields["BYDAY"]?.split(separator: ",").allSatisfy { Self.dayCodes.contains(String($0)) } == true) {
-                frequency = freq
-                interval = max(1, Int(fields["INTERVAL"] ?? "1") ?? 1)
-                weekdays = Set((fields["BYDAY"] ?? "").split(separator: ",").map(String.init))
-                if let value = fields["COUNT"], let number = Int(value) { count = max(1, number); endMode = "count" }
-            } else { frequency = "CUSTOM" }
-        } else { frequency = "CUSTOM" }
+        guard !rules.isEmpty else { return }
+        frequency = "CUSTOM"
+        guard rules.count == 1, let rule = rules.first, rule.hasPrefix("RRULE:") else { return }
+        let pairs = rule.dropFirst(6).split(separator: ";", omittingEmptySubsequences: false)
+            .map { $0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init) }
+        guard pairs.allSatisfy({ $0.count == 2 && !$0[1].isEmpty }),
+              Set(pairs.map { $0[0] }).count == pairs.count else { return }
+        let fields = Dictionary(uniqueKeysWithValues: pairs.map { ($0[0], $0[1]) })
+        let supported = Set(["FREQ", "INTERVAL", "BYDAY", "COUNT", "UNTIL"])
+        guard Set(fields.keys).isSubset(of: supported), let freq = fields["FREQ"],
+              ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].contains(freq),
+              let interval = Int(fields["INTERVAL"] ?? "1"), (1...999).contains(interval),
+              fields["COUNT"] == nil || fields["UNTIL"] == nil else { return }
+        let days = (fields["BYDAY"] ?? "").split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        guard fields["BYDAY"] == nil || (freq == "WEEKLY" && days.allSatisfy(Self.dayCodes.contains)) else { return }
+        if let value = fields["COUNT"] {
+            guard let count = Int(value), (1...9999).contains(count) else { return }
+            self.count = count
+            endMode = "count"
+        }
+        if let value = fields["UNTIL"] {
+            guard let date = Self.parseUntil(value, allDay: allDay, timeZone: timeZone) else { return }
+            until = date
+            endMode = "until"
+            originalUntil = value
+            originalUntilDate = date
+            originalAllDay = allDay
+            originalTimeZoneID = timeZone.identifier
+        }
+        frequency = freq
+        self.interval = interval
+        weekdays = fields["BYDAY"] == nil ? [] : Set(days)
     }
 
     func rules(allDay: Bool, timeZone: TimeZone) -> [String] {
@@ -41,6 +64,11 @@ struct RecurrenceSelection: Equatable {
         if frequency == "WEEKLY", !weekdays.isEmpty { fields.append("BYDAY=" + Self.dayCodes.filter(weekdays.contains).joined(separator: ",")) }
         if endMode == "count" { fields.append("COUNT=\(count)") }
         if endMode == "until" {
+            if let originalUntil, until == originalUntilDate, allDay == originalAllDay,
+               timeZone.identifier == originalTimeZoneID {
+                fields.append("UNTIL=" + originalUntil)
+                return ["RRULE:" + fields.joined(separator: ";")]
+            }
             let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
             formatter.locale = Locale(identifier: "en_US_POSIX")
             var eventCalendar = Calendar(identifier: .gregorian); eventCalendar.timeZone = timeZone
@@ -54,5 +82,17 @@ struct RecurrenceSelection: Equatable {
             }
         }
         return ["RRULE:" + fields.joined(separator: ";")]
+    }
+
+    private static func parseUntil(_ value: String, allDay: Bool, timeZone: TimeZone) -> Date? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.isLenient = false
+        formatter.timeZone = allDay ? timeZone : TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = allDay ? "yyyyMMdd" : "yyyyMMdd'T'HHmmss'Z'"
+        guard value.count == (allDay ? 8 : 16), let date = formatter.date(from: value),
+              formatter.string(from: date) == value else { return nil }
+        return date
     }
 }

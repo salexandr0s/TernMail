@@ -1,40 +1,55 @@
 import MessageContent
 import SwiftUI
 
-/// A saved signature is displayed separately so body edits cannot change it.
+/// The outgoing signature has a preview and per-message choices. Defaults
+/// remain in Settings; changing this row only changes the current draft.
 struct ComposeSignatureView: View {
-    let html: String
+    @Bindable var model: ComposeModel
+    let edit: () -> Void
     @State private var height = Tokens.Space.s8
     @State private var isExpanded = false
 
+    private var html: String? { model.content.signatureHTML.flatMap { $0.isEmpty ? nil : $0 } }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { isExpanded.toggle() } label: {
-                HStack(spacing: Tokens.Space.s2) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: Tokens.Space.s3)
-                    Image(systemName: "signature")
-                        .frame(width: Tokens.Control.icon)
-                    Text("Signature")
+            HStack(spacing: Tokens.Space.s2) {
+                Button { isExpanded.toggle() } label: {
+                    Label("Signature", systemImage: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption.weight(.medium))
-                    Spacer(minLength: Tokens.Space.s2)
-                    Text("Included")
-                        .font(.caption)
                 }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, Tokens.Space.s5)
-                .padding(.vertical, Tokens.Space.s2)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(html == nil)
+                .help(isExpanded ? "Hide signature preview" : "Show signature preview")
+                .accessibilityValue(html == nil ? "None" : (isExpanded ? "Expanded" : "Collapsed"))
+                Spacer(minLength: Tokens.Space.s2)
+                Text(html == nil ? "None" : "Included").font(.caption).foregroundStyle(.secondary)
+                Menu("Change Signature", systemImage: "signature") {
+                    Button("None") { model.chooseSignature(nil) }
+                    if model.selectedSender?.identity.signatureHTML?.isEmpty == false {
+                        Button("Gmail Signature") { model.useGmailSignature() }
+                    }
+                    if !model.signatures.isEmpty {
+                        Divider()
+                        ForEach(model.signatures) { signature in
+                            Button(signature.name) { model.chooseSignature(signature) }
+                        }
+                    }
+                    Divider()
+                    Button(html == nil ? "Write Signature…" : "Edit for This Message…", action: edit)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(!model.isEditable)
+                .accessibilityIdentifier("compose-choose-signature")
             }
-            .buttonStyle(.plain)
-            .help(isExpanded ? "Hide signature preview" : "Show signature preview")
-            .accessibilityLabel("Signature")
-            .accessibilityValue(isExpanded ? "Expanded, included in message" : "Collapsed, included in message")
-            .accessibilityHint("Shows or hides the preview. The signature stays in the message.")
-            if isExpanded {
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.vertical, Tokens.Space.s2)
+            if isExpanded, let html {
                 ScrollView {
-                    MessageWebView(html: MessageDocument.render(html: html).html, blocker: nil, height: $height)
+                    MessageWebView(html: MessageDocument.render(html:
+                        (model.content.signatureSeparator ? "<div>-- </div>" : "") + html
+                    ).html, blocker: nil, height: $height)
                         .frame(height: height)
                 }
                 .frame(height: min(height, Tokens.Layout.quoteMaxHeight))
@@ -46,6 +61,6 @@ struct ComposeSignatureView: View {
         .overlay(alignment: .top) { Divider() }
         .ternAnimation(value: isExpanded)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Saved signature")
+        .accessibilityLabel("Message signature")
     }
 }
