@@ -66,13 +66,11 @@ struct CalendarEventEditor: View {
                 systemImage: draft.isDeletion ? "calendar.badge.minus" : "calendar",
                 color: selectedCalendar?.color ?? .accentColor
             )
-            .accessibilityIdentifier("calendar.editor.heading")
             Divider()
             Form {
                 Section("Event") {
                     TextField("Title", text: $title, prompt: Text("Add a title"))
-                        .font(.title2.bold())
-                        .accessibilityIdentifier("calendar.editor.title")
+                        .font(.title3.weight(.medium))
                     Picker("Calendar", selection: $draft.calendarKey) {
                         ForEach(calendars.filter { $0.canWrite || $0.id == draft.calendarKey }) { calendar in
                             Text("\(calendar.accountName) · \(calendar.title)").tag(calendar.id)
@@ -80,8 +78,8 @@ struct CalendarEventEditor: View {
                     }
                     TextField("Location", text: $location, prompt: Text("Add a place or address"))
                 }.disabled(!editable || draft.isDeletion)
-                Section("Date and time") {
-                    Toggle("All day", isOn: $allDay)
+                Section("Date & Time") {
+                    Toggle("All-day", isOn: $allDay)
                         .onChange(of: allDay) { _, value in
                             if value { start = eventCalendar.startOfDay(for: start); end = max(start, eventCalendar.startOfDay(for: end)) }
                             else { start = CalendarLayout.date(at: 9 * 60, on: start, calendar: eventCalendar); end = start.addingTimeInterval(1800) }
@@ -92,27 +90,26 @@ struct CalendarEventEditor: View {
                     DatePicker(allDay ? "Last day" : "Ends", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
                         .disabled(preservesImportedDates)
                     if !allDay {
-                        CalendarTimeZonePicker(title: "Time zone", identifier: $zoneID)
+                        CalendarTimeZonePicker(title: "Time Zone", identifier: $zoneID)
                             .disabled(preservesImportedDates)
                     }
                 }.disabled(!editable || draft.isDeletion)
                 if isRecurring {
-                    Section("Apply changes to") {
+                    Section("Apply Changes To") {
                         Picker("Events", selection: $draft.editScope) {
                             ForEach(CalendarEditScope.allCases) { scope in
                                 Text(scope.title).tag(scope).disabled(scope != .occurrence && draft.seriesMaster == nil)
                             }
                         }
-                        .accessibilityIdentifier("calendar.editor.scope")
                         .disabled(draft.recovery != nil)
                         if draft.seriesMaster == nil {
                             Text("Series details are unavailable. Refresh before editing all or following events.")
-                                .font(.callout).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                         if draft.editScope == .following {
                             Text(draft.isDeletion ? "This event and all following occurrences will be deleted." : (knownExceptionCount ?? draft.followingExceptionsCount).map { "This splits the series. \($0) later exceptions may be reset." }
                                  ?? "This splits the series. Later exceptions may be reset; Tern checks the series before saving.")
-                                .font(.callout).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(.secondary)
                             Toggle("I have reviewed the change to following events", isOn: $draft.acknowledgesFollowingReset)
                         }
                     }.disabled(!editable)
@@ -122,9 +119,9 @@ struct CalendarEventEditor: View {
                         .disabled(preservesImportedDates || (isRecurring && draft.editScope == .occurrence))
                     if !draft.importedExceptions.isEmpty {
                         Text("This import includes ^[\(draft.importedExceptions.count) changed or cancelled occurrence](inflect: true).")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(.secondary)
                         Text("Dates and repeat rules are preserved with those occurrences. You can edit them after import.")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }.disabled(!editable || draft.isDeletion)
                 Section("Guests") {
@@ -138,7 +135,7 @@ struct CalendarEventEditor: View {
                                           address: attendee.email, name: attendee.displayName ?? "",
                                           size: Tokens.Space.s6)
                             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                                Text(attendee.displayName ?? attendee.email).font(.body.weight(.semibold)).lineLimit(1).help(attendee.email)
+                                Text(attendee.displayName ?? attendee.email).lineLimit(1).help(attendee.email)
                                 if attendee.displayName != nil { Text(attendee.email).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                                 Text(Self.responseTitle(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
                             }
@@ -153,11 +150,11 @@ struct CalendarEventEditor: View {
                     }.disabled(draft.isDeletion)
                     if !notificationRecipients.isEmpty, !draft.isImport {
                         Text("\(draft.isDeletion ? "Deleting sends cancellations" : "Saving sends invitations or updates") to: \(notificationRecipients.joined(separator: ", ")).")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle(draft.isDeletion ? "Send cancellations to these guests" : "Send invitations or updates to these guests", isOn: $confirmedNotifications)
                     }
                 }.disabled(!editable)
-                Section("Video call") {
+                Section("Video Call") {
                     if let link = draft.event.hangoutLink ?? draft.event.conferenceData?.entryPoints?.first(where: { $0.entryPointType == "video" })?.uri,
                        let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                         Link(destination: url) { Label("Join Meeting", systemImage: "video") }
@@ -171,7 +168,7 @@ struct CalendarEventEditor: View {
                     }
                 }
                 Section("Alerts") {
-                    Toggle("Use calendar defaults", isOn: $useDefaultAlerts)
+                    Toggle("Use Calendar Defaults", isOn: $useDefaultAlerts)
                     if !useDefaultAlerts {
                         ForEach($reminders) { $row in
                             HStack {
@@ -197,9 +194,8 @@ struct CalendarEventEditor: View {
                         }
                         TextField("URL", text: $eventURL)
                         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            Text("Notes").font(.callout.weight(.semibold))
+                            Text("Notes").font(.callout).foregroundStyle(.secondary)
                             TextEditor(text: $notes)
-                                .font(.body)
                                 .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4)
                                 .accessibilityLabel("Event notes")
                         }
@@ -218,27 +214,16 @@ struct CalendarEventEditor: View {
                 if let error { CalendarInlineError(message: error) }
                 HStack(spacing: Tokens.Space.s3) {
                     if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving event") }
-                    if !editable {
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                            Label("Read-only event", systemImage: "lock")
-                                .font(.callout).foregroundStyle(.secondary)
-                            if let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
-                                Link("Open in Google Calendar", destination: url)
-                            }
-                        }
+                    if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
+                        Link("Open in Google Calendar", destination: url)
                     }
                     Spacer()
-                    Button(editable ? "Cancel" : "Close") { dismiss() }
-                        .keyboardShortcut(.cancelAction).disabled(isSaving)
-                        .accessibilityIdentifier("calendar.editor.close")
+                    Button(editable ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
                     if editable {
-                        Button(saveTitle ?? (draft.isDeletion ? "Delete Event" : draft.isImport ? "Add to Calendar" : "Save Event"), role: draft.isDeletion ? .destructive : nil) { commit() }
-                            .buttonStyle(.borderedProminent)
+                        Button(saveTitle ?? (draft.isDeletion ? "Delete Event" : draft.isImport ? "Add to Calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
                             .keyboardShortcut(.defaultAction).disabled(isSaving || !canSave)
-                            .accessibilityIdentifier("calendar.editor.save")
                     }
                 }
-                .controlSize(.large)
             }.padding(Tokens.Space.s4)
                 .background(Tokens.Surface.muted)
         }

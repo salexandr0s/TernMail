@@ -17,7 +17,7 @@ struct AssistantConversationView<Welcome: View>: View {
                     .overlay(alignment: .bottom) { jumpToLatest(proxy) }
             }
         }
-        .background(Tokens.Surface.canvas)
+        .background(Tokens.Surface.primary)
     }
 
     private func observedScroll(_ proxy: ScrollViewProxy, viewportHeight: CGFloat) -> some View {
@@ -40,7 +40,7 @@ struct AssistantConversationView<Welcome: View>: View {
     private func conversationScroll(viewportHeight: CGFloat) -> some View {
         ScrollView {
             transcript
-                .padding(.horizontal, Tokens.Workspace.pageGutter)
+                .padding(.horizontal, Tokens.Space.s5)
                 .padding(.top, Tokens.Space.s2)
                 .padding(.bottom, Tokens.Space.s5)
                 .frame(maxWidth: Tokens.Assistant.contentWidth, alignment: .leading)
@@ -93,7 +93,7 @@ struct AssistantConversationView<Welcome: View>: View {
 
     private func daySeparator(_ date: Date) -> some View {
         Text(dayTitle(date))
-            .font(.caption).foregroundStyle(.secondary)
+            .font(.caption2).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.top, Tokens.Space.s6)
             .padding(.bottom, Tokens.Space.s1)

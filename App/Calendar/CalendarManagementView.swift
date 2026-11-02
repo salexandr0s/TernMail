@@ -43,7 +43,6 @@ struct CalendarManagementView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .accessibilityIdentifier("calendar.management.section")
             .fixedSize()
             .frame(maxWidth: .infinity)
             .padding(.horizontal, Tokens.Space.s5)
@@ -120,7 +119,6 @@ struct CalendarManagementView: View {
                     }
                     .frame(maxWidth: Tokens.Settings.pickerWidth)
                     .help(selected.map { "\($0.title) (\($0.accountName))" } ?? "Calendar")
-                    .accessibilityIdentifier("calendar.management.calendar")
                 }
                 if let selected { calendarIdentity(selected) }
             }
@@ -144,9 +142,7 @@ struct CalendarManagementView: View {
     @ViewBuilder private func calendarSettings(_ calendar: CalendarDisplayCalendar) -> some View {
         Section {
             TextField("Name", text: $draft.title)
-                .font(.body.weight(.semibold))
                 .disabled(!calendar.entry.isOwner || !calendar.canManage)
-                .accessibilityIdentifier("calendar.management.name")
             if calendar.entry.isOwner && !calendar.canManage {
                 SettingsControlRow("Rename this calendar", detail: "Requires Calendar Management access.") {
                     Button("Enable…") { enable(.calendarManagement, accountID: calendar.accountID) }
@@ -158,26 +154,23 @@ struct CalendarManagementView: View {
             SettingsControlRow("Color") { colorPicker }
             HStack(spacing: Tokens.Space.s3) {
                 if draft.hasChanges {
-                    Label("Unsaved changes", systemImage: "pencil.circle")
-                        .font(.callout.weight(.medium)).foregroundStyle(.secondary)
+                    Text("Unsaved changes").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 Button("Revert") { draft = CalendarSettingsDraft(calendar: calendar) }
                     .disabled(!draft.hasChanges)
-                    .accessibilityIdentifier("calendar.management.revert")
                 Button("Save Changes") { saveCalendar() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!draft.hasChanges || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("calendar.management.save")
             }
         } header: {
-            Text("Name and color")
+            Text("Name and Color")
         } footer: {
             Text("The name is shared with everyone. The color changes only for your account.")
         }
 
         Section("Notifications") {
-            SettingsToggleRow("Event notifications", detail: "Show this calendar's reminders on this Mac.", isOn: model.notifications(of: calendar))
+            SettingsToggleRow("Event Notifications", detail: "Show this calendar's reminders on this Mac.", isOn: model.notifications(of: calendar))
             Button("Allow macOS Notifications…") {
                 Task { await model.requestNotifications() }
             }
@@ -241,7 +234,6 @@ struct CalendarManagementView: View {
                                 shareEmail = ""; try await shareList.reload(calendar, using: model.shares)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
                         .disabled(shareEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     SettingsNote("Google sends a sharing notification to the person you add.")
@@ -259,16 +251,11 @@ struct CalendarManagementView: View {
 
     private func shareRow(_ share: CalendarShare, calendar: CalendarDisplayCalendar) -> some View {
         HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: share.role == "owner" ? "person.crop.circle.badge.checkmark" : "person.crop.circle")
-                .font(.title2).foregroundStyle(.secondary)
-                .frame(width: Tokens.Control.avatar, height: Tokens.Control.avatar)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
                 Text(Self.shareName(share))
-                    .font(.callout.weight(.semibold))
                     .lineLimit(1).truncationMode(.middle)
                     .help(Self.shareName(share))
-                Text(Self.roleTitle(share.role)).font(.callout).foregroundStyle(.secondary)
+                Text(Self.roleTitle(share.role)).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: Tokens.Space.s2)
             if share.role != "owner" {
@@ -342,7 +329,7 @@ struct CalendarManagementView: View {
     }
 
     @ViewBuilder private var assistantTab: some View {
-        Section("Calendar access") {
+        Section("Calendar Access") {
             SettingsNote("Choose what the assistant may read. Hiding a calendar in the main view does not change this access.")
             if model.calendars.isEmpty {
                 Text("No calendars connected").foregroundStyle(.secondary)
@@ -351,16 +338,16 @@ struct CalendarManagementView: View {
         ForEach(model.calendars) { calendar in
             Section {
                 calendarIdentity(calendar)
-                Picker("Assistant access", selection: model.assistantAccess(of: calendar)) {
+                Picker("Assistant Access", selection: model.assistantAccess(of: calendar)) {
                     ForEach(CalendarAIAccess.allCases) { access in Text(access.title).tag(access) }
                 }
                 .accessibilityLabel("Assistant access to \(calendar.title)")
-                SettingsToggleRow("Include in scheduling", detail: "Use this calendar when finding available times.",
+                SettingsToggleRow("Include in Scheduling", detail: "Use this calendar when finding available times.",
                                   isOn: model.scheduling(of: calendar))
                     .accessibilityLabel("Include \(calendar.title) in scheduling")
             }
         }
-        Section("Working hours") {
+        Section("Working Hours") {
             Picker("Start", selection: $model.workingStartHour) {
                 ForEach(0...23, id: \.self) { Text(hourLabel($0)).tag($0) }
             }
@@ -371,7 +358,6 @@ struct CalendarManagementView: View {
                 ForEach(weekdayOrder, id: \.self) { day in
                     Toggle(model.calendar.shortWeekdaySymbols[day - 1], isOn: $model.workingWeekdays.contains(day))
                         .toggleStyle(.checkbox)
-                        .font(.callout.weight(model.workingWeekdays.contains(day) ? .semibold : .regular))
                         .accessibilityLabel(model.calendar.weekdaySymbols[day - 1])
                 }
             }
@@ -381,8 +367,8 @@ struct CalendarManagementView: View {
             }
         }
         Section("Display") {
-            CalendarTimeZonePicker(title: "Time zone", identifier: $model.timeZoneID)
-            Picker("Week starts", selection: $model.firstWeekday) {
+            CalendarTimeZonePicker(title: "Time Zone", identifier: $model.timeZoneID)
+            Picker("Week Starts", selection: $model.firstWeekday) {
                 ForEach(1...7, id: \.self) { day in Text(model.calendar.weekdaySymbols[day - 1]).tag(day) }
             }
         }
@@ -407,26 +393,20 @@ struct CalendarManagementView: View {
     private func calendarIdentity(_ calendar: CalendarDisplayCalendar) -> some View {
         HStack(spacing: Tokens.Space.s3) {
             Image(systemName: "calendar")
-                .font(.title2)
+                .font(.title3)
                 .foregroundStyle(calendar.color)
-                .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
-                .background(calendar.color.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(calendar.title).font(.title3.bold())
+                Text(calendar.title).font(.body.weight(.medium))
                     .lineLimit(2).help(calendar.title)
-                Text(calendar.accountName).font(.callout).foregroundStyle(.secondary)
+                Text(calendar.accountName).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).help(calendar.accountName)
             }
             Spacer(minLength: Tokens.Space.s2)
             Text(calendar.entry.isOwner ? "Owner" : calendar.canWrite ? "Can edit" : "Read only")
-                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
-                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .font(.caption).foregroundStyle(.secondary)
                 .fixedSize()
         }
-        .padding(.vertical, Tokens.Space.s1)
-        .accessibilityElement(children: .combine)
     }
 
     private var calendarSelection: Binding<String?> {

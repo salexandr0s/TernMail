@@ -20,75 +20,31 @@ struct MailboxSwitcher: View {
     }
 
     var body: some View {
-        SettingsEditorSheet(title: "Go to Mailbox", width: Tokens.Settings.editorWideWidth, scrolls: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: Tokens.Space.s3) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    TextField("Mailbox, label or saved search", text: $query)
-                        .textFieldStyle(.plain)
-                        .font(.title3)
-                        .focused($searchFocused)
-                        .onSubmit(openSelected)
-                        .accessibilityLabel("Find a mailbox, label or saved search")
-                        .accessibilityIdentifier("mail.switcher.search")
-                    if !query.isEmpty {
-                        Button("Clear Search", systemImage: "xmark.circle.fill", action: clearSearch)
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                    }
+        VStack(spacing: Tokens.Space.s3) {
+            TextField("Go to mailbox, label or saved search", text: $query)
+                .textFieldStyle(.roundedBorder).focused($searchFocused)
+                .onSubmit { openSelected() }
+            List(choices, selection: $selected) { choice in
+                HStack {
+                    Label(choice.title, systemImage: choice.symbol).lineLimit(1)
+                    Spacer()
+                    Text(choice.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
-                .padding(Tokens.Space.s4)
-                .ternSurface(style: .grouped)
-                .ternOutline(radius: Tokens.Radius.lg, focus: searchFocused ? .accentColor : nil)
-                .padding(.horizontal, Tokens.Workspace.pageGutter)
-                .padding(.top, Tokens.Space.s4)
-                .padding(.bottom, Tokens.Space.s3)
-
-                List(choices, selection: $selected) { choice in
-                    HStack(spacing: Tokens.Space.s3) {
-                        Image(systemName: choice.symbol)
-                            .font(.title3)
-                            .foregroundStyle(SidebarSymbolStyle(color: .accentColor))
-                            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                            Text(choice.title).font(.body.weight(.medium)).lineLimit(1)
-                            Text(choice.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.vertical, Tokens.Space.s1)
-                    .contentShape(Rectangle())
-                    .tag(choice.id)
-                    .help("\(choice.title), \(choice.detail)")
-                    .accessibilityElement(children: .combine)
-                    .onTapGesture(count: 2) { open(choice) }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .accessibilityLabel("Mailbox results")
-                .overlay {
-                    if choices.isEmpty {
-                        ContentUnavailableView("No Matching Mailboxes", systemImage: "magnifyingglass",
-                            description: Text("Try another mailbox, label or account name."))
-                    }
-                }
+                .tag(choice.id)
+                .onTapGesture(count: 2) { open(choice) }
             }
-        } actions: {
-            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-            Button("Open", action: openSelected)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(choices.isEmpty)
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Open") { openSelected() }.keyboardShortcut(.defaultAction).disabled(choices.isEmpty)
+            }
         }
+        .padding(Tokens.Space.s4)
+        .frame(width: Tokens.Layout.shortcutsWidth, height: Tokens.Layout.shortcutsHeight)
         .onAppear { searchFocused = true; selected = choices.first?.id }
         .onChange(of: query) { _, _ in selected = choices.first?.id }
     }
 
-    private func clearSearch() { query = ""; searchFocused = true }
     private func openSelected() { if let option = choices.first(where: { $0.id == selected }) ?? choices.first { open(option) } }
     private func open(_ option: MailboxSwitchOption) { mailbox.selectedMailbox = option.mailbox; dismiss() }
 }

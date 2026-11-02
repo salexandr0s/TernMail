@@ -61,10 +61,9 @@ struct AttachmentLibraryCollection: View {
 
     private var columnHeadings: some View {
         HStack(spacing: Tokens.Space.s3) {
-            Text("File and source email").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Sender").frame(width: Tokens.Layout.sidebarMinWidth, alignment: .leading)
+            Text("File").frame(maxWidth: .infinity, alignment: .leading)
+            Text("From").frame(width: Tokens.Layout.sidebarMinWidth, alignment: .leading)
             Text("Received").frame(width: Tokens.Space.s16 * 2, alignment: .trailing)
-            Color.clear.frame(width: Tokens.Control.iconButton, height: 0)
         }
         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
         .padding(.horizontal, Tokens.Space.s4)
@@ -93,16 +92,12 @@ struct AttachmentLibraryCollection: View {
     }
 
     private func listRow(_ item: AttachmentLibraryItem) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            AttachmentLibraryRow(item: item, accountName: model.accountName(item),
-                accounts: model.availableAccounts, compact: availableWidth < Tokens.Layout.readableWidth)
-                .equatable()
-            AttachmentLibraryItemActions(item: item, model: model)
-                .padding(.top, Tokens.Space.s3)
-        }
-        .tag(item.id)
-        .draggable(containerItemID: item.id, containerNamespace: dragNamespace)
-        .attachmentAccessibilityActions(item, model: model) { Task { await model.openFile(item) } }
+        AttachmentLibraryRow(item: item, accountName: model.accountName(item),
+            accounts: model.availableAccounts, compact: availableWidth < Tokens.Layout.readableWidth)
+            .equatable()
+            .tag(item.id)
+            .draggable(containerItemID: item.id, containerNamespace: dragNamespace)
+            .attachmentAccessibilityActions(item, model: model) { Task { await model.openFile(item) } }
     }
 
     private var cards: some View {
@@ -203,32 +198,6 @@ private struct AttachmentCardCell: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { onActivate() }
             .attachmentAccessibilityActions(item, model: model, open: onOpen)
-            .overlay(alignment: .topTrailing) {
-                AttachmentLibraryItemActions(item: item, model: model)
-                    .padding(Tokens.Space.s4)
-            }
-    }
-}
-
-/// The same file commands as the native context menu, available without a right-click.
-private struct AttachmentLibraryItemActions: View {
-    let item: AttachmentLibraryItem
-    let model: AttachmentLibraryModel
-
-    var body: some View {
-        Menu {
-            AttachmentItemMenu(item: item, model: model)
-        } label: {
-            Image(systemName: "ellipsis")
-                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden)
-        .fixedSize()
-        .disabled(model.isWorking)
-        .help("Actions for \(item.filename)")
-        .accessibilityLabel("Actions for \(item.filename)")
-        .accessibilityIdentifier("attachments.item.actions.\(item.id)")
     }
 }
 

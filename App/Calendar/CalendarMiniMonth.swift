@@ -33,7 +33,7 @@ struct CalendarMiniMonth: View {
             .accessibilityLabel(CalendarLayout.format(month, style: .dateTime.month(.wide).year(), calendar: calendar))
             HStack(spacing: Tokens.Space.s0_5) {
                 Button("Today") { choose(.now) }
-                    .font(.callout)
+                    .font(.caption.weight(.medium))
                     .fixedSize()
                     .padding(.horizontal, Tokens.Space.s1)
                     .frame(height: Tokens.Space.s6)
@@ -51,14 +51,14 @@ struct CalendarMiniMonth: View {
 
     private func monthTitle(_ month: Date, style: Date.FormatStyle) -> some View {
         Text(CalendarLayout.format(month, style: style, calendar: calendar))
-            .font(.headline)
+            .font(.callout.weight(.semibold))
             .fixedSize()
     }
 
     private func monthButton(_ offset: Int, symbol: String, title: String) -> some View {
         Button { shift(offset) } label: {
             Image(systemName: symbol)
-                .font(.callout)
+                .font(.caption.weight(.semibold))
                 .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
@@ -102,16 +102,14 @@ struct CalendarMiniMonth: View {
         return Button { choose(day) } label: {
             VStack(spacing: Tokens.Space.s0_5) {
                 Text("\(calendar.component(.day, from: day))")
-                    .font(.callout.weight(isSelected || isToday ? .bold : activity.count > 0 ? .semibold : .regular))
+                    .font(.caption.weight(isSelected || isToday ? .bold : activity.count > 0 ? .semibold : .regular))
                     .monospacedDigit()
                     .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                     .foregroundStyle(isSelected ? Color(nsColor: .alternateSelectedControlTextColor)
                         : isToday ? Color.accentColor : isCurrentMonth ? Color.primary : Color.secondary)
-                    .background(isSelected ? Color.accentColor : .clear,
-                                in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .background(isSelected ? Color.accentColor : .clear, in: Circle())
                     .overlay {
-                        RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                            .strokeBorder(isToday && !isSelected ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus)
+                        Circle().strokeBorder(isToday && !isSelected ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus)
                     }
                 HStack(spacing: Tokens.Space.s0_5) {
                     ForEach(activity.colors, id: \.self) { color in

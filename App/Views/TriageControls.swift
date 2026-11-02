@@ -52,37 +52,19 @@ struct TriagePreferencesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section {
+            Section("Delete key") {
                 Picker("Delete key", selection: $deleteBehavior) {
-                    deletionChoice("Archive or remove the current label",
-                        detail: "Keep the mail. In a custom label, remove that label from the selection.")
-                        .tag(DeleteKeyBehavior.archive.rawValue)
-                    deletionChoice("Move to Trash", detail: "Move the selected mail to Trash.")
-                        .tag(DeleteKeyBehavior.trash.rawValue)
+                    Text("Archive, or remove the current label").tag(DeleteKeyBehavior.archive.rawValue)
+                    Text("Move to Trash").tag(DeleteKeyBehavior.trash.rawValue)
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
                 .accessibilityLabel("Delete key action")
                 .padding(.vertical, Tokens.Space.s2)
-            } header: {
-                Label("Delete key", systemImage: "delete.left")
-            } footer: {
-                Text(deleteBehavior == DeleteKeyBehavior.trash.rawValue
-                    ? "Pressing Delete moves the selection to Trash."
-                    : "Pressing Delete archives the selection, or removes the custom label you are viewing.")
             }
             Section("Sound") {
                 SettingsToggleRow("Play mail sounds", detail: "Use macOS sounds for archive, Trash and sent mail.", isOn: $sounds)
             }
         }
-    }
-
-    private func deletionChoice(_ title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text(title).font(.body.weight(.medium))
-            Text(detail).font(.callout).foregroundStyle(.secondary)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.vertical, Tokens.Space.s1)
     }
 }

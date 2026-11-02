@@ -37,49 +37,59 @@ struct GoogleTaskEditor: View {
     }
 
     private var inlineEditor: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Label("Editing task", systemImage: "pencil")
-                .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
-            TextField("What needs to be done?", text: $session.title)
-                .font(.title3.weight(.semibold)).textFieldStyle(.plain)
-                .focused($focusedField, equals: .title)
-                .onSubmit(submit)
-                .accessibilityLabel("Task title")
-                .accessibilityIdentifier("google-task-title")
-                .disabled(session.isSaving)
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
+                TextField("What needs to be done?", text: $session.title)
+                    .font(.body.weight(.medium)).textFieldStyle(.plain)
+                    .focused($focusedField, equals: .title)
+                    .onSubmit(submit)
+                    .accessibilityLabel("Task title")
+                    .accessibilityIdentifier("google-task-title")
+                    .padding(.vertical, Tokens.Space.s1_5)
+                    .disabled(session.isSaving)
+                HStack(spacing: Tokens.Space.s0_5) {
+                    Button(action: submit) {
+                        Group {
+                            if session.isSaving { ProgressView().controlSize(.small) }
+                            else { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+                        }
+                        .frame(width: Tokens.Space.s6, height: Tokens.Control.iconButton)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!session.canSave)
+                    .help("Save task (Return)").accessibilityLabel("Save task")
+                    .accessibilityIdentifier("google-task-inline-save")
+                    .ternHover(isEnabled: session.canSave)
+                    Button(action: finish) {
+                        Image(systemName: "xmark")
+                            .frame(width: Tokens.Space.s6, height: Tokens.Control.iconButton)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).disabled(session.isSaving)
+                    .help("Cancel editing (Escape)").accessibilityLabel("Cancel editing")
+                    .accessibilityIdentifier("google-task-inline-cancel")
+                    .ternHover(isEnabled: !session.isSaving)
+                }
+            }
             TextField("Add details", text: $session.notes, axis: .vertical)
-                .font(.body).textFieldStyle(.plain).lineLimit(1...4)
+                .font(.callout).textFieldStyle(.plain).lineLimit(1...4)
                 .focused($focusedField, equals: .notes)
                 .disabled(session.isSaving)
                 .accessibilityLabel("Task notes")
                 .accessibilityIdentifier("google-task-notes")
-            dueFields.font(.callout).controlSize(.small)
+            dueFields.font(.caption).controlSize(.small)
             if let url = GoogleTaskRow.emailURL(context.task?.notes ?? "") {
                 Button { openURL(url) } label: {
                     Label(GoogleTaskRow.emailSubject(context.task?.notes ?? "") ?? "Source email", systemImage: "envelope")
-                        .font(.callout).lineLimit(2)
+                        .font(.caption).lineLimit(1)
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .disabled(session.isSaving)
             }
             errorMessage
-            Divider()
-            HStack(spacing: Tokens.Space.s2) {
-                if session.isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving task") }
-                Spacer(minLength: 0)
-                Button("Cancel", action: finish)
-                    .disabled(session.isSaving)
-                    .help("Cancel editing (Escape)")
-                    .accessibilityLabel("Cancel editing")
-                    .accessibilityIdentifier("google-task-inline-cancel")
-                Button("Save Task", action: submit)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!session.canSave)
-                    .help("Save task (Return)")
-                    .accessibilityIdentifier("google-task-inline-save")
-            }
         }
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
         .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .ternOutline(radius: Tokens.Radius.md, focus: .accentColor)
         .accessibilityElement(children: .contain)
@@ -97,118 +107,101 @@ struct GoogleTaskEditor: View {
     }
 
     private var modalEditor: some View {
-        ScrollViewReader { scroll in
-            SettingsEditorSheet(title: context.task == nil ? "New Task" : "Task Details",
-                                width: Tokens.Settings.editorWideWidth, messages: modalMessages) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                    Label(context.listTitle, systemImage: "list.bullet")
-                        .font(.callout).foregroundStyle(.secondary).lineLimit(2).help(context.listTitle)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                            Text("Title").font(.callout.bold()).foregroundStyle(.secondary)
-                            TextField("What needs to be done?", text: $session.title, axis: .vertical)
-                                .font(.title2.weight(.semibold)).textFieldStyle(.plain)
-                                .lineLimit(2...4).focused($focusedField, equals: .title)
-                                .accessibilityLabel("Task title")
-                                .accessibilityIdentifier("google-task-title")
-                        }
-                        Divider()
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                            Text("Notes").font(.callout.bold()).foregroundStyle(.secondary)
-                            TextField("Add details", text: $session.notes, axis: .vertical)
-                                .textFieldStyle(.plain).lineLimit(3...8)
-                                .focused($focusedField, equals: .notes)
-                                .accessibilityLabel("Task notes")
-                                .accessibilityIdentifier("google-task-notes")
-                        }
-                    }
-                    .padding(Tokens.Space.s4)
-                    .ternSurface(style: .grouped)
-                    .ternOutline(radius: Tokens.Radius.lg, style: .contrastOnly, focus: focusedField == nil ? nil : .accentColor)
-                    .disabled(session.isSaving)
-                    dueFields
-                        .padding(Tokens.Space.s3)
-                        .ternSurface(style: .grouped)
-                    if let url = GoogleTaskRow.emailURL(context.task?.notes ?? "") {
-                        Button { openURL(url) } label: {
-                            HStack(spacing: Tokens.Space.s2) {
-                                Image(systemName: "envelope").foregroundStyle(Color.accentColor)
-                                    .frame(width: Tokens.Space.s6)
-                                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                                    Text("Source email").font(.caption).foregroundStyle(.secondary)
-                                    Text(GoogleTaskRow.emailSubject(context.task?.notes ?? "") ?? "Open source email")
-                                        .font(.body).lineLimit(2)
-                                }
-                                Spacer(minLength: 0)
-                                Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
-                            }
-                            .padding(Tokens.Space.s3)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .ternSurface(style: .grouped)
-                        .ternHover(radius: Tokens.Radius.lg)
-                        .accessibilityLabel("Open source email")
-                    }
-                    errorMessage
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "checklist").font(.title2).foregroundStyle(Color.accentColor)
+                    .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
+                    .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(context.task == nil ? "New task" : "Task details").font(.title3.weight(.semibold))
+                    Text(context.listTitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(context.listTitle)
                 }
-            } actions: {
-                if session.isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving task") }
-                if session.needsConflictReview {
-                    Button("Review Changes") { scroll.scrollTo("google-task-conflict-review", anchor: .top) }
-                        .accessibilityIdentifier("google-task-review-changes")
+            }
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                    Text("Title").font(.caption).foregroundStyle(.secondary)
+                    TextField("What needs to be done?", text: $session.title, axis: .vertical)
+                        .font(.title3.weight(.medium)).textFieldStyle(.plain)
+                        .lineLimit(2...4).focused($focusedField, equals: .title)
+                        .accessibilityLabel("Task title")
+                        .accessibilityIdentifier("google-task-title")
                 }
+                Divider()
+                VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                    Text("Notes").font(.caption).foregroundStyle(.secondary)
+                    TextField("Add details", text: $session.notes, axis: .vertical)
+                        .textFieldStyle(.plain).lineLimit(3...8)
+                        .focused($focusedField, equals: .notes)
+                        .accessibilityLabel("Task notes")
+                        .accessibilityIdentifier("google-task-notes")
+                }
+            }
+            .padding(Tokens.Space.s4)
+            .ternSurface(style: .grouped)
+            .ternOutline(radius: Tokens.Radius.lg, style: .contrastOnly, focus: focusedField == nil ? nil : .accentColor)
+            .disabled(session.isSaving)
+            dueFields
+            .padding(Tokens.Space.s3)
+            .ternSurface(style: .grouped)
+            if let url = GoogleTaskRow.emailURL(context.task?.notes ?? "") {
+                Button { openURL(url) } label: {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Image(systemName: "envelope").foregroundStyle(Color.accentColor)
+                            .frame(width: Tokens.Space.s6)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                            Text("Source email").font(.caption2).foregroundStyle(.secondary)
+                            Text(GoogleTaskRow.emailSubject(context.task?.notes ?? "") ?? "Open source email")
+                                .font(.callout).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(Tokens.Space.s3)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .ternSurface(style: .grouped)
+                .ternHover(radius: Tokens.Radius.lg)
+                .accessibilityLabel("Open source email")
+            }
+            errorMessage
+            HStack {
+                if session.isSaving { ProgressView().controlSize(.small) }
+                Spacer()
                 Button("Cancel", action: finish).keyboardShortcut(.cancelAction).disabled(session.isSaving)
-                Button(context.task == nil ? "Add Task" : "Save Task", action: submit)
+                Button(context.task == nil ? "Add Task" : "Save", action: submit)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(!session.canSave)
             }
-            .interactiveDismissDisabled(session.isSaving)
         }
-    }
-
-    private var modalMessages: [String] {
-        if let error = session.error { return [error] }
-        if session.needsConflictReview { return ["Review the latest Google Tasks version before saving."] }
-        return []
+        .padding(Tokens.Space.s5)
+        .frame(width: Tokens.Sheet.smallWidth)
+        .background(Tokens.Surface.primary.overlay(Color.primary.opacity(Tokens.Opacity.hover)))
+        .interactiveDismissDisabled(session.isSaving)
     }
 
     private var dueFields: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Tokens.Space.s3) {
-                dueToggle
-                Spacer(minLength: 0)
-                dueDatePicker
-            }
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                dueToggle
-                dueDatePicker
+        HStack(spacing: Tokens.Space.s2) {
+            Toggle("Due date", isOn: $session.hasDueDate).toggleStyle(.checkbox)
+            Spacer(minLength: Tokens.Space.s1)
+            if session.hasDueDate {
+                DatePicker("Due", selection: $session.dueDate, displayedComponents: .date)
+                    .datePickerStyle(.field).labelsHidden()
+                    .accessibilityLabel("Task due date")
             }
         }
         .disabled(session.isSaving)
     }
 
-    private var dueToggle: some View {
-        Toggle("Due date", isOn: $session.hasDueDate).toggleStyle(.checkbox).fixedSize()
-    }
-
-    @ViewBuilder private var dueDatePicker: some View {
-        if session.hasDueDate {
-            DatePicker("Due", selection: $session.dueDate, displayedComponents: .date)
-                .datePickerStyle(.field).labelsHidden().fixedSize()
-                .accessibilityLabel("Task due date")
-        }
-    }
-
     @ViewBuilder private var errorMessage: some View {
         if session.needsConflictReview {
             GoogleTaskConflictReview(session: session)
-                .id("google-task-conflict-review")
         }
-        if let error = session.error, isInline {
+        if let error = session.error {
             Label(error, systemImage: "exclamationmark.circle")
-                .font(.callout).foregroundStyle(Tokens.Status.error)
+                .font(isInline ? .caption : .callout).foregroundStyle(Tokens.Status.error)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("google-task-editor-error")
         }

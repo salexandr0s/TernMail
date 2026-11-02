@@ -27,13 +27,13 @@ struct CalendarEventChip: View {
     private var content: some View {
         HStack(spacing: Tokens.Space.s1) {
             Capsule().fill(event.color).frame(width: Tokens.Space.s0_5, height: Tokens.Space.s3)
-            Text(event.title).font(.caption.weight(.semibold)).lineLimit(1)
+            Text(event.title).font(.caption.weight(.medium)).lineLimit(1)
             Spacer(minLength: 0)
             if showsTime {
-                Text(event.start, style: .time).font(.caption2.weight(.medium)).monospacedDigit().foregroundStyle(.secondary)
+                Text(event.start, style: .time).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            if event.isPending { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary) }
+            if event.isPending { Image(systemName: "clock.arrow.circlepath").font(.caption2) }
         }
     }
 

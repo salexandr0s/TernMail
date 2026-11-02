@@ -86,9 +86,7 @@ struct EditLabelsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TernPageHeader(title: "Edit Labels", subtitle: "Changes apply to the selected mail.")
-                .padding(Tokens.Space.s5)
-            Divider()
+            PopupHeader(title: "Edit Labels", systemImage: "tag")
             FilteredLabelList(
                 choices: labels,
                 mark: { .check(selection.state(of: $0.id)) },
@@ -98,14 +96,14 @@ struct EditLabelsView: View {
             PopupFooter {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Apply Labels") { onApply(selection.change) }
+                Button("Apply") { onApply(selection.change) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(selection.change.isEmpty)
-                    .help("Apply Labels (⌘Return)")
+                    .help("Apply (⌘Return)")
             }
         }
-        .frame(width: Tokens.Sheet.smallWidth)
+        .frame(width: Tokens.Popover.width)
     }
 }
 
@@ -113,21 +111,13 @@ struct EditLabelsView: View {
 struct MoveToView: View {
     let targets: [LabelChoice]
     let onMove: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
-            TernPageHeader(title: "Move To", subtitle: "Choose a destination for the selected mail.")
-                .padding(Tokens.Space.s5)
-            Divider()
-            FilteredLabelList(choices: targets, mark: { _ in .none }, onPick: { onMove($0.id) },
-                onCreate: nil, placeholder: "Find a mailbox or label")
-            PopupFooter {
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
+            PopupHeader(title: "Move to", systemImage: "folder")
+            FilteredLabelList(choices: targets, mark: { _ in .none }, onPick: { onMove($0.id) }, onCreate: nil)
         }
-        .frame(width: Tokens.Sheet.smallWidth)
+        .frame(width: Tokens.Popover.width)
     }
 }
 
@@ -156,7 +146,6 @@ private struct FilteredLabelList: View {
     let onPick: (LabelChoice) -> Void
     /// Offered when the filter names no label. Nil hides it.
     let onCreate: ((String) -> Void)?
-    var placeholder = "Find a label"
 
     @State private var filter = ""
     @State private var highlighted: Int?
@@ -178,44 +167,29 @@ private struct FilteredLabelList: View {
     var body: some View {
         let items = items
         VStack(spacing: 0) {
-            HStack(spacing: Tokens.Space.s2) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                TextField(placeholder, text: $filter)
-                    .textFieldStyle(.plain)
-                    .focused($isFilterFocused)
-                    .accessibilityLabel(placeholder)
-                    .onSubmit {
-                        if let highlighted { pick(items, at: highlighted) }
-                    }
-                    .onKeyPress(.downArrow) {
-                        move(by: 1, count: items.count)
-                        return .handled
-                    }
-                    .onKeyPress(.upArrow) {
-                        move(by: -1, count: items.count)
-                        return .handled
-                    }
-                if !filter.isEmpty {
-                    Button("Clear Filter", systemImage: "xmark.circle.fill") {
-                        filter = ""
-                        isFilterFocused = true
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+            TextField("Filter labels", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFilterFocused)
+                .onSubmit {
+                    if let highlighted { pick(items, at: highlighted) }
                 }
-            }
-            .padding(Tokens.Space.s3)
-            .ternSurface(style: .grouped)
-            .ternOutline(radius: Tokens.Radius.lg, focus: isFilterFocused ? .accentColor : nil)
-            .padding(Tokens.Space.s4)
+                .onKeyPress(.downArrow) {
+                    move(by: 1, count: items.count)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    move(by: -1, count: items.count)
+                    return .handled
+                }
+                .padding(.horizontal, Tokens.Space.s5)
+                .padding(.bottom, Tokens.Space.s3)
             Divider()
             if items.isEmpty {
-                ContentUnavailableView("No Matching Labels", systemImage: "tag",
-                    description: Text(onCreate == nil ? "Try another name." : "Type a name to create a label."))
-                    .fixedSize(horizontal: false, vertical: true)
+                Label("No matching labels", systemImage: "magnifyingglass")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Tokens.Space.s5)
             } else {
                 list(items)
             }
@@ -244,7 +218,6 @@ private struct FilteredLabelList: View {
                 }
                 .padding(Tokens.Space.s2)
             }
-            .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: Tokens.Popover.maxListHeight)
             .fixedSize(horizontal: false, vertical: true)
             .onChange(of: highlighted) {
@@ -263,7 +236,6 @@ private struct FilteredLabelList: View {
                 if case .check(let state) = mark(choice) {
                     Image(systemName: Self.checkbox(state))
                         .foregroundStyle(isHighlighted ? textColor : .accentColor)
-                        .frame(width: Tokens.Control.icon)
                         .accessibilityHidden(true)
                 }
                 Image(systemName: choice.systemImage)
@@ -284,16 +256,10 @@ private struct FilteredLabelList: View {
                     .help("Create Label “\(name)”")
             }
             Spacer(minLength: 0)
-            if case .label(let choice) = item, case .none = mark(choice) {
-                Image(systemName: "arrow.right")
-                    .font(.caption)
-                    .foregroundStyle(isHighlighted ? textColor : .secondary)
-                    .accessibilityHidden(true)
-            }
         }
         .foregroundStyle(textColor)
         .padding(.horizontal, Tokens.Space.s3)
-        .padding(.vertical, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
         .background {
             if isHighlighted {
                 RoundedRectangle(cornerRadius: Tokens.Radius.sm)

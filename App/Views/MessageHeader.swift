@@ -18,15 +18,44 @@ struct MessageHeader<SenderItems: View>: View {
     @State private var showsSender = false
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            header(isNarrow: false)
-            header(isNarrow: true)
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+            Button(action: onToggle) {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .ternHover()
+            .help(isExpanded ? "Collapse message" : "Expand message")
+            .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("message-disclosure-\(message.id)")
+            .messageHeaderControl()
+
+            Button { showsSender = true } label: {
+                ContactAvatar(accountID: message.record.accountID, address: message.senderAddress,
+                              name: message.senderDisplayName, cache: mailbox.cache, accounts: mailbox.accountStore)
+            }
+            .buttonStyle(.plain)
+            .help("Show sender details")
+            .accessibilityLabel("Show details for \(message.senderDisplayName)")
+            .accessibilityIdentifier("sender-profile-\(message.id)")
+            .messageHeaderControl()
+            .popover(isPresented: $showsSender, arrowEdge: .bottom) {
+                SenderProfilePopover(accountID: message.record.accountID, address: message.senderAddress,
+                                     name: message.senderDisplayName, mailbox: mailbox)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                lines(isNarrow: false)
+                lines(isNarrow: true)
+            }
         }
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, isExpanded ? Tokens.Space.s4 : Tokens.Space.s3)
-        .background {
-            if isExpanded { Tokens.Surface.muted }
-        }
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
         .overlayPreferenceValue(MessageHeaderControlBounds.self) { bounds in
             GeometryReader { geometry in
                 MessageHeaderClickSurface(messageID: message.id, isExpanded: isExpanded,
@@ -48,69 +77,46 @@ struct MessageHeader<SenderItems: View>: View {
         .onChange(of: isExpanded) { _, expanded in if !expanded { showsDetails = false } }
     }
 
-    private func header(isNarrow: Bool) -> some View {
-        HStack(alignment: .center, spacing: isNarrow ? Tokens.Space.s2 : Tokens.Space.s3) {
-            disclosure
-            senderProfile(isNarrow: isNarrow)
-            lines(isNarrow: isNarrow)
-                .frame(minWidth: isNarrow ? 0 : Tokens.Layout.senderMinWidth,
-                       maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: Tokens.Space.s3) {
-                if !isNarrow { messageDate }
-                actions(isNarrow: isNarrow)
-            }
-            .fixedSize()
-        }
-    }
-
-    private var disclosure: some View {
-        Button(action: onToggle) {
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .ternHover()
-        .help(isExpanded ? "Collapse message" : "Expand message")
-        .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityIdentifier("message-disclosure-\(message.id)")
-        .messageHeaderControl()
-    }
-
-    private func senderProfile(isNarrow: Bool) -> some View {
-        Button { showsSender = true } label: {
-            ContactAvatar(accountID: message.record.accountID, address: message.senderAddress,
-                          name: message.senderDisplayName, cache: mailbox.cache, accounts: mailbox.accountStore,
-                          size: isExpanded && !isNarrow ? Tokens.Control.avatarLarge : Tokens.Control.avatar)
-        }
-        .buttonStyle(.plain)
-        .help("Show sender details")
-        .accessibilityLabel("Show details for \(message.senderDisplayName)")
-        .accessibilityIdentifier("sender-profile-\(message.id)")
-        .messageHeaderControl()
-        .popover(isPresented: $showsSender, arrowEdge: .bottom) {
-            SenderProfilePopover(accountID: message.record.accountID, address: message.senderAddress,
-                                 name: message.senderDisplayName, mailbox: mailbox)
-        }
-    }
-
     private func lines(isNarrow: Bool) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            senderIdentity
+        VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+            HStack(spacing: Tokens.Space.s2) {
+                HStack(spacing: Tokens.Space.s1) {
+                    if message.isUnread {
+                        Circle().fill(Color.accentColor).frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
+                            .accessibilityLabel("Unread")
+                            .allowsHitTesting(false)
+                    }
+                    MessageAddressMenu(address: .init(name: message.senderDisplayName, address: message.senderAddress),
+                                       accountID: message.record.accountID, mailbox: mailbox)
+                        .font(.body.weight(message.isUnread ? .semibold : .medium))
+                        .accessibilityIdentifier("message-sender-\(message.id)")
+                        .messageHeaderControl()
+                }
+                .frame(minWidth: isNarrow ? 0 : Tokens.Layout.senderMinWidth, maxWidth: .infinity, alignment: .leading)
+
+                Text(ThreadDate.short(message.record.date))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize()
+                    .help(message.record.date.formatted(date: .complete, time: .shortened))
+                    .allowsHitTesting(false)
+                MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose,
+                               showsReply: isExpanded && !isNarrow, showsStar: !isNarrow || message.isStarred,
+                               markUnreadFromHere: onMarkUnreadFromHere) { senderItems }
+                    .messageHeaderControl()
+            }
+
             if isExpanded {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: Tokens.Space.s2) {
-                        recipients
-                        detailsButton
-                    }
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        recipients
-                        detailsButton
-                    }
+                HStack(spacing: Tokens.Space.s2) {
+                    Text(recipientSummary).lineLimit(1).truncationMode(.middle)
+                        .allowsHitTesting(false)
+                    Button("Show details") { showsDetails = true }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Show sender, recipients and message details")
+                        .accessibilityIdentifier("message-details-\(message.id)")
+                        .fixedSize()
+                        .messageHeaderControl()
+                    Spacer(minLength: 0)
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 if message.labels.contains(SystemLabel.sent), let messageID = message.record.rfcMessageID {
@@ -120,66 +126,9 @@ struct MessageHeader<SenderItems: View>: View {
             } else {
                 Text(MessagePreview.text(for: message))
                     .font(.callout).foregroundStyle(.secondary)
-                    .lineLimit(isNarrow ? 2 : 1).allowsHitTesting(false)
-            }
-            if isNarrow { messageDate }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var senderIdentity: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            HStack(spacing: Tokens.Space.s1_5) {
-                if message.isUnread {
-                    Circle().fill(Color.accentColor).frame(width: Tokens.Space.s1_5, height: Tokens.Space.s1_5)
-                        .accessibilityLabel("Unread")
-                        .allowsHitTesting(false)
-                }
-                MessageAddressMenu(address: .init(name: message.senderDisplayName, address: message.senderAddress),
-                                   accountID: message.record.accountID, mailbox: mailbox)
-                    .font(isExpanded ? .headline : .body.weight(message.isUnread ? .semibold : .medium))
-                    .lineLimit(1)
-                    .accessibilityIdentifier("message-sender-\(message.id)")
-                    .messageHeaderControl()
-            }
-            if isExpanded, message.senderDisplayName != message.senderAddress {
-                Text(message.senderAddress)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(message.senderAddress)
-                    .allowsHitTesting(false)
+                    .lineLimit(1).allowsHitTesting(false)
             }
         }
-    }
-
-    private var messageDate: some View {
-        Text(ThreadDate.short(message.record.date))
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize()
-            .help(message.record.date.formatted(date: .complete, time: .shortened))
-            .allowsHitTesting(false)
-    }
-
-    private func actions(isNarrow: Bool) -> some View {
-        MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose,
-                       showsReply: isExpanded && !isNarrow, showsStar: !isNarrow || message.isStarred,
-                       markUnreadFromHere: onMarkUnreadFromHere) { senderItems }
-            .messageHeaderControl()
-    }
-
-    private var recipients: some View {
-        Text(recipientSummary).lineLimit(2).truncationMode(.middle)
-            .allowsHitTesting(false)
-    }
-
-    private var detailsButton: some View {
-        Button("Show details") { showsDetails = true }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Show sender, recipients and message details")
-            .accessibilityIdentifier("message-details-\(message.id)")
-            .fixedSize()
-            .messageHeaderControl()
     }
 
     private var recipientSummary: String {

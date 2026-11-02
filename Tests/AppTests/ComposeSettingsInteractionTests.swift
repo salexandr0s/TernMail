@@ -8,8 +8,7 @@ import Testing
 /// Drives only controls hosted by this test. No global keyboard or mouse events,
 /// Accessibility permission, account data, or UI-test automation service is used.
 @Suite(.serialized) @MainActor struct ComposeSettingsInteractionTests {
-    @Test(arguments: [false, true])
-    func templateNavigationPreservesNativeEditsUntilDiscard(selectSaved: Bool) async throws {
+    @Test func newTemplatePreservesNativeEditsUntilDiscard() async throws {
         let store = try AccountStore.inMemory()
         let saved = ComposeTemplate(id: "saved", name: "Saved template",
             document: ComposeDocument(plainText: "Saved message"))
@@ -26,7 +25,6 @@ import Testing
         try await waitFor(root) {
             self.nameField(in: root) != nil && self.messageEditor(in: root) != nil
                 && self.element("compose-template-new", in: root) != nil
-                && self.element("compose-template-selection." + saved.id, in: root) != nil
         }
         let name = try #require(nameField(in: root))
         let body = try #require(messageEditor(in: root))
@@ -45,14 +43,8 @@ import Testing
         }
 
         func requestNavigation() throws {
-            if selectSaved {
-                let savedRow = try #require(element("compose-template-selection." + saved.id, in: root),
-                    "The saved template must expose its library action.")
-                try #require(press(savedRow))
-            } else {
-                let button = try #require(element("compose-template-new", in: root))
-                try #require(press(button))
-            }
+            let button = try #require(element("compose-template-new", in: root))
+            try #require(press(button))
         }
 
         try requestNavigation()
@@ -74,8 +66,8 @@ import Testing
         unsaved.discardAndApply(try #require(unsaved.pendingChange))
         try await waitFor(root) {
             unsaved.subject == nil && unsaved.pendingChange == nil
-                && name.stringValue == (selectSaved ? saved.name : "")
-                && body.string.trimmingCharacters(in: .whitespacesAndNewlines) == (selectSaved ? "Saved message" : "")
+                && name.stringValue.isEmpty
+                && body.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         #expect(try await store.composeTemplates() == [saved])
     }

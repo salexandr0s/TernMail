@@ -116,7 +116,7 @@ struct CalendarTimeGrid: View {
                     VStack(spacing: 0) {
                         ForEach(0..<axis.rows.count, id: \.self) { row in
                             Text(CalendarLayout.format(axis.rowDates[row], style: .dateTime.hour(), calendar: calendar))
-                                .font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(.secondary)
+                                .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
                                 .frame(width: gutter - Tokens.Space.s2, height: hourHeight, alignment: .topTrailing)
                                 .padding(.trailing, Tokens.Space.s2)
                         }
@@ -136,18 +136,16 @@ struct CalendarTimeGrid: View {
     private func dayHeaders(columnWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             Text(calendar.timeZone.abbreviation(for: date) ?? calendar.timeZone.identifier)
-                .font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: gutter)
+                .font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(width: gutter)
                 .help(calendar.timeZone.identifier)
             ForEach(days, id: \.self) { day in
                 VStack(spacing: Tokens.Space.s1) {
                     Text(CalendarLayout.format(day, style: .dateTime.weekday(.abbreviated), calendar: calendar))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(calendar.isDateInToday(day) ? Color.accentColor : Color.secondary)
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     Text("\(calendar.component(.day, from: day))")
-                        .font(.title2.weight(calendar.isDateInToday(day) ? .bold : .medium)).monospacedDigit()
-                        .foregroundStyle(calendar.isDateInToday(day) ? Color(nsColor: .alternateSelectedControlTextColor) : Color.primary)
+                        .font(.title2.weight(calendar.isDateInToday(day) ? .semibold : .regular)).monospacedDigit()
                         .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
-                        .background(calendar.isDateInToday(day) ? Color.accentColor : .clear, in: Circle())
+                        .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
                 }
                 .frame(width: columnWidth).padding(.vertical, Tokens.Space.s2)
                 .background(calendar.isDateInWeekend(day) ? Tokens.Surface.muted : Tokens.Surface.primary)
@@ -164,7 +162,7 @@ struct CalendarTimeGrid: View {
         let contentHeight = max(Tokens.Space.s8, CGFloat(rowCount + 1) * rowHeight + Tokens.Space.s2)
         return ScrollView(.vertical) {
             HStack(alignment: .top, spacing: 0) {
-                Text("All day").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Text("All day").font(.caption2).foregroundStyle(.secondary)
                     .frame(width: gutter - Tokens.Space.s2, alignment: .trailing)
                     .padding(.trailing, Tokens.Space.s2).padding(.top, Tokens.Space.s2)
                 ForEach(days, id: \.self) { day in

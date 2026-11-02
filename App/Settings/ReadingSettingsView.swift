@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct ReadingSettingsView: View {
@@ -15,11 +14,7 @@ struct ReadingSettingsView: View {
 
     var body: some View {
         SettingsPage {
-            Section {
-                MailTextAppearancePreview(
-                    font: .system(size: NSFont.preferredFont(forTextStyle: .body).pointSize * ReadingPreferences.textScale(scale)),
-                    adaptsDarkMode: adaptsDark)
-                    .accessibilityIdentifier("settings.reading.preview")
+            Section("Appearance") {
                 SettingsControlRow("Text size") {
                     Picker("Text size", selection: $scale) {
                         Text("Small").tag(0.85)
@@ -31,11 +26,7 @@ struct ReadingSettingsView: View {
                     .fixedSize()
                 }
                 SettingsToggleRow("Adapt Messages to Dark Mode", isOn: $adaptsDark)
-                SettingsToggleRow("Show Message Size", detail: "Includes the size in Message Details.", isOn: $showsSize)
-            } header: {
-                Text("Message appearance")
-            } footer: {
-                Text("Text size also applies to the message list. Individual messages may use their own fonts and colors.")
+                SettingsToggleRow("Show Message Size", isOn: $showsSize)
             }
 
             Section("Conversations") {
@@ -64,12 +55,9 @@ struct ReadingSettingsView: View {
                 }
             }
 
-            Section("Remote content & privacy") {
+            Section("Privacy") {
                 SettingsToggleRow("Block Remote Images", detail: "Choose Load Images to allow HTTPS images in one message. Known tracking images stay blocked.", isOn: $blocksImages)
                 SettingsToggleRow("Show Company Logos", detail: "When a sender has no photo, look for an icon on their website. Websites receive your IP address, but no email address or message content.", isOn: $showsLogos)
-            }
-
-            Section("System search") {
                 SettingsToggleRow("Show Mail in Spotlight", detail: "Spotlight lists conversation subjects, sender names and previews. Turning this off removes them.", isOn: $showsInSpotlight)
                 if app.spotlightRemoval.hasPendingRemoval {
                     LabeledContent {

@@ -1,5 +1,93 @@
 import SwiftUI
 
+/// Sheets fit short forms and keep their actions visible when longer forms scroll.
+struct SettingsEditorSheet<Content: View, Actions: View>: View {
+    let title: String
+    var width: CGFloat = Tokens.Settings.editorWidth
+    var messages: [String] = []
+    /// `false` when `content` is a form that scrolls on its own.
+    var scrolls = true
+    /// Runs on Esc when no Cancel button claims it; Done-only sheets use it.
+    var onExit: (() -> Void)? = nil
+    @ViewBuilder let content: Content
+    @ViewBuilder let actions: Actions
+    @State private var contentHeight: CGFloat = Tokens.Layout.settingsHeight
+
+    var body: some View {
+        if let onExit {
+            sheet.onExitCommand(perform: onExit)
+        } else {
+            sheet
+        }
+    }
+
+    private var sheet: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            Text(title)
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+
+            if scrolls {
+                ScrollView {
+                    content
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(Tokens.Space.s1)
+                        .padding(.trailing, Tokens.Space.s2)
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear
+                                    .onAppear { contentHeight = ceil(geometry.size.height) }
+                                    .onChange(of: geometry.size.height) { _, height in
+                                        contentHeight = ceil(height)
+                                    }
+                            }
+                        }
+                }
+                .frame(height: min(contentHeight, Tokens.Settings.editorMaxContentHeight))
+            } else {
+                content
+            }
+
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(Tokens.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: Tokens.Space.s2) {
+                    Spacer(minLength: 0)
+                    actions
+                }
+            }
+        }
+        .padding(Tokens.Space.s5)
+        .frame(width: width)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Tokens.Surface.muted)
+    }
+}
+
+extension SettingsEditorSheet where Actions == SettingsDoneButton {
+    /// A sheet that applies changes as they are made. Return and Esc both close it.
+    init(title: String, width: CGFloat = Tokens.Settings.editorWidth, messages: [String] = [],
+         scrolls: Bool = true, onDone: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.init(title: title, width: width, messages: messages, scrolls: scrolls, onExit: onDone,
+                  content: content, actions: { SettingsDoneButton(action: onDone) })
+    }
+}
+
+/// The only button on a sheet that has nothing to cancel.
+struct SettingsDoneButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button("Done", action: action)
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+    }
+}
+
 /// Every pane is a grouped form, so labels and controls align the way they do
 /// in System Settings.
 struct SettingsPage<Content: View>: View {
@@ -21,7 +109,7 @@ struct SettingsFooter<Content: View>: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Tokens.Workspace.pageGutter)
+            .padding(.horizontal, Tokens.Space.s5)
             .padding(.vertical, Tokens.Space.s3)
             .background(Tokens.Surface.muted)
             .overlay(alignment: .top) { Divider() }

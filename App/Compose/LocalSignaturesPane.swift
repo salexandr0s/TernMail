@@ -24,30 +24,31 @@ struct LocalSignaturesPane: View {
 
     var body: some View {
         SettingsPage {
-            Section {
-                ComposeLibraryPicker(title: "Saved signatures", newItemLabel: "Create a new signature",
-                    symbol: "signature", identifierPrefix: "compose-signature",
-                    items: signatures.map { .init(id: $0.id, name: $0.name) }, selection: guardedSignature) {
-                    requestSignature(nil)
+            Section("Signature") {
+                SettingsControlRow("Signature") {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Picker("Signature", selection: guardedSignature) {
+                            Text("New Signature").tag(String?.none)
+                            ForEach(signatures) { Text($0.name).tag(Optional($0.id)) }
+                        }
+                        .frame(maxWidth: Tokens.Settings.pickerWidth)
+                        Button("New", systemImage: "plus") { requestSignature(nil) }
+                            .help("Create a new signature")
+                            .accessibilityLabel("Create a new signature")
+                    }
                 }
+                TextField("Name", text: $name, prompt: Text("Signature name"))
             }
-            Section(selectedID == nil ? "New signature" : "Edit signature") {
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    TextField("Signature name", text: $name, prompt: Text("Signature name"))
-                        .labelsHidden()
-                        .textFieldStyle(.plain)
-                        .font(Tokens.Workspace.pageTitle)
-                        .padding(.horizontal, Tokens.Space.s2)
-                        .padding(.top, Tokens.Space.s2)
-                    SettingsMessageEditor(draft: draft, isEditable: !isSaving)
-                        .frame(minHeight: Tokens.Layout.quoteMaxHeight)
-                        .accessibilityLabel("Signature text")
-                }
+            Section("Signature text") {
+                SettingsMessageEditor(draft: draft, isEditable: !isSaving)
+                    .frame(minHeight: Tokens.Layout.quoteMaxHeight)
+                    .accessibilityLabel("Signature text")
                 HStack {
                     Button("Delete Signature", role: .destructive) { unsaved.request { Task { await delete() } } }.disabled(selectedID == nil)
                     Spacer()
+                    Button("Save Signature") { Task { await save() } }
+                        .buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .controlSize(.small)
             }
 
             Section {
@@ -72,14 +73,20 @@ struct LocalSignaturesPane: View {
                 }
                 SettingsToggleRow("Place signature above quoted text", isOn: $assignment.placeAboveQuote)
                 SettingsToggleRow("Include signature separator (--)", isOn: $assignment.includeSeparator)
+                HStack {
+                    if loadingAssignment { ProgressView().controlSize(.small) }
+                    Spacer()
+                    Button("Save Defaults") { Task { await saveAssignment() } }
+                        .disabled(accountID.isEmpty || loadingAssignment)
+                }
             } header: {
                 Text("Signature defaults")
             } footer: {
                 Text("Existing drafts keep their current signature. An address without its own defaults uses the account default, then Gmail's signature setting.")
             }
             .disabled(loadingAssignment)
+            if let error { SettingsErrorLabel(error) }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { SettingsFooter { saveBar } }
         .task { accountID = accounts.first?.id ?? ""; await reload() }
         .task(id: accountID) { address = ""; await loadAssignment() }
         .task(id: address) { await loadAssignment() }
@@ -91,42 +98,6 @@ struct LocalSignaturesPane: View {
     private var signatureHasChanges: Bool { name != baselineName || draft.document != baselineDocument }
     private var assignmentHasChanges: Bool { !loadingAssignment && assignment != baselineAssignment }
     private var hasChanges: Bool { signatureHasChanges || assignmentHasChanges }
-
-    private var saveBar: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            if let error { SettingsErrorLabel(error) }
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .bottom, spacing: Tokens.Space.s4) {
-                    saveSignatureAction.fixedSize()
-                    Spacer(minLength: Tokens.Space.s4)
-                    saveDefaultsAction.fixedSize()
-                }
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    saveSignatureAction
-                    saveDefaultsAction
-                }
-            }
-        }
-    }
-
-    private var saveSignatureAction: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text(signatureHasChanges ? "Signature has unsaved changes" : "Signature text")
-                .font(.caption).foregroundStyle(.secondary)
-            Button("Save Signature") { Task { await save() } }
-                .buttonStyle(.borderedProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-    }
-
-    private var saveDefaultsAction: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text(loadingAssignment ? "Loading defaults…" : assignmentHasChanges ? "Defaults have unsaved changes" : "Account defaults")
-                .font(.caption).foregroundStyle(.secondary)
-            Button("Save Defaults") { Task { await saveAssignment() } }
-                .disabled(accountID.isEmpty || loadingAssignment)
-        }
-    }
 
     private var guardedSignature: Binding<String?> {
         Binding(get: { selectedID }, set: { id in

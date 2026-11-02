@@ -58,12 +58,9 @@ struct CalendarGridViews: View, Equatable {
                             } label: {
                                 HStack {
                                     Text(CalendarLayout.format(monthDate, style: .dateTime.month(.wide), calendar: calendar))
-                                        .font(.title2.bold())
-                                        .foregroundStyle(calendar.isDate(monthDate, equalTo: .now, toGranularity: .month)
-                                            ? Color.accentColor : Color.primary)
+                                        .font(.title3.weight(.semibold))
                                     Spacer()
-                                    Image(systemName: "chevron.right").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
-                                        .accessibilityHidden(true)
+                                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 }.contentShape(Rectangle())
                             }.buttonStyle(.plain)
                                 .accessibilityLabel("Show " + CalendarLayout.format(monthDate, style: .dateTime.month(.wide).year(), calendar: calendar))
@@ -74,12 +71,7 @@ struct CalendarGridViews: View, Equatable {
                         }
                         .padding(Tokens.Space.s4)
                         .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                                .strokeBorder(calendar.isDate(monthDate, equalTo: .now, toGranularity: .month)
-                                    ? Color.accentColor.opacity(Tokens.Opacity.outline) : Tokens.Surface.border,
-                                    lineWidth: Tokens.Border.hairline)
-                        }
+                        .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.lg).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
                     }
                 }
             }.padding(Tokens.Space.s4)

@@ -326,7 +326,7 @@ import Testing
         let view = try #require(window.contentView)
         try #require(element(id: "favorites.searchFolders", in: view) != nil)
         let field = try #require(descendants(view).compactMap { $0 as? NSTextField }.first {
-            $0.placeholderString == "Find a folder or label"
+            $0.placeholderString == "Find a folder"
         })
         try #require(window.makeFirstResponder(field))
         let editor = try #require(field.currentEditor() as? NSTextView)

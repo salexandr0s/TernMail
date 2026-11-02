@@ -20,11 +20,6 @@ struct FailedChangesView: View {
                 }
             } else {
                 SettingsPage {
-                    if let error {
-                        Section {
-                            SettingsErrorLabel(error)
-                        }
-                    }
                     Section {
                         ForEach(rows) { row in
                             failedRow(row)
@@ -33,6 +28,11 @@ struct FailedChangesView: View {
                         Text("\(rows.count) failed \(rows.count == 1 ? "change" : "changes")")
                     } footer: {
                         Text("Retry asks Gmail to save the change again. Discard removes the failed change from this Mac.")
+                    }
+                    if let error {
+                        Section {
+                            SettingsErrorLabel(error)
+                        }
                     }
                 }
             }
@@ -58,13 +58,13 @@ struct FailedChangesView: View {
 
     private func failedRow(_ failure: FailedChangePresentation) -> some View {
         let row = failure.action
-        return VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .top, spacing: Tokens.Space.s2) {
                 Image(systemName: "exclamationmark.circle")
                     .foregroundStyle(Tokens.Status.warning)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text(title(row.kind)).font(.headline)
+                    Text(title(row.kind)).font(.body.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                     Text(failure.targetDescription)
                         .fixedSize(horizontal: false, vertical: true)
@@ -73,50 +73,34 @@ struct FailedChangesView: View {
                         Text(intent).font(.callout).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Label(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed",
-                          systemImage: "person.crop.circle")
-                        .font(.callout)
+                    Text(row.createdAt, format: .dateTime.year().month().day().hour().minute().second())
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(app.mailbox?.account(id: row.accountID)?.account.email ?? "Account removed")
-                    Text(row.createdAt, format: .dateTime.year().month().day().hour().minute().second())
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text("Why it failed")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(row.lastError ?? "Gmail refused this change.")
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Tokens.Space.s3)
-            .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash),
-                        in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            if failure.draftID != nil || !failure.sources.isEmpty {
-                HStack {
-                    sourceActions(failure)
-                    Spacer(minLength: 0)
-                }
-            }
+            Text(row.lastError ?? "Gmail refused this change.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
             HStack(spacing: Tokens.Space.s2) {
+                sourceActions(failure)
+                Spacer(minLength: 0)
                 if row.id.map(busy.contains) == true {
                     ProgressView().controlSize(.small)
                         .accessibilityLabel("Updating failed change")
-                    Text("Updating…").font(.callout).foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 0)
                 Button("Retry", systemImage: "arrow.clockwise") { Task { await retry(row) } }
                     .accessibilityLabel("Retry \(title(row.kind)): \(failure.targetDescription)")
-                    .fixedSize()
                 Button("Discard…", role: .destructive) { discarding = row }
                     .accessibilityLabel("Discard \(title(row.kind)): \(failure.targetDescription)")
-                    .fixedSize()
             }
+            .controlSize(.small)
         }
         .disabled(row.id.map(busy.contains) == true)
         .padding(.vertical, Tokens.Space.s1)

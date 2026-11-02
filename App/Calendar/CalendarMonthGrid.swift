@@ -92,37 +92,26 @@ struct CalendarMonthGrid: View {
                 HStack {
                     if calendar.component(.day, from: day) == 1 {
                         Text(CalendarLayout.format(day, style: .dateTime.month(.abbreviated), calendar: calendar))
-                            .font(.caption.bold()).foregroundStyle(currentMonth ? Color.primary : Color.secondary).lineLimit(1)
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer()
                     Button { selectedID = nil; date = day } label: {
                         Text("\(calendar.component(.day, from: day))")
-                            .font(.callout.weight(selectedDay || calendar.isDateInToday(day) ? .bold : .medium))
-                            .monospacedDigit()
-                            .foregroundStyle(calendar.isDateInToday(day) ? Color(nsColor: .alternateSelectedControlTextColor)
-                                : currentMonth ? Color.primary : Color.secondary)
+                            .font(.callout.weight(selectedDay || calendar.isDateInToday(day) ? .semibold : .regular))
+                            .monospacedDigit().foregroundStyle(currentMonth ? Color.primary : Color.secondary)
                             .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                            .background(calendar.isDateInToday(day) ? Color.accentColor : .clear, in: Circle())
+                            .background(calendar.isDateInToday(day) ? Color.accentColor.opacity(Tokens.Calendar.selectedTint) : .clear, in: Circle())
                     }.buttonStyle(.plain)
                         .accessibilityLabel("Select " + CalendarLayout.format(day, style: .dateTime.month().day(), calendar: calendar))
-                        .accessibilityValue(calendar.isDateInToday(day) ? "Today" : "")
-                        .accessibilityAddTraits(selectedDay ? .isSelected : [])
                 }
                 ForEach(dayEvents.prefix(limit)) { event in
                     eventChip(event, on: day)
                 }
                 if dayEvents.count > limit {
-                    Button { openDay(day) } label: {
-                        HStack(spacing: Tokens.Space.s1) {
-                            Text("\(dayEvents.count - limit) more")
-                            Image(systemName: "chevron.right").accessibilityHidden(true)
-                        }
-                    }
-                        .font(.caption.bold()).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    Button("\(dayEvents.count - limit) more") { openDay(day) }
+                        .font(.caption.weight(.medium)).buttonStyle(.plain).foregroundStyle(Color.accentColor)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Tokens.Space.s1).help("Show all events on this day")
-                        .accessibilityLabel("Show \(dayEvents.count - limit) more events on "
-                            + CalendarLayout.format(day, style: .dateTime.month().day(), calendar: calendar))
                 }
                 Spacer(minLength: 0)
             }.padding(Tokens.Space.s1)

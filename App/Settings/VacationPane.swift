@@ -22,22 +22,8 @@ struct VacationPane: View {
     var body: some View {
         SettingsPage {
             header
-            Section {
-                SettingsToggleRow("Vacation responder", detail: "Send automatic replies during the schedule below.", isOn: $settings.enableAutoReply)
-            } header: {
-                Text("Automatic reply")
-            } footer: {
-                Text("Choose Save Changes to update the vacation responder in Gmail.")
-            }
-            Section {
-                dateRows(toggle: "Start date", picker: "Starts", date: $settings.startTime)
-                dateRows(toggle: "End date", picker: "Ends", date: $settings.endTime)
-            } header: {
-                Text("Schedule")
-            } footer: {
-                Text(scheduleDescription)
-            }
-            Section("Reply message") {
+            Section("Automatic reply") {
+                SettingsToggleRow("Vacation responder", detail: "Reply automatically while you're away.", isOn: $settings.enableAutoReply)
                 TextField("Subject", text: $settings.responseSubject.or(""))
                 SettingsMessageEditor(draft: draft, isEditable: model.canEdit)
                     .accessibilityLabel("Vacation reply message")
@@ -47,6 +33,10 @@ struct VacationPane: View {
                 if model.account?.hostedDomain != nil {
                     SettingsToggleRow("Only reply within my organization", isOn: $settings.restrictToDomain)
                 }
+            }
+            Section("Schedule") {
+                dateRows(toggle: "Start date", picker: "Starts", date: $settings.startTime)
+                dateRows(toggle: "End date", picker: "Ends", date: $settings.endTime)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { SettingsFooter { saveBar } }
@@ -67,12 +57,12 @@ struct VacationPane: View {
             if let validationMessage {
                 SettingsErrorLabel(validationMessage)
             }
-            if let error = model.error { SettingsErrorLabel(error) }
             HStack(spacing: Tokens.Space.s3) {
-                Text(hasChanges ? "Unsaved changes" : "No changes to save")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if hasChanges {
+                    Text("Unsaved changes")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer(minLength: Tokens.Space.s2)
                 if model.isSaving { ProgressView().controlSize(.small) }
                 Button("Save Changes") {
@@ -97,17 +87,6 @@ struct VacationPane: View {
     }
 
     private var hasChanges: Bool { editedSettings != previous }
-
-    private var scheduleDescription: String {
-        let start = settings.startTime?.formatted(date: .abbreviated, time: .shortened)
-        let end = settings.endTime?.formatted(date: .abbreviated, time: .shortened)
-        return switch (start, end) {
-        case (.some(let start), .some(let end)): "When enabled, replies run from \(start) to \(end)."
-        case (.some(let start), .none): "When enabled, replies start \(start) and continue until you turn them off."
-        case (.none, .some(let end)): "When enabled, replies continue until \(end)."
-        case (.none, .none): "When enabled, replies continue until you turn the responder off."
-        }
-    }
 
     private var editedSettings: VacationSettings {
         var result = settings

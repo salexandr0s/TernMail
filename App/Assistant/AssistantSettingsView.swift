@@ -25,9 +25,7 @@ struct AssistantSettingsView: View {
                                     scrolls: false, onDone: { dismiss() }) {
                     Form { sections }
                         .formStyle(.grouped)
-                        .scrollBounceBehavior(.basedOnSize)
-                        .frame(minHeight: 0, maxHeight: .infinity)
-                        .clipped()
+                        .frame(height: Tokens.Settings.editorMaxContentHeight)
                 }
             } else {
                 SettingsPage { sections }

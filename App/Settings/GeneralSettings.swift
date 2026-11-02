@@ -7,11 +7,11 @@ struct GeneralSettings: View {
 
     var body: some View {
         SettingsPage {
-            Section("Email links") {
+            Section {
                 DefaultMailAppView()
             }
-            Section {
-                SettingsControlRow("Undo Send", detail: "Time to stop a message after choosing Send.") {
+            Section("Sending") {
+                SettingsControlRow("Undo Send", detail: "Delay sending so you can undo.") {
                     Picker("Undo Send delay", selection: $undoSendDelay) {
                         ForEach(UndoSendDelay.choices, id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)
@@ -19,26 +19,10 @@ struct GeneralSettings: View {
                     }
                     .pickerStyle(.menu)
                 }
-            } header: {
-                Text("Sending")
-            } footer: {
-                Text("Tern holds each message for \(sendDelay) seconds. Choose Undo Send during that time to return to your draft.")
             }
-            Section {
+            Section("Keyboard") {
                 SettingsToggleRow("Single-Key Shortcuts", detail: "Use letter keys when you aren't typing.", isOn: $usesSingleKeys)
-            } header: {
-                Text("Keyboard")
-            } footer: {
-                Text(usesSingleKeys ? "Single keys are on in the main window. Command-key shortcuts remain available."
-                    : "Command-key shortcuts work with this setting off.")
-            }
-            Section("Everyday shortcuts") {
-                ForEach([ShortcutCatalog.newMessage, ShortcutCatalog.reply, ShortcutCatalog.archive]) { command in
-                    LabeledContent(command.title) {
-                        Text(command.label).font(.body.monospaced().weight(.medium))
-                    }
-                }
-                SettingsControlRow("All commands") {
+                SettingsControlRow("Shortcut reference") {
                     Button("View Shortcuts…") {
                         openWindow(id: KeyboardShortcutsView.sceneID)
                     }
@@ -47,9 +31,5 @@ struct GeneralSettings: View {
                 }
             }
         }
-    }
-
-    private var sendDelay: Int {
-        UndoSendDelay.choices.contains(undoSendDelay) ? undoSendDelay : UndoSendDelay.defaultSeconds
     }
 }

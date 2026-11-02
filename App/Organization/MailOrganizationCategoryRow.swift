@@ -8,6 +8,7 @@ struct MailOrganizationCategoryRow: View {
     var isEditable = true
     var isApplied = false
     var onOpenMessage: ((MailOrganizationSample) -> Void)? = nil
+    @State private var isExpanded = false
     @State private var visibleExampleCount = 4
 
     private var examples: [MailOrganizationSample] {
@@ -53,46 +54,92 @@ struct MailOrganizationCategoryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                    Image(systemName: "tag.fill")
-                        .font(.title2).foregroundStyle(tint)
-                        .frame(width: Tokens.Space.s10, height: Tokens.Space.s10)
-                        .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text(displayName).font(.title3.bold()).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.isHeader)
-                        Text(labelState).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                Text(category.proposal.explanation)
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
                 if isEditable {
-                    Toggle("Include this label", isOn: $category.isSelected)
+                    Toggle("Include \(displayName)", isOn: $category.isSelected)
+                        .labelsHidden()
                         .toggleStyle(.checkbox)
+                        .frame(width: Tokens.Control.icon, height: Tokens.Control.iconButton)
                         .accessibilityLabel("Include \(displayName)")
                         .accessibilityIdentifier("organization.category.\(category.id).selected")
                 }
+                disclosureButton
             }
-            .padding(Tokens.Space.s5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(tint.opacity(Tokens.Opacity.wash),
-                        in: UnevenRoundedRectangle(topLeadingRadius: Tokens.Radius.lg,
-                                                   topTrailingRadius: Tokens.Radius.lg))
-            Divider()
-            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-                if isEditable { editingControls } else { readOnlyDetails }
+            .padding(Tokens.Space.s4)
+
+            if isExpanded {
                 Divider()
-                exampleList
+                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    exampleList
+                    Divider()
+                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                        Text(isEditable ? "Label settings" : "Label details")
+                            .font(.subheadline.weight(.semibold))
+                        if isEditable {
+                            editingControls
+                        } else {
+                            readOnlyDetails
+                        }
+                    }
+                }
+                .padding(Tokens.Space.s4)
             }
-            .padding(Tokens.Space.s5)
         }
         .ternSurface()
+        .ternAnimation(value: isExpanded)
         .accessibilityElement(children: .contain)
+    }
+
+    private var disclosureButton: some View {
+        Button { isExpanded.toggle() } label: {
+            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                Image(systemName: "tag.fill")
+                    .font(.body)
+                    .foregroundStyle(tint)
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                        Text(displayName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .help(displayName)
+                        Spacer(minLength: 0)
+                        TernBadge(text: "\(category.selectedMessageIDs.count)")
+                            .accessibilityHidden(true)
+                    }
+                    Text(category.proposal.explanation)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(isExpanded ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: Tokens.Space.s2) {
+                        Text(labelState)
+                        Text("·").accessibilityHidden(true)
+                        Text(includesFutureMail ? "Future mail" : "Recent mail only")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, Tokens.Space.s1)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: Tokens.Space.s4, height: Tokens.Control.iconButton)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .ternHover()
+        .accessibilityLabel("\(displayName), \(category.selectedMessageIDs.count) messages selected, \(labelState), \(includesFutureMail ? "future mail filter" : "recent mail only")")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("\(category.proposal.explanation) \(isExpanded ? "Hide" : "Show") examples and label details.")
+        .accessibilityIdentifier("organization.category.\(category.id).disclosure")
     }
 
     private var editingControls: some View {
@@ -123,10 +170,8 @@ struct MailOrganizationCategoryRow: View {
             } else {
                 SettingsNote("This label applies to the reviewed messages. A future rule needs recurring mail from a consistent mailing-list or automated sender.")
             }
-            if category.proposal.kind == .topic, category.selectedMessageIDs != Set(category.proposal.messageIDs) {
-                SettingsNote(category.createsFilter
-                    ? "Future filters include only senders whose examples are all selected."
-                    : "Message choices changed. Future filters are turned off; you can enable a filter again only for senders whose examples are all included.")
+            if category.selectedMessageIDs != Set(category.proposal.messageIDs) {
+                SettingsNote("Message choices changed. Future filters are turned off; you can enable a filter again only for senders whose examples are all included.")
             }
         }
     }

@@ -145,58 +145,67 @@ struct AssistantTaskReview: View {
     }
 
     var body: some View {
-        SettingsEditorSheet(title: "Add to Tasks", width: Tokens.Sheet.smallWidth, messages: messages) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                Text("Review the task and choose a list.")
-                    .font(.callout).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    TextField("Task title", text: $session.title, axis: .vertical)
-                        .font(.title3.weight(.medium)).textFieldStyle(.plain)
-                        .lineLimit(2...4).focused($titleFocused)
-                        .accessibilityLabel("Task title")
-                    Divider()
-                    TextField("Add details", text: $session.notes, axis: .vertical)
-                        .textFieldStyle(.plain).lineLimit(3...8)
-                        .accessibilityLabel("Task notes")
-                }
-                .padding(Tokens.Space.s4).ternSurface(style: .grouped)
-                .disabled(session.isSaving || !session.hasAccess)
-                HStack(spacing: Tokens.Space.s2) {
-                    Toggle("Due date", isOn: $session.hasDueDate).toggleStyle(.checkbox)
-                    Spacer(minLength: Tokens.Space.s2)
-                    if session.hasDueDate {
-                        DatePicker("Due date", selection: $session.dueDate, displayedComponents: .date)
-                            .datePickerStyle(.field).labelsHidden()
-                            .accessibilityLabel("Task due date")
-                    }
-                }
-                .disabled(session.isSaving || !session.hasAccess)
-                destination
-                if let source = session.original.source {
-                    Label(source.subject.isEmpty ? "Source email" : source.subject, systemImage: "envelope")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(2).help(source.subject)
-                }
-                if session.isUncertain {
-                    Text("Google hasn't confirmed this save. Check again to look for the task before trying another addition.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("Add Again…") { confirmsRetry = true }
-                        .disabled(!session.canSave)
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            Label("Add to Tasks", systemImage: "checklist")
+                .font(.title3.weight(.semibold))
+            Text("Review the task and choose a list.")
+                .font(.callout).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                TextField("Task title", text: $session.title, axis: .vertical)
+                    .font(.title3.weight(.medium)).textFieldStyle(.plain)
+                    .lineLimit(2...4).focused($titleFocused)
+                    .accessibilityLabel("Task title")
+                Divider()
+                TextField("Add details", text: $session.notes, axis: .vertical)
+                    .textFieldStyle(.plain).lineLimit(3...8)
+                    .accessibilityLabel("Task notes")
+            }
+            .padding(Tokens.Space.s4).ternSurface(style: .grouped)
+            .disabled(session.isSaving || !session.hasAccess)
+            HStack(spacing: Tokens.Space.s2) {
+                Toggle("Due date", isOn: $session.hasDueDate).toggleStyle(.checkbox)
+                Spacer(minLength: Tokens.Space.s2)
+                if session.hasDueDate {
+                    DatePicker("Due date", selection: $session.dueDate, displayedComponents: .date)
+                        .datePickerStyle(.field).labelsHidden()
+                        .accessibilityLabel("Task due date")
                 }
             }
-        } actions: {
-            if session.isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving task") }
-            Button("Cancel") { dismiss() }
-                .keyboardShortcut(.cancelAction).disabled(session.isSaving)
-                .accessibilityIdentifier("assistant-task-cancel")
-            Button(session.isUncertain ? "Check again" : "Add Task") {
-                Task { if await session.save() { dismiss() } }
+            .disabled(session.isSaving || !session.hasAccess)
+            destination
+            if let source = session.original.source {
+                Label(source.subject.isEmpty ? "Source email" : source.subject, systemImage: "envelope")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(2).help(source.subject)
             }
-            .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-            .disabled(!session.canSave)
-            .accessibilityIdentifier("assistant-task-save")
+            if !session.hasAccess {
+                notice("Assistant access changed. Close this review and start again.")
+            } else if let error = session.error {
+                notice(error)
+            }
+            if session.isUncertain {
+                Text("Google hasn't confirmed this save. Check again to look for the task before trying another addition.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Add Again…") { confirmsRetry = true }
+                    .disabled(!session.canSave)
+            }
+            HStack {
+                if session.isSaving { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction).disabled(session.isSaving)
+                Button(session.isUncertain ? "Check again" : "Add Task") {
+                    Task { if await session.save() { dismiss() } }
+                }
+                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                .disabled(!session.canSave)
+                .accessibilityIdentifier("assistant-task-save")
+            }
         }
+        .padding(Tokens.Space.s5)
+        .frame(width: Tokens.Sheet.smallWidth)
+        .background(Tokens.Surface.primary)
         .interactiveDismissDisabled(session.isSaving)
         .confirmationDialog("Add the task again?", isPresented: $confirmsRetry, titleVisibility: .visible) {
             Button("Add Again") {
@@ -242,8 +251,9 @@ struct AssistantTaskReview: View {
         .padding(Tokens.Space.s3).ternSurface(style: .grouped)
     }
 
-    private var messages: [String] {
-        if !session.hasAccess { return ["Assistant access changed. Close this review and start again."] }
-        return session.error.map { [$0] } ?? []
+    private func notice(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.circle")
+            .font(.callout).foregroundStyle(Tokens.Status.error)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

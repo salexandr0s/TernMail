@@ -32,11 +32,6 @@ enum Tokens {
         static let border = Color(nsColor: .separatorColor)
     }
 
-    enum Workspace {
-        static let pageGutter = Space.s6
-        static let pageTitle: Font = .title2.bold()
-    }
-
     enum MessageList {
         static let unreadWeight: Font.Weight = .bold
         static let readWeight: Font.Weight = .regular
@@ -86,9 +81,6 @@ enum Tokens {
         static let sidebarWidth: CGFloat = 380
         static let sidebarMaxWidth: CGFloat = 480
         static let readerMinWidth = Layout.emptyStateWidth
-        static let compactHeight: CGFloat = 600
-        static let minimumTranscriptHeight = Space.s16 + Space.s8
-        static let compactScopeDetailsHeight = Space.s8
         static let contentWidth: CGFloat = 720
         static let bubbleInset = Space.s10
         static let userBubble = Color.accentColor.opacity(0.14)
@@ -107,7 +99,7 @@ enum Tokens {
 
     /// Calendar panes and sheets share native control sizing and semantic surfaces.
     enum Calendar {
-        static let sidebarWidth: CGFloat = 280
+        static let sidebarWidth: CGFloat = 248
         static let compactWidth = Layout.sidebarCompactWidth
         static let contentMinWidth: CGFloat = 420
         static let editorWidth: CGFloat = 600

@@ -13,39 +13,25 @@ struct SuggestionBlocklistPane: View {
         SettingsPage {
             Section {
                 SettingsControlRow("Account") {
-                    Picker("Account", selection: $accountID) {
-                        ForEach(accounts) { Text($0.email).tag($0.id) }
-                    }
+                    Picker("Account", selection: $accountID) { ForEach(accounts) { Text($0.email).tag($0.id) } }
                         .frame(maxWidth: Tokens.Settings.pickerWidth)
-                        .disabled(accounts.isEmpty)
                 }
-                if let error { SettingsErrorLabel(error) }
+                HStack(spacing: Tokens.Space.s2) {
+                    TextField("Email address", text: $address)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Email address to hide")
+                    Button("Hide Address") { Task { await change(address, blocked: true) } }
+                        .buttonStyle(.borderedProminent)
+                        .fixedSize()
+                        .disabled(accountID.isEmpty || address.isEmpty)
+                }
             } header: {
                 Text("Recipient suggestions")
             } footer: {
-                Text("Hide addresses from suggestions for this account. This does not block incoming mail.")
-            }
-            Section {
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    TextField("Email address", text: $address)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(accountID.isEmpty)
-                        .accessibilityLabel("Email address to hide")
-                    HStack {
-                        Spacer(minLength: 0)
-                        Button("Hide Address") { Task { await change(address, blocked: true) } }
-                            .buttonStyle(.borderedProminent)
-                            .fixedSize()
-                            .disabled(accountID.isEmpty || address.isEmpty)
-                    }
-                }
-            } header: {
-                Text("Hide a recipient")
-            } footer: {
-                Text("You can still enter hidden addresses manually when writing a message.")
+                Text("Hidden addresses stay out of recipient suggestions for this account.")
             }
 
-            Section {
+            Section("Hidden addresses") {
                 if blocked.isEmpty {
                     HStack(alignment: .top, spacing: Tokens.Space.s2) {
                         Image(systemName: "info.circle")
@@ -56,7 +42,7 @@ struct SuggestionBlocklistPane: View {
                             Text(accountID.isEmpty
                                 ? "Add a mail account in Connections to manage its recipient suggestions."
                                 : "Addresses you hide will appear here. You can show them again at any time.")
-                                .font(.callout)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -69,26 +55,21 @@ struct SuggestionBlocklistPane: View {
                             Image(systemName: "envelope")
                                 .foregroundStyle(.secondary)
                                 .accessibilityHidden(true)
-                            Text(entry).font(.body.weight(.medium))
+                            Text(entry)
                                 .textSelection(.enabled)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .help(entry)
                             Spacer(minLength: Tokens.Space.s3)
                             Button("Show Again") { Task { await change(entry, blocked: false) } }
-                                .fixedSize()
+                                .controlSize(.small)
                                 .accessibilityLabel("Show \(entry) in recipient suggestions")
-                                .help("Include this address in recipient suggestions again")
                         }
                         .padding(.vertical, Tokens.Space.s1)
                     }
                 }
-            } header: {
-                HStack(spacing: Tokens.Space.s2) {
-                    Text("Hidden addresses")
-                    Text("\(blocked.count)").monospacedDigit().foregroundStyle(.secondary)
-                }
             }
+            if let error { SettingsErrorLabel(error) }
         }
         .task { accountID = accounts.first?.id ?? ""; await reload() }
         .task(id: accountID) { await reload() }

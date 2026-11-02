@@ -15,26 +15,16 @@ struct ComposeSignatureView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Tokens.Space.s2) {
                 Button { isExpanded.toggle() } label: {
-                    HStack(spacing: Tokens.Space.s2) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: Tokens.Space.s3)
-                            .accessibilityHidden(true)
-                        Label("Signature", systemImage: "signature")
-                            .font(.callout)
-                        Spacer(minLength: Tokens.Space.s2)
-                        Text(html == nil ? "None" : "Included")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
+                    Label("Signature", systemImage: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.medium))
                 }
                 .buttonStyle(.plain)
                 .disabled(html == nil)
                 .help(isExpanded ? "Hide signature preview" : "Show signature preview")
-                .accessibilityLabel("Signature")
                 .accessibilityValue(html == nil ? "None" : (isExpanded ? "Expanded" : "Collapsed"))
-                Menu("Change") {
+                Spacer(minLength: Tokens.Space.s2)
+                Text(html == nil ? "None" : "Included").font(.caption).foregroundStyle(.secondary)
+                Menu("Change Signature", systemImage: "signature") {
                     Button("None") { model.chooseSignature(nil) }
                     if model.selectedSender?.identity.signatureHTML?.isEmpty == false {
                         Button("Gmail Signature") { model.useGmailSignature() }
@@ -51,7 +41,6 @@ struct ComposeSignatureView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .disabled(!model.isEditable)
-                .accessibilityLabel("Change Signature")
                 .accessibilityIdentifier("compose-choose-signature")
             }
             .padding(.horizontal, Tokens.Space.s5)
@@ -68,6 +57,8 @@ struct ComposeSignatureView: View {
                 .padding(.bottom, Tokens.Space.s2)
             }
         }
+        .background(Tokens.Surface.muted)
+        .overlay(alignment: .top) { Divider() }
         .ternAnimation(value: isExpanded)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Message signature")

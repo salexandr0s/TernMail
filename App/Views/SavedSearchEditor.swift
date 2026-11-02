@@ -13,96 +13,61 @@ struct SavedSearchEditor: View {
     @State private var isSaving = false
     @FocusState private var isNameFocused: Bool
 
-    private var canSave: Bool {
-        !isSaving && !mailbox.navigation.isSaving
-            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     var body: some View {
-        SettingsEditorSheet(
-            title: existing == nil ? "New Saved Search" : "Edit Saved Search",
-            width: Tokens.Settings.editorWideWidth,
-            messages: mailbox.navigation.error.map { [$0] } ?? []
-        ) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        Text("Name").font(.callout.bold()).foregroundStyle(.secondary)
-                        TextField("Name this search", text: $name)
-                            .font(.title3.weight(.semibold))
-                            .textFieldStyle(.plain)
-                            .focused($isNameFocused)
-                            .accessibilityLabel("Search name")
-                    }
-                    Divider()
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        Text("Search Query").font(.callout.bold()).foregroundStyle(.secondary)
-                        TextField("Search terms or Gmail operators", text: $query, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .lineLimit(3...6)
-                            .accessibilityLabel("Search query")
-                            .help("Use Gmail search operators such as from:, label: and has:attachment.")
-                        if let operators = URL(string: "https://support.google.com/mail/answer/7190") {
-                            Link("Gmail Search Operators", destination: operators)
-                                .font(.callout)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            PopupHeader(
+                title: existing == nil ? "New Saved Search" : "Edit Saved Search",
+                systemImage: "magnifyingglass",
+                subtitle: "Search history stays off. Tern saves only this search."
+            )
+            Form {
+                TextField("Name", text: $name)
+                    .focused($isNameFocused)
+                TextField("Search terms", text: $query)
+                    .help("Use Gmail search operators such as from:, label: and has:attachment.")
+                if let operators = URL(string: "https://support.google.com/mail/answer/7190") {
+                    Link("Gmail Search Operators", destination: operators)
+                        .font(.callout)
                 }
-                .padding(Tokens.Space.s4)
-                .ternSurface(style: .grouped)
-
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    Text("Search In").font(.callout.bold())
-                    Picker("Accounts", selection: $selectedAccount) {
-                        Text("All Accounts").tag("")
-                        if case .accounts(let ids)? = existing?.scope, ids.count > 1 {
-                            Text("Selected Accounts").tag("__subset")
-                        }
-                        ForEach(mailbox.presentedAccounts, id: \.account.id) {
-                            Text(mailbox.accountTitle($0.account)).tag($0.account.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Picker("Accounts", selection: $selectedAccount) {
+                    Text("All Accounts").tag("")
+                    if case .accounts(let ids)? = existing?.scope, ids.count > 1 { Text("Selected Accounts").tag("__subset") }
+                    ForEach(mailbox.presentedAccounts, id: \.account.id) { Text(mailbox.accountTitle($0.account)).tag($0.account.id) }
                 }
-                .padding(Tokens.Space.s4)
-                .ternSurface(style: .grouped)
-
-                Text("This search appears in your sidebar. Tern saves the query without keeping a search history.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let error = mailbox.navigation.error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(Tokens.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .disabled(isSaving)
-        } actions: {
-            if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving search") }
-            Button("Cancel", role: .cancel) { dismiss() }
-                .keyboardShortcut(.cancelAction)
-                .disabled(isSaving)
-            Button("Save Search") { Task { await save() } }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canSave)
+            .formStyle(.columns)
+            .padding(.horizontal, Tokens.Space.s5)
+            .padding(.bottom, Tokens.Space.s5)
+            PopupFooter {
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { Task { await save() } }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
-        .interactiveDismissDisabled(isSaving)
-        .onAppear(perform: loadSearch)
-    }
-
-    private func loadSearch() {
-        name = existing?.name ?? ""
-        // A new search keeps the results bar's mailbox and account scope.
-        query = existing?.query ?? mailbox.search.queryText
-        if case .accounts(let ids)? = existing?.scope, ids.count == 1 { selectedAccount = ids[0] }
-        else if case .accounts(let ids)? = existing?.scope, ids.count > 1 { selectedAccount = "__subset" }
-        else if existing == nil, let id = mailbox.search.accountID { selectedAccount = id }
-        isNameFocused = true
+        .frame(width: Tokens.Sheet.smallWidth)
+        .fixedSize(horizontal: false, vertical: true)
+        .onAppear {
+            name = existing?.name ?? ""
+            // A new search keeps the results bar's mailbox and account scope.
+            query = existing?.query ?? mailbox.search.queryText
+            if case .accounts(let ids)? = existing?.scope, ids.count == 1 { selectedAccount = ids[0] }
+            else if case .accounts(let ids)? = existing?.scope, ids.count > 1 { selectedAccount = "__subset" }
+            else if existing == nil, let id = mailbox.search.accountID { selectedAccount = id }
+            isNameFocused = true
+        }
     }
 
     private func save() async {
-        guard canSave else { return }
         isSaving = true
         defer { isSaving = false }
         let scope: MailSearchScope
@@ -129,8 +94,6 @@ struct SavedSearchRows: View {
             ForEach(mailbox.navigation.searches) { search in
                 if let target = mailbox.favoriteMailboxID(.savedSearch(id: search.id)) {
                     Label(search.name, systemImage: "magnifyingglass")
-                        .lineLimit(1)
-                        .help("\(search.name): \(search.query)")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .sidebarHover(SidebarRowSelection(source: .savedSearch, mailbox: target))
@@ -146,19 +109,12 @@ struct SavedSearchRows: View {
                 }
             }
         } header: {
-            HStack(spacing: Tokens.Space.s1) {
+            HStack {
                 Text("Saved Searches")
-                Spacer(minLength: Tokens.Space.s1)
-                Button("New Saved Search", systemImage: "plus.circle") {
-                    mailbox.navigation.isCreatingSearch = true
-                }
-                .labelStyle(.iconOnly)
-                .font(.body)
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                .buttonStyle(.borderless)
-                .help("New Saved Search")
+                Spacer()
+                Button { mailbox.navigation.isCreatingSearch = true } label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless).help("New Saved Search").accessibilityLabel("New Saved Search")
             }
-            .padding(.vertical, Tokens.Space.s1_5)
         }
     }
 }

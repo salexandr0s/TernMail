@@ -26,22 +26,23 @@ struct AttachmentStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Divider()
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: "paperclip")
                     .frame(width: Tokens.Control.icon)
                     .accessibilityHidden(true)
                 Text(attachmentCount)
-                    .font(.callout)
+                    .font(.caption.weight(.medium))
                 if !attachments.isEmpty {
-                    Text(totalSize).font(.caption).foregroundStyle(.secondary)
+                    Text(totalSize).font(.caption)
                 }
                 Spacer(minLength: Tokens.Space.s2)
                 if !failed.isEmpty {
                     Label("\(failed.count) \(failed.count == 1 ? "issue" : "issues")", systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(Tokens.Status.warning)
                 }
             }
+            .foregroundStyle(.secondary)
             .padding(.horizontal, Tokens.Space.s5)
             .padding(.top, Tokens.Space.s2)
             ScrollView(.horizontal) {
@@ -63,6 +64,7 @@ struct AttachmentStrip: View {
             .scrollIndicators(.automatic)
             .fixedSize(horizontal: false, vertical: true)
         }
+        .background(Tokens.Surface.muted)
         .quickLookPreview($previewURL, in: previewItems)
         .onChange(of: attachments.compactMap(\.id)) { _, ids in
             if !previewIDs.isSubset(of: ids) { previewURL = nil }

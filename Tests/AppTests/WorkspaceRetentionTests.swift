@@ -269,12 +269,7 @@ import Testing
     }
 
     private func visibleToolbarItems(in window: NSWindow) -> [NSToolbarItem] {
-        func isRendered(_ item: NSToolbarItem) -> Bool {
-            guard !item.isHidden else { return false }
-            if let group = item as? NSToolbarItemGroup {
-                // Native ControlGroup parents have no view; their children render the controls.
-                return !group.subitems.isEmpty && group.subitems.allSatisfy(isRendered)
-            }
+        (window.toolbar?.visibleItems ?? []).filter { item in
             guard let view = item.view, view.window === window,
                   !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return false }
             var current: NSView? = view
@@ -285,17 +280,14 @@ import Testing
             let frame = view.convert(view.bounds, to: nil)
             return frame.intersects(NSRect(origin: .zero, size: window.frame.size))
         }
-        return (window.toolbar?.visibleItems ?? []).filter(isRendered)
     }
 
     private func toolbarShows(_ destination: WorkspaceDestination, in window: NSWindow) -> Bool {
         let visibleIDs = visibleToolbarItems(in: window).map { $0.itemIdentifier.rawValue }
-        guard ["workspace.destination", "mail.compose", "workspace.search"].allSatisfy(visibleIDs.contains) else { return false }
-        if destination == .mail {
-            return visibleIDs.contains("mail.archive") && !visibleIDs.contains { $0.hasPrefix("calendar.") }
-        }
-        return !visibleIDs.contains("mail.archive")
-            && ["calendar.navigation", "calendar.today", "calendar.mode"].allSatisfy(visibleIDs.contains)
+        let expected = destination == .mail ? "mail.archive" : "calendar.today"
+        let inactive = destination == .mail ? "calendar.today" : "mail.archive"
+        // Create keeps its identifier while changing from New Message to New Event.
+        return visibleIDs.contains("mail.compose") && visibleIDs.contains(expected) && !visibleIDs.contains(inactive)
     }
 
     private struct NativeLayout {

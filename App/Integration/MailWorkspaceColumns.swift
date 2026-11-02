@@ -19,8 +19,6 @@ final class AttachmentLibraryToolbarState {
     private(set) var isCompact = false
     var isPopoverPresented = false
     var searchFocusRequest = 0
-    /// Supplied by the retained library presentation, including while its page is hidden.
-    private(set) var sidebarModel: AttachmentLibraryModel?
     /// The window's search field while the library shows; the library mirrors it.
     var searchText = ""
     /// The toolbar's sort menu; the library mirrors it like the search text.
@@ -42,18 +40,6 @@ final class AttachmentLibraryToolbarState {
     func updateCompact(_ compact: Bool) {
         isCompact = compact
         if !compact { isPopoverPresented = false }
-    }
-
-    func attachSidebarModel(_ model: AttachmentLibraryModel) {
-        guard sidebarModel !== model else { return }
-        isPopoverPresented = false
-        sidebarModel = model
-    }
-
-    func detachSidebarModel(_ model: AttachmentLibraryModel) {
-        guard sidebarModel === model else { return }
-        isPopoverPresented = false
-        sidebarModel = nil
     }
 }
 

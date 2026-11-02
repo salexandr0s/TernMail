@@ -152,53 +152,6 @@ import WebKit
         await fixture.app.signOut()
     }
 
-    @Test(arguments: [false, true])
-    func headerControlsStayCenteredAndReachableAcrossReaderWidths(expanded: Bool) async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.settings.removePersistentDomain(forName: fixture.suite) }
-        let message = try #require(fixture.detail.messages.last)
-        let state = HeaderState(expanded: expanded)
-        let window = makeWindow(HeaderHarness(message: message, mailbox: fixture.mailbox, state: state)
-            .environment(fixture.app).defaultAppStorage(fixture.settings), width: 760, height: 360)
-        defer { window.close() }
-
-        for width in [CGFloat(320), 420, 760, 1_600, 320] {
-            window.setContentSize(NSSize(width: width, height: 360))
-            _ = try await waitForHeaderPoint(in: window)
-            try await settle()
-            let content = try #require(window.contentView)
-            let surface = try #require(clickViews(in: window).first { $0.messageID == message.id })
-            let headerFrame = window.convertToScreen(surface.convert(surface.bounds, to: nil))
-            #expect(abs(window.contentLayoutRect.width - width) <= 1,
-                "Header controls must adapt without enlarging the reader window")
-            var identifiers = ["message-disclosure-", "sender-profile-", "message-more-", "message-star-"]
-            if expanded && width >= 760 { identifiers.append("message-reply-") }
-            for prefix in identifiers {
-                let control = try #require(element(id: prefix + message.id, in: window))
-                #expect(!control.frame.isEmpty)
-                #expect(abs(control.frame.midY - headerFrame.midY) <= 2,
-                    "\(prefix) must be vertically centered in the whole header at width \(width)")
-                let frame = content.convert(window.convertFromScreen(control.frame), from: nil)
-                #expect(content.bounds.insetBy(dx: -1, dy: -1).contains(frame),
-                    "Header controls must stay inside the reader")
-                try assertControlHitIsNotHeader(control, in: window)
-            }
-            #expect(state.transitions == 0, "Resizing must preserve the expansion state")
-        }
-
-        // The narrow layout's menu remains an independent native target.
-        let more = try #require(element(id: "message-more-\(message.id)", in: window))
-        let titles = try await menuTitles(open: { try clickControl(more, in: window) })
-        #expect(!titles.isEmpty)
-        #expect(state.transitions == 0)
-        let disclosure = try #require(element(id: "message-disclosure-\(message.id)", in: window))
-        try #require(disclosure.press())
-        try await eventually { state.transitions == 1 }
-        #expect(state.expanded == !expanded)
-        window.close()
-        await fixture.app.signOut()
-    }
-
     @Test func readerKeepsInitialExpansionAndRendersLightDarkAndNarrowLayouts() async throws {
         let fixture = try await Fixture.make()
         defer { fixture.settings.removePersistentDomain(forName: fixture.suite) }
@@ -217,23 +170,21 @@ import WebKit
         }
         for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             window.appearance = NSAppearance(named: appearance)
-            window.setContentSize(NSSize(width: 1_600, height: 760))
+            window.setContentSize(NSSize(width: 900, height: 760))
             try await settle()
-            try await capture(window, name: "reader-\(name)-wide.png")
-            window.setContentSize(NSSize(width: 320, height: 760))
+            try capture(window, name: "reader-\(name)-wide.png")
+            window.setContentSize(NSSize(width: 420, height: 760))
             try await settle()
-            try await capture(window, name: "reader-\(name)-narrow.png")
+            try capture(window, name: "reader-\(name)-narrow.png")
+            let more = try #require(element(id: "message-more-\(latest.id)", in: window))
             let content = try #require(window.contentView)
-            for prefix in ["message-disclosure-", "sender-profile-", "message-sender-", "message-details-", "message-more-"] {
-                let control = try #require(element(id: prefix + latest.id, in: window))
-                let frame = content.convert(window.convertFromScreen(control.frame), from: nil)
-                #expect(frame.minX >= content.bounds.minX && frame.maxX <= content.bounds.maxX,
-                    "Message metadata and controls must remain inside an actual narrow reader with its page gutters")
-            }
+            let frame = content.convert(window.convertFromScreen(more.frame), from: nil)
+            #expect(frame.minX >= content.bounds.minX && frame.maxX <= content.bounds.maxX,
+                "The message menu must remain inside a narrow reader")
         }
         window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
         try await settle()
-        try await capture(window, name: "reader-dark-increased-contrast.png")
+        try capture(window, name: "reader-dark-increased-contrast.png")
         let disclosure = try #require(element(id: "message-disclosure-\(latest.id)", in: window))
         try #require(disclosure.press())
         try await eventually { self.element(id: "message-disclosure-\(latest.id)", in: window)?.value == "Collapsed" }
@@ -241,7 +192,7 @@ import WebKit
         try await eventually { self.element(id: "message-disclosure-\(latest.id)", in: window)?.value == "Expanded" }
         try key("\u{F702}", code: 123, in: window)
         try await eventually { self.element(id: "message-disclosure-\(latest.id)", in: window)?.value == "Collapsed" }
-        try await capture(window, name: "reader-collapsed-keyboard.png")
+        try capture(window, name: "reader-collapsed-keyboard.png")
         let newsletterDisclosure = try #require(element(id: "message-disclosure-\(first.id)", in: window))
         try #require(newsletterDisclosure.press())
         var newsletter: ContentSizedWebView?
@@ -262,7 +213,7 @@ import WebKit
             window.appearance = NSAppearance(named: appearance)
             window.setContentSize(NSSize(width: 560, height: 760))
             try await settle()
-            try await capture(window, name: "reader-newsletter-\(name).png")
+            try capture(window, name: "reader-newsletter-\(name).png")
         }
         window.close()
         await fixture.app.signOut()
@@ -309,7 +260,7 @@ import WebKit
             for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                 window.appearance = NSAppearance(named: appearance)
                 try await settle()
-                try await capture(window, name: "summary-\(variant)-compact-\(name).png")
+                try capture(window, name: "summary-\(variant)-compact-\(name).png")
             }
             let sources = try #require(element(id: "summary-sources", in: window))
             _ = try await menuTitles(open: { try clickControl(sources, in: window) }, selectingFirst: true)
@@ -324,7 +275,7 @@ import WebKit
                 #expect(element(id: "summary-decision-sources-0", in: window) == nil)
                 try await Task.sleep(for: .seconds(Tokens.Motion.base))
                 try await settle()
-                try await capture(window, name: "summary-tasks-only.png")
+                try capture(window, name: "summary-tasks-only.png")
             }
             try activate("summary-disclosure")
             try await eventually { self.element(id: "summary-overview", in: window) == nil }
@@ -336,7 +287,7 @@ import WebKit
             }
             try await Task.sleep(for: .seconds(Tokens.Motion.base))
             try await settle()
-            try await capture(window, name: "summary-\(variant)-minimised.png")
+            try capture(window, name: "summary-\(variant)-minimised.png")
             let minimisedSources = try #require(element(id: "summary-sources", in: window))
             _ = try await menuTitles(open: { try clickControl(minimisedSources, in: window) }, selectingFirst: true)
             #expect(state.sourceActions == 2)
@@ -373,11 +324,11 @@ import WebKit
                     window.appearance = NSAppearance(named: appearance)
                     if variant == "tasks" { window.setContentSize(NSSize(width: 760, height: 480)) }
                     try await settle()
-                    try await capture(window, name: "summary-\(variant)-expanded-\(name).png")
+                    try capture(window, name: "summary-\(variant)-expanded-\(name).png")
                     if variant == "tasks" {
                         window.setContentSize(NSSize(width: 420, height: 600))
                         try await settle()
-                        try await capture(window, name: "summary-tasks-narrow-\(name).png")
+                        try capture(window, name: "summary-tasks-narrow-\(name).png")
                         let lastTaskSource = try #require(element(id: "summary-task-sources-2", in: window))
                         let content = try #require(window.contentView)
                         let frame = content.convert(window.convertFromScreen(lastTaskSource.frame), from: nil)
@@ -468,7 +419,7 @@ import WebKit
                 return point != nil
             }
         } catch {
-            try await capture(window, name: "header-hit-routing-failure.png")
+            try capture(window, name: "header-hit-routing-failure.png")
             for view in clickViews(in: window) {
                 let center = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
                 let hit = routedHit(at: center, in: window)
@@ -604,13 +555,13 @@ import WebKit
         }
         return ([window] + (window.contentView.map(descendants) ?? [])).flatMap(visit)
     }
-    private func capture(_ window: NSWindow, name: String) async throws {
-        let data = try await NativeWindowCapture.png(of: window)
+    private func capture(_ window: NSWindow, name: String) throws {
+        let view = try #require(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
         Attachment.record(Array(data), named: name)
-        if let directory = ProcessInfo.processInfo.environment["TERN_READER_DESIGN_AUDIT_DIR"] {
-            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-            try data.write(to: URL(fileURLWithPath: directory).appending(path: name))
-        }
     }
     private func eventually(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))

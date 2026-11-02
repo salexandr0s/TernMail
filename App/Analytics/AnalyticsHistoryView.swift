@@ -6,7 +6,7 @@ struct AnalyticsHistoryView: View {
     let model: MailAnalyticsModel
     let owners: [AccountMailbox]
     @Environment(\.openSettings) private var openSettings
-    @State private var showsDetails = true
+    @State private var showsDetails = false
 
     private var hasScannedHistory: Bool {
         !snapshot.coverage.isEmpty && snapshot.coverage.allSatisfy(\.isComplete)
@@ -15,7 +15,7 @@ struct AnalyticsHistoryView: View {
     private var canLoadHistory: Bool { owners.contains(where: \.syncEnabled) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Tokens.Space.s4) {
                     summary
@@ -38,7 +38,6 @@ struct AnalyticsHistoryView: View {
                     .font(.caption).foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Divider()
             DisclosureGroup(isExpanded: $showsDetails) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     ForEach(snapshot.coverage, id: \.accountID) { coverage in
@@ -50,11 +49,11 @@ struct AnalyticsHistoryView: View {
                 }
                 .padding(.top, Tokens.Space.s3)
             } label: {
-                Text("Account coverage").font(.callout.bold())
+                Text("History details").font(.caption).foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("analytics-history-details")
         }
-        .padding(Tokens.Space.s6)
+        .padding(Tokens.Space.s5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
@@ -66,16 +65,16 @@ struct AnalyticsHistoryView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Image(systemName: hasScannedHistory ? "checkmark.circle" : "clock.arrow.circlepath")
-                        .font(.title2).foregroundStyle(hasScannedHistory ? Tokens.Status.success : Color.accentColor)
+                        .font(.title3).foregroundStyle(.secondary)
                 }
             }
-            .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
+            .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
             .background(Color.primary.opacity(Tokens.Opacity.wash),
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(model.isLoadingHistory ? "Loading mail history" : "Mail history")
-                    .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    .font(.callout.weight(.semibold))
                 if model.isLoadingHistory {
                     Text("\(model.historyPagesLoaded.formatted()) pages saved")
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
@@ -85,7 +84,7 @@ struct AnalyticsHistoryView: View {
                     }
                 } else {
                     Text(hasScannedHistory ? "History scanned. Totals include loaded email." : "Partial history. Older email may be missing.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -100,7 +99,7 @@ struct AnalyticsHistoryView: View {
             Button(hasScannedHistory ? "Scan again" : "Load full history") {
                 model.loadHistory(accounts: owners, restart: hasScannedHistory)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered).controlSize(.small)
             .disabled(!canLoadHistory)
         }
     }
@@ -118,10 +117,7 @@ struct AnalyticsHistoryView: View {
                 coverageStatus(coverage)
             }
         }
-        .font(.callout)
-        .padding(Tokens.Space.s3)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .accessibilityElement(children: .combine)
+        .font(.caption).foregroundStyle(.secondary)
     }
 
     @ViewBuilder private func coverageStatus(_ coverage: MailAnalyticsCoverage) -> some View {

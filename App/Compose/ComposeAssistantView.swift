@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The small bar leaves the message editable. Its popover holds longer replies
@@ -21,7 +22,11 @@ struct ComposeAssistantView: View {
     var body: some View {
         VStack(spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s2) {
-                Label("Writing assistant", systemImage: "sparkles")
+                Label {
+                    Text("Ask AI").foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: "sparkles").foregroundStyle(Color.accentColor)
+                }
                 .font(.callout.weight(.semibold)).fixedSize()
                 Text(barHasFileDrop ? "Use as AI context" : compactContext)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -56,16 +61,12 @@ struct ComposeAssistantView: View {
                     .frame(minWidth: 0, maxWidth: .infinity)
                 requestButton
             }
-            .padding(.horizontal, Tokens.Space.s2)
-            .padding(.vertical, Tokens.Space.s1)
-            .background(Tokens.Surface.primary, in: .rect(cornerRadius: Tokens.Radius.md))
-            .ternOutline(radius: Tokens.Radius.md)
         }
         .padding(Tokens.Space.s3)
-        .frame(idealWidth: Tokens.Layout.composeMinWidth - Tokens.Space.s3 * 4)
-        .background(Tokens.Surface.muted, in: .rect(cornerRadius: Tokens.Radius.lg))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternOutline(radius: Tokens.Radius.lg)
         .overlay { dropOutline(isTargeted: barHasFileDrop) }
+        .shadow(color: Tokens.Shadow.mdColor, radius: Tokens.Shadow.mdRadius, y: Tokens.Shadow.mdY)
         .accessibilityIdentifier("compose-assistant-bar")
         .composeFileDrop(isEnabled: true, isTargeted: $barDropTargeted, onDrop: acceptContextFiles)
         .fileImporter(isPresented: $choosesContextFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
@@ -159,8 +160,10 @@ struct ComposeAssistantView: View {
 
     @ViewBuilder private var requestButton: some View {
         if model.isRunning {
-            Button("Stop", systemImage: "stop.fill") { model.stop() }
-            .buttonStyle(.bordered).buttonBorderShape(.capsule).fixedSize()
+            Button { model.stop() } label: {
+                Image(systemName: "stop.fill").frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+            }
+            .buttonStyle(.bordered).buttonBorderShape(.circle)
             .help("Stop response").accessibilityLabel("Stop response")
         } else if model.isLoadingContextFiles {
             ProgressView().controlSize(.small)
@@ -175,8 +178,11 @@ struct ComposeAssistantView: View {
                 .controlSize(.small)
                 .accessibilityLabel("Set up compose assistant")
         } else {
-            Button("Send", systemImage: "arrow.up", action: submit)
-            .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).fixedSize()
+            Button(action: submit) {
+                Image(systemName: "arrow.up").font(.body.weight(.semibold))
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+            }
+            .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
             .disabled(!model.canAsk || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .help("Ask assistant (Return)").accessibilityLabel("Ask assistant")
         }
@@ -186,8 +192,7 @@ struct ComposeAssistantView: View {
         VStack(spacing: 0) {
             HStack(spacing: Tokens.Space.s2) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                    Text("Writing assistant").font(Tokens.Workspace.pageTitle)
-                        .accessibilityAddTraits(.isHeader)
+                    Label("Ask AI", systemImage: "sparkles").font(.headline)
                     Text(conversationHasFileDrop ? "Use as AI context"
                          : (assistant.hasCalendarAccess ? "Mail and calendar context" : "Mail context"))
                         .font(.caption).foregroundStyle(.secondary)
@@ -200,13 +205,12 @@ struct ComposeAssistantView: View {
                         showsConversation = false
                         showsSettings = true
                     }
-                } label: { Label("Assistant Options", systemImage: "ellipsis").labelStyle(.iconOnly) }
+                } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Assistant Options").accessibilityLabel("Assistant Options")
                 iconButton("Close conversation", symbol: "xmark") { showsConversation = false }
             }
-            .padding(Tokens.Space.s4)
-            .background(Tokens.Surface.primary)
+            .padding(Tokens.Space.s3)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -222,7 +226,7 @@ struct ComposeAssistantView: View {
                         } else if model.messages.isEmpty {
                             starters
                         }
-                        ComposeAssistantContextFilesView(model: model, presentation: .errors)
+                        contextFileErrors
                         ForEach(model.messages) { message in
                             messageRow(message)
                         }
@@ -236,10 +240,7 @@ struct ComposeAssistantView: View {
                             Button("Try Again") { model.retry() }.disabled(!model.canAsk)
                         }
                         if let proposal = model.proposal {
-                            ComposeAssistantProposalView(proposal: proposal,
-                                preservesInlineImages: model.preservesInlineImages,
-                                statusMessage: model.proposalStatusMessage)
-                                .id("compose-assistant-proposal")
+                            draftPreview(proposal)
                         }
                         Color.clear.frame(height: Tokens.Space.s1).id("compose-assistant-end")
                     }
@@ -255,18 +256,17 @@ struct ComposeAssistantView: View {
             if model.proposal != nil || model.canUndo {
                 Divider()
                 HStack(spacing: Tokens.Space.s2) {
-                    Text(model.proposal == nil ? "Draft updated" : "Review before applying")
+                    Text(model.proposal == nil ? "Draft updated" : "Review before sending")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: Tokens.Space.s2)
                     if model.canUndo { Button("Undo") { model.undo() }.help("Undo the assistant's changes") }
                     if model.proposal != nil {
-                        Button("Apply to Draft", systemImage: "checkmark") { model.apply() }
+                        Button("Apply to Draft") { model.apply() }
                             .buttonStyle(.borderedProminent).disabled(!model.canApply)
                             .accessibilityIdentifier("compose-assistant-apply")
                     }
                 }
                 .padding(Tokens.Space.s3)
-                .background(Tokens.Surface.primary)
             }
             Divider()
             VStack(spacing: Tokens.Space.s2) {
@@ -276,10 +276,6 @@ struct ComposeAssistantView: View {
                     requestField(.conversation)
                     requestButton
                 }
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.vertical, Tokens.Space.s1)
-                .background(Tokens.Surface.primary, in: .rect(cornerRadius: Tokens.Radius.md))
-                .ternOutline(radius: Tokens.Radius.md)
             }
             .padding(Tokens.Space.s3)
         }
@@ -302,14 +298,77 @@ struct ComposeAssistantView: View {
         .disabled(!model.canAddContextFiles)
     }
 
-    private var contextFiles: some View {
-        ComposeAssistantContextFilesView(model: model)
+    @ViewBuilder private var contextFiles: some View {
+        if !model.contextAttachments.isEmpty {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("AI context · Not sent with email")
+                    .font(.caption2).foregroundStyle(.secondary)
+                ScrollView(.horizontal) {
+                    HStack(spacing: Tokens.Space.s2) {
+                        ForEach(model.contextAttachments) { file in
+                            HStack(spacing: Tokens.Space.s2) {
+                                if file.isLoading { ProgressView().controlSize(.mini) }
+                                else {
+                                    Image(systemName: file.errorMessage == nil ? "doc" : "exclamationmark.circle")
+                                        .foregroundStyle(file.errorMessage == nil ? Color.secondary : Tokens.Status.error)
+                                }
+                                VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                                    Text(file.filename).font(.caption.weight(.medium)).lineLimit(1)
+                                    Text(file.statusText).font(.caption2).lineLimit(1)
+                                        .foregroundStyle(file.errorMessage == nil ? Color.secondary : Tokens.Status.error)
+                                }
+                                .frame(maxWidth: Tokens.Layout.attachmentWidth, alignment: .leading)
+                                .help(file.filename + "\n" + file.statusText)
+                                if file.errorMessage != nil {
+                                    iconButton("Retry reading \(file.filename)", symbol: "arrow.clockwise") {
+                                        model.retryContextFile(file.id)
+                                    }
+                                    .disabled(!model.canAddContextFiles)
+                                }
+                                iconButton("Remove \(file.filename) from AI context", symbol: "xmark.circle.fill") {
+                                    model.removeContextFile(file.id)
+                                }
+                            }
+                            .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
+                            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                            .ternOutline(radius: Tokens.Radius.md)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func dropOutline(isTargeted: Bool) -> some View {
         RoundedRectangle(cornerRadius: Tokens.Radius.lg)
             .strokeBorder(isTargeted ? Color.accentColor : .clear, lineWidth: Tokens.Border.focus)
             .allowsHitTesting(false)
+    }
+
+    @ViewBuilder private var contextFileErrors: some View {
+        if model.hasContextFileErrors {
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                ForEach(model.contextAttachments) { file in
+                    if let error = file.errorMessage {
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Label(file.filename, systemImage: "exclamationmark.circle")
+                                .font(.callout.weight(.medium))
+                            Text(error).font(.callout).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack(spacing: Tokens.Space.s2) {
+                                Button("Retry") { model.retryContextFile(file.id) }.disabled(!model.canAddContextFiles)
+                                Button("Remove") { model.removeContextFile(file.id) }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+            .id("compose-context-errors")
+        }
     }
 
     private func acceptContextFiles(_ files: [ComposeDroppedFile]) {
@@ -385,6 +444,37 @@ struct ComposeAssistantView: View {
                 }
             }
         }
+    }
+
+    private func draftPreview(_ proposal: ComposeAssistantProposal) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Label("Draft preview", systemImage: "doc.text")
+                .font(.callout.weight(.semibold))
+                .padding(.horizontal, Tokens.Space.s4).padding(.vertical, Tokens.Space.s3)
+            Divider()
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text("Subject").font(.caption).foregroundStyle(.secondary)
+                    Text(proposal.subject).font(.callout.weight(.medium)).textSelection(.enabled)
+                }
+                Divider()
+                Text(proposal.body).font(.body).lineSpacing(Tokens.Space.s0_5).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.preservesInlineImages {
+                    Text("Inline images will stay below the rewritten text.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let message = model.proposalStatusMessage {
+                    Label(message, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .padding(Tokens.Space.s4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .ternOutline(radius: Tokens.Radius.md)
+        .accessibilityIdentifier("compose-assistant-preview")
+        .id("compose-assistant-proposal")
     }
 
     private func scrollToResult(_ proxy: ScrollViewProxy) {

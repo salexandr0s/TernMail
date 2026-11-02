@@ -44,16 +44,12 @@ struct CalendarTimelineEvent: View {
             .strokeBorder(outlineColor, lineWidth: Tokens.Border.focus)
     }
 
-    private var outlineColor: Color { selected ? Color.accentColor : event.color.opacity(Tokens.Opacity.tint) }
+    private var outlineColor: Color { selected ? Color.accentColor : Color.clear }
     private var fillColor: Color {
         event.color.opacity(CalendarColor.tint(selected ? Tokens.Calendar.selectedTint : Tokens.Calendar.allDayTint, contrast: contrast))
     }
-    private var accessibilityDescription: String {
-        [event.title, timeDescription, event.event.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
-    }
-    private var tooltip: String {
-        [event.title, timeDescription, event.event.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
-    }
+    private var accessibilityDescription: String { event.title + ", " + timeDescription }
+    private var tooltip: String { event.title + "\n" + timeDescription }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
@@ -65,7 +61,7 @@ struct CalendarTimelineEvent: View {
 
     private var headline: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s1) {
-            Text(event.title).font(.callout.weight(.semibold)).lineLimit(height >= Tokens.Space.s16 ? 2 : 1)
+            Text(event.title).font(.caption.weight(.semibold)).lineLimit(height >= Tokens.Space.s16 ? 2 : 1)
             if event.isPending {
                 Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary)
             }
@@ -74,14 +70,10 @@ struct CalendarTimelineEvent: View {
 
     private var details: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-            ViewThatFits(in: .horizontal) {
-                Text(rangeDescription).fixedSize(horizontal: true, vertical: false)
-                Text(showsRange ? rangeDescription : CalendarLayout.format(event.start, style: .dateTime.hour().minute(), calendar: calendar))
-            }
-            .font(.caption).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+            Text(showsRange ? rangeDescription : CalendarLayout.format(event.start, style: .dateTime.hour().minute(), calendar: calendar))
+                .font(.caption2).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
             if height > Tokens.Space.s16 + Tokens.Space.s4, let location = event.event.location, !location.isEmpty {
-                Label(location, systemImage: "mappin.and.ellipse")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(location).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }

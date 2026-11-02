@@ -164,11 +164,12 @@ struct ComposeView: View {
                 form
             }
         }
-        .background(Tokens.Surface.canvas)
+        .background(Tokens.Surface.primary)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
         .navigationTitle(model.title)
+        .navigationSubtitle(model.status.flatMap { $0.isError ? nil : $0.text } ?? "")
         .toolbar { toolbar }
-        .toolbar(removing: .title)
+        .toolbar(removing: availableWidth < Tokens.Compose.labeledToolbarWidth ? .title : nil)
         .alert(model.alert?.title ?? "", isPresented: $model.alert.isPresent()) {
             Button("OK") {}
         } message: {
@@ -218,81 +219,38 @@ struct ComposeView: View {
     }
 
     private var form: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(spacing: Tokens.Space.s3) {
-                            if model.droppedFormatting {
-                                Banner(
-                                    systemImage: "exclamationmark.triangle",
-                                    text: "Editing this draft removes tables, fonts and other formatting. Only bold, italic, underline, links and lists are kept."
-                                ) {
-                                    model.droppedFormatting = false
-                                }
-                            }
-                            writingCanvas(editorHeight: max(Tokens.Layout.editorMinHeight, geometry.size.height / 2))
-                        }
-                        .frame(maxWidth: Tokens.Layout.composeWidth)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, Tokens.Space.s3)
-                        .padding(.vertical, Tokens.Space.s3)
-                    }
-                    .accessibilityIdentifier("compose.formScroll")
-                    .onChange(of: focusedRecipient) { _, field in
-                        if let field { proxy.scrollTo(field, anchor: .center) }
-                    }
-                    .onChange(of: focus) { _, field in
-                        if field == .subject { proxy.scrollTo("compose-subject", anchor: .center) }
-                    }
-                    .onChange(of: model.isEditingMessage) { _, editing in
-                        if editing { proxy.scrollTo("compose-body", anchor: .center) }
-                    }
-                    .onChange(of: showsAssistant) { _, showing in
-                        if showing { proxy.scrollTo("compose-assistant", anchor: .center) }
-                    }
-                }
-                ComposeDraftStatus(
-                    text: model.progressText ?? model.status?.text,
-                    isError: model.progressText == nil && model.status?.isError == true,
-                    isWorking: model.progressText != nil,
-                    hasUnsavedChanges: model.isEdited,
-                    requestsReadReceipt: model.content.requestsReadReceipt,
-                    isEditable: model.isEditable
-                )
-                .frame(maxWidth: Tokens.Layout.composeWidth)
-                .padding(.horizontal, Tokens.Space.s3)
-            }
-        }
-        // The AI bar consumes its own drops as context; the rest of the form attaches to mail.
-        .composeFileDrop(isEnabled: model.isEditable, isTargeted: $isFileDropTargeted) { files in
-            model.attach(files.map(Attachable.dropped))
-        }
-        .overlay {
-            if isFileDropTargeted || isBodyFileDropTargeted {
-                RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                    .fill(Color.accentColor.opacity(Tokens.Opacity.wash))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                            .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
-                    }
-                    .overlay {
-                        Label("Attach to email", systemImage: "paperclip")
-                            .font(.headline)
-                            .padding(Tokens.Space.s4)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                    }
-                    .allowsHitTesting(false)
-            }
-        }
-        .fileImporter(isPresented: $model.isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
-        }
-    }
-
-    /// One stable hierarchy keeps the native editor and its selection alive as the window resizes.
-    private func writingCanvas(editorHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
+            if model.droppedFormatting {
+                Banner(
+                    systemImage: "exclamationmark.triangle",
+                    text: "Editing this draft removes tables, fonts and other formatting. Only bold, italic, underline, links and lists are kept."
+                ) {
+                    model.droppedFormatting = false
+                }
+            }
+            if let status = model.status, status.isError {
+                Banner(systemImage: "exclamationmark.circle", text: status.text, isError: true)
+            }
+            if let progress = model.progressText {
+                HStack(spacing: Tokens.Space.s2) {
+                    ProgressView().controlSize(.small)
+                    Text(progress).font(.callout)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Tokens.Space.s4)
+                .padding(.vertical, Tokens.Space.s2)
+                .background(Tokens.Surface.muted)
+                .accessibilityElement(children: .combine)
+            } else if availableWidth < Tokens.Compose.labeledToolbarWidth,
+                      let status = model.status, !status.isError {
+                Text(status.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Tokens.Compose.gutter)
+                    .padding(.vertical, Tokens.Space.s1_5)
+                    .background(Tokens.Surface.muted)
+            }
             header
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
@@ -320,9 +278,9 @@ struct ComposeView: View {
                         .accessibilityHidden(true)
                 }
             }
-            // The outer form scrolls while this native editor keeps its writing viewport.
-            .frame(height: editorHeight)
-            .id("compose-body")
+            // Keep room to write when recipients, files and quoted text are visible.
+            // The native window minimum grows with the other controls' intrinsic sizes.
+            .frame(minHeight: Tokens.Layout.editorMinHeight)
             // Cmd-K must also work while the formatting bar is hidden. The
             // popover points at the selection, where the link goes.
             .popover(isPresented: $model.isEditingLink, attachmentAnchor: linkAnchor, arrowEdge: .bottom) {
@@ -337,36 +295,50 @@ struct ComposeView: View {
                 .frame(maxWidth: Tokens.Compose.assistantMaxWidth)
                 .frame(maxWidth: .infinity)
                 .padding(Tokens.Space.s3)
-                .id("compose-assistant")
             }
-            ComposeIncludedContent {
-                if model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty {
-                    AttachmentStrip(
-                        attachments: model.attachments.filter { $0.contentID == nil },
-                        failed: model.failedAttachments,
-                        isEditable: model.isEditable,
-                        fileURL: { [model] in await model.attachmentFileURL($0) },
-                        retry: { model.retry($0) },
-                        dismissFailure: { model.dismissFailure($0) }
-                    ) {
-                        model.removeAttachment($0)
-                    }
+            if model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty {
+                AttachmentStrip(
+                    attachments: model.attachments.filter { $0.contentID == nil },
+                    failed: model.failedAttachments,
+                    isEditable: model.isEditable,
+                    fileURL: { [model] in await model.attachmentFileURL($0) },
+                    retry: { model.retry($0) },
+                    dismissFailure: { model.dismissFailure($0) }
+                ) {
+                    model.removeAttachment($0)
                 }
-                if model.content.signatureAboveQuote { signature }
-                if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
-                    quotedText(quote)
-                }
-                if !model.content.signatureAboveQuote { signature }
             }
-        }
-        .background(Tokens.Surface.primary)
-        .clipShape(.rect(cornerRadius: Tokens.Radius.lg))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
-                .allowsHitTesting(false)
+            if model.content.signatureAboveQuote { signature }
+            if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
+                quotedText(quote)
+            }
+            if !model.content.signatureAboveQuote { signature }
         }
         .ternAnimation(value: model.showsFormatting)
+        // The AI bar consumes its own drops as context; the rest of the form attaches to mail.
+        .composeFileDrop(isEnabled: model.isEditable, isTargeted: $isFileDropTargeted) { files in
+            model.attach(files.map(Attachable.dropped))
+        }
+        .overlay {
+            if isFileDropTargeted || isBodyFileDropTargeted {
+                RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                    .fill(Color.accentColor.opacity(Tokens.Opacity.wash))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Tokens.Radius.md)
+                            .strokeBorder(Color.accentColor, lineWidth: Tokens.Border.focus)
+                    }
+                    .overlay {
+                        Label("Attach to email", systemImage: "paperclip")
+                            .font(.headline)
+                            .padding(Tokens.Space.s4)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    }
+                    .allowsHitTesting(false)
+            }
+        }
+        .fileImporter(isPresented: $model.isChoosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { model.attach(urls.map(Attachable.file)) }
+        }
     }
 
     private var signature: some View {
@@ -387,40 +359,6 @@ struct ComposeView: View {
     }
 
     private var header: some View {
-        VStack(spacing: Tokens.Space.s1) {
-            if model.showsFrom {
-                fromField
-                if let change = model.senderChange {
-                    senderChangeNote(change)
-                }
-            }
-            recipientRows
-                .padding(.vertical, Tokens.Space.s1)
-                .background(Tokens.Surface.muted, in: .rect(cornerRadius: Tokens.Radius.md))
-                .padding(.top, Tokens.Space.s1)
-            // New drafts start in To. Keeping Subject after the recipients lets
-            // native forward-Tab navigation reach it before the message body.
-            TextField("Subject", text: $model.content.subject, selection: $subjectSelection)
-                .textFieldStyle(.plain)
-                .font(Tokens.Workspace.pageTitle)
-                .labelsHidden()
-                .accessibilityLabel("Subject")
-                .accessibilityIdentifier("compose-subject")
-                .id("compose-subject")
-                .focused($focus, equals: .subject)
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.vertical, Tokens.Space.s2)
-                .overlay { focusRing(focus == .subject) }
-        }
-        .disabled(!model.isEditable)
-        .padding(.horizontal, Tokens.Compose.gutter - Tokens.Space.s2)
-        .padding(.top, Tokens.Space.s3)
-        .padding(.bottom, Tokens.Space.s3)
-        .ternAnimation(value: focus)
-        .ternAnimation(value: focusedRecipient)
-    }
-
-    private var recipientRows: some View {
         VStack(spacing: 0) {
             fieldRow("To:", field: .to) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
@@ -460,7 +398,29 @@ struct ComposeView: View {
                     recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
                 }
             }
+            rowDivider
+            fieldRow("Subject:", field: .subject) {
+                TextField("", text: $model.content.subject, selection: $subjectSelection)
+                    .textFieldStyle(.plain)
+                    .font(.body.weight(.medium))
+                    .labelsHidden()
+                    .accessibilityLabel("Subject")
+                    .focused($focus, equals: .subject)
+            }
+            if model.showsFrom {
+                rowDivider
+                fromField
+                if let change = model.senderChange {
+                    senderChangeNote(change)
+                }
+            }
         }
+        .disabled(!model.isEditable)
+        .padding(.horizontal, Tokens.Compose.gutter - Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1)
+        .background(Tokens.Surface.primary)
+        .ternAnimation(value: focus)
+        .ternAnimation(value: focusedRecipient)
     }
 
     /// Hairlines follow the editable values, leaving the labels quiet.
@@ -515,7 +475,7 @@ struct ComposeView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .font(.callout.weight(.medium))
+            .font(.callout)
             .padding(.horizontal, Tokens.Space.s2)
             .padding(.vertical, Tokens.Space.s1_5)
             .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton)
@@ -564,7 +524,7 @@ struct ComposeView: View {
     private func fieldRow<Content: View>(
         _ label: String, field: Field, @ViewBuilder content: () -> Content
     ) -> some View {
-        let isFocused = focusedRecipient == field
+        let isFocused = field == .subject ? focus == field : focusedRecipient == field
         return HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
             fieldLabel(label)
             content()
@@ -640,7 +600,6 @@ struct ComposeView: View {
             await model.suggestions(for: text)
         }
         .alignmentGuide(.firstTextBaseline) { _ in baseline }
-        .id(field)
     }
 
     /// Where the link popover points: the text it links, or the whole editor
@@ -663,50 +622,48 @@ struct ComposeView: View {
     private func quotedText(_ quote: String) -> some View {
         let noun = model.draft?.kind == .forward ? "Forwarded Message" : "Quoted Text"
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Tokens.Space.s2) {
-                Button {
-                    showsQuote.toggle()
-                } label: {
-                    HStack(spacing: Tokens.Space.s2) {
-                        Image(systemName: showsQuote ? "chevron.down" : "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: Tokens.Space.s3)
-                            .accessibilityHidden(true)
-                        Label(noun, systemImage: "text.quote")
-                            .font(.callout)
-                        Spacer(minLength: Tokens.Space.s2)
-                        Text("Included").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
+            Button {
+                showsQuote.toggle()
+            } label: {
+                HStack(spacing: Tokens.Space.s2) {
+                    Image(systemName: showsQuote ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: Tokens.Space.s3)
+                    Image(systemName: "text.quote")
+                        .frame(width: Tokens.Control.icon)
+                    Text(noun)
+                        .font(.caption.weight(.medium))
+                    Spacer(minLength: Tokens.Space.s2)
+                    Text("Included").font(.caption)
                 }
-                .buttonStyle(.plain)
-                .help("Included below your message, even when hidden.")
-                .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
-                .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
-                Button("Edit") {
-                    model.isEditingSupplement = true
-                    editsQuote = true
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, Tokens.Compose.gutter)
+                .padding(.vertical, Tokens.Space.s2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Included unchanged below your message, even when hidden.")
+            .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
+            .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
+            if showsQuote {
+                HStack(spacing: Tokens.Space.s2) {
+                    Button("Edit Quotation") {
+                        model.isEditingSupplement = true
+                        editsQuote = true
+                    }
+                    .accessibilityIdentifier("compose-edit-quote")
+                    Spacer()
                 }
                 .controlSize(.small)
                 .disabled(!model.isEditable)
-                .accessibilityLabel("Edit Quotation")
-                .accessibilityIdentifier("compose-edit-quote")
-            }
-            .padding(.horizontal, Tokens.Compose.gutter)
-            .padding(.vertical, Tokens.Space.s2)
-            if showsQuote {
+                .padding(.horizontal, Tokens.Compose.gutter)
+                .padding(.bottom, Tokens.Space.s2)
                 ScrollView {
                     Text(quote)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, Tokens.Space.s3)
-                        .overlay(alignment: .leading) {
-                            Rectangle()
-                                .fill(Tokens.Surface.border)
-                                .frame(width: Tokens.Border.focus)
-                        }
                         .padding(.horizontal, Tokens.Compose.gutter)
                         .padding(.bottom, Tokens.Space.s2)
                 }
@@ -714,6 +671,8 @@ struct ComposeView: View {
                 .transition(.opacity)
             }
         }
+        .background(Tokens.Surface.muted)
+        .overlay(alignment: .top) { Divider() }
         .ternAnimation(value: showsQuote)
     }
 

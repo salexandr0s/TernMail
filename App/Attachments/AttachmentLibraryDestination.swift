@@ -3,32 +3,26 @@ import MailStore
 import MessageContent
 import SwiftUI
 
-/// Gives attachment accounts and categories their own navigation beside the files.
+/// Uses the same sidebar as Mail while giving the library the full detail area.
 struct AttachmentLibraryDestination: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @Bindable var model: AttachmentLibraryModel
     @Bindable var toolbar: AttachmentLibraryToolbarState
-    @State private var toolbarInset = ClippedSplitToolbarInset()
     private var mailbox: MailboxModel { model.mailbox }
 
     var body: some View {
         HSplitView {
             if toolbar.showsSidebar {
-                AttachmentLibrarySidebar(model: model)
-                    .padding(.top, toolbarInset.top)
+                SidebarView(mailbox: mailbox)
                     .frame(minWidth: Tokens.Layout.sidebarMinWidth,
                         idealWidth: toolbar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
                     .background { AttachmentSidebarWidthProbe(toolbar: toolbar) }
             }
             AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
-                // Let the collection viewport shrink before the split grows below a short window.
-                .frame(minHeight: 0, maxHeight: .infinity)
-                .padding(.top, toolbarInset.top)
                 .background {
                     ZStack {
-                        AttachmentToolbarInsetProbe(inset: toolbarInset)
                         VisibleContentProbe(kind: .workspace, isActive: model.isPageReady,
                                             revision: model.pagePresentationRevision)
                         VisibleContentProbe(kind: .mailbox, isActive: model.isPageReady,
@@ -42,19 +36,15 @@ struct AttachmentLibraryDestination: View {
                     if model.isPageReady { reportReady() }
                 }
         }
-        // Each pane reserves any toolbar safe area lost by this clipped split.
+        // Bound the native split below the toolbar before clipping its material.
         .padding(.top, Tokens.Border.hairline)
         .clipped()
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
-            toolbar.updateCompact(size.width < Tokens.Layout.sidebarCompactWidth)
-            toolbarInset.refresh()
+        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Layout.sidebarCompactWidth } action: {
+            toolbar.updateCompact($0)
         }
         .toolbar(removing: .sidebarToggle)
         .modifier(MailNoticeOverlay(mailbox: mailbox))
-        .onDisappear {
-            model.dismissPresentation()
-            if toolbar.sidebarModel === model { toolbar.isPopoverPresented = false }
-        }
+        .onDisappear { model.dismissPresentation(); toolbar.isPopoverPresented = false }
         .onChange(of: toolbar.searchText) { _, text in if model.search != text { model.search = text } }
         .onChange(of: model.search, initial: true) { _, text in if toolbar.searchText != text { toolbar.searchText = text } }
         .onChange(of: toolbar.sort) { _, sort in if model.sort != sort { model.sort = sort } }
@@ -72,36 +62,6 @@ struct AttachmentLibraryDestination: View {
         guard app.destination == .mail, mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID else { return }
         NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained)
         NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .retained)
-    }
-}
-
-/// Unlike the sidebar width probe, this also measures a one-pane compact split.
-struct AttachmentToolbarInsetProbe: NSViewRepresentable {
-    let inset: ClippedSplitToolbarInset
-
-    func makeNSView(context: Context) -> Probe { Probe() }
-
-    func updateNSView(_ view: Probe, context: Context) {
-        view.inset = inset
-        view.measure()
-    }
-
-    final class Probe: NSView {
-        weak var inset: ClippedSplitToolbarInset?
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); measure() }
-        override func layout() { super.layout(); measure() }
-
-        func measure() {
-            var ancestor = superview
-            while let view = ancestor {
-                if let split = view as? NSSplitView, split.isVertical {
-                    inset?.measure(split)
-                    return
-                }
-                ancestor = view.superview
-            }
-        }
     }
 }
 
@@ -194,7 +154,5 @@ private struct AttachmentLibraryPresentationContent<Content: View>: View {
                 .accessibilityHidden(isPresented)
             if isPresented { AttachmentLibraryDestination(model: model, toolbar: toolbar) }
         }
-        .onAppear { toolbar.attachSidebarModel(model) }
-        .onDisappear { toolbar.detachSidebarModel(model) }
     }
 }
