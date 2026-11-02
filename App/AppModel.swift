@@ -1173,6 +1173,7 @@ extension AccountFeature {
         case .calendar: "Google Calendar"
         case .calendarManagement: "Calendar Management"
         case .calendarSharing: "Calendar Sharing"
+        case .tasks: "Google Tasks"
         }
     }
 }
