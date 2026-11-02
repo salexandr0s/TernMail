@@ -13,6 +13,8 @@ extension GoogleTasksModel {
         isCreating = true
         creationStates[request.reference] = .adding
         pendingCreation = request
+        pendingCreation?.accountID = preferredAccount
+        pendingCreation?.listID = preferredList
         errorMessage = nil
         notice = nil
         defer {
@@ -29,10 +31,7 @@ extension GoogleTasksModel {
         }
         selectAccount(accountID)
         creationOwners[request.reference] = accountID
-        if request.source == nil {
-            pendingCreation?.accountID = accountID
-            pendingCreation?.listID = preferredList
-        }
+        pendingCreation?.accountID = accountID
         guard let client = authorizedService(for: accountID) else {
             errorMessage = GoogleTasksModelError.unavailable.errorDescription
             return false
@@ -46,6 +45,7 @@ extension GoogleTasksModel {
             guard let destination = availableLists.first(where: { $0.id == preferredList }) ?? availableLists.first else {
                 throw GoogleTasksModelError.noLists
             }
+            pendingCreation?.listID = destination.id
             // Search every list: a task may have been moved in Google's app.
             for list in availableLists {
                 let existing = try await client.allTasks(listID: list.id)
@@ -78,7 +78,7 @@ extension GoogleTasksModel {
             notice = "Added to \(destination.title)"
             if selectedAccountID == accountID {
                 showDestination(accountID: accountID, lists: availableLists, listID: destination.id,
-                    tasks: selectedListID == destination.id ? tasks.filter { $0.id != created.id } + [created] : [created])
+                    tasks: selectedListID == destination.id ? [created] + tasks.filter { $0.id != created.id } : [created])
             }
             await refresh()
             return true

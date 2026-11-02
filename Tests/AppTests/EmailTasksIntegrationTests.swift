@@ -10,6 +10,23 @@ import WebKit
 @testable import Tern
 
 @Suite @MainActor struct EmailTasksIntegrationTests {
+    @Test func rowEditAndDeleteRemainAccessibleWithoutOpeningAMenu() async throws {
+        var edits = 0, deletions = 0
+        let controller = NSHostingController(rootView: GoogleTaskRow(task: .init(id: "task", title: "Review proposal"),
+            parentTitle: nil, isBusy: false, onComplete: {}, onEdit: { edits += 1 }, onDelete: { deletions += 1 }))
+        controller.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 100),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderBack(nil)
+        defer { window.close() }
+        try await waitFor { self.element("google-task-edit-button-task", in: controller.view) != nil }
+        #expect(press(try #require(element("google-task-edit-button-task", role: "AXButton", in: controller.view))))
+        #expect(press(try #require(element("google-task-delete-task", role: "AXButton", in: controller.view))))
+        try await waitFor { edits == 1 && deletions == 1 }
+    }
+
     @Test(.timeLimit(.minutes(1))) func selectedEmailTextReachesTheNativeTaskMenuAndExpiredSelectionsCannotRun() async throws {
         let fixture = SelectionFixture()
         let controller = NSHostingController(rootView: SelectionReader(fixture: fixture, blocker: await RemoteContentBlocker.ruleList()))
@@ -233,20 +250,21 @@ import WebKit
         return try #require(try await iterator.next() ?? nil)
     }
 
-    private func waitFor(_ predicate: () -> Bool) async throws {
+    private func waitFor(sourceLocation: SourceLocation = #_sourceLocation, _ predicate: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(predicate())
+        try #require(predicate(), sourceLocation: sourceLocation)
     }
 
-    private func element(_ id: String, in root: NSView) -> NSObject? {
+    private func element(_ id: String, role: String? = nil, in root: NSView) -> NSObject? {
         var seen = Set<ObjectIdentifier>()
         func visit(_ value: Any) -> NSObject? {
             guard let object = value as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return nil }
             func attribute(_ name: String) -> Any? {
                 object.responds(to: NSSelectorFromString(name)) ? object.value(forKey: name) : nil
             }
-            if attribute("accessibilityIdentifier") as? String == id { return object }
+            if attribute("accessibilityIdentifier") as? String == id,
+               role == nil || attribute("accessibilityRole") as? String == role { return object }
             let children = attribute("accessibilityChildren") as? [Any] ?? []
             for child in children + NSAccessibility.unignoredChildren(from: children) + ((object as? NSView)?.subviews ?? []) {
                 if let result = visit(child) { return result }
