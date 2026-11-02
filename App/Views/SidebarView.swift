@@ -51,7 +51,6 @@ struct SidebarView: View {
                             MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
                                 .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
                                 .conversationDropTarget(boxID, mailbox: mailbox)
-                                .sidebarHover(SidebarRowSelection(mailbox: boxID))
                                 .tag(SidebarRowSelection(mailbox: boxID))
                             if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                         }
@@ -79,7 +78,6 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .environment(\.selectedSidebarRow, selection.wrappedValue)
         .contentMargins(.horizontal, 0, for: .scrollContent)
         // A Section can apply its sheet to every row, queuing repeated presentations.
         .sheet(isPresented: $isAddingFavorite) {
@@ -236,7 +234,6 @@ struct SidebarView: View {
                     Label(box.title, systemImage: box.systemImage)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .sidebarHover(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
                         .tag(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
                         .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
                         .accessibilityValue(mailbox.sidebarBadgeDescription(.account(owner.account.id, box.id)))
@@ -339,26 +336,6 @@ struct SidebarSymbolStyle: ShapeStyle {
 
     func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
         environment.backgroundProminence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(color)
-    }
-}
-
-extension EnvironmentValues {
-    @Entry var selectedSidebarRow: SidebarRowSelection?
-}
-
-private struct SidebarHover: ViewModifier {
-    @Environment(\.selectedSidebarRow) private var selection
-    let row: SidebarRowSelection
-    let isEnabled: Bool
-
-    func body(content: Content) -> some View {
-        content.ternHover(isEnabled: isEnabled && selection != row)
-    }
-}
-
-extension View {
-    func sidebarHover(_ row: SidebarRowSelection, isEnabled: Bool = true) -> some View {
-        modifier(SidebarHover(row: row, isEnabled: isEnabled))
     }
 }
 
@@ -465,7 +442,6 @@ private struct CombinedMailboxRows: View {
             onToggleExpansion: { isExpanded.toggle() }
         )
         .conversationDropTarget(combinedID, mailbox: mailbox)
-        .sidebarHover(SidebarRowSelection(mailbox: combinedID))
         .tag(SidebarRowSelection(mailbox: combinedID))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(box.title)
@@ -488,7 +464,6 @@ private struct CombinedMailboxRows: View {
                     .accessibilityLabel("\(box.title), \(name)")
                     .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
                     .conversationDropTarget(boxID, mailbox: mailbox)
-                    .sidebarHover(SidebarRowSelection(mailbox: boxID))
                     .tag(SidebarRowSelection(mailbox: boxID))
                     .contextMenu {
                         MailboxContextMenu(mailbox: mailbox, box: boxID,
@@ -609,7 +584,6 @@ private struct LabelRow: View {
         .selectionDisabled(isPending)
         .conversationDropTarget(.account(label.accountID, label.id), mailbox: mailbox)
         .onHover { isHovered = $0 }
-        .sidebarHover(SidebarRowSelection(mailbox: .account(label.accountID, label.id)), isEnabled: !isPending)
         .tag(SidebarRowSelection(mailbox: .account(label.accountID, label.id)))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)

@@ -131,7 +131,6 @@ struct FavoritesView: View {
         }
         .badge(canExpand && isExpanded ? 0 : mailbox.sidebarBadgeCount(box))
         .conversationDropTarget(box, mailbox: mailbox)
-        .sidebarHover(SidebarRowSelection(source: source, mailbox: box))
         .tag(SidebarRowSelection(source: source, mailbox: box))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title(favorite))
@@ -164,7 +163,6 @@ struct FavoritesView: View {
                     .conversationDropTarget(accountBox, mailbox: mailbox)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .sidebarHover(SidebarRowSelection(source: source, mailbox: accountBox))
                     .tag(SidebarRowSelection(source: source, mailbox: accountBox))
                     .accessibilityLabel("\(title(favorite)), \(name)")
                     .accessibilityValue(mailbox.sidebarBadgeDescription(accountBox))
@@ -284,7 +282,6 @@ struct InboxCategoryRows: View {
                 .padding(.leading, Tokens.Space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .sidebarHover(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
                 .accessibilityValue(mailbox.sidebarBadgeDescription(.account(accountID, category.labelID)))
                 .tag(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
