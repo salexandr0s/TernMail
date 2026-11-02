@@ -10,7 +10,7 @@ The plan is to make the action visible at its source, let nearby content move wi
 
 ## Implementation
 
-Five production files contain this pass:
+The initial motion pass uses these five production files. Later behavior fixes are recorded below.
 
 | File | Behavior |
 |---|---|
@@ -32,7 +32,7 @@ Native hosted screenshots and interaction checks replace stageshow's browser fil
 |---|---|---|
 | Mail star | The row's native Star accessibility action updated the actual model. Light and dark settled mail views were inspected. | Hover and keyboard-star transitions were not separately visually exercised. |
 | Notices | Arrival at 40 milliseconds and settled notices were captured. Native Dismiss worked, and an old notice timer did not dismiss its replacement. Real archive removed the synthetic row; native notice Undo restored it. | Continuous entrance, exit and interruption footage was not recorded. |
-| Attachments | Two files were added. Native removal of `agenda.txt` left `notes.txt`. Arrival, removal and settled frames were inspected. | Quick Look and failure transitions were not separately visually exercised. |
+| Attachments | Two files were added. Native removal of `agenda.txt` left `notes.txt`. The follow-up below checked the actual Quick Look panel, pagination, native close and Space reopening, plus failure Retry, Remove and Keep actions. | Recovery failures were induced with a missing local file and a SQLite DELETE refusal. Live Gmail failures were not exercised. |
 | Composer | After each actual Cc and Bcc disclosure, the current native field editor held focus. Native Show/Hide Quoted Text actions changed the disclosure and retained the quoted content. Regular, narrow and quote captures were inspected. The installed initial Release also passed manual Cc/Bcc focus and assistant open/close checks with the real system setting enabled. | Sender transitions were not separately visually exercised. The manual installed-app checks preceded the follow-up fix. |
 | Reduce Motion | Real macOS and SwiftUI environment values were checked while the same hosted view remained mounted through On, Off and On. The visible probe rectangle produced zero interpolated offsets with the fix under Reduce Motion, 18 with motion enabled, then zero after re-enabling Reduce Motion. | The probe measures shared animation behavior; it does not record every production transition continuously. |
 
@@ -66,8 +66,28 @@ Evidence is under [build/Verification/reduce-motion](../../build/Verification/re
 - The same audit exercised Cc/Bcc focus, two attachments and removal, native quote Show/Hide, scoped native Star, archive and native notice Undo, notice replacement and Dismiss. `screenshots/manifest.json` maps the ten reviewed PNGs.
 - `normal.log` and `normal.xcresult` record both ordinary native tests passing with the opt-in audit skipped.
 
-The preference changed through System Settings, without environment injection. The original Off preference was restored after the live audit; `runtime.json` records the setting changes and checks. Quick Look and failure transitions remain outside the visual checks.
+The preference changed through System Settings, without environment injection. The original Off preference was restored after the live audit; `runtime.json` records the setting changes and checks. At that time, Quick Look and failure transitions were outside the visual checks. The attachment follow-up below covers them.
 
-The universal Release for `3a85c14d2cda00f86bb7346c3a06546658deb49c` passed and is installed at `/Users/developer/Applications/Tern.app`. Signature, signing requirement and OAuth configuration matched the previous app. The previous app is backed up at `build/Previous/Tern-before-reduce-motion-3a85c14d.app`; [delivery.json](../../build/Verification/reduce-motion/delivery.json) records its hash and checks.
+The universal Release for `3a85c14d2cda00f86bb7346c3a06546658deb49c` passed and was installed at `/Users/developer/Applications/Tern.app`. Signature, signing requirement and OAuth configuration matched the previous app. The previous app is backed up at `build/Previous/Tern-before-reduce-motion-3a85c14d.app`; [delivery.json](../../build/Verification/reduce-motion/delivery.json) records its hash and checks.
 
 The installed app was launched with the original Off setting, then tested after enabling Reduce Motion while it remained running. Cc and Bcc disclosures focused their native fields, and the compose assistant opened, focused its input and closed. The untouched test composer closed normally. Reduce Motion was restored to Off, and Tern was left open on Inbox with no dialog. No real message was sent, archived or deleted during this installed-app check. SwiftPM resolution ran after the Xcode checks and left Core dependency pins unchanged.
+
+## Attachment Quick Look and recovery follow-up
+
+Native attachment checks reproduced four failures: a removed attachment could open after its pending preview resumed; an earlier preview request could replace a newer selection; a suspended file copy could recreate a removed attachment's temporary file; and a failed removal deleted the preview copy even though Keep retained the attachment.
+
+Commit `2dc163e` fixes three production files. `AttachmentStrip.swift` cancels obsolete preview work and checks which request still owns the selection. `OutgoingAttachmentFiles.swift` invalidates pending copies on removal or close and isolates their temporary paths. `ComposeModel.swift` removes the preview copy only after the attachment's stored removal succeeds. The reproduced failures and passing regression checks give high confidence in these fixes. The design is unchanged.
+
+The acceptance run hosted the real `ComposeView` with synthetic AuditGmail accounts and inspected the actual shared Quick Look panel. It checked selected filenames and file bytes, two preview items reducing to one, Right/Left pagination, native panel close followed by a real Space reopening, and native Remove dismissing the preview. The compose window had to remain visible after closing Quick Look.
+
+Recovery checks restored a missing source file, invoked native Retry and verified the attachment arrived. Native Remove dismissed another failed import. A disk-backed SQLite DELETE refusal then produced the removal failure card: Keep retained both the attachment and its readable preview file; Retry removed the attachment after the refusal was lifted. These fixtures performed no live provider or mail writes.
+
+Run the operator acceptance with `--ui-audit --attachment-audit --attachment-live`. The two operator tests wait for CUA to close the actual panel and press Space; they observe the resulting native state. The three race regressions also run with `--ui-audit --attachment-audit` alone. Their nonlive `orderOut` call is cleanup for test isolation and provides no evidence about native close behavior.
+
+Evidence is under [build/Verification/attachment-flows](../../build/Verification/attachment-flows/):
+
+- `clean-baseline.log` and `clean-baseline.xcresult` record the reproduced preview and cache failures before the fix.
+- `native-final.log` and `native-final.xcresult` record 25 passing tests: 18 ComposeModel, two MotionInteraction and five AttachmentInteraction tests. The opt-in runtime Reduce Motion test was skipped in this run; its earlier real-system audit remains recorded above.
+- `captures-final.log` and `captures-final.xcresult` record all five attachment tests passing again after a capture-only timing correction. The helper now waits 350 milliseconds for the native view and chip transition to settle. The [final capture manifest](../../build/Verification/attachment-flows/captures-final/manifest.json) maps ten PNGs. Independent review inspected all ten and found no material source issues or visual defects.
+
+Continuous recording, the browser film gate and live Gmail failures were outside this follow-up. Universal signed Release packaging and installation remain pending.
