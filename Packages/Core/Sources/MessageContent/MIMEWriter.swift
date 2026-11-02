@@ -47,6 +47,8 @@ public struct MIMEMessage: Sendable, Equatable {
     public var date = Date()
     /// Message IDs include their angle brackets, like `<id@example.com>`.
     public var messageID: String?
+    /// An optional RFC 8098 request, addressed to the sending identity.
+    public var dispositionNotificationTo: EmailAddress?
     public var inReplyTo: String?
     public var references: [String] = []
     public var plainText = ""
@@ -78,6 +80,10 @@ public struct MIMEMessage: Sendable, Equatable {
         headers.append(MIMEWriter.unstructuredHeader("Subject", subject))
         if let messageID = MIMEWriter.messageIDs([messageID].compactMap { $0 }).first {
             headers.append(MIMEWriter.header("Message-ID", messageID))
+        }
+        if let recipient = dispositionNotificationTo, recipient.isValid,
+           !recipient.address.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+            headers.append(MIMEWriter.addressHeader("Disposition-Notification-To", [recipient]))
         }
         if let inReplyTo = MIMEWriter.messageIDs([inReplyTo].compactMap { $0 }).first {
             headers.append(MIMEWriter.header("In-Reply-To", inReplyTo))

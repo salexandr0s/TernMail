@@ -627,52 +627,94 @@ private struct SyncStatusView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s2) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                switch mailbox.syncStatus {
-                case .syncing:
-                    HStack(spacing: Tokens.Space.s2) {
-                        ProgressView().controlSize(.mini)
-                            .frame(width: Tokens.Control.icon, height: Tokens.Control.icon)
-                        Text("Updating…")
-                    }
-                case .failed(let message):
-                    Label(message, systemImage: "exclamationmark.triangle")
+        VStack(spacing: Tokens.Space.s2) {
+            HStack(spacing: Tokens.Space.s2) {
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: Tokens.Control.icon))
+                        .foregroundStyle(.primary)
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                }
+                .buttonStyle(.borderless)
+                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
+                .ternHover(radius: Tokens.Radius.md)
+                .help("Settings (⌘,)")
+                .accessibilityLabel("Settings")
+                .accessibilityIdentifier("sidebar.settings")
+
+                status
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("sidebar.syncStatus")
+            }
+
+            if case .failed(let message) = mailbox.syncStatus {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Text(message)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .help(message)
-                    Button("Try Again") { mailbox.syncNow() }
+                    Button("Try Again", systemImage: "arrow.clockwise") { mailbox.syncNow() }
                         .buttonStyle(.link)
-                case .idle:
-                    if let date = mailbox.lastSyncedAt {
-                        TimelineView(.periodic(from: .now, by: 30)) { _ in
-                            let title = "Updated \(date.formatted(.relative(presentation: .named)))"
-                            Label(title, systemImage: "checkmark.circle")
-                                .lineLimit(2)
-                                .help(title)
-                        }
-                    } else {
-                        Label("Not updated yet", systemImage: "arrow.clockwise")
-                    }
+                        .foregroundStyle(Color.accentColor)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
+                .padding(Tokens.Space.s3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Tokens.Status.warning.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .ternOutline(radius: Tokens.Radius.sm, style: .contrastOnly)
             }
-            .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton, alignment: .leading)
-
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.body)
-                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .ternHover()
-            .help("Settings (⌘,)")
-            .accessibilityLabel("Settings")
-            .accessibilityIdentifier("sidebar.settings")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, Tokens.Space.s3)
         .padding(.vertical, Tokens.Space.s2)
+    }
+
+    @ViewBuilder private var status: some View {
+        switch mailbox.syncStatus {
+        case .syncing:
+            HStack(spacing: Tokens.Space.s1_5) {
+                ProgressView().controlSize(.mini)
+                    .frame(width: Tokens.Control.icon, height: Tokens.Control.icon)
+                    .accessibilityHidden(true)
+                Text("Updating…")
+            }
+            .accessibilityElement(children: .combine)
+        case .failed:
+            statusLabel("Update failed", symbol: "exclamationmark.triangle.fill", tint: Tokens.Status.warning)
+        case .idle:
+            if let date = mailbox.lastSyncedAt {
+                TimelineView(.periodic(from: .now, by: 30)) { _ in
+                    let relativeDate = date.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))
+                    ViewThatFits(in: .horizontal) {
+                        statusLabel("Updated \(relativeDate)", symbol: "checkmark.circle", tint: Tokens.Status.success)
+                            .fixedSize(horizontal: true, vertical: false)
+                        statusLabel(relativeDate, symbol: "checkmark.circle", tint: Tokens.Status.success)
+                    }
+                    .help("Last updated \(date.formatted(date: .abbreviated, time: .shortened))")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Updated \(date.formatted(.relative(presentation: .named)))")
+                }
+            } else {
+                statusLabel("Not updated yet", symbol: "circle.dashed")
+            }
+        }
+    }
+
+    private func statusLabel(_ title: String, symbol: String, tint: Color = .secondary) -> some View {
+        HStack(spacing: Tokens.Space.s1_5) {
+            Image(systemName: symbol)
+                .foregroundStyle(tint)
+                .frame(width: Tokens.Control.icon)
+                .accessibilityHidden(true)
+            Text(title)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

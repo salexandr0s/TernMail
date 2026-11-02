@@ -381,7 +381,8 @@ extension SyncEngine {
                 cc: headers.cc,
                 bcc: message.header("Bcc").map(EmailAddress.parseList) ?? [],
                 subject: headers.subject,
-                body: document, fromAddress: headers.from.first?.address
+                body: document, fromAddress: headers.from.first?.address,
+                requestsReadReceipt: Self.importedReadReceiptRequest(message, sender: headers.from.first)
             ),
             rfcMessageID: headers.messageID ?? MIMEMessage.newMessageID(for: sender),
             gmailDraftID: gmailDraftID,

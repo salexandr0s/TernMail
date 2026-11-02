@@ -128,6 +128,7 @@ extension SyncEngine {
         try await write { tx in
             deleted.withLock { $0.formUnion(fetched.missing) }
             try tx.deleteLibraryAttachments(messageIDs: Array(fetched.missing), accountID: accountID)
+            try tx.deleteAnalyticsMessages(messageIDs: Array(fetched.missing), accountID: accountID)
             for entry in fetched.entries where !deleted.withLock({ $0.contains(entry.message.id) }) {
                 try tx.replaceLibraryAttachments(entry.attachments, message: entry.message,
                     labelIDs: entry.labelIDs, generation: saved.generation)
@@ -184,14 +185,19 @@ extension SyncEngine {
         try await write { tx in
             deleted.withLock { $0.formUnion(gone) }
             try tx.deleteLibraryAttachments(messageIDs: Array(gone), accountID: accountID)
+            try tx.deleteAnalyticsMessages(messageIDs: Array(gone), accountID: accountID)
             for record in records {
                 guard let historyID = Int64(record.id), historyID > 0 else { throw SyncError.invalidHistoryID }
                 for change in record.labelsAdded ?? [] where !gone.contains(change.message.id) {
                     try tx.applyLibraryLabelChange(messageID: change.message.id, added: change.labelIds,
                         removed: [], historyID: historyID, accountID: accountID)
+                    try tx.applyAnalyticsLabelChange(messageID: change.message.id, added: change.labelIds,
+                        removed: [], historyID: historyID, accountID: accountID)
                 }
                 for change in record.labelsRemoved ?? [] where !gone.contains(change.message.id) {
                     try tx.applyLibraryLabelChange(messageID: change.message.id, added: [],
+                        removed: change.labelIds, historyID: historyID, accountID: accountID)
+                    try tx.applyAnalyticsLabelChange(messageID: change.message.id, added: [],
                         removed: change.labelIds, historyID: historyID, accountID: accountID)
                 }
             }
@@ -230,6 +236,7 @@ extension SyncEngine {
         try await write { tx in
             deleted.withLock { $0.formUnion(fetched.missing) }
             try tx.deleteLibraryAttachments(messageIDs: Array(fetched.missing), accountID: accountID)
+            try tx.deleteAnalyticsMessages(messageIDs: Array(fetched.missing), accountID: accountID)
             for entry in fetched.entries where !deleted.withLock({ $0.contains(entry.message.id) }) {
                 try tx.replaceLibraryAttachments(entry.attachments, message: entry.message,
                     labelIDs: entry.labelIDs, generation: saved.generation)

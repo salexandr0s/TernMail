@@ -1,0 +1,144 @@
+import AppKit
+import Foundation
+import MailStore
+import MessageContent
+import SwiftUI
+import Testing
+@testable import Tern
+
+/// Opt-in captures use synthetic data and attach the shipped views to the test result.
+@Suite @MainActor struct MailAnalyticsVisualAudit {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["TERN_ANALYTICS_VISUAL_AUDIT_DIR"] != nil))
+    func renderAnalyticsAndSenderCard() async throws {
+        let cache = try MailCache.inMemory()
+        let now = Date.now
+        let updates = Self.messages(now: now)
+        try await cache.write { tx in
+            _ = try tx.upsertMessages(updates)
+            try tx.upsertAnalyticsMessages(updates)
+            try tx.saveBodies([.init(accountID: "analytics-audit", messageID: "m0", html: """
+                <p>The revised proposal is attached.</p><div class="gmail_signature">Best,<br>Alex Morgan<br>
+                <a href="https://www.linkedin.com/in/alex-morgan-example">LinkedIn</a><br>
+                <a href="https://www.linkedin.com/company/alex-morgan-studio">Our studio</a><br>
+                <a href="https://www.instagram.com/alex.morgan.example/">Instagram</a><br>
+                <a href="https://example.com">Studio website</a></div>
+                """, plainText: nil, fetchedAt: now)])
+            let draft = LocalDraft(accountID: "analytics-audit", kind: .new,
+                content: .init(to: [.init(address: "alex@example.invalid")], subject: "Review of the next project phase",
+                               requestsReadReceipt: true), rfcMessageID: "<audit-receipt@example.invalid>", now: now)
+            try tx.recordReadReceiptRequest(for: draft, senderAddress: "owner@example.invalid", messageID: "m1", threadID: "t0", sentAt: now)
+            try tx.storeReadReceipt(.init(originalMessageID: draft.rfcMessageID, recipient: "alex@example.invalid", disposition: .displayed),
+                accountID: "analytics-audit", receiptMessageID: "receipt1", reporter: "alex@example.invalid",
+                returnAddresses: ["owner@example.invalid"], receivedAt: now)
+        }
+        let account = AccountRecord(id: "analytics-audit", email: "owner@example.invalid", displayName: "Personal",
+                                    grantedScopes: [], addedAt: now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(),
+                                   outgoingDirectory: .temporaryDirectory, syncEnabled: false)
+        for (name, width, scheme) in [("wide-light", 880.0, ColorScheme.light), ("narrow-dark", 560.0, ColorScheme.dark)] {
+            try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox),
+                size: NSSize(width: width, height: 950), scheme: scheme, waitFor: "Emails over time",
+                name: "analytics-\(name)", captureBottom: true)
+        }
+        try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
+                address: "alex@example.invalid", name: "Alex Morgan"), mailbox: mailbox),
+            size: NSSize(width: 880, height: 950), scheme: .light, waitFor: "Emails over time",
+            name: "sender-analytics", captureBottom: true)
+        for scheme in [ColorScheme.light, .dark] {
+            try await capture(SenderProfilePopover(accountID: account.id, address: "alex@example.invalid",
+                name: "Alex Morgan with a longer display name", mailbox: mailbox),
+                size: NSSize(width: 420, height: 440), scheme: scheme, waitFor: "Profiles and websites",
+                name: "sender-card-\(scheme == .light ? "light" : "dark")", captureBottom: true)
+        }
+        try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
+                address: "new-contact@example.invalid", name: "New contact"), mailbox: mailbox),
+            size: NSSize(width: 560, height: 950), scheme: .light, waitFor: "No indexed email",
+            name: "analytics-empty-narrow", captureBottom: true)
+        let receipt = ReadReceiptStatus(accountID: account.id, rfcMessageID: "<large-receipt@example.invalid>",
+            messageID: nil, threadID: nil, subject: "Project review", sentAt: now,
+            recipients: (1...18).map { index in
+                ReadReceiptRecipientStatus(address: index == 1
+                    ? "alexander.morgan.with.a.long.address@example.invalid" : "colleague\(index)@example.invalid",
+                    receivedAt: index.isMultiple(of: 3) ? now : nil)
+            })
+        for scheme in [ColorScheme.light, .dark] {
+            try await capture(ReadReceiptDetails(status: receipt), size: NSSize(width: 320, height: 440),
+                scheme: scheme, waitFor: "6 of 18 receipts received",
+                name: "receipt-details-\(scheme == .light ? "light" : "dark")", captureBottom: true)
+        }
+        await mailbox.stop()
+    }
+
+    nonisolated private static func messages(now: Date) -> [CacheTransaction.MessageUpdate] {
+        (0..<90).map { index in
+            let sent = index % 3 == 1
+            return .init(record: .init(accountID: "analytics-audit", id: "m\(index)", threadID: "t\(index / 3)", historyID: 1,
+                date: now.addingTimeInterval(-Double(index) * 86_400 * 3), snippet: "",
+                sender: sent ? "Owner <owner@example.invalid>" : "Alex Morgan <alex@example.invalid>",
+                recipients: sent ? "Alex Morgan <alex@example.invalid>" : "owner@example.invalid", cc: nil,
+                subject: index == 0 ? "Project proposal and planning for the next season" : "Project update \(index + 1)",
+                sizeEstimate: 300), labelIDs: [sent ? SystemLabel.sent : SystemLabel.inbox])
+        }
+    }
+
+    private func capture<Content: View>(_ content: Content, size: NSSize, scheme: ColorScheme, waitFor: String,
+                                       name: String, captureBottom: Bool) async throws {
+        let controller = NSHostingController(rootView: content
+            .frame(width: size.width, height: size.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, scheme))
+        controller.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
+        window.contentViewController = controller
+        window.setContentSize(size)
+        window.orderFront(nil)
+        defer { window.close() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !contains(waitFor, in: controller.view), ContinuousClock.now < deadline {
+            controller.view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        controller.view.layoutSubtreeIfNeeded()
+        try attach(controller.view, name: name + ".png")
+        #expect(contains(waitFor, in: controller.view), "Expected content did not appear; inspect the attached capture.")
+        if captureBottom, let scroll = firstScrollView(in: controller.view), let document = scroll.documentView {
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(100))
+            controller.view.layoutSubtreeIfNeeded()
+            try attach(controller.view, name: name + "-bottom.png")
+        }
+    }
+
+    private func attach(_ view: NSView, name: String) throws {
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        Attachment.record(Array(data), named: name)
+    }
+
+    private func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView { return scroll }
+        return view.subviews.lazy.compactMap { firstScrollView(in: $0) }.first
+    }
+
+    private func contains(_ text: String, in object: Any) -> Bool {
+        var seen = Set<ObjectIdentifier>()
+        func visit(_ item: Any) -> Bool {
+            guard let object = item as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return false }
+            func value(_ key: String) -> Any? {
+                object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil
+            }
+            if [value("accessibilityValue"), value("accessibilityLabel")].contains(where: {
+                ($0 as? String)?.contains(text) == true
+            }) { return true }
+            let children = value("accessibilityChildren") as? [Any] ?? []
+            let views = (object as? NSView)?.subviews ?? []
+            return (children + NSAccessibility.unignoredChildren(from: children)).contains(where: visit)
+                || views.contains(where: visit)
+        }
+        return visit(object)
+    }
+}

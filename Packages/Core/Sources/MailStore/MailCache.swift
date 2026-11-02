@@ -58,6 +58,9 @@ public struct CacheTransaction {
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
         "contactEmail", "contact", "contactSync", "invitationReply", "messageSnoozeHold", "ownAddress", "unreadDelta",
         "attachmentLibrary", "attachmentLibraryLabel", "attachmentIndexState",
+        "mailAnalyticsContact", "mailAnalyticsMessage", "mailAnalyticsState",
+        "readReceiptRecipient", "readReceiptRequest", "readReceiptEvent",
+        "readReceiptPending",
     ]
 
     // MARK: Labels
@@ -139,6 +142,7 @@ public struct CacheTransaction {
     /// (`setOwnAddresses`).
     @discardableResult
     public func upsertMessages(_ updates: [MessageUpdate]) throws -> Set<String> {
+        try upsertAnalyticsMessages(updates)
         var threads = Set<String>()
         var ownAddressesByAccount: [String: Set<String>] = [:]
         for update in updates {
@@ -236,6 +240,7 @@ public struct CacheTransaction {
         messageID: String, added: [String], removed: [String], historyID: Int64, accountID: String
     ) throws -> String? {
         try applyLibraryLabelChange(messageID: messageID, added: added, removed: removed, historyID: historyID, accountID: accountID)
+        try applyAnalyticsLabelChange(messageID: messageID, added: added, removed: removed, historyID: historyID, accountID: accountID)
         guard var message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
             return nil
         }

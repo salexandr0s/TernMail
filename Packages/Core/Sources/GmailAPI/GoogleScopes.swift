@@ -18,6 +18,8 @@ public enum AccountFeature: String, Sendable, CaseIterable {
     case calendarManagement
     /// Manage sharing permissions on owned calendars.
     case calendarSharing
+    /// View, create and update Google Tasks.
+    case tasks
 
     /// The features `names` lists. Names this version doesn't know are skipped.
     public static func named(_ names: some Sequence<String>) -> Set<AccountFeature> {
@@ -44,6 +46,7 @@ public enum GoogleScopes {
     public static let calendarManagement = "https://www.googleapis.com/auth/calendar.calendars"
     public static let calendarSharing = "https://www.googleapis.com/auth/calendar.acls"
     public static let fullCalendar = "https://www.googleapis.com/auth/calendar"
+    public static let tasks = "https://www.googleapis.com/auth/tasks"
 
     /// Asked for at every authorization: the account's identity and its mail.
     public static let base = ["openid", "email", "profile", gmailModify]
@@ -66,6 +69,7 @@ public enum GoogleScopes {
         case .calendar: [calendarEvents, calendarList, calendarFreeBusy]
         case .calendarManagement: [calendarManagement]
         case .calendarSharing: [calendarSharing]
+        case .tasks: [tasks]
         }
     }
 

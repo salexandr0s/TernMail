@@ -101,6 +101,7 @@ private struct MessageListVisualRow: View, Equatable {
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @Environment(\.backgroundProminence) private var prominence
     @State private var isHovered = false
+    @State private var showsSender = false
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.mailbox === rhs.mailbox && lhs.selected == rhs.selected && lhs.dateKey == rhs.dateKey
@@ -181,12 +182,25 @@ private struct MessageListVisualRow: View, Equatable {
         // One element per row: VoiceOver reads the state, then who, what and when.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary(labels: labels, date: date))
+        .accessibilityAction(named: "Show sender details") {
+            if item.sender != nil { showsSender = true }
+        }
+        .onChange(of: item.id) { _, _ in showsSender = false }
     }
 
     @ViewBuilder private var avatar: some View {
         if let sender = item.sender {
-            ContactAvatar(accountID: item.id.accountID, address: sender.address, name: sender.name ?? "",
-                          cache: mailbox.cache, accounts: mailbox.accountStore, size: avatarSize)
+            Button { showsSender = true } label: {
+                ContactAvatar(accountID: item.id.accountID, address: sender.address, name: sender.name ?? "",
+                              cache: mailbox.cache, accounts: mailbox.accountStore, size: avatarSize)
+            }
+            .buttonStyle(.borderless)
+            .help("Show sender details")
+            .accessibilityLabel("Show details for \(sender.name ?? sender.address)")
+            .popover(isPresented: $showsSender, arrowEdge: .trailing) {
+                SenderProfilePopover(accountID: item.id.accountID, address: sender.address,
+                                     name: sender.name ?? sender.address, mailbox: mailbox)
+            }
         } else {
             TernAvatar(name: "", size: avatarSize)
         }

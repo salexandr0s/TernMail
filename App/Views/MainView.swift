@@ -17,7 +17,8 @@ struct MainView: View {
     @State private var sidebarHiddenForWidth = false
     /// The sidebar column's last width while visible, gutter included.
     @State private var sidebarColumnWidth = Tokens.Layout.sidebarWidth + Tokens.Layout.columnGutter
-    @State private var showsAssistant = false
+    @State private var utilityPanel: WorkspacePanel?
+    private var showsPanel: Bool { utilityPanel != nil }
     @State private var hostWindow: NSWindow?
     /// `Double`, because `@AppStorage` cannot store `CGFloat`.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
@@ -33,8 +34,8 @@ struct MainView: View {
     @FocusState private var outboxFocused: Bool
     let mailbox: MailboxModel
     var isActive = true
-    var isCalendarAssistantPresented = false
-    var onCalendarAssistantToggle: (() -> Void)?
+    var calendarPanel: WorkspacePanel?
+    var onCalendarPanelToggle: ((WorkspacePanel) -> Void)?
     var calendarSidebarState: CalendarSidebarState?
 
     private var showsOutbox: Bool {
@@ -63,7 +64,7 @@ struct MainView: View {
     /// Below the three columns' minimum widths the split view clips the
     /// sidebar and the reader, so the sidebar steps aside until there's room.
     private func fitColumns(to width: CGFloat) {
-        guard width > 0, !showsAssistant, !hidesReader else { return }
+        guard width > 0, !showsPanel, !hidesReader else { return }
         if width < AssistantSidebarLayout.threeColumnMinimum {
             guard columnVisibility == .all else { return }
             sidebarHiddenForWidth = true
@@ -83,7 +84,7 @@ struct MainView: View {
 
     /// While the assistant shows, the window keeps room for the list and reader beside it.
     private var minimumWidth: CGFloat {
-        showsAssistant && !hidesReader ? AssistantSidebarLayout.windowMinimum : Tokens.Layout.windowMinWidth
+        showsPanel && !hidesReader ? AssistantSidebarLayout.windowMinimum : Tokens.Layout.windowMinWidth
     }
 
     private var section: WorkspaceSection {
@@ -108,14 +109,14 @@ struct MainView: View {
         let contentTopInset = toolbarInset.top
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
-                preferredWidth: CGFloat(preferredAssistantWidth), isPresented: showsAssistant)
+                preferredWidth: CGFloat(preferredAssistantWidth), isPresented: showsPanel)
             HStack(spacing: 0) {
                 // A split wider than the mail area runs under the assistant and
                 // keeps its leading edge, the sidebar or the list, in view.
                 mailContent(topInset: contentTopInset)
                     .frame(width: layout.mailWidth, alignment: .leading)
                     .clipped()
-                if showsAssistant {
+                if showsPanel {
                     Rectangle()
                         .fill(Tokens.Surface.border)
                         .frame(width: Tokens.Border.hairline)
@@ -123,17 +124,23 @@ struct MainView: View {
                             AssistantSidebarResizeHandle(width: layout.sidebarWidth, onResize: resizeAssistant)
                                 .frame(width: Tokens.Space.s3)
                                 .accessibilityElement()
-                                .accessibilityLabel("Assistant width")
+                                .accessibilityLabel(utilityPanel == .tasks ? "Tasks width" : "Assistant width")
                                 .accessibilityValue("\(Int(layout.sidebarWidth)) points")
                                 .accessibilityAdjustableAction { direction in
                                     resizeAssistant(layout.sidebarWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
                                 }
                         }
-                    AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
-                        onExpand: { openAssistantWindow(fullScreen: true) },
-                        onDetach: { openAssistantWindow(fullScreen: false) }, onClose: closeAssistant)
-                        .frame(width: layout.sidebarWidth)
-                        .clipped()
+                    Group {
+                        if utilityPanel == .tasks {
+                            GoogleTasksSidebar(model: app.tasks, onClose: closePanel, isActive: isActive)
+                        } else {
+                            AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
+                                onExpand: { openAssistantWindow(fullScreen: true) },
+                                onDetach: { openAssistantWindow(fullScreen: false) }, onClose: closePanel)
+                        }
+                    }
+                    .frame(width: layout.sidebarWidth)
+                    .clipped()
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -171,9 +178,12 @@ struct MainView: View {
         .onChange(of: mailbox.selectedMailbox) { _, box in storedMailbox = box?.restorationValue ?? "" }
         .onChange(of: columnVisibility) { _, visibility in
             // The assistant and a narrow window hide columns for a while; keep the user's own choice.
-            if !showsAssistant && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
+            if !showsPanel && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
         }
         .onChange(of: hidesReader) { _, _ in fitColumns(to: mailWidth) }
+        .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
+            if isActive, request != nil { presentPanel(.tasks); app.didShowTasks() }
+        }
         .modifier(AssistantAccessRefresh(mailbox: mailbox))
         .modifier(SignOutDialogs())
         .onChange(of: mailbox.draftToReopen) { _, id in
@@ -187,9 +197,11 @@ struct MainView: View {
             WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
                 accounts: app.accountPreferences, section: section, width: workspaceWidth, sidebar: sidebarToggle,
                 onSelect: show, onNewMessage: newMessage, onReply: reply,
-                isAssistantPresented: section == .attachments ? false : isActive ? showsAssistant : isCalendarAssistantPresented,
-                isAssistantAvailable: section != .attachments && (isActive || onCalendarAssistantToggle != nil),
-                onToggleAssistant: { if isActive { toggleAssistant() } else { onCalendarAssistantToggle?() } })
+                isAssistantPresented: section == .attachments ? false : (isActive ? utilityPanel : calendarPanel) == .assistant,
+                isAssistantAvailable: section != .attachments && (isActive || onCalendarPanelToggle != nil),
+                onToggleAssistant: { if isActive { togglePanel(.assistant) } else { onCalendarPanelToggle?(.assistant) } },
+                isTasksPresented: (isActive ? utilityPanel : calendarPanel) == .tasks,
+                onToggleTasks: { if isActive { togglePanel(.tasks) } else { onCalendarPanelToggle?(.tasks) } })
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar(removing: workspaceWidth < Tokens.Layout.toolbarTitleFoldWidth ? .title : nil)
@@ -200,7 +212,7 @@ struct MainView: View {
     private func mailContent(topInset: CGFloat) -> some View {
         MailColumnsContent(mailbox: mailbox,
             identity: .init(columnVisibility: columnVisibility, showsReader: !hidesReader,
-                showsAssistant: showsAssistant, topInset: topInset, outboxFocused: outboxFocused),
+                showsAssistant: showsPanel, topInset: topInset, outboxFocused: outboxFocused),
             columnVisibility: $columnVisibility, sidebarColumnWidth: $sidebarColumnWidth,
             outboxFocused: $outboxFocused, paneSizing: paneSizing, toolbarInset: toolbarInset)
         .equatable()
@@ -209,13 +221,18 @@ struct MainView: View {
         .modifier(MailNoticeOverlay(mailbox: mailbox))
     }
 
-    private func toggleAssistant() {
-        if showsAssistant { closeAssistant(); return }
-        // Capture divider positions before narrowing or hiding a native column.
-        paneSizing.beginPresentation()
-        previousColumnVisibility = columnVisibility
-        widenForAssistant()
-        showsAssistant = true
+    private func togglePanel(_ panel: WorkspacePanel) {
+        if utilityPanel == panel { closePanel() }
+        else { presentPanel(panel) }
+    }
+
+    private func presentPanel(_ panel: WorkspacePanel) {
+        if !showsPanel {
+            paneSizing.beginPresentation()
+            previousColumnVisibility = columnVisibility
+            widenForAssistant()
+        }
+        utilityPanel = panel
     }
 
     /// AppKit widens a window to show a sidebar that doesn't fit, so opening
@@ -232,16 +249,16 @@ struct MainView: View {
         hostWindow.setFrame(frame, display: true, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
-    private func closeAssistant() {
-        guard showsAssistant else { return }
-        showsAssistant = false
+    private func closePanel() {
+        guard showsPanel else { return }
+        utilityPanel = nil
         if let previousColumnVisibility { columnVisibility = previousColumnVisibility }
         previousColumnVisibility = nil
         paneSizing.endPresentation()
     }
 
     private func updateNavigationVisibility(isNarrow: Bool) {
-        guard showsAssistant, let previousColumnVisibility else { return }
+        guard showsPanel, let previousColumnVisibility else { return }
         columnVisibility = isNarrow && previousColumnVisibility != .detailOnly ? .doubleColumn : previousColumnVisibility
     }
 
@@ -250,7 +267,7 @@ struct MainView: View {
     }
 
     private func openAssistantWindow(fullScreen: Bool) {
-        closeAssistant()
+        closePanel()
         AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
     }
 

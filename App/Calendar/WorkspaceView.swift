@@ -11,7 +11,7 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
 struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
-    @State private var showsCalendarAssistant = false
+    @State private var calendarPanel: WorkspacePanel?
     @State private var calendarSidebar = CalendarSidebarState()
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
@@ -20,17 +20,18 @@ struct WorkspaceView: View {
     var body: some View {
         ZStack {
             MainView(mailbox: mailbox, isActive: app.destination == .mail,
-                isCalendarAssistantPresented: showsCalendarAssistant,
-                onCalendarAssistantToggle: { showsCalendarAssistant.toggle() }, calendarSidebarState: calendarSidebar)
+                calendarPanel: calendarPanel,
+                onCalendarPanelToggle: { calendarPanel = calendarPanel == $0 ? nil : $0 }, calendarSidebarState: calendarSidebar)
                 .opacity(app.destination == .mail ? 1 : 0)
                 .allowsHitTesting(app.destination == .mail)
                 .accessibilityHidden(app.destination != .mail)
+                .zIndex(app.destination == .mail ? 1 : 0)
                 .background {
                     MailWorkspacePerformance(mailbox: mailbox, isActive: app.destination == .mail)
                 }
             HStack(spacing: 0) {
                 CalendarView(model: app.calendar, isActive: app.destination == .calendar, sidebarState: calendarSidebar)
-                if showsCalendarAssistant {
+                if let calendarPanel {
                     Rectangle()
                         .fill(Tokens.Surface.border)
                         .frame(width: Tokens.Border.hairline)
@@ -38,28 +39,39 @@ struct WorkspaceView: View {
                             AssistantSidebarResizeHandle(width: CGFloat(preferredAssistantWidth), onResize: resizeAssistant)
                                 .frame(width: Tokens.Space.s3)
                                 .accessibilityElement()
-                                .accessibilityLabel("Assistant width")
+                                .accessibilityLabel(calendarPanel == .tasks ? "Tasks width" : "Assistant width")
                                 .accessibilityValue("\(Int(preferredAssistantWidth)) points")
                                 .accessibilityAdjustableAction { direction in
                                     resizeAssistant(CGFloat(preferredAssistantWidth) + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
                                 }
                         }
-                    AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
-                        onExpand: { openAssistant(fullScreen: true) },
-                        onDetach: { openAssistant(fullScreen: false) },
-                        onClose: { showsCalendarAssistant = false })
-                        .frame(width: CGFloat(preferredAssistantWidth))
+                    Group {
+                        if calendarPanel == .tasks {
+                            GoogleTasksSidebar(model: app.tasks, onClose: { self.calendarPanel = nil },
+                                isActive: app.destination == .calendar)
+                        } else {
+                            AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
+                                onExpand: { openAssistant(fullScreen: true) },
+                                onDetach: { openAssistant(fullScreen: false) },
+                                onClose: { self.calendarPanel = nil })
+                        }
+                    }
+                    .frame(width: CGFloat(preferredAssistantWidth))
                 }
             }
             .opacity(app.destination == .calendar ? 1 : 0)
             .allowsHitTesting(app.destination == .calendar)
             .accessibilityHidden(app.destination != .calendar)
+            .zIndex(app.destination == .calendar ? 1 : 0)
             .background {
                 CalendarWorkspacePerformance(model: app.calendar, isActive: app.destination == .calendar)
             }
         }
         .toolbar(removing: .sidebarToggle)
         .task { await app.calendar.start() }
+        .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
+            if app.destination == .calendar, request != nil { calendarPanel = .tasks; app.didShowTasks() }
+        }
         .onChange(of: app.destination, initial: true) { _, destination in
             app.calendar.isVisible = destination == .calendar
         }
@@ -76,7 +88,7 @@ struct WorkspaceView: View {
     }
 
     private func openAssistant(fullScreen: Bool) {
-        showsCalendarAssistant = false
+        calendarPanel = nil
         AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
     }
 }

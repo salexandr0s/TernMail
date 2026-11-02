@@ -3,12 +3,15 @@ import MailStore
 import MessageContent
 import SwiftUI
 
-/// The row of controls in an expanded message's header.
+/// Message controls keep the same targets in open, collapsed and narrow headers.
 struct MessageActions<SenderItems: View>: View {
     let message: MessageDetail
     let mailbox: MailboxModel
     let selectedText: String
     let compose: (MailboxModel.ComposeStart) -> Void
+    var showsReply = true
+    var showsStar = true
+    var markUnreadFromHere: (() -> Void)? = nil
     /// The sender's reading choices, after the message commands in More.
     @ViewBuilder let senderItems: SenderItems
     @Environment(\.openWindow) private var openWindow
@@ -16,42 +19,113 @@ struct MessageActions<SenderItems: View>: View {
     var body: some View {
         HStack(spacing: Tokens.Space.s1) {
             if message.labels.contains(SystemLabel.draft) {
-                Button("Edit Draft", systemImage: "pencil") {
-                    compose(.editDraft(messageID: message.id, accountID: message.record.accountID))
-                }.help("Edit Draft")
+                if showsReply {
+                    Button {
+                        compose(.editDraft(messageID: message.id, accountID: message.record.accountID))
+                    } label: {
+                        MessageActionIcon("Edit Draft", systemImage: "pencil")
+                    }
+                    .help("Edit Draft")
+                    .accessibilityIdentifier("message-edit-draft-\(message.id)")
+                    .ternHover()
+                }
             } else {
-                Button { mailbox.toggleMessageStar(message) } label: {
-                    Label(message.isStarred ? "Remove Star" : "Star", systemImage: message.isStarred ? "star.fill" : "star")
-                        .foregroundStyle(message.isStarred ? AnyShapeStyle(Tokens.Status.star) : AnyShapeStyle(.secondary))
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                }.help(message.isStarred ? "Remove Star" : "Star")
-                let primary = MessageMenuItems.primaryReply(to: message, in: mailbox)
-                Button(primary == .replyAll ? "Reply All" : "Reply", systemImage: primary == .replyAll ? "arrowshape.turn.up.left.2" : "arrowshape.turn.up.left") {
-                    MessageMenuItems.reply(primary, to: message, in: mailbox, selectedText: selectedText, openWindow: openWindow)
-                }.help(primary == .replyAll ? "Reply All" : "Reply")
-                Menu {
-                    MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText)
-                    senderItems
-                } label: { Label("More", systemImage: "ellipsis.circle").frame(width: Tokens.Space.s6, height: Tokens.Space.s6) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden)
-                .accessibilityLabel("More actions for this message")
+                if showsStar {
+                    Button { mailbox.toggleMessageStar(message) } label: {
+                        MessageActionIcon(message.isStarred ? "Remove Star" : "Star",
+                                          systemImage: message.isStarred ? "star.fill" : "star")
+                            .foregroundStyle(message.isStarred ? AnyShapeStyle(Tokens.Status.star) : AnyShapeStyle(.secondary))
+                    }
+                    .help(message.isStarred ? "Remove Star" : "Star")
+                    .accessibilityIdentifier("message-star-\(message.id)")
+                    .ternHover()
+                }
+                if showsReply {
+                    let primary = MessageMenuItems.primaryReply(to: message, in: mailbox)
+                    Button {
+                        MessageMenuItems.reply(primary, to: message, in: mailbox, selectedText: selectedText, openWindow: openWindow)
+                    } label: {
+                        MessageActionIcon(primary == .replyAll ? "Reply All" : "Reply",
+                                          systemImage: primary == .replyAll ? "arrowshape.turn.up.left.2" : "arrowshape.turn.up.left")
+                    }
+                    .help(primary == .replyAll ? "Reply All" : "Reply")
+                    .accessibilityIdentifier("message-reply-\(message.id)")
+                    .ternHover()
+                }
             }
+            Menu {
+                MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText,
+                                 markUnreadFromHere: markUnreadFromHere, compose: compose)
+                senderItems
+            } label: { MessageActionIcon("More actions for this message", systemImage: "ellipsis") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("More actions for this message")
+            .accessibilityIdentifier("message-more-\(message.id)")
+            .help("More actions for this message")
+            .ternHover()
         }
-        .labelStyle(.iconOnly).buttonStyle(.borderless).imageScale(.medium).foregroundStyle(.secondary)
+        .labelStyle(.iconOnly).buttonStyle(.borderless).imageScale(.medium)
+        .foregroundStyle(.secondary)
     }
 }
 
-/// One message's commands, shared by the More button and the card's context
-/// menu. The context menu passes `markUnreadFromHere` and shows the star.
+/// Shared label dimensions retain the native button's keyboard focus treatment.
+private struct MessageActionIcon: View {
+    let title: String
+    let systemImage: String
+
+    init(_ title: String, systemImage: String) {
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+            .contentShape(Rectangle())
+    }
+}
+
+/// One message's commands, shared by More and the header's context menu.
 struct MessageMenuItems: View {
     let message: MessageDetail
     let mailbox: MailboxModel
     let selectedText: String
     var markUnreadFromHere: (() -> Void)? = nil
-    var showsStar = false
+    var showsStar = true
+    var compose: ((MailboxModel.ComposeStart) -> Void)? = nil
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        if message.labels.contains(SystemLabel.draft) {
+            Button("Edit Draft", systemImage: "pencil") { editDraft() }
+        } else {
+            replyItems
+            Divider()
+            Button(message.isUnread ? "Mark as Read" : "Mark as Unread",
+                   systemImage: message.isUnread ? "envelope.open" : "envelope.badge") {
+                mailbox.performReadingAction(message.isUnread ? .markRead : .markUnread,
+                                             name: message.isUnread ? "Mark as Read" : "Mark as Unread",
+                                             messageID: message.id, accountID: message.record.accountID)
+            }
+            if let markUnreadFromHere { Button("Mark Unread from Here") { markUnreadFromHere() } }
+            if showsStar {
+                Button(message.isStarred ? "Remove Star" : "Star", systemImage: message.isStarred ? "star.slash" : "star") {
+                    mailbox.toggleMessageStar(message)
+                }
+            }
+        }
+        Divider()
+        linkItems
+        Divider()
+        Button("Print Message…", systemImage: "printer") { printMessage() }.disabled(message.body == nil)
+        Button("Export Message as PDF…") { printMessage(pdf: true) }.disabled(message.body == nil)
+        Button("Show Original") { openWindow(id: OriginalMessageWindow.sceneID, value: link) }
+    }
+
+    @ViewBuilder private var replyItems: some View {
         Button("Reply") { reply(.reply) }
         Button("Reply All") { reply(.replyAll) }
         Button("Forward") { reply(.forward) }
@@ -71,22 +145,16 @@ struct MessageMenuItems: View {
                 }
             }
         }
-        if markUnreadFromHere != nil || showsStar {
-            Divider()
-            if let markUnreadFromHere { Button("Mark Unread from Here") { markUnreadFromHere() } }
-            if showsStar { Button(message.isStarred ? "Remove Star" : "Star") { mailbox.toggleMessageStar(message) } }
-        }
-        Divider()
-        Button("Show Original") { openWindow(id: OriginalMessageWindow.sceneID, value: link) }
-        Button("Print Message…") { printMessage() }.disabled(message.body == nil)
-        Button("Export Message as PDF…") { printMessage(pdf: true) }.disabled(message.body == nil)
+    }
+
+    @ViewBuilder private var linkItems: some View {
         if let url = link.ternURL { Button("Copy Link") { copy(url) } }
         if let email = mailbox.account(id: message.record.accountID)?.account.email, let url = link.gmailURL(email: email) {
             Button("Copy Gmail Link") { copy(url) }
             Button("Open in Gmail") { NSWorkspace.shared.open(url) }
         }
         let file = MessageFileItem(message, mailbox: mailbox)
-        ShareLink(item: file, preview: file.preview) { Text("Share") }
+        ShareLink(item: file, preview: file.preview) { Text("Share Message…") }
     }
 
     private var link: MailLink { MailLink(accountID: message.record.accountID, threadID: message.record.threadID, messageID: message.id) }
@@ -112,6 +180,17 @@ struct MessageMenuItems: View {
         Self.reply(kind, to: message, in: mailbox, selectedText: selectedText, openWindow: openWindow)
     }
 
+    private func editDraft() {
+        let start = MailboxModel.ComposeStart.editDraft(messageID: message.id, accountID: message.record.accountID)
+        if let compose { compose(start) }
+        else {
+            Task {
+                guard let id = await mailbox.startCompose(start) else { return }
+                openWindow(id: ComposeWindow.sceneID, value: id)
+            }
+        }
+    }
+
     private func printMessage(pdf: Bool = false) {
         ConversationPrintController.show(subject: message.record.subject, messages: [message], exportsPDF: pdf) { error in
             if let error { mailbox.notice = .init(message: error, isError: true) }
@@ -125,10 +204,14 @@ struct MessageAddressMenu: View {
     let address: EmailAddress
     let accountID: String
     let mailbox: MailboxModel
+    var displayName: String? = nil
+    var showsFullAddress = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Menu {
+            Text(address.address)
+            Divider()
             Button("Copy Address") { NSPasteboard.general.replaceContents(with: address.address) }
             Button("New Message") {
                 Task {
@@ -136,11 +219,17 @@ struct MessageAddressMenu: View {
                     openWindow(id: ComposeWindow.sceneID, value: id)
                 }
             }
+            Divider()
             Button("Search Messages From") { mailbox.searchFromAddress(address.address, accountID: accountID) }
             Button("Search Messages To") { mailbox.searchToAddress(address.address, accountID: accountID) }
             Button("Create Filter…") { mailbox.requestFilter(sender: address.address, recipients: nil, subject: nil, accountID: accountID) }
-        } label: { Text(address.name ?? address.address).lineLimit(1) }
+        } label: {
+            Text(displayName ?? (showsFullAddress ? address.displayString : address.name ?? address.address))
+                .lineLimit(showsFullAddress ? nil : 1)
+                .fixedSize(horizontal: false, vertical: showsFullAddress)
+        }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .help(address.displayString)
         .accessibilityLabel("Address actions for \(address.displayString)")
     }

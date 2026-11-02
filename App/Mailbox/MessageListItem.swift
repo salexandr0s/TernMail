@@ -23,6 +23,7 @@ final class MessageListProjection {
         let conversations: Bool
         let filters: Set<MailQuickFilter>
         let mailboxID: String?
+        var retainedUnreadRows: Set<MailListRowID> = []
     }
 
     struct Input: Sendable {
@@ -34,6 +35,7 @@ final class MessageListProjection {
         let categories: [String: Set<String>]
         let addresses: [String: Set<String>]
         let availableLabels: [String: [LabelRecord]]
+        var retainedUnreadRows: Set<MailListRowID> = []
     }
 
     private var previous: Key?
@@ -51,7 +53,8 @@ final class MessageListProjection {
     static func prepare(_ input: Input, reusing previous: [MessageListItem] = []) -> [MessageListItem] {
         MessageListItem.project(threads: input.threads, entries: input.entries,
             conversations: input.conversations, filters: input.filters, mailboxID: input.mailboxID,
-            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels, reusing: previous)
+            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels, reusing: previous,
+            retainingUnreadRows: input.retainedUnreadRows)
     }
 }
 
@@ -221,7 +224,8 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
     static func project(threads: [ThreadRecord], entries: [MessageListEntry], conversations: Bool,
                         filters: Set<MailQuickFilter>, mailboxID: String?, categories: [String: Set<String>],
                         addresses: [String: Set<String>], availableLabels: [String: [LabelRecord]] = [:],
-                        reusing previous: [MessageListItem] = []) -> [MessageListItem] {
+                        reusing previous: [MessageListItem] = [],
+                        retainingUnreadRows: Set<MailListRowID> = []) -> [MessageListItem] {
         let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         func row(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry],
                  participantMessages: [MessageListEntry]? = nil) -> MessageListItem {
@@ -234,8 +238,12 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
         let threadMap = Dictionary(threads.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         let filtered = entries.filter { entry in
             guard threadMap[ThreadKey(accountID: entry.message.accountID, threadID: entry.message.threadID)] != nil else { return false }
+            let retainedRead = retainingUnreadRows.contains(.init(accountID: entry.message.accountID,
+                threadID: entry.message.threadID, messageID: entry.message.id))
             if let mailboxID, mailboxID != MailboxModel.snoozedID {
                 if mailboxID == SystemLabel.allMail {
+                    guard entry.labels.isDisjoint(with: [SystemLabel.trash, SystemLabel.spam]) else { return false }
+                } else if mailboxID == SystemLabel.unread, retainedRead {
                     guard entry.labels.isDisjoint(with: [SystemLabel.trash, SystemLabel.spam]) else { return false }
                 } else if !entry.labels.contains(mailboxID) { return false }
             }
@@ -243,7 +251,7 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
                !entry.labels.isDisjoint(with: categories[entry.message.accountID] ?? []) { return false }
             for filter in filters {
                 switch filter {
-                case .unread: if !entry.labels.contains(SystemLabel.unread) { return false }
+                case .unread: if !entry.labels.contains(SystemLabel.unread), !retainedRead { return false }
                 case .starred: if !entry.labels.contains(SystemLabel.starred) { return false }
                 case .attachments: if entry.attachments.isEmpty { return false }
                 case .important: if !entry.labels.contains(SystemLabel.important) { return false }

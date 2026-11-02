@@ -40,22 +40,37 @@ public enum MessageDocument {
             let document = try SwiftSoup.parse(html)
             var trackers = 0
             var hiddenImages = 0
-            for image in try document.select("img[src]") {
+            for element in try document.select("[data-tern-image-state],[data-tern-image-placeholder],[data-tern-image-label],[data-blocked-src]") {
+                for attribute in ["data-tern-image-state", "data-tern-image-placeholder", "data-tern-image-label", "data-blocked-src"] {
+                    try element.removeAttr(attribute)
+                }
+            }
+            for image in try document.select("img") {
+                guard image.hasAttr("src") else { continue }
                 let source = try image.attr("src").trimmingCharacters(in: .whitespacesAndNewlines)
                 if source.lowercased().hasPrefix("cid:") {
                     let cid = String(source.dropFirst(4)).removingPercentEncoding ?? String(source.dropFirst(4))
                     if let url = policy.inlineResources.url(for: cid) { try image.attr("src", url.absoluteString) }
-                    else { try image.removeAttr("src") }
+                    else {
+                        try image.removeAttr("src")
+                        try image.attr("data-tern-image-state", "inline-unavailable")
+                    }
                 } else if let url = URL(string: source), TrackerMatcher.isTrackingImage(url: url,
                     width: try? image.attr("width"), height: try? image.attr("height"), style: try? image.attr("style")) {
-                    try image.removeAttr("src")
-                    try image.removeAttr("srcset")
+                    // A known tracking image has no reading content or layout to preserve.
+                    try image.remove()
                     trackers += 1
                 } else if !policy.allowsRemoteImages, let url = URL(string: source), HTMLSanitizer.isConsentLoadable(url) {
                     hiddenImages += 1
                 }
             }
             let blocked = try HTMLSanitizer.clean(document, policy: policy)
+            for image in try document.select("img:not([src])") {
+                let wasBlocked = !(try image.attr("data-blocked-src")).isEmpty
+                let missingInline = try image.attr("data-tern-image-state") == "inline-unavailable"
+                try describeMissingImage(image, state: wasBlocked ? "blocked" : "unavailable",
+                    reason: missingInline ? "Inline image unavailable" : wasBlocked ? "Image blocked" : "Image unavailable")
+            }
             guard let head = document.head() else { return render(plainText: html) }
             try head.prepend(headMarkup(style: htmlStyle + "body{font-size:\(13 * policy.textScale)px}", policy: policy))
             document.outputSettings().prettyPrint(pretty: false)
@@ -66,6 +81,85 @@ public enum MessageDocument {
             // Showing the escaped source is safe; showing nothing would hide the mail.
             return render(plainText: html)
         }
+    }
+
+    /// Keep the image in its original parent so the sender's CSS still applies.
+    /// A generated local SVG supplies intrinsic dimensions and readable fallback text.
+    private static func describeMissingImage(_ image: Element, state: String, reason: String) throws {
+        let originalAlt = try image.attr("alt").trimmingCharacters(in: .whitespacesAndNewlines)
+        try image.attr("data-tern-image-state", state)
+        if originalAlt.isEmpty {
+            try image.attr("alt", reason)
+        }
+        if try image.attr("title").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try image.attr("title", reason)
+        }
+        try image.attr("aria-label", originalAlt.isEmpty ? reason : originalAlt + ". " + reason)
+        let width = try imageDimension("width", of: image) ?? 300
+        let height = try imageDimension("height", of: image) ?? min(120, max(48, width / 2.5))
+        let columns = max(8, min(40, Int((min(width, 300) - 16) / 7)))
+        let lines = placeholderLines(originalAlt, columns: columns) + placeholderLines(reason, columns: columns)
+        let text = lines.enumerated().map { index, line in
+            let offset = index == 0 ? -Double(lines.count - 1) * 8 : 16
+            return "<tspan x=\"50%\" dy=\"\(offset)\">\(escaped(line))</tspan>"
+        }.joined()
+        // No viewBox: text uses the displayed viewport's points instead of
+        // shrinking with a wide newsletter image in a narrow reader.
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="\(width)" height="\(height)">
+        <style>:root{color-scheme:light}@media(prefers-color-scheme:dark){:root{color-scheme:dark}}
+        rect{fill:Canvas;stroke:CanvasText;stroke-opacity:.28;stroke-dasharray:4 3}
+        text{fill:CanvasText;font:13px -apple-system,system-ui,sans-serif}</style>
+        <rect x="1" y="1" width="calc(100% - 2px)" height="calc(100% - 2px)" rx="6"/>
+        <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">\(text)</text></svg>
+        """
+        try image.attr("src", "data:image/svg+xml;base64," + Data(svg.utf8).base64EncodedString())
+    }
+
+    private static func placeholderLines(_ text: String, columns: Int) -> [String] {
+        // Bound work and strip XML-invalid control characters before escaping.
+        let clean = text.unicodeScalars.prefix(240).filter {
+            $0.value >= 0x20 && $0.value != 0xFFFE && $0.value != 0xFFFF
+        }.map(String.init).joined()
+        guard !clean.isEmpty else { return [] }
+        var lines: [String] = []
+        var line = ""
+        for word in clean.split(whereSeparator: \.isWhitespace) {
+            if !line.isEmpty, line.count + word.count + 1 > columns {
+                lines.append(line)
+                line = ""
+            }
+            guard lines.count < 2 else { break }
+            line += (line.isEmpty ? "" : " ") + String(word.prefix(columns))
+        }
+        if !line.isEmpty, lines.count < 2 { lines.append(line) }
+        return lines
+    }
+
+    private static func imageDimension(_ property: String, of image: Element) throws -> Double? {
+        func numeric(_ value: String?) -> Double? {
+            guard var value else { return nil }
+            value = value.lowercased().replacingOccurrences(of: "!important", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasSuffix("px") { value = String(value.dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard let number = Double(value), number.isFinite, number >= 1, number <= 100_000 else { return nil }
+            return number
+        }
+        let style = try image.attr("style")
+        let attribute = try image.attr(property)
+        return numeric(inlineDimension(property, in: style)) ?? numeric(attribute)
+    }
+
+    private static func inlineDimension(_ property: String, in style: String) -> String? {
+        var selected: String?
+        for declaration in style.split(separator: ";") {
+            let pair = declaration.split(separator: ":", maxSplits: 1)
+            guard pair.count == 2, pair[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == property else { continue }
+            let value = pair[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if selected?.lowercased().contains("!important") != true || value.lowercased().contains("!important") {
+                selected = value
+            }
+        }
+        return selected
     }
 
     public static func render(plainText: String, policy: MessageRenderPolicy = .init()) -> RenderedMessage {
@@ -93,7 +187,8 @@ public enum MessageDocument {
         :root{color-scheme:light}\
         html{background:#fff;color:#000}\
         body{margin:0;padding:0;font:13px -apple-system,system-ui,sans-serif;overflow-wrap:break-word}\
-        img{max-width:100%;height:auto}
+        img{max-width:100%;height:auto}\
+        img[data-tern-image-state]{color-scheme:light dark}
         """
 
     private static let plainTextStyle = """

@@ -30,12 +30,13 @@ extension MailboxModel {
     var listProjectionKey: MessageListProjection.Key {
         .init(dataRevision: listDataRevision, contextRevision: listContextRevision,
               conversations: listPreferences.conversations, filters: listPreferences.filters,
-              mailboxID: search.isActive ? nil : selectedLabelID)
+              mailboxID: search.isActive ? nil : selectedLabelID, retainedUnreadRows: retainedUnreadReadingRows)
     }
 
     func listProjectionConfiguration(mailboxID: String?) -> MessageListProjection.Key {
         .init(dataRevision: 0, contextRevision: listContextRevision,
-              conversations: listPreferences.conversations, filters: listPreferences.filters, mailboxID: mailboxID)
+              conversations: listPreferences.conversations, filters: listPreferences.filters, mailboxID: mailboxID,
+              retainedUnreadRows: retainedUnreadReadingRows)
     }
 
     func listProjectionInput(threads: [ThreadRecord], entries: [MessageListEntry], mailboxID: String?) -> MessageListProjection.Input {
@@ -47,7 +48,8 @@ extension MailboxModel {
         return .init(threads: threads, entries: entries,
             conversations: listPreferences.conversations, filters: listPreferences.filters,
             mailboxID: mailboxID, categories: categories, addresses: addresses,
-            availableLabels: Dictionary(accounts.map { ($0.account.id, $0.labels) }, uniquingKeysWith: { first, _ in first }))
+            availableLabels: Dictionary(accounts.map { ($0.account.id, $0.labels) }, uniquingKeysWith: { first, _ in first }),
+            retainedUnreadRows: retainedUnreadReadingRows)
     }
 
     /// The list's selection. Setting it keeps only rows the list shows.
