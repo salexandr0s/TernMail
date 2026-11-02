@@ -6,11 +6,17 @@ struct GoogleTaskRow: View {
     let task: GoogleTask
     let parentTitle: String?
     let isBusy: Bool
+    var isPending = false
     let onComplete: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
     @Environment(\.openURL) private var openURL
     @State private var isHovered = false
+    @FocusState private var focusedControl: Control?
+    @AccessibilityFocusState private var accessibleControl: Control?
+
+    private enum Control: Hashable { case complete, title, source, edit, delete }
+    private var showsActions: Bool { !isPending && (isHovered || focusedControl != nil || accessibleControl != nil) }
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
@@ -20,7 +26,7 @@ struct GoogleTaskRow: View {
                     else {
                         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                             .font(.title3)
-                            .foregroundStyle(task.isCompleted || isHovered ? Color.accentColor : Color.secondary)
+                            .foregroundStyle(task.isCompleted ? Color.accentColor : Color.secondary)
                     }
                 }
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
@@ -28,36 +34,28 @@ struct GoogleTaskRow: View {
             }
             .buttonStyle(.plain)
             .disabled(isBusy)
+            .focused($focusedControl, equals: .complete)
+            .accessibilityFocused($accessibleControl, equals: .complete)
             .help(task.isCompleted ? "Mark incomplete" : "Mark complete")
-            .accessibilityLabel("\(task.isCompleted ? "Mark incomplete" : "Complete"): \(task.title)")
+            .accessibilityLabel("\(isPending ? "Adding task" : task.isCompleted ? "Mark incomplete" : "Complete"): \(task.title)")
             .accessibilityIdentifier("google-task-complete-\(task.id)")
             .ternHover(isEnabled: !isBusy, radius: Tokens.Radius.md)
 
             VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                Button(action: onEdit) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text(task.title.isEmpty ? "Untitled task" : task.title)
-                            .font(.body.weight(task.isCompleted ? .regular : .medium))
-                            .strikethrough(task.isCompleted)
-                            .foregroundStyle(task.isCompleted ? .secondary : .primary)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                        let preview = Self.visibleNotes(task.notes ?? "")
-                        if !preview.isEmpty && !task.isCompleted {
-                            Text(preview).font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(1).multilineTextAlignment(.leading)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                if isPending {
+                    taskText
+                } else {
+                    Button(action: onEdit) { taskText }
+                        .buttonStyle(.plain)
+                        .disabled(isBusy)
+                        .focused($focusedControl, equals: .title)
+                        .accessibilityFocused($accessibleControl, equals: .title)
+                        .help(task.title)
+                        .accessibilityLabel("Edit task: \(task.title)")
+                        .accessibilityIdentifier("google-task-edit-\(task.id)")
                 }
-                .buttonStyle(.plain)
-                .disabled(isBusy)
-                .help(task.title)
-                .accessibilityLabel("Edit task: \(task.title)")
-                .accessibilityIdentifier("google-task-edit-\(task.id)")
 
-                if !task.isCompleted && (task.dueDay != nil || Self.emailURL(task.notes ?? "") != nil) {
+                if (!task.isCompleted && task.dueDay != nil) || Self.emailURL(task.notes ?? "") != nil {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: Tokens.Space.s2) { metadata }
                         VStack(alignment: .leading, spacing: Tokens.Space.s1_5) { metadata }
@@ -73,19 +71,38 @@ struct GoogleTaskRow: View {
             .padding(.vertical, Tokens.Space.s1_5)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            options
+            actions
         }
         .padding(.vertical, Tokens.Space.s1_5)
         .padding(.horizontal, Tokens.Space.s2)
-        .background(isHovered ? Color.accentColor.opacity(Tokens.Opacity.hover) : .clear,
+        .background(showsActions ? Color.primary.opacity(Tokens.Opacity.hover) : .clear,
             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .onHover { isHovered = $0 }
-        .ternAnimation(value: isHovered)
+        .ternAnimation(value: showsActions)
         .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("google-task-row-\(task.id)")
+    }
+
+    private var taskText: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            Text(task.title.isEmpty ? "Untitled task" : task.title)
+                .font(.body.weight(task.isCompleted ? .regular : .medium))
+                .strikethrough(task.isCompleted)
+                .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            let preview = Self.visibleNotes(task.notes ?? "")
+            if !preview.isEmpty && !task.isCompleted {
+                Text(preview).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).multilineTextAlignment(.leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder private var metadata: some View {
-        if let due = task.dueDay {
+        if let due = task.dueDay, !task.isCompleted {
             Label {
                 Text(dueLabel(due)).foregroundStyle(.primary)
             } icon: {
@@ -106,28 +123,36 @@ struct GoogleTaskRow: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .disabled(isBusy)
+            .focused($focusedControl, equals: .source)
+            .accessibilityFocused($accessibleControl, equals: .source)
             .help(Self.emailSubject(task.notes ?? "") ?? "Open source email")
             .accessibilityLabel("Open source email: \(Self.emailSubject(task.notes ?? "") ?? task.title)")
             .accessibilityIdentifier("google-task-email-\(task.id)")
         }
     }
 
-    private var options: some View {
-        Menu {
-            Button("Edit Task…", systemImage: "pencil", action: onEdit)
-            if let source = Self.emailURL(task.notes ?? "") {
-                Button("Open Email", systemImage: "envelope") { openURL(source) }
-            }
-            Divider()
-            Button("Delete Task…", systemImage: "trash", role: .destructive, action: onDelete)
-        } label: {
-            Image(systemName: "ellipsis")
+    private var actions: some View {
+        HStack(spacing: Tokens.Space.s0_5) {
+            action("Edit task", symbol: "pencil", control: .edit, perform: onEdit)
+            action("Delete task", symbol: "xmark", control: .delete, perform: onDelete)
+        }
+        .disabled(isBusy)
+        .accessibilityHidden(isPending)
+    }
+
+    private func action(_ title: String, symbol: String, control: Control, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Image(systemName: symbol).font(.callout)
+                .opacity(showsActions ? 1 : 0)
                 .frame(width: Tokens.Space.s6, height: Tokens.Control.iconButton)
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .foregroundStyle(isHovered ? Color.primary : Color.secondary).disabled(isBusy)
-        .help("Task options").accessibilityLabel("Options for \(task.title)")
+        .buttonStyle(.plain).foregroundStyle(.secondary)
+        .focused($focusedControl, equals: control)
+        .accessibilityFocused($accessibleControl, equals: control)
+        .ternHover(isEnabled: !isBusy)
+        .help(title).accessibilityLabel("\(title): \(task.title)")
+        .accessibilityIdentifier("google-task-\(control == .edit ? "edit-button" : "delete")-\(task.id)")
     }
 
     private func dueLabel(_ day: String) -> String {

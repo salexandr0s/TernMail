@@ -5,6 +5,48 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct GoogleTasksModelTests {
+    @Test(.timeLimit(.minutes(1))) func creationKeepsItsDestinationAndInsertsAtTheTopBeforeRefresh() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService(lists: [.init(id: "list", title: "My tasks"), .init(id: "other", title: "Other")])
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let insert = TasksReadGate(), refresh = TasksReadGate()
+        defer { Task { await insert.release(); await refresh.release() } }
+        await service.delayInsert(insert, refresh: refresh)
+        var request = Self.request("a")
+        request.listID = "removed-list"
+        let saving = Task { await model.add(request) }
+        await insert.waitUntilHeld()
+        #expect(model.pendingCreation?.accountID == "a")
+        #expect(model.pendingCreation?.listID == "list")
+        #expect(model.creationState(for: request) == .adding)
+        #expect(model.tasks.isEmpty)
+
+        model.selectList("other")
+        await model.refresh()
+        #expect(model.pendingCreation?.listID == "list")
+        #expect(model.selectedListID == "other")
+        await service.put(.init(id: "existing", title: "Existing task"), listID: "list")
+        model.selectList("list")
+        // selectList schedules its own refresh; wait for that read to publish.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while model.tasks.first?.id != "existing", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(model.tasks.first?.id == "existing")
+        await insert.release()
+        await refresh.waitUntilHeld()
+        let created = try #require(model.tasks.first)
+        #expect(created.title == request.title)
+        #expect(model.tasks.last?.id == "existing")
+        #expect(model.pendingCreation == nil)
+        #expect(model.creationState(for: request) == .added)
+        await refresh.release()
+        #expect(await saving.value)
+        #expect(model.tasks.map(\.id) == [created.id, "existing"])
+    }
+
     @Test func disabledAccountCannotReadOrWriteWithAStillGrantedToken() async throws {
         let fixture = try TasksModelFixture()
         defer { fixture.clean() }
@@ -80,7 +122,10 @@ import Testing
         let delayed = Task { await model.refresh() }
         await gate.waitUntilHeld()
         model.selectAccount("b")
-        await model.refresh()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while model.tasks.first?.id != "b-task", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         await gate.release()
         await delayed.value
         #expect(model.selectedAccountID == "b")
@@ -235,6 +280,8 @@ private actor MemoryTasksService: TasksService {
     var updates = 0
     var insertLists: [String] = []
     private var gate: TasksReadGate?
+    private var insertGate: TasksReadGate?
+    private var afterInsertGate: TasksReadGate?
     private var insertFailure: GmailError?
     private var readFailure: GmailError?
 
@@ -243,6 +290,9 @@ private actor MemoryTasksService: TasksService {
     }
     func setInsertFailure(_ error: GmailError?) { insertFailure = error }
     func setReadFailure(_ error: GmailError?) { readFailure = error }
+    func delayInsert(_ insert: TasksReadGate, refresh: TasksReadGate) {
+        insertGate = insert; afterInsertGate = refresh
+    }
     func put(_ task: GoogleTask, listID: String) { values[listID, default: []].append(task) }
     func taskLists(pageToken: String?) async throws -> GoogleTaskListPage {
         reads += 1
@@ -257,9 +307,11 @@ private actor MemoryTasksService: TasksService {
     }
     func insertTask(listID: String, draft: GoogleTaskDraft) async throws -> GoogleTask {
         inserts += 1; insertLists.append(listID)
+        if let insertGate { self.insertGate = nil; await insertGate.hold() }
         if let insertFailure { throw insertFailure }
         let task = GoogleTask(id: UUID().uuidString, title: draft.title, notes: draft.notes, due: draft.due, etag: "v1")
-        values[listID, default: []].append(task)
+        values[listID, default: []].insert(task, at: 0)
+        gate = afterInsertGate; afterInsertGate = nil
         return task
     }
     func updateTask(listID: String, taskID: String, update: GoogleTaskUpdate, etag: String?) async throws -> GoogleTask {

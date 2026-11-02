@@ -22,7 +22,7 @@ struct GoogleTasksSidebar: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     feedback
-                    if let request = model.pendingCreation { pending(request) }
+                    if let request = model.pendingCreation, !model.isCreating { pending(request) }
                     if !model.hasLoadedAccounts {
                         ProgressView("Loading tasks…").frame(maxWidth: .infinity).padding(.vertical, Tokens.Space.s12)
                     } else if model.accounts.isEmpty {
@@ -48,6 +48,7 @@ struct GoogleTasksSidebar: View {
             footer
         }
         .background(Tokens.Surface.primary.overlay(Color.primary.opacity(Tokens.Opacity.hover)))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-tasks-sidebar")
         .task(id: isActive) {
             guard isActive else { return }
@@ -200,10 +201,6 @@ struct GoogleTasksSidebar: View {
             .padding(Tokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Tokens.Status.error.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        } else if let notice = model.notice {
-            Label(notice, systemImage: "checkmark.circle")
-                .font(.caption).foregroundStyle(.secondary)
-                .padding(.horizontal, Tokens.Space.s2)
         }
     }
 
@@ -224,12 +221,19 @@ struct GoogleTasksSidebar: View {
     }
 
     @ViewBuilder private var taskContent: some View {
-        if model.openTasks.isEmpty {
+        if model.openTasks.isEmpty && pendingTask == nil {
             emptyState(model.completedTasks.isEmpty ? "A fresh list" : "All caught up",
                 detail: model.completedTasks.isEmpty ? "Add your first task above, or turn a line from an email into a task."
                     : "Everything in this list is complete. New tasks will appear here.", symbol: "checkmark.circle")
         } else {
             LazyVStack(spacing: 0) {
+                if let pendingTask {
+                    GoogleTaskRow(task: pendingTask, parentTitle: nil, isBusy: true, isPending: true,
+                        onComplete: {}, onEdit: {}, onDelete: {})
+                    if !model.openTasks.isEmpty {
+                        Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
+                    }
+                }
                 ForEach(model.openTasks) { task in
                     row(task)
                     if task.id != model.openTasks.last?.id {
@@ -278,6 +282,17 @@ struct GoogleTasksSidebar: View {
             onEdit: { editor = context(task) }, onDelete: { deletion = context(task) })
     }
 
+    /// Saving uses the same row and metadata as Google's result, without
+    /// exposing an unconfirmed task to completion, editing, or reconciliation.
+    private var pendingTask: GoogleTask? {
+        guard model.isCreating, let request = model.pendingCreation,
+              (request.source?.accountID ?? request.accountID) == model.selectedAccountID,
+              let listID = request.listID, listID == model.selectedListID,
+              let email = model.selectedAccount?.email,
+              let draft = try? request.draft(email: email) else { return nil }
+        return GoogleTask(id: "pending-\(request.id)", title: draft.title, notes: draft.notes, due: draft.due)
+    }
+
     private var composer: some View {
         HStack(spacing: Tokens.Space.s2) {
             Image(systemName: "plus.circle.fill").font(.title3).foregroundStyle(Color.accentColor).accessibilityHidden(true)
@@ -303,7 +318,11 @@ struct GoogleTasksSidebar: View {
 
     private var footer: some View {
         HStack(spacing: Tokens.Space.s1) {
-            if let date = model.lastSyncedAt, model.issue == nil {
+            if model.isCreating, model.pendingCreation != nil {
+                Text("Adding task…")
+            } else if let notice = model.notice, model.issue == nil, model.errorMessage == nil {
+                Label(notice, systemImage: "checkmark.circle").lineLimit(1).help(notice)
+            } else if let date = model.lastSyncedAt, model.issue == nil {
                 Image(systemName: "checkmark.circle").accessibilityHidden(true)
                 Text("Updated \(date.formatted(.relative(presentation: .named)))")
                     .lineLimit(1)
@@ -358,7 +377,7 @@ struct GoogleTasksSidebar: View {
                         Button("Check Again") { Task { await model.add(request) } }
                         Button("Add Again…") { confirmsRetry = true }
                     } else {
-                        Button(model.isCreating ? "Adding…" : "Add Task") { Task { await model.add(request) } }
+                        Button("Add Task") { Task { await model.add(request) } }
                             .buttonStyle(.borderedProminent)
                     }
                     Spacer(minLength: 0)
@@ -369,6 +388,8 @@ struct GoogleTasksSidebar: View {
         }
         .padding(Tokens.Space.s3)
         .ternSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("google-tasks-pending-recovery")
     }
 
     private func context(_ task: GoogleTask?) -> GoogleTaskEditorContext? {
