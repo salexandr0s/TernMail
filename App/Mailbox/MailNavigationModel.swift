@@ -45,10 +45,11 @@ final class MailNavigationModel {
         _ = await change { try await $0.deleteSavedMailSearch(id: id) }
     }
 
-    func addFavorite(_ target: MailFavoriteTarget) async {
-        guard !favorites.contains(where: { $0.target == target }) else { return }
+    @discardableResult
+    func addFavorite(_ target: MailFavoriteTarget) async -> Bool {
+        guard !favorites.contains(where: { $0.target.matchesFavorite(target) }) else { return true }
         let updated = favorites + [MailFavorite(target: target, sortOrder: favorites.count)]
-        _ = await change { try await $0.saveMailFavorites(updated) }
+        return await change { try await $0.saveMailFavorites(updated) }
     }
 
     func removeFavorite(_ id: String) async {
@@ -191,5 +192,20 @@ extension MailboxModel {
             }
             accountPresentation[accountID] = updated
         } catch { notice = Notice(message: "Couldn't save Inbox categories.", isError: true) }
+    }
+}
+
+extension MailFavoriteTarget {
+    /// Older account-folder shortcuts use the label form for system folders.
+    /// Unified folders retain their distinct scope, including with one account.
+    func matchesFavorite(_ other: MailFavoriteTarget) -> Bool {
+        if self == other { return true }
+        switch (self, other) {
+        case let (.label(accountID, labelID), .mailbox(otherLabelID, .accounts(accountIDs))),
+             let (.mailbox(otherLabelID, .accounts(accountIDs)), .label(accountID, labelID)):
+            return labelID == otherLabelID && accountIDs == [accountID]
+        default:
+            return false
+        }
     }
 }

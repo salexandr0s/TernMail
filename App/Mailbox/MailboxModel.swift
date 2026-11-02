@@ -1227,7 +1227,7 @@ extension SystemMailbox {
     init(labelID: String) {
         var words = labelID.split(separator: "_")
         if words.count > 1, words.first == "CATEGORY" { words.removeFirst() }
-        self = (Self.all + Self.more).first { $0.id == labelID }
+        self = (Self.all + [Self.outbox] + Self.more).first { $0.id == labelID }
             ?? SystemMailbox(id: labelID, title: words.map(\.capitalized).joined(separator: " "), systemImage: "tray")
     }
 }

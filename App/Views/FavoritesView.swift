@@ -6,34 +6,102 @@ struct FavoritesView: View {
     let mailbox: MailboxModel
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
+    @AppStorage("sidebarFavoritesCollapsed") private var isCollapsed = false
     @State private var hoveredBox: MailboxID?
+    @State private var isHeaderHovered = false
+    @State private var isAddingFavorite = false
+    @FocusState private var focusedControl: HeaderControl?
+    @AccessibilityFocusState private var isHeaderAccessibilityFocused: Bool
+
+    private enum HeaderControl: Hashable { case add, disclosure }
+
+    private var showsHeaderControls: Bool {
+        isHeaderHovered || focusedControl != nil || isHeaderAccessibilityFocused || isAddingFavorite
+    }
 
     var body: some View {
         Section {
-            ForEach(mailbox.navigation.favorites) { favorite in
-                if let box = mailbox.favoriteMailboxID(favorite.target) {
-                    favoriteRows(favorite, box: box)
+            if !isCollapsed {
+                ForEach(mailbox.navigation.favorites) { favorite in
+                    if let box = mailbox.favoriteMailboxID(favorite.target) {
+                        favoriteRows(favorite, box: box)
+                    }
                 }
-            }
-            .onMove { source, destination in
-                Task { await mailbox.navigation.moveFavorites(fromOffsets: source, toOffset: destination) }
+                .onMove { source, destination in
+                    Task { await mailbox.navigation.moveFavorites(fromOffsets: source, toOffset: destination) }
+                }
             }
         } header: {
-            HStack {
-                Text("Favorites")
-                Spacer()
-                Menu {
-                    Button("Add Current Mailbox") { addCurrent() }
-                        .disabled(mailbox.selectedLabelID == nil || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
-                    Button("New Saved Search…") { mailbox.navigation.isCreatingSearch = true }
-                    Divider()
-                    Button("Reset Favorites") { Task { await mailbox.navigation.resetFavorites() } }
-                } label: {
-                    Label("Edit Favorites", systemImage: "ellipsis.circle").labelStyle(.iconOnly)
-                }
-                // One control: the indicator beside the icon read as a second one.
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Edit Favorites")
+            header
+        }
+        .sheet(isPresented: $isAddingFavorite) {
+            AddFavoriteView(mailbox: mailbox) { isCollapsed = false }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: Tokens.Space.s1) {
+            Text("Favorites")
+            Spacer(minLength: Tokens.Space.s1)
+            Button { isAddingFavorite = true } label: {
+                Image(systemName: "plus.circle")
+                    .font(.body)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(Rectangle())
+                    .ternHover()
+                    .opacity(showsHeaderControls ? 1 : 0)
             }
+            .buttonStyle(.borderless)
+            .focusable()
+            .focused($focusedControl, equals: .add)
+            .onKeyPress(keys: [.return, .space]) { _ in
+                isAddingFavorite = true
+                return .handled
+            }
+            .accessibilityLabel("Add Favorite")
+            .accessibilityIdentifier("favorites.add")
+            .help("Add Favorite")
+
+            Button { isCollapsed.toggle() } label: {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(Rectangle())
+                    .ternHover()
+                    .opacity(showsHeaderControls ? 1 : 0)
+                    .ternAnimation(value: isCollapsed)
+            }
+            .buttonStyle(.borderless)
+            .focusable()
+            .focused($focusedControl, equals: .disclosure)
+            .onKeyPress(keys: [.return, .space]) { _ in
+                isCollapsed.toggle()
+                return .handled
+            }
+            .accessibilityLabel(isCollapsed ? "Expand Favorites" : "Collapse Favorites")
+            .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
+            .accessibilityIdentifier("favorites.disclosure")
+            .help(isCollapsed ? "Expand Favorites" : "Collapse Favorites")
+        }
+        .padding(.vertical, Tokens.Space.s1_5)
+        .contentShape(Rectangle())
+        // macOS combines section headers into one heading, so expose both actions there.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Favorites")
+        .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
+        .accessibilityIdentifier("favorites.header")
+        .accessibilityFocused($isHeaderAccessibilityFocused)
+        .accessibilityAction(named: Text("Add Favorite")) { isAddingFavorite = true }
+        .accessibilityAction(named: Text(isCollapsed ? "Expand Favorites" : "Collapse Favorites")) { isCollapsed.toggle() }
+        .onHover { isHeaderHovered = $0 }
+        .contextMenu {
+            Button("Add Favorite…", systemImage: "plus") { isAddingFavorite = true }
+            Button("Add Current Mailbox") { addCurrent() }
+                .disabled(mailbox.selectedLabelID == nil || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
+            Button("New Saved Search…") { mailbox.navigation.isCreatingSearch = true }
+            Divider()
+            Button("Reset Favorites") { Task { await mailbox.navigation.resetFavorites() } }
         }
     }
 
@@ -157,7 +225,9 @@ struct FavoritesView: View {
         else {
             switch box {
             case .account(let id, let label):
-                target = SystemMailbox.all.contains { $0.id == label } ? .mailbox(labelID: label, scope: .accounts([id])) : .label(accountID: id, labelID: label)
+                let isSystem = (SystemMailbox.all + [.outbox] + SystemMailbox.more).contains { $0.id == label }
+                    || mailbox.account(id: id)?.labels.first(where: { $0.id == label })?.isSystem == true
+                target = isSystem ? .mailbox(labelID: label, scope: .accounts([id])) : .label(accountID: id, labelID: label)
             case .combined(let label): target = .mailbox(labelID: label, scope: .allAccounts)
             case .scoped(let label, let ids): target = .mailbox(labelID: label, scope: .accounts(ids))
             }
