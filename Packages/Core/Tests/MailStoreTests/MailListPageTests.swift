@@ -99,6 +99,85 @@ private let account = "acct"
         try await cache.write { tx in try tx.setOwnAddresses(["alias@example.com"], accountID: account) }
         #expect(try await marked(cache) == ["alias"])
     }
+
+    @Test func unreadPageRetainsOpenedMessagesWithCurrentDataUntilTheVisitEnds() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([
+                message("opened", thread: "t1", labels: [SystemLabel.inbox, SystemLabel.unread]),
+                message("sibling", thread: "t1", minutes: -1),
+                message("newer", thread: "t2", labels: [SystemLabel.inbox, SystemLabel.unread], minutes: 5),
+                message("older", thread: "t3", labels: [SystemLabel.inbox, SystemLabel.unread], minutes: -5),
+            ]), accountID: account)
+        }
+        let visit = MailListPageBuilder.mailbox(accountIDs: [account], labelID: SystemLabel.unread, limit: 1,
+                                               retainingReadMessageIDs: [account: ["opened", "newer"]])
+        let initial = try await cache.read { try visit.page(in: $0) }
+        #expect(initial.threads.map(\.id) == ["t2", "t1"])
+        #expect(initial.threads.allSatisfy { $0.isUnread })
+
+        try await cache.write { tx in
+            var opened = message("opened", thread: "t1", labels: [SystemLabel.inbox, SystemLabel.starred], history: 101)
+            opened.record.subject = "Updated subject"
+            try tx.rebuildThreads(try tx.upsertMessages([opened]), accountID: account)
+        }
+        let afterReading = try await cache.read { try visit.page(in: $0) }
+        #expect(afterReading.threads.map(\.id) == ["t2", "t1"])
+        #expect(afterReading.threads.last?.isUnread == false)
+        #expect(afterReading.threads.last?.isStarred == true)
+        #expect(afterReading.entries.first { $0.message.id == "opened" }?.message.subject == "Updated subject")
+        #expect(afterReading.entries.first { $0.message.id == "opened" }?.labels.contains(SystemLabel.unread) == false)
+
+        let nextVisit = try await cache.read {
+            try MailListPageBuilder.mailbox(accountIDs: [account], labelID: SystemLabel.unread, limit: 1).page(in: $0)
+        }
+        #expect(nextVisit.threads.map(\.id) == ["t2"])
+        let inbox = try await cache.read {
+            try MailListPageBuilder.mailbox(accountIDs: [account], labelID: SystemLabel.inbox, limit: 1,
+                                           retainingReadMessageIDs: [account: ["opened"]]).page(in: $0)
+        }
+        #expect(inbox.threads.map(\.id) == ["t2"])
+
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.deleteMessages(ids: ["opened"], accountID: account), accountID: account)
+        }
+        let afterDeletion = try await cache.read { try visit.page(in: $0) }
+        #expect(afterDeletion.threads.map(\.id) == ["t2"])
+    }
+
+    @Test func retainedReadMessagesRespectAccountScopeAndTrashOrSpam() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            for id in [account, "other", "outside"] {
+                var candidate = message("same-message", thread: "same-thread")
+                candidate.record.accountID = id
+                try tx.rebuildThreads(try tx.upsertMessages([candidate]), accountID: id)
+            }
+            try tx.rebuildThreads(try tx.upsertMessages([
+                message("trashed", thread: "trash-thread", labels: [SystemLabel.trash]),
+                message("trash-sibling", thread: "trash-thread"),
+                message("spam", thread: "spam-thread", labels: [SystemLabel.spam]),
+                message("spam-sibling", thread: "spam-thread"),
+            ]), accountID: account)
+        }
+        let page = try await cache.read {
+            try MailListPageBuilder.mailbox(accountIDs: [account, "other"], labelID: SystemLabel.unread, limit: 20,
+                retainingReadMessageIDs: [account: ["same-message", "trashed", "spam"], "outside": ["same-message"]]).page(in: $0)
+        }
+        #expect(page.threads.map(\.accountID) == [account])
+        #expect(page.threads.map(\.id) == ["same-thread"])
+
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([
+                message("same-message", thread: "same-thread", labels: [SystemLabel.trash], history: 101),
+            ]), accountID: account)
+        }
+        let afterTrash = try await cache.read {
+            try MailListPageBuilder.mailbox(accountIDs: [account, "other"], labelID: SystemLabel.unread, limit: 20,
+                retainingReadMessageIDs: [account: ["same-message"]]).page(in: $0)
+        }
+        #expect(afterTrash == .empty)
+    }
 }
 
 private func marked(_ cache: MailCache) async throws -> Set<String> {

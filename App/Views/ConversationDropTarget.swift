@@ -19,8 +19,7 @@ private struct SidebarRowFeedback: ViewModifier {
                 content
             }
         }
-        // Native sidebar rows add their own margins; trim the space before counts.
-        .listRowInsets(.trailing, -Tokens.Space.s2)
+        .listRowInsets(.horizontal, Tokens.Space.s2)
         .onHover { isHovered = $0 }
         .listRowBackground(highlight.map { color in
             RoundedRectangle(cornerRadius: Tokens.Radius.md).fill(color)

@@ -97,7 +97,12 @@ final class MessageListPreferences {
     var starredTotal: Bool { didSet { defaults.set(starredTotal, forKey: "mailStarredTotal") } }
     var draftsTotal: Bool { didSet { defaults.set(draftsTotal, forKey: "mailDraftsTotal") } }
     var spamUnread: Bool { didSet { defaults.set(spamUnread, forKey: "mailSpamUnread") } }
-    var filters: Set<MailQuickFilter> = []
+    var filters: Set<MailQuickFilter> = [] {
+        didSet {
+            if filters.contains(.unread) != oldValue.contains(.unread) { unreadVisitRevision &+= 1 }
+        }
+    }
+    private(set) var unreadVisitRevision: UInt64 = 0
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {

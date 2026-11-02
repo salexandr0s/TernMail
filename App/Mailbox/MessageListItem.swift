@@ -23,6 +23,7 @@ final class MessageListProjection {
         let conversations: Bool
         let filters: Set<MailQuickFilter>
         let mailboxID: String?
+        var retainedUnreadRows: Set<MailListRowID> = []
     }
 
     struct Input: Sendable {
@@ -34,6 +35,7 @@ final class MessageListProjection {
         let categories: [String: Set<String>]
         let addresses: [String: Set<String>]
         let availableLabels: [String: [LabelRecord]]
+        var retainedUnreadRows: Set<MailListRowID> = []
     }
 
     private var previous: Key?
@@ -51,7 +53,65 @@ final class MessageListProjection {
     static func prepare(_ input: Input, reusing previous: [MessageListItem] = []) -> [MessageListItem] {
         MessageListItem.project(threads: input.threads, entries: input.entries,
             conversations: input.conversations, filters: input.filters, mailboxID: input.mailboxID,
-            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels, reusing: previous)
+            categories: input.categories, addresses: input.addresses, availableLabels: input.availableLabels, reusing: previous,
+            retainingUnreadRows: input.retainedUnreadRows)
+    }
+}
+
+/// The row uses a short name list while tooltips and accessibility retain addresses.
+struct MessageListParticipants: Equatable, Sendable {
+    let compact: String
+    let full: String
+
+    init(headers: [String], fallback: String, complete: Bool = true) {
+        var seenHeaders = Set<String>()
+        let rawHeaders = headers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seenHeaders.insert($0).inserted }
+            .joined(separator: ", ")
+        let details = rawHeaders.isEmpty ? fallback : rawHeaders
+        guard complete else {
+            self.init(compact: fallback, full: rawHeaders.isEmpty ? fallback : "\(fallback); available details: \(rawHeaders)")
+            return
+        }
+        var seen = Set<String>()
+        var participants: [EmailAddress] = []
+        for header in headers {
+            let entries = EmailAddress.splitList(header).filter {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            guard !entries.isEmpty else {
+                self.init(compact: fallback, full: details)
+                return
+            }
+            for entry in entries {
+                let addresses = EmailAddress.parseList(String(entry))
+                // The header parser can recover one address from malformed input.
+                // Decline shortening if another @ is unaccounted for, even in a name or comment.
+                guard !addresses.isEmpty, addresses.allSatisfy(\.isValid),
+                      entry.filter({ $0 == "@" }).count == addresses.count else {
+                    self.init(compact: fallback, full: details)
+                    return
+                }
+                participants += addresses.filter { seen.insert($0.normalized).inserted }
+            }
+        }
+        guard !participants.isEmpty else {
+            self.init(compact: fallback, full: details)
+            return
+        }
+        let names = Dictionary(grouping: participants, by: { ($0.name ?? $0.address).lowercased() })
+        let displayed = participants.prefix(2).map { participant in
+            let name = participant.name ?? participant.address
+            return names[name.lowercased(), default: []].count > 1 ? participant.address : name
+        }
+        let remaining = participants.count - displayed.count
+        let suffix = remaining == 0 ? "" : ", +\(remaining) more"
+        self.init(compact: displayed.joined(separator: ", ") + suffix, full: details)
+    }
+
+    private init(compact: String, full: String) {
+        self.compact = compact
+        self.full = full
     }
 }
 
@@ -62,13 +122,23 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
     private let metadata: Metadata
     let sender: EmailAddress?
     let visibleLabels: [LabelRecord]
+    let senderPresentation: MessageListParticipants
+    let recipientPresentation: MessageListParticipants
+    private let participantSources: [ParticipantSource]
+
+    private struct ParticipantSource: Equatable, Sendable {
+        let id: String
+        let date: Date
+        let header: String
+    }
 
     var labels: Set<String> { metadata.labels }
     var attachments: [AttachmentRecord] { metadata.attachments }
     var recipients: String { messages.first?.message.recipients ?? "" }
 
     init(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry],
-         availableLabels: [LabelRecord] = [], mailboxID: String? = nil) {
+         availableLabels: [LabelRecord] = [], mailboxID: String? = nil,
+         participantMessages: [MessageListEntry]? = nil) {
         self.id = id
         self.thread = thread
         self.messages = messages
@@ -76,11 +146,28 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
         self.metadata = metadata
         sender = EmailAddress.parseList(messages.first?.message.sender ?? thread.participants).first
         visibleLabels = Self.displayedLabels(applied: metadata.labels, from: availableLabels, mailboxID: mailboxID)
+        participantSources = Self.participantSources(in: participantMessages ?? messages, for: id)
+        let fallback = thread.participants.isEmpty ? "No Sender" : thread.participants
+        senderPresentation = MessageListParticipants(headers: participantSources.map(\.header), fallback: fallback,
+                                                     complete: participantSources.count == thread.messageCount)
+        let recipients = messages.first?.message.recipients ?? ""
+        recipientPresentation = MessageListParticipants(headers: [recipients], fallback: recipients)
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.thread == rhs.thread && lhs.messages == rhs.messages
             && lhs.visibleLabels == rhs.visibleLabels
+            && lhs.senderPresentation == rhs.senderPresentation && lhs.recipientPresentation == rhs.recipientPresentation
+    }
+
+    private static func participantSources(in messages: [MessageListEntry], for id: MailListRowID) -> [ParticipantSource] {
+        var seen = Set<String>()
+        return messages.filter {
+            $0.message.accountID == id.accountID && $0.message.threadID == id.threadID
+                && (id.messageID == nil || $0.message.id == id.messageID)
+                && seen.insert($0.message.id).inserted
+        }.map { ParticipantSource(id: $0.message.id, date: $0.message.date, header: $0.message.sender) }
+            .sorted { ($0.date, $0.id) < ($1.date, $1.id) }
     }
 
     /// Rows are prepared off-main and later read by the UI; protect shared lazy values.
@@ -137,18 +224,26 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
     static func project(threads: [ThreadRecord], entries: [MessageListEntry], conversations: Bool,
                         filters: Set<MailQuickFilter>, mailboxID: String?, categories: [String: Set<String>],
                         addresses: [String: Set<String>], availableLabels: [String: [LabelRecord]] = [:],
-                        reusing previous: [MessageListItem] = []) -> [MessageListItem] {
+                        reusing previous: [MessageListItem] = [],
+                        retainingUnreadRows: Set<MailListRowID> = []) -> [MessageListItem] {
         let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        func row(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry]) -> MessageListItem {
-            if let previous = previousByID[id], previous.thread == thread, previous.messages == messages { return previous }
+        func row(id: MailListRowID, thread: ThreadRecord, messages: [MessageListEntry],
+                 participantMessages: [MessageListEntry]? = nil) -> MessageListItem {
+            if let previous = previousByID[id], previous.thread == thread, previous.messages == messages,
+               previous.participantSources == participantSources(in: participantMessages ?? messages, for: id) { return previous }
             return MessageListItem(id: id, thread: thread, messages: messages,
-                                   availableLabels: availableLabels[id.accountID] ?? [], mailboxID: mailboxID)
+                                   availableLabels: availableLabels[id.accountID] ?? [], mailboxID: mailboxID,
+                                   participantMessages: participantMessages)
         }
         let threadMap = Dictionary(threads.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         let filtered = entries.filter { entry in
             guard threadMap[ThreadKey(accountID: entry.message.accountID, threadID: entry.message.threadID)] != nil else { return false }
+            let retainedRead = retainingUnreadRows.contains(.init(accountID: entry.message.accountID,
+                threadID: entry.message.threadID, messageID: entry.message.id))
             if let mailboxID, mailboxID != MailboxModel.snoozedID {
                 if mailboxID == SystemLabel.allMail {
+                    guard entry.labels.isDisjoint(with: [SystemLabel.trash, SystemLabel.spam]) else { return false }
+                } else if mailboxID == SystemLabel.unread, retainedRead {
                     guard entry.labels.isDisjoint(with: [SystemLabel.trash, SystemLabel.spam]) else { return false }
                 } else if !entry.labels.contains(mailboxID) { return false }
             }
@@ -156,7 +251,7 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
                !entry.labels.isDisjoint(with: categories[entry.message.accountID] ?? []) { return false }
             for filter in filters {
                 switch filter {
-                case .unread: if !entry.labels.contains(SystemLabel.unread) { return false }
+                case .unread: if !entry.labels.contains(SystemLabel.unread), !retainedRead { return false }
                 case .starred: if !entry.labels.contains(SystemLabel.starred) { return false }
                 case .attachments: if entry.attachments.isEmpty { return false }
                 case .important: if !entry.labels.contains(SystemLabel.important) { return false }
@@ -174,13 +269,15 @@ struct MessageListItem: Identifiable, Equatable, Sendable {
             }
         }
         let groups = Dictionary(grouping: filtered) { ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID) }
+        let participantGroups = Dictionary(grouping: entries) { ThreadKey(accountID: $0.message.accountID, threadID: $0.message.threadID) }
         return threads.compactMap { thread in
             guard let messages = groups[thread.key], !messages.isEmpty else { return nil }
             var displayed = thread
             displayed.isUnread = messages.contains { $0.labels.contains(SystemLabel.unread) }
             displayed.isStarred = messages.contains { $0.labels.contains(SystemLabel.starred) }
             displayed.lastDate = messages.map(\.message.date).max() ?? thread.lastDate
-            return row(id: .init(accountID: thread.accountID, threadID: thread.id), thread: displayed, messages: messages)
+            return row(id: .init(accountID: thread.accountID, threadID: thread.id), thread: displayed, messages: messages,
+                       participantMessages: participantGroups[thread.key])
         }
     }
 }

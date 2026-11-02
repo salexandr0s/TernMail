@@ -241,6 +241,82 @@ import Testing
                                                     messageCount: 1, starred: false) == "Sender, No Subject, Oct 30")
     }
 
+    @Test func participantSummariesKeepDistinctAddressesAndQuotedNames() {
+        let aliases = MessageListParticipants(headers: [
+            "Alex <alex@work.example>", "Alex <alex@personal.example>",
+            "Alex <alex+projects@work.example>", "Alex <ALEX@WORK.EXAMPLE>"
+        ], fallback: "Alex")
+        #expect(aliases.compact == "alex@work.example, alex@personal.example, +1 more")
+        #expect(aliases.full == "Alex <alex@work.example>, Alex <alex@personal.example>, Alex <alex+projects@work.example>, Alex <ALEX@WORK.EXAMPLE>")
+
+        let names = MessageListParticipants(headers: [
+            "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>",
+            "Rowan <rowan@example.com>", "Casey <casey@example.com>"
+        ], fallback: "Original participants")
+        #expect(names.compact == "Doe, Jane, Sam, +2 more")
+        #expect(names.full == "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>, Rowan <rowan@example.com>, Casey <casey@example.com>")
+        for malformed in ["Sam <sam@example.com>, missing address", "alex@work.example alex@personal.example"] {
+            let presentation = MessageListParticipants(headers: [malformed], fallback: "Original participants")
+            #expect(presentation.compact == "Original participants")
+            #expect(presentation.full == malformed)
+        }
+        let namedAddress = "\"Team @ Work\" <team@work.example>"
+        let conservative = MessageListParticipants(headers: [namedAddress], fallback: "Team @ Work")
+        #expect(conservative.compact == "Team @ Work")
+        #expect(conservative.full == namedAddress)
+    }
+
+    @Test func participantPresentationUsesCompleteHeadersWithoutWideningFilteredRows() throws {
+        let earlier = MessageRecord(accountID: "a", id: "earlier", threadID: "thread", historyID: 1,
+            date: Date(timeIntervalSince1970: 1), snippet: "", sender: "Alex <alex@work.example>",
+            recipients: "Team <team@example.com>", cc: nil, subject: "Planning", sizeEstimate: 1)
+        var later = earlier
+        later.id = "later"
+        later.date = Date(timeIntervalSince1970: 2)
+        later.sender = "Alex <alex@personal.example>"
+        later.recipients = "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>"
+        let entries = [MessageListEntry(message: later, labels: [SystemLabel.inbox, SystemLabel.unread]),
+                       MessageListEntry(message: earlier, labels: [SystemLabel.sent])]
+        var thread = entries[0].rowThread
+        thread.participants = "Alex"
+        thread.messageCount = 2
+        func project(_ entries: [MessageListEntry], conversations: Bool = true,
+                     previous: [MessageListItem] = []) -> [MessageListItem] {
+            MessageListItem.project(threads: [thread], entries: entries, conversations: conversations,
+                filters: [], mailboxID: SystemLabel.inbox, categories: [:],
+                addresses: ["a": ["alex@work.example", "alex@personal.example"]], reusing: previous)
+        }
+        let rows = project(entries)
+        let row = try #require(rows.first)
+        #expect(row.messages.map(\.message.id) == [later.id])
+        #expect(row.senderPresentation.compact == "alex@work.example, alex@personal.example")
+        #expect(row.senderPresentation.full == "Alex <alex@work.example>, Alex <alex@personal.example>")
+        #expect(row.recipientPresentation.compact == "Doe, Jane, Sam")
+        #expect(row.recipientPresentation.full == later.recipients)
+
+        // An address change in a filtered-out message still changes display identity.
+        var revised = earlier
+        revised.sender = "Alex <alex+projects@work.example>"
+        let refreshed = try #require(project([entries[0], .init(message: revised, labels: [SystemLabel.sent])], previous: rows).first)
+        #expect(refreshed.messages == row.messages)
+        #expect(refreshed.thread == row.thread)
+        #expect(refreshed.senderPresentation.compact == "alex+projects@work.example, alex@personal.example")
+        #expect(refreshed != row)
+
+        // Search or a partially cached thread must not present an incomplete list as complete.
+        let partial = try #require(project([entries[0]], previous: rows).first)
+        #expect(partial.senderPresentation.compact == thread.participants)
+        #expect(partial.senderPresentation.full == "Alex; available details: Alex <alex@personal.example>")
+        let message = try #require(project(entries, conversations: false).first)
+        #expect(message.senderPresentation.compact == "Alex")
+        #expect(message.senderPresentation.full == later.sender)
+
+        var foreign = earlier
+        foreign.accountID = "b"
+        foreign.sender = "Other account <other@example.com>"
+        #expect(project(entries + [.init(message: foreign, labels: [SystemLabel.inbox])]) == rows)
+    }
+
     @Test func searchHighlightsMatchWholeWordsAndStartLongPreviewsNearTheMatch() {
         func bold(_ string: AttributedString) -> [String] {
             string.runs.compactMap { run in
@@ -844,6 +920,8 @@ import Testing
         return "binding=\(bindingReads.withLock { $0 }), list=\(listReads.withLock { $0 }), direct=\(directReads.withLock { $0 })"
     }
 
+    #endif
+
     private func awaitListState(_ phase: String, details: () -> String,
                                 sourceLocation: SourceLocation = #_sourceLocation,
                                 _ condition: () -> Bool) async throws {
@@ -851,8 +929,6 @@ import Testing
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         try #require(condition(), "\(phase): \(details())", sourceLocation: sourceLocation)
     }
-    #endif
-
     @Test func databaseChangesPublishThreadsAndMessagesTogetherWithoutAListView() async throws {
         let (mailbox, cache) = try await fixture()
         defer { Task { await mailbox.stop() } }
@@ -885,6 +961,105 @@ import Testing
         // No yield: returning publishes the retained transaction and rows now.
         #expect(mailbox.isListPresentationReady)
         #expect(mailbox.listItems == inbox)
+    }
+
+    @Test(arguments: [true, false], [true, false])
+    func readingUnreadMailKeepsItsRowUntilLeaving(conversations: Bool, unreadMailbox: Bool) async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        try await cache.write { tx in
+            try tx.replaceLabels([.init(accountID: "a", id: SystemLabel.inbox, name: "Inbox", isSystem: true,
+                threadsUnread: 1, messagesUnread: 1)], accountID: "a")
+        }
+        mailbox.listPreferences.conversations = conversations
+        if unreadMailbox { mailbox.selectedMailbox = .account("a", SystemLabel.unread) }
+        else { mailbox.listPreferences.filters = [.unread] }
+        try await awaitListState("unread row", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.isListPresentationReady && mailbox.listItems.count == 1
+        }
+        let row = try #require(mailbox.listItems.first)
+        mailbox.selectListRows([row.id])
+        await mailbox.markConversationRead(row.id.threadKey, messageID: conversations ? nil : "m2")
+        #expect(try await cache.read { try $0.currentLabels(threadID: "t", accountID: "a")["m2"]?.contains(SystemLabel.unread) } == false)
+        #expect(try await cache.read { try $0.unreadCounts(accountID: "a")[SystemLabel.inbox]?.messagesUnread } == 0)
+        try await awaitListState("read update", details: { "entries=\(mailbox.listEntries.count)" }) {
+            !mailbox.listEntries.contains { $0.labels.contains(SystemLabel.unread) }
+        }
+        #expect(mailbox.listItems.map(\.id) == [row.id])
+        #expect(mailbox.listItems.first?.thread.isUnread == false)
+        #expect(mailbox.selectedListRowIDs == [row.id])
+        #expect(mailbox.listItems.first?.messages.map(\.message.id) == ["m2"])
+
+        if unreadMailbox {
+            mailbox.selectedMailbox = .account("a", SystemLabel.inbox)
+            mailbox.selectedMailbox = .account("a", SystemLabel.unread)
+        } else {
+            mailbox.listPreferences.filters = []
+            mailbox.listPreferences.filters = [.unread]
+        }
+        try await awaitListState("new unread visit", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.isListPresentationReady && mailbox.listItems.isEmpty
+        }
+        if !unreadMailbox {
+            mailbox.listPreferences.filters = []
+            _ = try await mailbox.engine.perform(.markUnread, target: .messages(["m2"]))
+            mailbox.listPreferences.filters = [.unread]
+            try await awaitListState("marked unread again", details: { "rows=\(mailbox.listItems.count)" }) {
+                mailbox.listItems.first?.thread.isUnread == true
+            }
+            mailbox.selectListRows([row.id])
+            await mailbox.markConversationRead(row.id.threadKey, messageID: conversations ? nil : "m2")
+            try await awaitListState("read again", details: { "rows=\(mailbox.listItems.count)" }) {
+                mailbox.listItems.first?.thread.isUnread == false
+            }
+            #expect(mailbox.selectedListRowIDs == [row.id])
+        }
+    }
+
+    @Test(arguments: [true, false])
+    func unreadVisitKeepsSeveralOpenedRowsAndContinuesUpdating(conversations: Bool) async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let second = AccountRecord(id: "b", email: "second@example.com", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(), syncEnabled: false)
+        let original = try #require(mailbox.listEntries.first { $0.message.id == "m2" }?.message)
+        try await cache.write { tx in
+            var duplicate = original
+            duplicate.accountID = "b"
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: duplicate, labelIDs: [SystemLabel.inbox, SystemLabel.unread])]), accountID: "b")
+        }
+        mailbox.listPreferences.conversations = conversations
+        mailbox.selectedMailbox = .combined(SystemLabel.unread)
+        try await awaitListState("both accounts", details: { "rows=\(mailbox.listItems.count)" }) { mailbox.listItems.count == 2 }
+        let rows = mailbox.listItems.map(\.id)
+        for row in rows {
+            mailbox.selectListRows([row])
+            await mailbox.markConversationRead(row.threadKey, messageID: conversations ? nil : row.messageID)
+            try await awaitListState("opened row", details: { "rows=\(mailbox.listItems.count)" }) {
+                mailbox.listItems.first { $0.id == row }?.thread.isUnread == false
+            }
+            #expect(mailbox.selectedListRowIDs == [row])
+            #expect(Set(mailbox.listItems.map(\.id)) == Set(rows))
+        }
+        _ = try await mailbox.engine.perform(.star, target: .messages(["m2"]))
+        try await cache.write { tx in
+            var incoming = original
+            incoming.id = "incoming"; incoming.threadID = "new-thread"
+            incoming.date = original.date.addingTimeInterval(60)
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: incoming, labelIDs: [SystemLabel.inbox, SystemLabel.unread])]), accountID: "a")
+        }
+        try await awaitListState("new mail and star", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.listItems.count == 3 && mailbox.listItems.contains { $0.id.accountID == "a" && $0.thread.isStarred }
+        }
+        _ = try await mailbox.engine.perform(.trash, target: .messages(["m2"]))
+        try await awaitListState("trashed opened message", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.listItems.count == 2 && !mailbox.listItems.contains { $0.id.accountID == "a" && $0.id.threadID == "t" }
+        }
+        mailbox.search.update("Planning")
+        mailbox.search.cancel()
+        try await awaitListState("search ends unread visit", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.isListPresentationReady && mailbox.listItems.map(\.id.threadID) == ["new-thread"]
+        }
     }
 
     @Test func localActionsInvalidateRetainedPagesBeforeReturningToThem() async throws {

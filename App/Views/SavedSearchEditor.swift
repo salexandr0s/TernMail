@@ -96,8 +96,8 @@ struct SavedSearchRows: View {
                     Label(search.name, systemImage: "magnifyingglass")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .ternHover(isEnabled: mailbox.sidebarSelection != target)
-                        .tag(target)
+                        .sidebarHover(SidebarRowSelection(source: .savedSearch, mailbox: target))
+                        .tag(SidebarRowSelection(source: .savedSearch, mailbox: target))
                         .popover(isPresented: Bindable(mailbox.navigation).searchToEdit.equals(search), arrowEdge: .trailing) {
                             SavedSearchEditor(mailbox: mailbox, existing: search)
                         }

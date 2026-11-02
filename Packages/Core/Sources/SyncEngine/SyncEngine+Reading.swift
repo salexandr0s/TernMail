@@ -121,6 +121,7 @@ extension SyncEngine {
                 let ids = try tx.messages(threadID: threadID, accountID: accountID)
                     .filter { snapshot.versions[$0.id] == $0.historyID }.map(\.id)
                 deleted.withLock { $0.formUnion(ids) }
+                try tx.deleteAnalyticsMessages(messageIDs: ids, accountID: accountID)
                 try tx.rebuildThreads(try tx.deleteMessages(ids: ids, accountID: accountID), accountID: accountID)
             }
             return
@@ -134,6 +135,9 @@ extension SyncEngine {
         for message in messages {
             try Task.checkCancellation()
             guard message.threadId == threadID else { throw GmailError.decoding("Message thread identity") }
+            do { try await ingestReadReceipt(message) }
+            catch is CancellationError { throw CancellationError() }
+            catch { /* A queued receipt download retries on the next sync pass. */ }
             updates.append(try Mapping.message(message, accountID: accountID))
             guard wanted.contains(message.id) else { continue }
             // A cached body needs only the parts its invitation may live in.

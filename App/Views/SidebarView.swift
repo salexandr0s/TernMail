@@ -8,12 +8,15 @@ struct SidebarView: View {
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
     @AppStorage("sidebarFavoritesCollapsed") private var favoritesCollapsed = false
     @State private var isAddingFavorite = false
+    @State private var preferredSelection: SidebarRowSelection?
+    @State private var expandedLabels: Set<MailboxID> = []
+    @State private var expandedMore: Set<String> = []
 
     var body: some View {
         // Calendar and Attachments live in the toolbar's section switcher, so
         // the sidebar starts with Favorites. During a search it shows no
         // selection, since results can come from outside the selected mailbox.
-        List(selection: $mailbox.sidebarSelection) {
+        List(selection: selection) {
             FavoritesView(mailbox: mailbox, isCollapsed: $favoritesCollapsed, isAddingFavorite: $isAddingFavorite)
             SavedSearchRows(mailbox: mailbox)
             if mailbox.presentedAccounts.count > 1 {
@@ -47,7 +50,8 @@ struct SidebarView: View {
                             let boxID = MailboxID.account(owner.account.id, box.id)
                             MailboxRow(box: box, title: box.title, color: box.color, count: mailbox.sidebarBadgeCount(boxID))
                                 .conversationDropTarget(boxID, mailbox: mailbox)
-                                .tag(boxID)
+                                .sidebarHover(SidebarRowSelection(mailbox: boxID))
+                                .tag(SidebarRowSelection(mailbox: boxID))
                             if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                         }
                     }
@@ -74,6 +78,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .environment(\.selectedSidebarRow, selection.wrappedValue)
         .contentMargins(.horizontal, 0, for: .scrollContent)
         // A Section can apply its sheet to every row, queuing repeated presentations.
         .sheet(isPresented: $isAddingFavorite) {
@@ -105,12 +110,8 @@ struct SidebarView: View {
         .task(id: mailbox.accounts.flatMap(\.labels)) {
             await LabelAppearance.shared.reconcile(using: mailbox.cache)
         }
-        .onChange(of: mailbox.selectedMailbox) { _, selected in
-            // An account's mailbox chosen elsewhere shows under its expanded row.
-            if mailbox.presentedAccounts.count > 1, case .account(_, let id)? = selected,
-               (SystemMailbox.all + [.outbox]).contains(where: { $0.id == id }) {
-                expansion(of: id).wrappedValue = true
-            }
+        .onChange(of: revealTarget, initial: true) { _, _ in
+            revealSelection()
         }
         .sheet(item: $mailbox.labelEditor) { request in
             LabelEditorSheet(
@@ -150,17 +151,63 @@ struct SidebarView: View {
             .mapValues { AccountAppearance.color(at: $0) }
     }
 
+    private var selection: Binding<SidebarRowSelection?> {
+        Binding {
+            mailbox.sidebarRowSelection(preferred: preferredSelection, favoritesCollapsed: favoritesCollapsed,
+                expandedMailboxIDs: expanded.ids)
+        } set: { row in
+            // List can clear its selection when a section closes or rows move.
+            guard let row else { return }
+            preferredSelection = row
+            mailbox.sidebarSelection = row.mailbox
+        }
+    }
+
+    private struct RevealTarget: Equatable {
+        let row: SidebarRowSelection?
+        let ancestors: [MailboxID]
+    }
+
+    private var revealTarget: RevealTarget {
+        let row = mailbox.sidebarRowForNavigation(preferred: preferredSelection)
+        let ancestors = row.flatMap { $0.source == .mailboxes ? mailbox.sidebarLabelAncestors(of: $0.mailbox) : nil } ?? []
+        return RevealTarget(row: row, ancestors: ancestors)
+    }
+
+    private func revealSelection() {
+        guard let row = mailbox.sidebarRowForNavigation(preferred: preferredSelection) else { return }
+        preferredSelection = row
+        if case .favorite = row.source { favoritesCollapsed = false }
+        if row.source == .mailboxes, case .account(let accountID, let labelID) = row.mailbox,
+           let owner = mailbox.account(id: accountID) {
+            expandedLabels.formUnion(mailbox.sidebarLabelAncestors(of: row.mailbox))
+            if moreBoxes(owner).contains(where: { $0.id == labelID })
+                || owner.labels.contains(where: { $0.id == labelID && !$0.isSystem && !mailbox.isVisibleInSidebar($0) }) {
+                expandedMore.insert(accountID)
+            }
+        }
+        var ancestor = mailbox.sidebarParent(of: row)
+        while let parent = ancestor {
+            if mailbox.sidebarCanExpand(parent) { expanded.ids.insert(parent.mailbox.id) }
+            ancestor = mailbox.sidebarParent(of: parent)
+        }
+    }
+
     /// Right Arrow shows a mailbox's account rows and Left Arrow hides them,
     /// or moves from an account row up to its mailbox, as in an outline.
     private func expandOrCollapse(_ key: KeyEquivalent) -> KeyPress.Result {
-        guard mailbox.presentedAccounts.count > 1, let selected = mailbox.sidebarSelection,
-              (SystemMailbox.all + [.outbox]).contains(where: { $0.id == selected.id })
-        else { return .ignored }
-        switch (selected, key) {
-        case (.combined(let id), .rightArrow): expansion(of: id).wrappedValue = true
-        case (.combined(let id), .leftArrow): expansion(of: id).wrappedValue = false
-        case (.account(_, let id), .leftArrow): mailbox.sidebarSelection = .combined(id)
-        default: return .ignored
+        guard let selected = selection.wrappedValue else { return .ignored }
+        if mailbox.sidebarCanExpand(selected) {
+            if key == .rightArrow { expanded.ids.insert(selected.mailbox.id) }
+            else { expanded.ids.remove(selected.mailbox.id) }
+        } else if selected.source == .mailboxes, mailbox.sidebarLabelHasChildren(box: selected.mailbox),
+                  key == .rightArrow || expandedLabels.contains(selected.mailbox) {
+            if key == .rightArrow { expandedLabels.insert(selected.mailbox) }
+            else { expandedLabels.remove(selected.mailbox) }
+        } else if key == .leftArrow, let parent = mailbox.sidebarParent(of: selected) {
+            selection.wrappedValue = parent
+        } else {
+            return .ignored
         }
         return .handled
     }
@@ -170,20 +217,26 @@ struct SidebarView: View {
     }
 
     private func labelOutline(_ owner: AccountMailbox) -> some View {
-        OutlineGroup(LabelNode.outline(owner.labels.filter { !$0.isSystem && mailbox.isVisibleInSidebar($0) }), children: \.children) { node in
-            LabelRow(mailbox: mailbox, node: node)
+        ForEach(mailbox.sidebarLabelRows(for: owner, expandedLabels: expandedLabels)) { item in
+            let box = MailboxID.account(owner.account.id, item.node.id)
+            LabelRow(mailbox: mailbox, node: item.node,
+                isExpanded: item.node.children == nil ? nil : expandedLabels.contains(box),
+                onToggleExpansion: {
+                    if expandedLabels.contains(box) { expandedLabels.remove(box) } else { expandedLabels.insert(box) }
+                })
+                .padding(.leading, CGFloat(item.depth) * Tokens.Space.s4)
         }
     }
 
     @ViewBuilder private func moreMailboxes(_ owner: AccountMailbox) -> some View {
         if mailbox.listPreferences.showsMore {
-            DisclosureGroup("More") {
+            DisclosureGroup("More", isExpanded: $expandedMore.contains(owner.account.id)) {
                 ForEach(moreBoxes(owner), id: \.id) { box in
                     Label(box.title, systemImage: box.systemImage)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .ternHover(isEnabled: mailbox.sidebarSelection != .account(owner.account.id, box.id))
-                        .tag(MailboxID.account(owner.account.id, box.id))
+                        .sidebarHover(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
+                        .tag(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
                         .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
                 }
                 ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
@@ -278,6 +331,74 @@ struct SidebarDisclosureChevron: View {
     }
 }
 
+/// Resolve inside the row so the native selection controls foreground contrast.
+struct SidebarSymbolStyle: ShapeStyle {
+    let color: Color
+
+    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+        environment.backgroundProminence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(color)
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var selectedSidebarRow: SidebarRowSelection?
+}
+
+private struct SidebarHover: ViewModifier {
+    @Environment(\.selectedSidebarRow) private var selection
+    let row: SidebarRowSelection
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        content.ternHover(isEnabled: isEnabled && selection != row)
+    }
+}
+
+extension View {
+    func sidebarHover(_ row: SidebarRowSelection, isEnabled: Bool = true) -> some View {
+        modifier(SidebarHover(row: row, isEnabled: isEnabled))
+    }
+}
+
+struct SidebarDisclosureAccessibility: ViewModifier {
+    let isExpanded: Bool?
+    var childrenTitle = "Accounts"
+    let toggle: () -> Void
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let isExpanded {
+            content
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityAction(named: Text("\(isExpanded ? "Hide" : "Show") \(childrenTitle)"), toggle)
+        } else {
+            content
+        }
+    }
+}
+
+/// Disclosure changes the outline without changing the current mailbox.
+struct SidebarDisclosureButton: View {
+    let title: String
+    let isExpanded: Bool
+    let isHovered: Bool
+    var childrenTitle = "Accounts"
+    let toggle: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button(action: toggle) {
+            SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: isHovered || isFocused)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .focused($isFocused)
+        .accessibilityLabel("\(isExpanded ? "Hide" : "Show") \(childrenTitle.lowercased()) in \(title)")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .help("\(isExpanded ? "Hide" : "Show") \(childrenTitle)")
+    }
+}
+
 /// A system mailbox's row, its symbol in `color`.
 private struct MailboxRow: View {
     @Environment(\.sidebarRowSize) private var sidebarRowSize
@@ -288,6 +409,7 @@ private struct MailboxRow: View {
     let count: Int
     /// Set on a row listing every account to show its disclosure state.
     var isExpanded: Bool?
+    var onToggleExpansion: (() -> Void)?
     var isAccount = false
     @State private var isHovered = false
 
@@ -302,13 +424,12 @@ private struct MailboxRow: View {
                     .font(.system(size: (isAccount ? Tokens.Space.s3 : Tokens.Control.icon) * scale))
                     .imageScale(.medium)
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(color)
+                    .foregroundStyle(SidebarSymbolStyle(color: color))
                     .frame(width: Tokens.Space.s5 * scale)
             }
             Spacer(minLength: Tokens.Space.s1)
-            if let isExpanded {
-                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: isHovered)
-                    .padding(.trailing, Tokens.Space.s2)
+            if let isExpanded, let onToggleExpansion {
+                SidebarDisclosureButton(title: box.title, isExpanded: isExpanded, isHovered: isHovered, toggle: onToggleExpansion)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -332,14 +453,16 @@ private struct CombinedMailboxRows: View {
         let combinedID = MailboxID.combined(box.id)
         MailboxRow(
             box: box, title: box.title, color: box.color,
-            count: isExpanded ? 0 : mailbox.sidebarBadgeCount(combinedID), isExpanded: isExpanded
+            count: isExpanded ? 0 : mailbox.sidebarBadgeCount(combinedID), isExpanded: isExpanded,
+            onToggleExpansion: { isExpanded.toggle() }
         )
         .conversationDropTarget(combinedID, mailbox: mailbox)
-        .tag(combinedID)
-        .onTapGesture(perform: selectAndToggle)
+        .sidebarHover(SidebarRowSelection(mailbox: combinedID))
+        .tag(SidebarRowSelection(mailbox: combinedID))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(box.title)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint(isExpanded ? "Hides accounts" : "Shows accounts")
-        .accessibilityAction(.default, selectAndToggle)
+        .accessibilityAction(named: Text(isExpanded ? "Hide Accounts" : "Show Accounts")) { isExpanded.toggle() }
         .contextMenu {
             MailboxContextMenu(mailbox: mailbox, box: combinedID, favoriteTarget: .mailbox(labelID: box.id, scope: .allAccounts))
         }
@@ -356,7 +479,8 @@ private struct CombinedMailboxRows: View {
                     .help(owner.account.email)
                     .accessibilityLabel("\(box.title), \(name)")
                     .conversationDropTarget(boxID, mailbox: mailbox)
-                    .tag(boxID)
+                    .sidebarHover(SidebarRowSelection(mailbox: boxID))
+                    .tag(SidebarRowSelection(mailbox: boxID))
                     .contextMenu {
                         MailboxContextMenu(mailbox: mailbox, box: boxID,
                             favoriteTarget: .mailbox(labelID: box.id, scope: .accounts([owner.account.id])))
@@ -365,12 +489,6 @@ private struct CombinedMailboxRows: View {
                 }
             }
         }
-    }
-
-    private func selectAndToggle() {
-        mailbox.sidebarSelection = .combined(box.id)
-        // Keep the disclosure animation local to the chevron, outside List layout.
-        isExpanded.toggle()
     }
 }
 
@@ -442,6 +560,9 @@ private struct LabelRow: View {
     @Environment(\.sidebarRowSize) private var sidebarRowSize
     let mailbox: MailboxModel
     let node: LabelNode
+    var isExpanded: Bool?
+    var onToggleExpansion: (() -> Void)?
+    @State private var isHovered = false
 
     var body: some View {
         let label = node.label
@@ -457,6 +578,11 @@ private struct LabelRow: View {
                         .foregroundStyle(.secondary)
                         .help("Waiting for Gmail")
                 }
+                Spacer(minLength: Tokens.Space.s1)
+                if let isExpanded, let onToggleExpansion {
+                    SidebarDisclosureButton(title: label.name, isExpanded: isExpanded, isHovered: isHovered,
+                        childrenTitle: "Labels", toggle: onToggleExpansion)
+                }
             }
         } icon: {
             let color = Color(gmailHex: label.backgroundColor)
@@ -465,7 +591,7 @@ private struct LabelRow: View {
             Image(systemName: icon == "tag" && color != nil ? "tag.fill" : icon)
                 .font(.system(size: Tokens.Control.icon * scale))
                 .imageScale(.medium)
-                .foregroundStyle(color ?? .secondary)
+                .foregroundStyle(SidebarSymbolStyle(color: color ?? .secondary))
                 .frame(width: Tokens.Space.s5 * scale)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -473,8 +599,13 @@ private struct LabelRow: View {
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
         .conversationDropTarget(.account(label.accountID, label.id), mailbox: mailbox)
-        .tag(MailboxID.account(label.accountID, label.id))
+        .onHover { isHovered = $0 }
+        .sidebarHover(SidebarRowSelection(mailbox: .account(label.accountID, label.id)), isEnabled: !isPending)
+        .tag(SidebarRowSelection(mailbox: .account(label.accountID, label.id)))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)
+        .modifier(SidebarDisclosureAccessibility(isExpanded: isExpanded, childrenTitle: "Labels",
+            toggle: { onToggleExpansion?() }))
         .contextMenu {
             Button("Add to Favorites", systemImage: "star") {
                 Task { await mailbox.navigation.addFavorite(.label(accountID: label.accountID, labelID: label.id)) }
@@ -496,39 +627,52 @@ private struct SyncStatusView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            switch mailbox.syncStatus {
-            case .syncing:
-                HStack(spacing: Tokens.Space.s2) {
-                    ProgressView().controlSize(.mini)
-                    Text("Checking for mail…")
-                }
-            case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .help(message)
-                Button("Try Again") { mailbox.syncNow() }
-                    .buttonStyle(.link)
-            case .idle:
-                if let date = mailbox.lastSyncedAt {
-                    TimelineView(.periodic(from: .now, by: 30)) { _ in
-                        Label("Updated \(date.formatted(.relative(presentation: .named)))", systemImage: "checkmark.circle")
-                            .lineLimit(2)
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                switch mailbox.syncStatus {
+                case .syncing:
+                    HStack(spacing: Tokens.Space.s2) {
+                        ProgressView().controlSize(.mini)
+                            .frame(width: Tokens.Control.icon, height: Tokens.Control.icon)
+                        Text("Updating…")
+                    }
+                case .failed(let message):
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(message)
+                    Button("Try Again") { mailbox.syncNow() }
+                        .buttonStyle(.link)
+                case .idle:
+                    if let date = mailbox.lastSyncedAt {
+                        TimelineView(.periodic(from: .now, by: 30)) { _ in
+                            let title = "Updated \(date.formatted(.relative(presentation: .named)))"
+                            Label(title, systemImage: "checkmark.circle")
+                                .lineLimit(2)
+                                .help(title)
+                        }
+                    } else {
+                        Label("Not updated yet", systemImage: "arrow.clockwise")
                     }
                 }
             }
-            // With several accounts, the section titles name them.
-            if !mailbox.hasSeveralAccounts {
-                Label(mailbox.account.email, systemImage: "person.crop.circle")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(mailbox.account.email)
+            .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton, alignment: .leading)
+
+            SettingsLink {
+                Image(systemName: "gearshape")
+                    .font(.body)
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .ternHover()
+            .help("Settings (⌘,)")
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("sidebar.settings")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Tokens.Space.s3)
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
     }
 }
 

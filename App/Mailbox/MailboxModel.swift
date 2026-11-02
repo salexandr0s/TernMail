@@ -66,6 +66,7 @@ final class MailboxModel {
     var selectedMailbox: MailboxID? {
         didSet {
             guard selectedMailbox != oldValue else { return }
+            endUnreadReadingVisit()
             NavigationPerformance.shared.begin(.mailbox)
             if selectedMailbox?.id == AttachmentLibraryModel.mailboxID || oldValue?.id == AttachmentLibraryModel.mailboxID {
                 NavigationPerformance.shared.begin(.workspace,
@@ -122,6 +123,8 @@ final class MailboxModel {
     var accountPresentation: [String: AccountMailPreferences] = [:] { didSet { listContextRevision &+= 1 } }
     var visibleAccountIDs: Set<String>?
     let listPreferences: MessageListPreferences
+    private var unreadReadingRows = Set<MailListRowID>()
+    private var unreadReadingFilterRevision: UInt64 = 0
     @ObservationIgnored lazy var triage = MailTriageModel(mailbox: self)
     var notice: Notice?
     /// The newest send's notice, above `notice` so other actions don't replace it.
@@ -236,6 +239,7 @@ final class MailboxModel {
         } else {
             if previousSearchIDs != Set(searchedAccounts.map(\.account.id)) { updateSearchSources() }
             if previousMailboxIDs != Set(selectedAccounts.map(\.account.id)) {
+                endUnreadReadingVisit()
                 threads = []
                 mailboxPage = .empty
                 mailboxPageReady = false
@@ -524,7 +528,10 @@ final class MailboxModel {
     /// Loads missing bodies and marks the thread read.
     func open(_ key: ThreadKey, markRead: Bool = true) async -> Bool {
         guard let owner = account(id: key.accountID) else { return false }
-        if markRead { listPages.invalidateRetained() }
+        if markRead {
+            retainUnreadRowsForReading(key)
+            listPages.invalidateRetained()
+        }
         do {
             try await owner.engine.openThread(key.threadID, markRead: markRead)
             return true
@@ -962,7 +969,8 @@ final class MailboxModel {
             observeSnoozedPage(generation: generation)
             return
         }
-        let key = MailListPageCache.Key(accountIDs: sources.sorted(), labelID: mailbox.id, limit: threadLimit)
+        let key = MailListPageCache.Key(accountIDs: sources.sorted(), labelID: mailbox.id, limit: threadLimit,
+            retainedReadRows: mailbox.id == SystemLabel.unread ? retainedUnreadReadingRows : [])
         listPages.activate(key, cache: cache, configuration: { [weak self] page in
             guard let self else {
                 return (.init(threads: [], entries: [], conversations: true, filters: [], mailboxID: key.labelID,
@@ -1020,6 +1028,10 @@ final class MailboxModel {
     /// Search result identities choose the page; its threads and messages are
     /// then read atomically rather than joined from independent observations.
     private func observeSearchPage() {
+        if search.isActive, !unreadReadingRows.isEmpty {
+            endUnreadReadingVisit()
+            observeThreads()
+        }
         searchPageTask?.cancel()
         searchPageGeneration &+= 1
         let generation = searchPageGeneration
@@ -1105,6 +1117,7 @@ final class MailboxModel {
 
     /// Keeps search and a combined mailbox's list in step with the accounts.
     private func accountsChanged() {
+        endUnreadReadingVisit()
         listContextRevision &+= 1
         listPages.stop()
         let retainedAccounts = Set(selectedAccounts.map(\.account.id))
@@ -1128,6 +1141,36 @@ final class MailboxModel {
     /// Call before cache-changing reading/triage operations that bypass the
     /// window's undo queue. Existing visible rows remain until the atomic update.
     func invalidateListSnapshots() { listPages.invalidateRetained() }
+
+    /// Automatic reading changes labels immediately, but keeps opened rows for
+    /// this visit to Unread. Other filters still apply to their current data.
+    var retainedUnreadReadingRows: Set<MailListRowID> {
+        guard !search.isActive,
+              selectedLabelID == SystemLabel.unread || listPreferences.filters.contains(.unread),
+              selectedLabelID == SystemLabel.unread || unreadReadingFilterRevision == listPreferences.unreadVisitRevision
+        else { return [] }
+        let visible = Set(selectedAccounts.map(\.account.id))
+        return unreadReadingRows.filter { visible.contains($0.accountID) }
+    }
+
+    func retainUnreadRowsForReading(_ key: ThreadKey, messageID: String? = nil) {
+        guard !search.isActive, selectedLabelID == SystemLabel.unread || listPreferences.filters.contains(.unread) else { return }
+        let opened = Set(listItems.filter { $0.id.threadKey == key }.flatMap(\.messages).filter {
+            $0.labels.contains(SystemLabel.unread) && (messageID == nil || $0.message.id == messageID)
+        }.map { MailListRowID(accountID: $0.message.accountID, threadID: $0.message.threadID, messageID: $0.message.id) })
+        guard !opened.isEmpty else { return }
+        let retained = retainedUnreadReadingRows.union(opened)
+        guard retained != unreadReadingRows || unreadReadingFilterRevision != listPreferences.unreadVisitRevision else { return }
+        unreadReadingRows = retained
+        unreadReadingFilterRevision = listPreferences.unreadVisitRevision
+        if selectedLabelID == SystemLabel.unread { observeThreads() }
+    }
+
+    private func endUnreadReadingVisit() {
+        guard !unreadReadingRows.isEmpty else { return }
+        unreadReadingRows = []
+        listPages.invalidateRetained()
+    }
 
     private func measureReaderSelection() {
         NavigationPerformance.shared.begin(.reader)

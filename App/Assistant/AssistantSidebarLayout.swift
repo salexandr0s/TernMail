@@ -138,15 +138,20 @@ struct AssistantSidebarResizeHandle: NSViewRepresentable {
     func makeNSView(context: Context) -> ResizeView { ResizeView() }
     func updateNSView(_ view: ResizeView, context: Context) { view.width = width; view.onResize = onResize }
 
-    final class ResizeView: NSView {
+    final class ResizeView: ResizeHandleView {
         var width: CGFloat = 0
         var onResize: ((CGFloat) -> Void)?
         private var startX: CGFloat = 0
         private var startWidth: CGFloat = 0
-        override var mouseDownCanMoveWindow: Bool { false }
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func resetCursorRects() { super.resetCursorRects(); addCursorRect(bounds, cursor: .resizeLeftRight) }
-        override func mouseDown(with event: NSEvent) { startX = event.locationInWindow.x; startWidth = width }
-        override func mouseDragged(with event: NSEvent) { onResize?(startWidth + startX - event.locationInWindow.x) }
+        override func mouseDown(with event: NSEvent) {
+            guard isResizeAvailable else { return }
+            super.mouseDown(with: event)
+            startX = event.locationInWindow.x
+            startWidth = width
+        }
+        override func mouseDragged(with event: NSEvent) {
+            guard isDragging, isResizeAvailable else { return }
+            onResize?(startWidth + startX - event.locationInWindow.x)
+        }
     }
 }

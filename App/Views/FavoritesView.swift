@@ -8,7 +8,7 @@ struct FavoritesView: View {
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @Binding var isCollapsed: Bool
     @Binding var isAddingFavorite: Bool
-    @State private var hoveredBox: MailboxID?
+    @State private var hoveredFavorite: String?
     @State private var isHeaderHovered = false
     @FocusState private var focusedControl: HeaderControl?
     @AccessibilityFocusState private var isHeaderAccessibilityFocused: Bool
@@ -103,6 +103,7 @@ struct FavoritesView: View {
     }
 
     @ViewBuilder private func favoriteRows(_ favorite: MailFavorite, box: MailboxID) -> some View {
+        let source = SidebarRowSelection.Source.favorite(favorite.id)
         let isExpanded = expanded.ids.contains(box.id)
         let canExpand = accounts(for: box).count > 1
         HStack(spacing: Tokens.Space.s1) {
@@ -113,32 +114,30 @@ struct FavoritesView: View {
                 Image(systemName: symbol(favorite))
                     .font(.system(size: Tokens.Control.icon * scale))
                     .imageScale(.medium)
-                    .foregroundStyle(mailbox.sidebarSelection == box ? .primary : color(favorite))
+                    .foregroundStyle(SidebarSymbolStyle(color: color(favorite)))
                     .frame(width: Tokens.Space.s5 * scale)
             }
             Spacer(minLength: Tokens.Space.s1)
             if canExpand {
-                SidebarDisclosureChevron(isExpanded: isExpanded, isHovered: hoveredBox == box)
-                    .padding(.trailing, Tokens.Space.s2)
+                SidebarDisclosureButton(title: title(favorite), isExpanded: isExpanded, isHovered: hoveredFavorite == favorite.id) {
+                    toggleExpansion(of: box)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { isHovering in
-            if isHovering { hoveredBox = box } else if hoveredBox == box { hoveredBox = nil }
+            if isHovering { hoveredFavorite = favorite.id } else if hoveredFavorite == favorite.id { hoveredFavorite = nil }
         }
         .badge(canExpand && isExpanded ? 0 : mailbox.sidebarBadgeCount(box))
         .conversationDropTarget(box, mailbox: mailbox)
-        .tag(box)
-        .onTapGesture {
-            mailbox.sidebarSelection = box
-            if canExpand {
-                if isExpanded { expanded.ids.remove(box.id) } else { expanded.ids.insert(box.id) }
-            }
-        }
+        .sidebarHover(SidebarRowSelection(source: source, mailbox: box))
+        .tag(SidebarRowSelection(source: source, mailbox: box))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(title(favorite))
         .help(title(favorite))
-        .accessibilityValue(canExpand ? (isExpanded ? "Expanded" : "Collapsed") : "")
+        .modifier(SidebarDisclosureAccessibility(isExpanded: canExpand ? isExpanded : nil,
+            toggle: { toggleExpansion(of: box) }))
         .contextMenu {
             MailboxContextMenu(mailbox: mailbox, box: box, isSystemMailbox: favorite.target.isSystemMailbox)
             Divider()
@@ -156,27 +155,30 @@ struct FavoritesView: View {
                 Label {
                     Text(name)
                 } icon: {
-                    Image(systemName: symbol(favorite)).foregroundStyle(accountColor(owner.account.id))
+                    Image(systemName: symbol(favorite)).foregroundStyle(SidebarSymbolStyle(color: accountColor(owner.account.id)))
                 }
                     .lineLimit(1).padding(.leading, Tokens.Space.s4)
                     .help(owner.account.email)
                     .badge(mailbox.sidebarBadgeCount(accountBox))
                     .conversationDropTarget(accountBox, mailbox: mailbox)
-                    .tag(accountBox)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .sidebarHover(SidebarRowSelection(source: source, mailbox: accountBox))
+                    .tag(SidebarRowSelection(source: source, mailbox: accountBox))
                     .accessibilityLabel("\(title(favorite)), \(name)")
-                if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
+                if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id, source: source) }
             }
         } else if box.id == SystemLabel.inbox, accounts(for: box).count == 1, let owner = accounts(for: box).first {
-            InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id)
+            InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id, source: source)
         }
     }
 
+    private func toggleExpansion(of box: MailboxID) {
+        if expanded.ids.contains(box.id) { expanded.ids.remove(box.id) } else { expanded.ids.insert(box.id) }
+    }
+
     private func accounts(for box: MailboxID) -> [AccountMailbox] {
-        switch box {
-        case .combined: mailbox.presentedAccounts
-        case .account(let id, _): mailbox.presentedAccounts.filter { $0.account.id == id }
-        case .scoped(_, let ids): mailbox.presentedAccounts.filter { ids.contains($0.account.id) }
-        }
+        mailbox.sidebarAccounts(for: box)
     }
 
     private func accountColor(_ id: String) -> Color {
@@ -272,6 +274,7 @@ extension MailFavoriteTarget {
 struct InboxCategoryRows: View {
     let mailbox: MailboxModel
     let accountID: String
+    var source: SidebarRowSelection.Source = .mailboxes
     var body: some View {
         ForEach(InboxCategory.allCases.filter { mailbox.accountPresentation[accountID]?.inboxCategories.contains($0) == true }, id: \.rawValue) { category in
             let box = SystemMailbox(labelID: category.labelID)
@@ -279,9 +282,9 @@ struct InboxCategoryRows: View {
                 .padding(.leading, Tokens.Space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .ternHover(isEnabled: mailbox.sidebarSelection != .account(accountID, category.labelID))
+                .sidebarHover(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
                 .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
-                .tag(MailboxID.account(accountID, category.labelID))
+                .tag(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
         }
     }
 }

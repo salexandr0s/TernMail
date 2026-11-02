@@ -36,7 +36,7 @@ public struct MailListPage: Sendable, Equatable {
 /// conversation again, so its row and its messages come from one read.
 public struct MailListPageBuilder: Sendable {
     enum Conversations: Sendable {
-        case mailbox(accountIDs: [String], labelID: String, limit: Int)
+        case mailbox(accountIDs: [String], labelID: String, limit: Int, retainingReadMessageIDs: [String: Set<String>])
         case listed([ThreadRecord])
     }
 
@@ -47,9 +47,11 @@ public struct MailListPageBuilder: Sendable {
 
     /// The newest `limit` conversations under `labelID` across the accounts,
     /// a snoozed conversation that came back counting from its wake time.
-    public static func mailbox(accountIDs: [String], labelID: String, limit: Int) -> MailListPageBuilder {
+    public static func mailbox(accountIDs: [String], labelID: String, limit: Int,
+                               retainingReadMessageIDs: [String: Set<String>] = [:]) -> MailListPageBuilder {
         MailListPageBuilder(
-            conversations: .mailbox(accountIDs: accountIDs, labelID: labelID, limit: limit),
+            conversations: .mailbox(accountIDs: accountIDs, labelID: labelID, limit: limit,
+                                   retainingReadMessageIDs: retainingReadMessageIDs),
             query: nil, includingMessageIDs: [:], snoozedOnly: false
         )
     }
@@ -75,12 +77,10 @@ public struct MailListPageBuilder: Sendable {
     public func page(in tx: CacheTransaction) throws -> MailListPage {
         let threads: [ThreadRecord]
         switch conversations {
-        case .mailbox(let accountIDs, let labelID, let limit):
+        case .mailbox(let accountIDs, let labelID, let limit, let retained):
             guard !accountIDs.isEmpty else { return .empty }
-            threads = try ThreadRecord.fetchAll(
-                tx.db, sql: ThreadListQuery.sql(accountCount: accountIDs.count),
-                arguments: ThreadListQuery.arguments(accountIDs: accountIDs, labelID: labelID, limit: limit)
-            )
+            threads = try Self.mailboxThreads(accountIDs: accountIDs, labelID: labelID, limit: limit,
+                                             retainingReadMessageIDs: retained, in: tx)
         case .listed(let listed):
             threads = try Self.stored(listed, in: tx)
         }
@@ -91,6 +91,50 @@ public struct MailListPageBuilder: Sendable {
             includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly
         )
         return MailListPage(threads: threads, entries: entries)
+    }
+
+    private static func mailboxThreads(accountIDs: [String], labelID: String, limit: Int,
+                                       retainingReadMessageIDs retained: [String: Set<String>],
+                                       in tx: CacheTransaction) throws -> [ThreadRecord] {
+        let sql = ThreadListQuery.sql(accountCount: accountIDs.count)
+        let arguments = ThreadListQuery.arguments(accountIDs: accountIDs, labelID: labelID, limit: limit)
+        guard labelID == SystemLabel.unread, !retained.isEmpty else {
+            return try ThreadRecord.fetchAll(tx.db, sql: sql, arguments: arguments)
+        }
+
+        var rows = try Row.fetchAll(tx.db, sql: sql, arguments: arguments)
+        for accountID in Set(accountIDs).sorted() {
+            guard let retainedIDs = retained[accountID], !retainedIDs.isEmpty else { continue }
+            let ids = retainedIDs.subtracting(try tx.hiddenDraftMessageIDs(accountID: accountID)).sorted()
+            for start in stride(from: 0, to: ids.count, by: 400) {
+                let chunk = Array(ids[start..<min(start + 400, ids.count)])
+                var retainedArguments: StatementArguments = [accountID, SystemLabel.allMail]
+                retainedArguments += StatementArguments(chunk)
+                retainedArguments += [SystemLabel.trash, SystemLabel.spam]
+                rows += try Row.fetchAll(tx.db, sql: """
+                    SELECT DISTINCT thread.*, threadLabel.listDate AS listDate
+                    FROM threadLabel
+                    JOIN thread ON thread.accountID = threadLabel.accountID AND thread.id = threadLabel.threadID
+                    JOIN message m ON m.accountID = thread.accountID AND m.threadID = thread.id
+                    WHERE threadLabel.accountID = ? AND threadLabel.labelID = ?
+                    AND m.id IN (\(databaseQuestionMarks(count: chunk.count)))
+                    AND NOT EXISTS (
+                        SELECT 1 FROM effectiveLabel l
+                        WHERE l.accountID = m.accountID AND l.messageID = m.id AND l.labelID IN (?, ?)
+                    )
+                    """, arguments: retainedArguments)
+            }
+        }
+
+        var byAccount: [String: [String: (thread: ThreadRecord, listDate: Date)]] = [:]
+        for row in rows {
+            let thread = try ThreadRecord(row: row)
+            byAccount[thread.accountID, default: [:]][thread.id] = (thread, row["listDate"])
+        }
+        return byAccount.values.flatMap(\.values).sorted { lhs, rhs in
+            if lhs.listDate != rhs.listDate { return lhs.listDate > rhs.listDate }
+            return (lhs.thread.id, lhs.thread.accountID) < (rhs.thread.id, rhs.thread.accountID)
+        }.map(\.thread)
     }
 
     /// The listed conversations as the cache holds them now, in the order

@@ -1480,6 +1480,7 @@ actor FakeGmail: GmailService {
     private var held: CheckedContinuation<Void, Never>?
     private var holdsMetadata = false
     private var heldMetadata: CheckedContinuation<Void, Never>?
+    private var metadataHoldEntered: (@Sendable () -> Void)?
     private var holdsThread = false
     private var heldThread: CheckedContinuation<Void, Never>?
     private var metadataErrors: [String: GmailError] = [:]
@@ -1521,7 +1522,10 @@ actor FakeGmail: GmailService {
     func failNextChange(with error: GmailError) { nextChangeError = error }
     func setChangeErrors(_ errors: [String: GmailError]) { changeErrors = errors }
     func confirmChanges(at historyID: Int64?) { confirmedHistoryID = historyID }
-    func holdNextMetadata() { holdsMetadata = true }
+    func holdNextMetadata(onHeld: @escaping @Sendable () -> Void = {}) {
+        holdsMetadata = true
+        metadataHoldEntered = onHeld
+    }
     func holdNextThread() { holdsThread = true }
     var isHoldingThread: Bool { heldThread != nil }
     func releaseThread() { heldThread?.resume(); heldThread = nil }
@@ -1585,7 +1589,11 @@ actor FakeGmail: GmailService {
         })
         if holdsMetadata {
             holdsMetadata = false
-            await withCheckedContinuation { heldMetadata = $0 }
+            await withCheckedContinuation {
+                heldMetadata = $0
+                metadataHoldEntered?()
+                metadataHoldEntered = nil
+            }
         }
         return results
     }
