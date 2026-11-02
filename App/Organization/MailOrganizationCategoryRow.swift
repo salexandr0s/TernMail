@@ -5,6 +5,9 @@ struct MailOrganizationCategoryRow: View {
     @Binding var category: MailOrganizationReviewCategory
     let samples: MailOrganizationSamples
     let canCreateFilters: Bool
+    var isEditable = true
+    @State private var isExpanded = false
+    @State private var visibleExampleCount = 4
 
     private var examples: [MailOrganizationSample] {
         let ids = Set(category.proposal.messageIDs)
@@ -16,55 +19,166 @@ struct MailOrganizationCategoryRow: View {
         return samples.existingLabels.contains { !$0.isSystem && $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
-    var body: some View {
-        Section {
-            Toggle(isOn: $category.isSelected) {
-                Text(category.proposal.name).font(.headline)
-                Text(category.proposal.explanation).fixedSize(horizontal: false, vertical: true)
-            }
-            .toggleStyle(.checkbox)
-            .accessibilityLabel("Include \(category.proposal.name)")
+    private var displayName: String {
+        let name = category.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Untitled label" : name
+    }
 
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+    private var tint: Color {
+        switch category.proposal.kind {
+        case .topic: .accentColor
+        case .action: .orange
+        case .waiting: .purple
+        }
+    }
+
+    private var hasRecurringSenders: Bool {
+        category.proposal.kind == .topic && !category.proposal.ruleSenders.isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: Tokens.Space.s2) {
+                Toggle("Include \(displayName)", isOn: $category.isSelected)
+                    .labelsHidden()
+                    .toggleStyle(.checkbox)
+                    .frame(width: Tokens.Control.icon, height: Tokens.Control.iconButton)
+                    .disabled(!isEditable)
+                    .accessibilityLabel("Include \(displayName)")
+                    .accessibilityIdentifier("organization.category.\(category.id).selected")
+                disclosureButton
+            }
+            .padding(Tokens.Space.s4)
+
+            if isExpanded {
+                Divider()
+                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    editingControls
+                    exampleList
+                }
+                .padding(Tokens.Space.s4)
+            }
+        }
+        .ternSurface()
+        .ternAnimation(value: isExpanded)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var disclosureButton: some View {
+        Button { isExpanded.toggle() } label: {
+            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                Image(systemName: "tag.fill")
+                    .font(.body)
+                    .foregroundStyle(tint)
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                    .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                        Text(displayName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .help(displayName)
+                        Spacer(minLength: 0)
+                        TernBadge(text: "\(examples.count)")
+                            .accessibilityHidden(true)
+                    }
+                    Text(category.proposal.explanation)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(isExpanded ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: Tokens.Space.s2) {
+                        Text(reusesLabel ? "Existing label" : "New label")
+                        Text("·").accessibilityHidden(true)
+                        Text(category.createsFilter && hasRecurringSenders ? "Future mail" : "Recent mail only")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, Tokens.Space.s1)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: Tokens.Space.s4, height: Tokens.Control.iconButton)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .ternHover()
+        .accessibilityLabel("\(displayName), \(examples.count) \(examples.count == 1 ? "message" : "messages"), \(reusesLabel ? "existing label" : "new label"), \(category.createsFilter && hasRecurringSenders ? "future mail filter" : "recent mail only")")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("\(category.proposal.explanation) \(isExpanded ? "Hide" : "Show") examples and label options.")
+        .accessibilityIdentifier("organization.category.\(category.id).disclosure")
+    }
+
+    private var editingControls: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("Label name").font(.caption).foregroundStyle(.secondary)
                 TextField("Label name", text: $category.name)
                     .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Gmail label name for \(category.proposal.name)")
-                Label(reusesLabel ? "Uses an existing Gmail label" : "Creates a Gmail label",
-                      systemImage: reusesLabel ? "tag" : "tag.badge.plus")
+                    .accessibilityLabel("Gmail label name for \(displayName)")
+                    .disabled(!isEditable || !category.isSelected)
+            }
+
+            if hasRecurringSenders {
+                Toggle("Also label future mail", isOn: $category.createsFilter)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(!isEditable || !category.isSelected || !canCreateFilters)
+                Text(category.proposal.ruleSenders.joined(separator: ", "))
                     .font(.caption).foregroundStyle(.secondary)
-
-                if category.proposal.kind == .topic && !category.proposal.ruleSenders.isEmpty {
-                    Toggle("Label future mail from these senders", isOn: $category.createsFilter)
-                        .toggleStyle(.switch)
-                        .disabled(!canCreateFilters)
-                    Text(category.proposal.ruleSenders.joined(separator: ", "))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                    SettingsNote("The Gmail filters match all new incoming messages from these addresses, regardless of their topic.")
-                } else {
-                    SettingsNote(category.proposal.kind == .topic
-                        ? "Applies to these sampled messages. There isn't enough consistent sender history for an automatic filter."
-                        : "Applies to these sampled messages. These labels do not clear automatically when a reply arrives.")
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                SettingsNote("The filter matches all incoming mail from these addresses.")
+                if !canCreateFilters && !samples.isPartial && isEditable {
+                    SettingsNote("Enable Gmail Settings in Connections to create future filters.", systemImage: "lock")
                 }
+            } else if category.proposal.kind != .topic {
+                SettingsNote("These labels do not clear automatically when a reply arrives.")
+            } else {
+                SettingsNote("This label applies to the sample. More consistent sender history is needed for a future filter.")
+            }
+        }
+    }
 
-                DisclosureGroup("\(examples.count) sampled \(examples.count == 1 ? "message" : "messages")") {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        ForEach(examples, id: \.messageID) { message in
-                            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                                Text(message.subject.isEmpty ? "(No subject)" : message.subject)
-                                    .font(.callout).lineLimit(2)
-                                Text("\(message.isSent ? "Sent" : "Received") · \(message.sender)")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+    private var exampleList: some View {
+        let shown = Array(examples.prefix(visibleExampleCount))
+        return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Examples").font(.subheadline.weight(.semibold))
+                Spacer(minLength: Tokens.Space.s2)
+                Text("\(shown.count) of \(examples.count)").font(.caption).foregroundStyle(.secondary)
+            }
+            VStack(spacing: 0) {
+                ForEach(shown, id: \.messageID) { message in
+                    MailOrganizationExampleRow(message: message)
+                        .padding(Tokens.Space.s3)
+                    if message.messageID != shown.last?.messageID {
+                        Divider().padding(.horizontal, Tokens.Space.s3)
                     }
-                    .padding(.top, Tokens.Space.s2)
                 }
             }
-            .disabled(!category.isSelected)
+            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
+            if examples.count > 4 {
+                HStack(spacing: Tokens.Space.s3) {
+                    if shown.count < examples.count {
+                        Button("Show \(min(4, examples.count - shown.count)) More") { visibleExampleCount += 4 }
+                            .accessibilityIdentifier("organization.category.\(category.id).showMore")
+                    }
+                    if visibleExampleCount > 4 {
+                        Button("Show Less") { visibleExampleCount = 4 }
+                    }
+                }
+                .buttonStyle(.borderless)
+                .font(.callout)
+            }
         }
     }
 }

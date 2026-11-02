@@ -34,11 +34,19 @@ struct MailOrganizationReviewCategory: Identifiable {
 final class MailOrganizationModel {
     enum Phase { case idle, reading, analyzing, review, applying, queued, complete }
     typealias Authorized = @Sendable () async -> Bool
-    typealias ReadSamples = @MainActor (MailOrganizationAccess, @escaping Authorized) async throws -> MailOrganizationSamples
+    typealias Progress = @Sendable (MailOrganizationSamplingProgress) async -> Void
+    typealias ReadSamples = @MainActor (MailOrganizationAccess, @escaping Authorized, @escaping Progress) async throws -> MailOrganizationSamples
     typealias Analyze = @Sendable (MailOrganizationSamples, String, @escaping Authorized) async throws -> OrganizationPlan
     typealias Apply = @MainActor ([OrganizationApplicationCategory], MailOrganizationSamples, @escaping Authorized) async throws -> OrganizationApplicationReceipt
 
-    private(set) var phase: Phase = .idle
+    private(set) var phase: Phase = .idle {
+        didSet {
+            if phase != oldValue { phaseStartedAt = phase == .idle ? nil : Date() }
+        }
+    }
+    private(set) var samplingProgress: MailOrganizationSamplingProgress?
+    private(set) var analysisStartedAt: Date?
+    private(set) var phaseStartedAt: Date?
     private(set) var samples: MailOrganizationSamples?
     private(set) var errorMessage: String?
     private(set) var delivery: OrganizationApplicationStatus?
@@ -102,15 +110,17 @@ final class MailOrganizationModel {
         let expected = access()
         snapshot = expected
         let job = generation
+        analysisStartedAt = Date()
         phase = .reading
         operation = Task { [weak self] in
             guard let self else { return }
             do {
-                let loaded = try await readSamples(expected, authorization(job, expected))
+                let loaded = try await readSamples(expected, authorization(job, expected), progress(job, expected))
                 try check(job, expected)
                 guard loaded.accountID == expected.accountID, !loaded.messages.isEmpty else {
                     errorMessage = "No recent messages were available to analyze. Try again after Gmail finishes syncing."
                     phase = .idle
+                    samplingProgress = nil; analysisStartedAt = nil
                     return
                 }
                 samples = loaded
@@ -128,6 +138,7 @@ final class MailOrganizationModel {
             } catch {
                 guard acceptsFailure(job, expected) else { return }
                 samples = nil; categories = []; phase = .idle
+                samplingProgress = nil; analysisStartedAt = nil
                 errorMessage = (error as? MailOrganizationError)?.localizedDescription
                     ?? "Couldn't analyze these messages. Check the Google and ChatGPT connections, then try again."
             }
@@ -193,6 +204,7 @@ final class MailOrganizationModel {
     func clear() {
         generation = UUID(); operation?.cancel(); operation = nil
         samples = nil; categories = []; receipt = nil; delivery = nil
+        samplingProgress = nil; analysisStartedAt = nil; phaseStartedAt = nil
         snapshot = nil; errorMessage = nil; phase = .idle
     }
 
@@ -200,6 +212,17 @@ final class MailOrganizationModel {
 
     private func authorization(_ job: UUID, _ expected: MailOrganizationAccess) -> Authorized {
         { [weak self] in await MainActor.run { self?.isCurrent(job, expected) == true } }
+    }
+
+    private func progress(_ job: UUID, _ expected: MailOrganizationAccess) -> Progress {
+        { [weak self] value in
+            await MainActor.run {
+                guard let self, self.generation == job else { return }
+                self.refreshAccess()
+                guard self.isCurrent(job, expected), self.phase == .reading else { return }
+                self.samplingProgress = value
+            }
+        }
     }
 
     private func isCurrent(_ job: UUID, _ expected: MailOrganizationAccess) -> Bool {

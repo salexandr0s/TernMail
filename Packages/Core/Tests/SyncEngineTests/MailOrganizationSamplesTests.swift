@@ -16,7 +16,8 @@ import Testing
             try organizationPage((0..<150).map { "m\($0)" } + ["m0"], next: "more"),
             try organizationPage((150..<260).map { "m\($0)" })
         ])
-        let samples = try await engine.organizationSamples()
+        let progress = OrganizationProgressRecorder()
+        let samples = try await engine.organizationSamples(progress: { await progress.append($0) })
         #expect(samples.accountID == account)
         #expect(samples.selectedCount == 250)
         #expect(samples.messages.count == 250)
@@ -35,6 +36,11 @@ import Testing
         #expect(try await cache.read { try $0.pendingActions(accountID: account) }.isEmpty)
         #expect(try await cache.read { try $0.syncState(accountID: account) }?.historyID == 90)
         #expect(try await cache.read { try $0.heldThreadIDs(accountID: account) } == ["shared"])
+        let updates = await progress.values
+        #expect(updates.first == .init(stage: .labels))
+        #expect(updates.filter { $0.stage == .listing }.map(\.selectedCount) == [0, 150, 250])
+        #expect(updates.filter { $0.stage == .reading }.map(\.processedCount) == Array(stride(from: 0, through: 250, by: 25)))
+        #expect(updates.filter { $0.stage == .reading }.allSatisfy { $0.selectedCount == 250 })
     }
 
     @Test func excludesIneligibleAndMissingMailWithExplicitPartialCoverage() async throws {
@@ -43,12 +49,14 @@ import Testing
             await gmail.add(try organizationMessage(id, labels: labels))
         }
         await gmail.setRecentPages([try organizationPage(["good", "draft", "spam", "trash", "missing"])])
-        let samples = try await engine.organizationSamples()
+        let progress = OrganizationProgressRecorder()
+        let samples = try await engine.organizationSamples(progress: { await progress.append($0) })
         #expect(samples.messages.map(\.messageID) == ["good"])
         #expect(samples.selectedCount == 5)
         #expect(samples.unavailableCount == 4)
         #expect(samples.isPartial)
         #expect(await gmail.changes.isEmpty)
+        #expect(await progress.values.last == .init(stage: .reading, processedCount: 5, selectedCount: 5))
     }
 
     @Test func cancellationAfterMetadataResponseDoesNotCacheOrReturnPrivateSamples() async throws {
@@ -57,7 +65,7 @@ import Testing
         await gmail.setRecentPages([try organizationPage(["held"])])
         await gmail.holdNextMetadata()
         let access = OrganizationSampleAccess()
-        let task = Task { try await engine.organizationSamples { await access.allowed } }
+        let task = Task { try await engine.organizationSamples(isAuthorized: { await access.allowed }) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !(await gmail.isHoldingMetadata), ContinuousClock.now < deadline { await Task.yield() }
         #expect(await gmail.isHoldingMetadata)
@@ -65,6 +73,19 @@ import Testing
         await gmail.releaseMetadata()
         await #expect(throws: AssistantMailError.accessChanged) { try await task.value }
         #expect(try await cache.read { try $0.message(id: "held", accountID: account) } == nil)
+        #expect(await gmail.changes.isEmpty)
+    }
+
+    @Test func permissionRevokedDuringProgressStopsTheNextNetworkRequest() async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        let access = OrganizationSampleAccess()
+        await #expect(throws: AssistantMailError.accessChanged) {
+            try await engine.organizationSamples(isAuthorized: { await access.allowed }, progress: { _ in
+                await access.revoke()
+            })
+        }
+        #expect(await gmail.labelListRequests == 0)
+        #expect(await gmail.metadataRequests.isEmpty)
         #expect(await gmail.changes.isEmpty)
     }
 
@@ -106,6 +127,11 @@ import Testing
 private actor OrganizationSampleAccess {
     private(set) var allowed = true
     func revoke() { allowed = false }
+}
+
+private actor OrganizationProgressRecorder {
+    private(set) var values: [MailOrganizationSamplingProgress] = []
+    func append(_ value: MailOrganizationSamplingProgress) { values.append(value) }
 }
 
 private func organizationPage(_ ids: [String], next: String? = nil) throws -> MessageListPage {

@@ -1,6 +1,21 @@
 import Foundation
 import GmailAPI
 
+/// Progress counts attempted metadata reads, including unavailable messages.
+/// The selected total becomes final when reading begins.
+public struct MailOrganizationSamplingProgress: Sendable, Equatable {
+    public enum Stage: Sendable, Equatable { case labels, listing, reading }
+    public let stage: Stage
+    public let processedCount: Int
+    public let selectedCount: Int
+
+    public init(stage: Stage, processedCount: Int = 0, selectedCount: Int = 0) {
+        self.stage = stage
+        self.processedCount = processedCount
+        self.selectedCount = selectedCount
+    }
+}
+
 /// Account-bound metadata for one organization review. No bodies or attachments.
 public struct MailOrganizationSamples: Sendable, Equatable {
     public let accountID: String

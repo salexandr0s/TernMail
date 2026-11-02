@@ -40,6 +40,7 @@ import TernAI
         #expect(model.phase == .complete)
         model.clear()
         #expect(model.samples == nil && model.categories.isEmpty && model.receipt == nil)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
     }
 
     @Test(arguments: [true, false])
@@ -85,6 +86,7 @@ import TernAI
         await completion.value
         #expect(model.phase == .idle)
         #expect(model.samples == nil && model.categories.isEmpty)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
         #expect(!model.canApply)
         #expect(harness.applied.isEmpty)
     }
@@ -100,6 +102,61 @@ import TernAI
         #expect(harness.applied.isEmpty)
         model.refreshAccess()
         #expect(model.samples == nil && model.categories.isEmpty)
+    }
+
+    @Test func progressFollowsTheCurrentReadAndIgnoresLateCallbacks() async throws {
+        let harness = OrganizationModelHarness()
+        let reading = OrganizationSamplingGate(samples: harness.samples)
+        let analyzing = OrganizationAnalysisGate()
+        var reports: [MailOrganizationModel.Progress] = []
+        let model = harness.makeModel(readSamples: { _, _, progress in
+            reports.append(progress)
+            await progress(.init(stage: .reading, processedCount: reports.count == 1 ? 1 : 3, selectedCount: 3))
+            if reports.count == 1 { return await reading.result() }
+            return harness.samples
+        }, analyze: { _, _, _ in await analyzing.result() })
+
+        model.startAnalysis()
+        await reading.waitUntilStarted()
+        #expect(model.phase == .reading)
+        #expect(model.samplingProgress == .init(stage: .reading, processedCount: 1, selectedCount: 3))
+        #expect(model.analysisStartedAt != nil && model.phaseStartedAt != nil)
+        let cancelled = Task { await model.waitForOperation() }
+        await Task.yield()
+        model.clear()
+        await reports[0](.init(stage: .reading, processedCount: 2, selectedCount: 3))
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
+        await reading.release()
+        await cancelled.value
+
+        model.startAnalysis()
+        await analyzing.waitUntilStarted()
+        #expect(model.phase == .analyzing)
+        let finalRead = try #require(model.samplingProgress)
+        let phaseStarted = try #require(model.phaseStartedAt)
+        let analysisStarted = try #require(model.analysisStartedAt)
+        #expect(finalRead.processedCount == 3)
+        #expect(phaseStarted >= analysisStarted)
+        await reports[0](.init(stage: .reading, processedCount: 2, selectedCount: 3))
+        await reports[1](.init(stage: .reading, processedCount: 2, selectedCount: 3))
+        #expect(model.samplingProgress == finalRead)
+        #expect(model.phaseStartedAt == phaseStarted)
+        await analyzing.release()
+        await model.waitForOperation()
+        #expect(model.phase == .review)
+    }
+
+    @Test func failedReadClearsProgressAndTimestamps() async {
+        let harness = OrganizationModelHarness()
+        let model = harness.makeModel(readSamples: { _, _, progress in
+            await progress(.init(stage: .listing, selectedCount: 20))
+            throw AIProviderError.network
+        })
+        model.startAnalysis()
+        await model.waitForOperation()
+        #expect(model.phase == .idle)
+        #expect(model.errorMessage != nil)
+        #expect(model.samplingProgress == nil && model.analysisStartedAt == nil && model.phaseStartedAt == nil)
     }
 
     @Test func revokedAccessDuringTokenRefreshStopsMetadataBeforeTransport() async throws {
@@ -143,8 +200,9 @@ import TernAI
         }, existingLabels: [], selectedCount: partial ? 4 : 3, unavailableCount: partial ? 1 : 0, isPartial: partial)
     }
 
-    func makeModel(analyze: MailOrganizationModel.Analyze? = nil) -> MailOrganizationModel {
-        MailOrganizationModel(access: { self.access }, readSamples: { _, isAuthorized in
+    func makeModel(readSamples: MailOrganizationModel.ReadSamples? = nil,
+                   analyze: MailOrganizationModel.Analyze? = nil) -> MailOrganizationModel {
+        MailOrganizationModel(access: { self.access }, readSamples: readSamples ?? { _, isAuthorized, _ in
             guard await isAuthorized() else { throw CancellationError() }
             return self.samples
         }, analyze: analyze ?? { _, _, _ in Self.plan }, apply: { categories, samples, isAuthorized in
@@ -171,6 +229,28 @@ import TernAI
                 messageIDs: ["m3"], ruleSenders: []),
         ], analyzedCount: 3)
     }
+}
+
+private actor OrganizationSamplingGate {
+    let samples: MailOrganizationSamples
+    private var continuation: CheckedContinuation<MailOrganizationSamples, Never>?
+    private var started: CheckedContinuation<Void, Never>?
+
+    init(samples: MailOrganizationSamples) { self.samples = samples }
+
+    func result() async -> MailOrganizationSamples {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            started?.resume(); started = nil
+        }
+    }
+
+    func waitUntilStarted() async {
+        if continuation != nil { return }
+        await withCheckedContinuation { started = $0 }
+    }
+
+    func release() { continuation?.resume(returning: samples); continuation = nil }
 }
 
 private actor OrganizationAnalysisGate {

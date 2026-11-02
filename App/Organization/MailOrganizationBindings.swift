@@ -27,11 +27,11 @@ enum MailOrganizationBindings {
                     connectionRevision: 0, modelID: nil, mailAccessEnabled: false, canCreateFilters: false)
             }
             return access(app: app, accountID: accountID, connection: connection)
-        }, readSamples: { [weak app] expected, isAuthorized in
+        }, readSamples: { [weak app] expected, isAuthorized, progress in
             guard let app, let owner = app.mailbox?.account(id: accountID),
                   String(describing: ObjectIdentifier(owner)) == expected.instanceID,
                   await isAuthorized() else { throw AssistantMailError.accessChanged }
-            return try await owner.engine.organizationSamples(isAuthorized: isAuthorized)
+            return try await owner.engine.organizationSamples(isAuthorized: isAuthorized, progress: progress)
         }, analyze: { [weak chatGPT] samples, modelID, isAuthorized in
             guard await isAuthorized() else { throw AssistantMailError.accessChanged }
             let provider = scopedProvider(accessToken: { [weak chatGPT] in

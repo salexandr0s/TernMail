@@ -9,12 +9,13 @@ extension SyncEngine {
     /// Ordinary message metadata joins the cache for exact-message label overlays.
     /// This read never changes Gmail, downloads bodies, or advances a sync cursor.
     public func organizationSamples(
-        isAuthorized: @escaping @Sendable () async -> Bool = { true }
+        isAuthorized: @escaping @Sendable () async -> Bool = { true },
+        progress: @escaping @Sendable (MailOrganizationSamplingProgress) async -> Void = { _ in }
     ) async throws -> MailOrganizationSamples {
         typealias Limits = MailOrganizationSampleLimits
-        try await organizationCheckAccess(isAuthorized)
+        try await organizationReport(.init(stage: .labels), progress: progress, isAuthorized: isAuthorized)
         let labels = try await gmail.labels()
-        try await organizationCheckAccess(isAuthorized)
+        try await organizationReport(.init(stage: .listing), progress: progress, isAuthorized: isAuthorized)
         var selected: [MessageRef] = []
         var seen = Set<String>()
         var tokens = Set<String>()
@@ -45,6 +46,8 @@ extension SyncEngine {
                 if seen.insert(reference.id).inserted { selected.append(reference) }
                 if selected.count == Limits.messages { break }
             }
+            try await organizationReport(.init(stage: .listing, selectedCount: selected.count),
+                                         progress: progress, isAuthorized: isAuthorized)
             if selected.count == Limits.messages || page.nextPageToken == nil {
                 finished = true
                 break
@@ -61,6 +64,9 @@ extension SyncEngine {
 
         var samples: [MailOrganizationSample] = []
         var updates: [CacheTransaction.MessageUpdate] = []
+        var processed = 0
+        try await organizationReport(.init(stage: .reading, selectedCount: selected.count),
+                                     progress: progress, isAuthorized: isAuthorized)
         for start in stride(from: 0, to: selected.count, by: Limits.batchSize) {
             try await organizationCheckAccess(isAuthorized)
             let batch = Array(selected[start..<min(start + Limits.batchSize, selected.count)])
@@ -73,6 +79,9 @@ extension SyncEngine {
                 try await organizationCheckAccess(isAuthorized)
                 if Self.organizationAccessError(error) { throw error }
                 partial = true
+                processed += batch.count
+                try await organizationReport(.init(stage: .reading, processedCount: processed, selectedCount: selected.count),
+                                             progress: progress, isAuthorized: isAuthorized)
                 continue
             }
             for reference in batch {
@@ -105,6 +114,9 @@ extension SyncEngine {
                     isSent: labelIDs.contains(SystemLabel.sent), labelIDs: labelIDs))
                 updates.append(update)
             }
+            processed += batch.count
+            try await organizationReport(.init(stage: .reading, processedCount: processed, selectedCount: selected.count),
+                                         progress: progress, isAuthorized: isAuthorized)
         }
         try await organizationCheckAccess(isAuthorized)
         let accountID = accountID
@@ -131,6 +143,17 @@ extension SyncEngine {
         return .init(accountID: accountID, messages: samples, existingLabels: labels,
                      selectedCount: selected.count, unavailableCount: selected.count - samples.count,
                      isPartial: partial || samples.count < selected.count)
+    }
+
+    private func organizationReport(
+        _ value: MailOrganizationSamplingProgress,
+        progress: @Sendable (MailOrganizationSamplingProgress) async -> Void,
+        isAuthorized: @Sendable () async -> Bool
+    ) async throws {
+        try await organizationCheckAccess(isAuthorized)
+        await progress(value)
+        // Reporting can suspend across cancellation or a permission change.
+        try await organizationCheckAccess(isAuthorized)
     }
 
     private func organizationCheckAccess(_ isAuthorized: @Sendable () async -> Bool) async throws {
