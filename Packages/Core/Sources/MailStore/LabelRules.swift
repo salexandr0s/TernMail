@@ -153,6 +153,7 @@ extension CacheTransaction {
             }
             row.addLabelIDs = row.addLabelIDs.map(swap)
             row.removeLabelIDs = row.removeLabelIDs.map(swap)
+            row.settingsChange = row.settingsChange?.mappingLabelIDs(swap)
             row.diff = row.diff.mapValues { .init(added: $0.added.map(swap), removed: $0.removed.map(swap)) }
             guard row != before else { continue }
             try row.update(db)
@@ -185,6 +186,15 @@ extension CacheTransaction {
         let neverCreated = LabelRules.isTemporary(labelID)
         var deleted: [Int64] = []
         for var row in try pendingActions(accountID: accountID) where row.state == .queued {
+            if row.settingsChange?.requiredLabelIDs.contains(labelID) == true {
+                if neverCreated, row.kind == .createFilter {
+                    try row.delete(db)
+                } else {
+                    try retainFailedAction(row, message: "This filter needs a label that was deleted.")
+                }
+                deleted += row.id.map { [$0] } ?? []
+                continue
+            }
             if row.kind.changesLabel {
                 guard row.labelID == labelID else { continue }
                 try row.delete(db)

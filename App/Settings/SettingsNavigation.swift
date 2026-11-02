@@ -6,7 +6,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     case connections, accountPreferences, profiles
     case reading, messageList, attachments
     case writing, templates, signatures, suggestions
-    case filters, blocked, vacation, calendar
+    case organizeMail, filters, blocked, vacation, calendar
     case assistant, failedChanges, maintenance
     var id: String { rawValue }
     /// The `UserDefaults` key holding the pane the window shows. Other windows
@@ -48,6 +48,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .templates: "Templates"
         case .signatures: "Signatures"
         case .suggestions: "Suggestions"
+        case .organizeMail: "Organize Mail"
         case .filters: "Filters"
         case .blocked: "Blocked Senders"
         case .vacation: "Vacation Responder"
@@ -73,6 +74,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .templates: "doc.on.doc"
         case .signatures: "signature"
         case .suggestions: "person.crop.circle.badge.checkmark"
+        case .organizeMail: "tag"
         case .filters: "line.3.horizontal.decrease.circle"
         case .blocked: "person.crop.circle.badge.xmark"
         case .vacation: "sun.max"
@@ -104,7 +106,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .reading, .messageList: .blue
         case .attachments: .cyan
         case .writing, .templates, .signatures, .suggestions: .purple
-        case .filters, .blocked, .failedChanges: .orange
+        case .organizeMail, .filters, .blocked, .failedChanges: .orange
         case .vacation: .teal
         case .calendar: .mint
         }
@@ -125,6 +127,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .templates: "reusable replies canned responses"
         case .signatures: "local gmail new messages replies separator send as identity footer"
         case .suggestions: "recipients autocomplete hide hidden addresses"
+        case .organizeMail: "gmail labels categories rules newsletters action waiting accounts finance personalized ai organize"
         case .filters: "gmail rules incoming forwarding labels delete archive"
         case .blocked: "gmail spam block email address"
         case .vacation: "automatic reply away out of office autoresponder dates"
@@ -154,7 +157,7 @@ struct SettingsNavigationSection: Identifiable, Sendable {
         SettingsNavigationSection(title: "Accounts", destinations: [.connections, .accountPreferences, .profiles]),
         SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .attachments]),
         SettingsNavigationSection(title: "Composing", destinations: [.writing, .templates, .signatures, .suggestions]),
-        SettingsNavigationSection(title: "Google", destinations: [.filters, .blocked, .vacation, .calendar]),
+        SettingsNavigationSection(title: "Google", destinations: [.organizeMail, .filters, .blocked, .vacation, .calendar]),
         SettingsNavigationSection(title: "Tools", destinations: [.assistant, .failedChanges, .maintenance])
     ]
 

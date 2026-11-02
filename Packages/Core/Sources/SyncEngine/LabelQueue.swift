@@ -418,7 +418,7 @@ extension SyncEngine {
         }
         guard let result else { return }
         for row in result.changed {
-            if let id = row.id { undoReceipts[id]?.value?.update(row) }
+            updateReceipts(row)
         }
         if !result.keptDeletes.isEmpty {
             unavailableUndoIDs.formUnion(result.keptDeletes)
@@ -462,7 +462,8 @@ extension SyncEngine {
                 var dependents = [id]
                 for dependent in try tx.pendingActions(accountID: accountID) where dependent.state == .queued {
                     guard dependent.labelID == labelID || dependent.labelChange?.parentLabelID == labelID
-                            || (dependent.addLabelIDs + dependent.removeLabelIDs).contains(labelID) else { continue }
+                            || (dependent.addLabelIDs + dependent.removeLabelIDs).contains(labelID)
+                            || dependent.settingsChange?.requiredLabelIDs.contains(labelID) == true else { continue }
                     try tx.retainFailedAction(dependent, message: "This change needs a label that Gmail couldn't create. Retry the label first.")
                     dependents += dependent.id.map { [$0] } ?? []
                 }

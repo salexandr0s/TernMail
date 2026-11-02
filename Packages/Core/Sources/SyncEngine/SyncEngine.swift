@@ -170,7 +170,7 @@ public actor SyncEngine {
     /// Undo receipts exist only for this engine's lifetime. Remember rejected
     /// and consumed row IDs even after history has removed the queue rows.
     var unavailableUndoIDs = Set<Int64>()
-    var undoReceipts: [Int64: WeakActionReceipt] = [:]
+    var undoReceipts: [Int64: [WeakActionReceipt]] = [:]
     private(set) var isStopped = false
     /// Set as `stop()` begins. A lock, so another engine's write that adds
     /// rows for this account can check it inside its transaction.
