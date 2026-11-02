@@ -6,6 +6,7 @@ struct FilterEditorSheet: View {
     let original: GmailFilter?
     @State private var draft: FilterEditorDraft
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var fromFocused: Bool
 
     init(model: SettingsModel, original: GmailFilter?, initialCriteria: GmailFilter.Criteria? = nil) {
         self.model = model
@@ -23,11 +24,15 @@ struct FilterEditorSheet: View {
         ) {
             Form {
                 criteriaSection
+                deliverySection
                 actionsSection
+                forwardingSection
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .frame(height: Tokens.Settings.editorMaxContentHeight)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(minHeight: 0, maxHeight: .infinity)
+            .clipped()
         } actions: {
             Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
             if model.isSaving { ProgressView().controlSize(.small) }
@@ -40,11 +45,13 @@ struct FilterEditorSheet: View {
             .disabled(!model.canEdit || validation != nil)
         }
         .interactiveDismissDisabled(model.isSaving)
+        .onAppear { fromFocused = true }
     }
 
     private var criteriaSection: some View {
-        Section("Match incoming messages") {
+        Section {
             TextField("From", text: $draft.from)
+                .focused($fromFocused)
             TextField("To", text: $draft.to)
             TextField("Subject", text: $draft.subject)
             TextField("Has the words", text: $draft.query)
@@ -63,16 +70,25 @@ struct FilterEditorSheet: View {
             }
             Toggle("Has attachment", isOn: $draft.hasAttachment)
             Toggle("Exclude chats", isOn: $draft.excludeChats)
+        } header: {
+            Text("Match incoming messages")
+        } footer: {
+            Text("Leave a field empty to ignore it.")
+        }
+    }
+
+    private var deliverySection: some View {
+        Section("Delivery") {
+            Toggle("Skip the Inbox", isOn: $draft.skipInbox)
+            Toggle("Move to Trash", isOn: $draft.trash)
+            Toggle("Never send to Spam", isOn: $draft.neverSpam)
         }
     }
 
     private var actionsSection: some View {
-        Section {
-            Toggle("Skip the Inbox", isOn: $draft.skipInbox)
+        Section("Organize matching mail") {
             Toggle("Mark as read", isOn: $draft.markRead)
             Toggle("Star", isOn: $draft.star)
-            Toggle("Never send to Spam", isOn: $draft.neverSpam)
-            Toggle("Move to Trash", isOn: $draft.trash)
             SettingsControlRow("Importance") {
                 Picker("Importance", selection: $draft.importance) {
                     Text("Leave unchanged").tag(0)
@@ -90,6 +106,11 @@ struct FilterEditorSheet: View {
                 }
                 .frame(maxWidth: Tokens.Settings.pickerWidth)
             }
+        }
+    }
+
+    private var forwardingSection: some View {
+        Section {
             SettingsControlRow("Forward to") {
                 Picker("Forward to", selection: $draft.forward) {
                     Text("No forwarding").tag("")
@@ -105,7 +126,7 @@ struct FilterEditorSheet: View {
                 .help(draft.forward)
             }
         } header: {
-            Text("Then")
+            Text("Forwarding")
         } footer: {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text("Add and verify forwarding addresses in Gmail before using them here.")

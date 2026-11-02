@@ -108,6 +108,13 @@ struct ProfilesView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .font(.caption).foregroundStyle(.secondary)
+            if accounts.isEmpty {
+                Button("Assign Accounts…") {
+                    SettingsNavigationRequests.shared.request(.accountPreferences)
+                }
+                .accessibilityLabel("Assign accounts to \(profile.name)")
+                .accessibilityHint("Opens Account Settings. Choose an account, then select this profile.")
+            }
         }
         .padding(.vertical, Tokens.Space.s1)
     }
@@ -131,12 +138,35 @@ struct ProfilesView: View {
 
     private func scheduleSummary(_ schedule: ProfileNotificationSchedule) -> String {
         switch schedule {
-        case .unrestricted: "Any time"
-        case .off: "Notifications off"
-        case .everyDay: "Daily hours"
-        case .weekdays: "Weekday hours"
-        case .custom: "Custom hours"
+        case .unrestricted: return "Notifications at any time"
+        case .off: return "Notifications off"
+        case .everyDay(let ranges):
+            return ranges.isEmpty ? "No notification hours" : "Every day · \(hoursSummary(ranges))"
+        case .weekdays(let ranges):
+            return ranges.isEmpty ? "No notification hours" : "Weekdays · \(hoursSummary(ranges))"
+        case .custom(let days):
+            var groups: [(hours: String, days: [String])] = []
+            let names = Calendar.autoupdatingCurrent.shortWeekdaySymbols
+            for day in ISOWeekday.allCases {
+                guard let ranges = days[day], !ranges.isEmpty else { continue }
+                let hours = hoursSummary(ranges)
+                let name = names[day.rawValue % 7]
+                if let index = groups.firstIndex(where: { $0.hours == hours }) {
+                    groups[index].days.append(name)
+                } else {
+                    groups.append((hours: hours, days: [name]))
+                }
+            }
+            return groups.isEmpty ? "No notification hours" : groups.map {
+                "\($0.days.joined(separator: ", ")) · \($0.hours)"
+            }.joined(separator: "; ")
         }
+    }
+
+    private func hoursSummary(_ ranges: [DailyTimeRange]) -> String {
+        ranges.map {
+            "\($0.startTime.formatted(date: .omitted, time: .shortened))–\($0.endTime.formatted(date: .omitted, time: .shortened))"
+        }.joined(separator: ", ")
     }
 }
 

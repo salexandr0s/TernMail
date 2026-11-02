@@ -494,6 +494,7 @@
 		F17E1C0370C9B4C6A26DE8B6 /* MailToolbarActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8F3C0381240F67DC8DAA44 /* MailToolbarActions.swift */; };
 		F2363F53FE38E99423D519FB /* AssistantDiagramLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167830634175ACE25ADE4A4D /* AssistantDiagramLayout.swift */; };
 		F30F3479CE1DB2800A01C2DA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19D12B162EB349AF712B075 /* OnboardingView.swift */; };
+		F45EA3884DA3C26F8B1DD18E /* SettingsSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBFBDB74B430F131368B495 /* SettingsSidebar.swift */; };
 		F54AC79D5C044CB2AD107655 /* AttachmentChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FB78A80DB609E8F1B551E96 /* AttachmentChip.swift */; };
 		F5607B390E7F91BA8BFA7F32 /* CalendarSidebarVisualAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41076FA773ACDDF11C3071BE /* CalendarSidebarVisualAudit.swift */; };
 		F5829BFC12FE1A6E22977C5D /* MailboxModel+Reading.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD5BAE3966376BC09D235ABB /* MailboxModel+Reading.swift */; };
@@ -975,6 +976,7 @@
 		DC15FBA92C4C43F3FF31B932 /* MessageListHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListHeader.swift; sourceTree = "<group>"; };
 		DD6205EBA779F2BE40B6F7A5 /* AssistantSidebarLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSidebarLayout.swift; sourceTree = "<group>"; };
 		DDB703773AA5A7152A3E3FA5 /* ReaderFindBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderFindBar.swift; sourceTree = "<group>"; };
+		DDBFBDB74B430F131368B495 /* SettingsSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSidebar.swift; sourceTree = "<group>"; };
 		DDD2386BF48FDB67B7F118E4 /* OnboardingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingUITests.swift; sourceTree = "<group>"; };
 		DDEC532495FD2A3C794B4C77 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		DDED45524A7D8FB43C18C976 /* ReadingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingPolicyTests.swift; sourceTree = "<group>"; };
@@ -1305,6 +1307,7 @@
 				212AD4DF872A901F71358EAD /* SettingsNavigation.swift */,
 				9DC34223EB5FB50CFBCD3B9C /* SettingsNavigationRequests.swift */,
 				BA57438AA2BEF861C115161B /* SettingsPanes.swift */,
+				DDBFBDB74B430F131368B495 /* SettingsSidebar.swift */,
 				849B44FA21088BA3520B375E /* SettingsSnapshot.swift */,
 				D345E1E07A7D5362FD396E40 /* SignaturesPane.swift */,
 				BB0A30A770408A3231F4632D /* VacationPane.swift */,
@@ -2381,6 +2384,7 @@
 				B160D9DE241FC09CD679D4D4 /* SettingsNavigation.swift in Sources */,
 				B20A579CBE276875C6D474DC /* SettingsNavigationRequests.swift in Sources */,
 				BBD5832EB0F99AF50D9DE0BE /* SettingsPanes.swift in Sources */,
+				F45EA3884DA3C26F8B1DD18E /* SettingsSidebar.swift in Sources */,
 				24F66D88CC6E1913CBA4A4CC /* SettingsSnapshot.swift in Sources */,
 				1149EFF44FC8FE6E735B8770 /* SettingsView.swift in Sources */,
 				BFE43CA7502271CF39B17249 /* ShareActions.swift in Sources */,

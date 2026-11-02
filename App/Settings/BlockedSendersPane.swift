@@ -16,8 +16,9 @@ struct BlockedSendersPane: View {
                         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                             Text("No sender-blocking filters")
                             Text("Filters that block individual senders appear here.")
-                                .font(.caption)
+                                .font(.callout)
                                 .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     } icon: {
                         Image(systemName: "person.crop.circle.badge.checkmark")
@@ -27,16 +28,30 @@ struct BlockedSendersPane: View {
                     ForEach(Array(blocked.enumerated()), id: \.offset) { _, filter in
                         LabeledContent {
                             Button("Unblock…") { unblocking = filter }
-                                .controlSize(.small)
+                                .fixedSize()
                                 .accessibilityLabel("Unblock \(filter.criteria.from ?? "sender")")
                                 .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
                         } label: {
-                            Text(filter.criteria.from ?? "")
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                                .help(filter.criteria.from ?? "")
+                            Label {
+                                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                                    Text(filter.criteria.from ?? "")
+                                        .font(.body.weight(.medium))
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
+                                        .textSelection(.enabled)
+                                        .help(filter.criteria.from ?? "")
+                                    Text(filter.id == nil ? "Waiting for Gmail" : "New messages go to Trash")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            } icon: {
+                                Image(systemName: "hand.raised")
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                            }
                         }
+                        .padding(.vertical, Tokens.Space.s1)
                     }
                 }
             } header: {

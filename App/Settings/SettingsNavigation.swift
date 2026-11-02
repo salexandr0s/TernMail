@@ -1,5 +1,5 @@
+import Foundation
 import Observation
-import SwiftUI
 
 enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     case general, mailActions, notifications
@@ -85,30 +85,39 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// A line above the pane for what its headers don't say. `nil` where it
-    /// would only list the pane's own sections.
-    var subtitle: String? {
+    /// A short purpose statement for the page header and search results.
+    var subtitle: String {
         switch self {
+        case .general: "Set up everyday defaults for using Tern."
+        case .mailActions: "Choose how keyboard actions and mail sounds behave."
+        case .notifications: "Choose which mail gets your attention and how you are notified."
         case .connections: "Add Google accounts and choose what each one shares with Tern."
+        case .accountPreferences: "Arrange your accounts and personalize how they appear."
         case .profiles: "Group your accounts and set notification hours."
+        case .reading: "Make conversations comfortable to read and control what loads."
+        case .messageList: "Choose what appears in your inbox and how you move through it."
+        case .attachments: "Choose where attachments are stored when you open them."
+        case .writing: "Choose your sender, formatting, and reply defaults."
         case .templates: "Save reusable messages to insert while writing."
         case .signatures: "Signatures on this Mac stay in Tern. Gmail signatures are saved to your Google account."
-        case .assistant: "Ask about your mail, summarize threads, and prepare replies."
-        default: nil
+        case .suggestions: "Choose which addresses appear when you add recipients."
+        case .organizeMail: "Find useful labels for your mail, then review what gets applied."
+        case .filters: "Set rules for how incoming mail is handled in Gmail."
+        case .blocked: "Review sender filters that move new messages to Trash."
+        case .vacation: "Send an automatic reply while you are away."
+        case .calendar: "Manage your calendars, sharing, and scheduling preferences."
+        case .assistant: "Connect ChatGPT and choose what your assistant can access."
+        case .failedChanges: "Review changes that could not finish and choose what happens next."
+        case .maintenance: "Manage downloaded mail and the storage it uses on this Mac."
         }
     }
 
-    var tint: Color {
+    /// Lists and editors can use a wider working area than preference forms.
+    var usesWideLayout: Bool {
         switch self {
-        case .general, .mailActions, .maintenance: .gray
-        case .notifications: .red
-        case .connections, .accountPreferences, .profiles, .assistant: .indigo
-        case .reading, .messageList: .blue
-        case .attachments: .cyan
-        case .writing, .templates, .signatures, .suggestions: .purple
-        case .organizeMail, .filters, .blocked, .failedChanges: .orange
-        case .vacation: .teal
-        case .calendar: .mint
+        case .accountPreferences, .templates, .signatures, .organizeMail,
+             .filters, .vacation, .calendar, .failedChanges: true
+        default: false
         }
     }
 
@@ -129,7 +138,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .suggestions: "recipients autocomplete hide hidden addresses"
         case .organizeMail: "gmail labels categories rules newsletters action waiting accounts finance personalized ai organize"
         case .filters: "gmail rules incoming forwarding labels delete archive"
-        case .blocked: "gmail spam block email address"
+        case .blocked: "gmail trash block sender filter email address"
         case .vacation: "automatic reply away out of office autoresponder dates"
         case .calendar: "calendars events subscriptions sharing scheduling availability"
         case .assistant: "chatgpt openai ai model writing style summaries privacy access"
@@ -139,7 +148,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     }
 
     func matches(_ query: String) -> Bool {
-        let searchable = "\(title) \(subtitle ?? "") \(searchTerms)"
+        let searchable = "\(title) \(subtitle) \(searchTerms)"
         return query.split(whereSeparator: \.isWhitespace).allSatisfy {
             searchable.localizedStandardContains(String($0))
         }
@@ -147,23 +156,18 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
 }
 
 struct SettingsNavigationSection: Identifiable, Sendable {
-    /// Empty for the first group, which shows no header, as in System Settings,
-    /// so General isn't named twice.
     let title: String
     let destinations: [SettingsDestination]
     var id: String { title }
     static let sections = [
-        SettingsNavigationSection(title: "", destinations: [.general, .mailActions, .notifications]),
+        SettingsNavigationSection(title: "Workspace", destinations: [.general, .notifications, .calendar, .assistant]),
         SettingsNavigationSection(title: "Accounts", destinations: [.connections, .accountPreferences, .profiles]),
-        SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .attachments]),
-        SettingsNavigationSection(title: "Composing", destinations: [.writing, .templates, .signatures, .suggestions]),
-        SettingsNavigationSection(title: "Google", destinations: [.organizeMail, .filters, .blocked, .vacation, .calendar]),
-        SettingsNavigationSection(title: "Tools", destinations: [.assistant, .failedChanges, .maintenance])
+        SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .mailActions, .attachments]),
+        SettingsNavigationSection(title: "Writing", destinations: [.writing, .templates, .signatures, .suggestions]),
+        SettingsNavigationSection(title: "Rules & Replies", destinations: [.organizeMail, .filters, .blocked, .vacation]),
+        SettingsNavigationSection(title: "Maintenance", destinations: [.failedChanges, .maintenance])
     ]
 
-    static func section(containing destination: SettingsDestination) -> SettingsNavigationSection? {
-        sections.first { $0.destinations.contains(destination) }
-    }
 }
 
 /// A pane whose edits only Save sends registers them here, so leaving the pane

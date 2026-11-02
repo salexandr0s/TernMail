@@ -16,7 +16,7 @@ struct FiltersPane: View {
                         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                             Text("No filters")
                             Text("Choose which messages to match and what happens when they arrive.")
-                                .font(.caption)
+                                .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -59,29 +59,29 @@ struct FiltersPane: View {
     }
 
     private func filterRow(_ filter: GmailFilter) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(summary(filter))
-                    .font(.body.weight(.medium))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                Text(actions(filter))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if filter.id == nil {
-                    Text("Saving…").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Text(summary(filter))
+                .font(.body.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            Label(actions(filter), systemImage: "arrow.turn.down.right")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: Tokens.Space.s2) {
+                if filter.id == nil {
+                    Label("Waiting for Gmail", systemImage: "clock")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
                 Button("Edit…") { editor = FilterEditorSelection(filter: filter) }
                     .accessibilityLabel("Edit filter: \(summary(filter))")
+                    .fixedSize()
                 Button("Delete…", role: .destructive) { deleting = filter }
                     .accessibilityLabel("Delete filter: \(summary(filter))")
+                    .fixedSize()
             }
-            .controlSize(.small)
-            .fixedSize()
             .disabled(!model.canEdit || filter.id == nil || model.pendingCount > 0)
         }
         .padding(.vertical, Tokens.Space.s1)
@@ -102,14 +102,29 @@ struct FiltersPane: View {
     }
 
     private func actions(_ filter: GmailFilter) -> String {
-        let adds = (filter.action.addLabelIds ?? []).map { id in
-            "Add \(model.labels.first(where: { $0.id == id })?.title ?? id)"
-        }
-        let removes = (filter.action.removeLabelIds ?? []).map { id in
-            "Remove \(model.labels.first(where: { $0.id == id })?.title ?? id)"
-        }
+        let adds = (filter.action.addLabelIds ?? []).map { labelAction($0, adding: true) }
+        let removes = (filter.action.removeLabelIds ?? []).map { labelAction($0, adding: false) }
         let forward = filter.action.forward.map { ["Forward to \($0)"] } ?? []
         return (adds + removes + forward).joined(separator: " · ")
+    }
+
+    private func labelAction(_ id: String, adding: Bool) -> String {
+        let name = model.labels.first(where: { $0.id == id })?.title ?? id
+        return switch (id, adding) {
+        case ("INBOX", true): "Move to Inbox"
+        case ("INBOX", false): "Skip the Inbox"
+        case ("UNREAD", true): "Mark as unread"
+        case ("UNREAD", false): "Mark as read"
+        case ("STARRED", true): "Star"
+        case ("STARRED", false): "Remove star"
+        case ("IMPORTANT", true): "Mark as important"
+        case ("IMPORTANT", false): "Mark as not important"
+        case ("TRASH", true): "Move to Trash"
+        case ("TRASH", false): "Remove from Trash"
+        case ("SPAM", true): "Send to Spam"
+        case ("SPAM", false): "Never send to Spam"
+        default: adding ? "Apply label: \(name)" : "Remove label: \(name)"
+        }
     }
 }
 

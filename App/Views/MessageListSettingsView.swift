@@ -3,9 +3,12 @@ import SwiftUI
 struct MessageListSettingsView: View {
     var mailbox: MailboxModel? = nil
     @Bindable var preferences = MessageListPreferences.shared
+    @Environment(\.layoutDirection) private var layoutDirection
     var body: some View {
         SettingsPage {
             Section("Appearance") {
+                MailListAppearancePreview(preferences: preferences)
+                    .accessibilityIdentifier("settings.messageList.preview")
                 SettingsControlRow("Density", detail: "Compact hides message previews.") {
                     Picker("Density", selection: $preferences.density) {
                         ForEach(MailListDensity.allCases) { Text($0.title).tag($0) }
@@ -14,7 +17,7 @@ struct MessageListSettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                SettingsToggleRow("Show account badges", isOn: $preferences.showsAccountBadges)
+                SettingsToggleRow("Show account badges", detail: "Identifies accounts in mailboxes that combine their mail.", isOn: $preferences.showsAccountBadges)
                 SettingsToggleRow("Show importance markers", isOn: $preferences.showsImportance)
                 SettingsToggleRow("Show quick filters", isOn: $preferences.showsQuickFilters)
             }
@@ -30,19 +33,27 @@ struct MessageListSettingsView: View {
                 }
             }
 
-            Section("Swipe actions") {
-                SettingsControlRow("Leading edge, first action") {
-                    swipePicker("Leading edge, first action", selection: $preferences.leadingFirst)
+            Section {
+                SettingsControlRow("First action") {
+                    swipePicker("\(leadingSwipeTitle), first action", selection: $preferences.leadingFirst)
                 }
-                SettingsControlRow("Leading edge, second action") {
-                    swipePicker("Leading edge, second action", selection: $preferences.leadingSecond)
+                SettingsControlRow("Second action") {
+                    swipePicker("\(leadingSwipeTitle), second action", selection: $preferences.leadingSecond)
                 }
-                SettingsControlRow("Trailing edge, first action") {
-                    swipePicker("Trailing edge, first action", selection: $preferences.trailingFirst)
+            } header: {
+                Label(leadingSwipeTitle, systemImage: layoutDirection == .leftToRight ? "arrow.right" : "arrow.left")
+            } footer: {
+                Text("Swipe a message to reveal these actions, then choose one.")
+            }
+            Section {
+                SettingsControlRow("First action") {
+                    swipePicker("\(trailingSwipeTitle), first action", selection: $preferences.trailingFirst)
                 }
-                SettingsControlRow("Trailing edge, second action") {
-                    swipePicker("Trailing edge, second action", selection: $preferences.trailingSecond)
+                SettingsControlRow("Second action") {
+                    swipePicker("\(trailingSwipeTitle), second action", selection: $preferences.trailingSecond)
                 }
+            } header: {
+                Label(trailingSwipeTitle, systemImage: layoutDirection == .leftToRight ? "arrow.left" : "arrow.right")
             }
 
             Section("Sidebar") {
@@ -54,6 +65,9 @@ struct MessageListSettingsView: View {
             if let mailbox { SidebarSettingsView(mailbox: mailbox) }
         }
     }
+
+    private var leadingSwipeTitle: String { layoutDirection == .leftToRight ? "Swipe right" : "Swipe left" }
+    private var trailingSwipeTitle: String { layoutDirection == .leftToRight ? "Swipe left" : "Swipe right" }
 
     /// The rule in full, in the list's own unit: conversations or messages.
     private func nextSelectionTitle(_ selection: MailNextSelection) -> String {
