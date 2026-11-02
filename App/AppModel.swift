@@ -368,6 +368,7 @@ final class AppModel {
         }
         let ids = Set(eligible.map(\.id))
         for id in Array(inboxWatchers.keys) where !ids.contains(id) {
+            guard !inboxUpdatesAreStopped, revision == inboxReconciliationRevision else { return }
             await inboxWatchers.removeValue(forKey: id)?.stop()
         }
         for record in eligible {

@@ -6,6 +6,29 @@ import Testing
 @testable import SyncEngine
 
 @Suite(.timeLimit(.minutes(1))) struct SyncSchedulingTests {
+    @Test func concurrentStopsWaitForTheSameBackgroundTeardown() async throws {
+        let sleep = HeldSchedulerSleep()
+        let (engine, cache, _, _) = try await makeEngine(sleep: { _ in await sleep.wait() })
+        try await seed(cache, [], cursor: 100)
+        await engine.start()
+        if let passes = await engine.requestedPasses { await passes.value }
+        await sleep.waitUntilEntered()
+
+        let (entered, signal) = AsyncStream.makeStream(of: Void.self)
+        var starts = entered.makeAsyncIterator()
+        let first = await engine.observedStop(entered: signal, sleep: sleep)
+        _ = await starts.next()
+        // An actor hop after the signal waits until stop reaches its first await.
+        #expect(await engine.isStopped)
+        let second = await engine.observedStop(entered: signal, sleep: sleep)
+        _ = await starts.next()
+        #expect(await engine.isStopped)
+
+        await sleep.release()
+        await first.value
+        await second.value
+    }
+
     @Test func pollingFollowsTheActivityAndIMAP() async throws {
         let clock = SchedulerClock()
         let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
@@ -125,6 +148,40 @@ import Testing
             #expect(await engine.afterActionTask == nil)
         }
     }
+}
+
+private extension SyncEngine {
+    func observedStop(entered: AsyncStream<Void>.Continuation, sleep: HeldSchedulerSleep) -> Task<Void, Never> {
+        Task {
+            entered.yield(())
+            await stop()
+            #expect(sleep.finished)
+        }
+    }
+}
+
+/// Keeps teardown suspended even after cancellation, until the test releases it.
+private actor HeldSchedulerSleep {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private nonisolated let completion = OSAllocatedUnfairLock(initialState: false)
+    nonisolated var finished: Bool { completion.withLock { $0 } }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            for waiter in entryWaiters { waiter.resume() }
+            entryWaiters = []
+        }
+        completion.withLock { $0 = true }
+    }
+
+    func waitUntilEntered() async {
+        if continuation != nil { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func release() { continuation?.resume(); continuation = nil }
 }
 
 /// Parks every sleep the engine asks for until the test ends it, so each

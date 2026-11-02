@@ -203,6 +203,7 @@ final class AccountMailbox {
     }
 
     private func handle(_ event: SyncEvent) {
+        guard !isStopped, !Task.isCancelled else { return }
         switch event {
         case .syncStarted:
             syncStatus = .syncing

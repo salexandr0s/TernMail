@@ -381,7 +381,7 @@ extension SyncEngine {
     private func recordCreated(_ row: PendingAction, realID: String, adopted: Bool = false) async {
         guard let id = row.id, let temporaryID = row.labelID else { return }
         // Gmail's copy of the label, with its color and visibility, comes with the next full listing.
-        labelsRefreshedAt = nil
+        invalidateLabels()
         let accountID = accountID
         let now = now()
         let result = try? await write { tx -> (changed: [PendingAction], keptDeletes: [Int64]) in
@@ -423,7 +423,7 @@ extension SyncEngine {
     /// Marks a delete sent and takes the label out of the cache.
     private func recordDeleted(_ row: PendingAction) async {
         guard let id = row.id, let labelID = row.labelID else { return }
-        labelsRefreshedAt = nil
+        invalidateLabels()
         let accountID = accountID
         let now = now()
         let dropped = try? await write { tx -> [Int64] in

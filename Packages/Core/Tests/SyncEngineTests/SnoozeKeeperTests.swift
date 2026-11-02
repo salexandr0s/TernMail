@@ -1,12 +1,37 @@
 import Foundation
 import GmailAPI
 import MailStore
+import os
 import Testing
 @testable import SyncEngine
 
 private let hour: TimeInterval = 60 * 60
 
 @Suite struct SnoozeKeeperTests {
+    @Test func stopWaitsForAnExplicitSnoozeMutation() async throws {
+        let (engine, _, _, _) = try await makeEngine()
+        let (keeper, _) = try await makeKeeper(engine)
+        let (entered, signal) = AsyncStream.makeStream(of: Void.self)
+        let (release, resume) = AsyncStream.makeStream(of: Void.self)
+        let finished = OSAllocatedUnfairLock(initialState: false)
+        var starts = entered.makeAsyncIterator()
+        let mutation = Task {
+            await keeper.operations.perform {
+                signal.yield(())
+                for await _ in release { break }
+                finished.withLock { $0 = true }
+            }
+        }
+        _ = await starts.next()
+        let stopping = await keeper.observedStop(entered: signal, finished: finished)
+        _ = await starts.next()
+        #expect(await keeper.isStopped)
+        resume.yield(())
+        await mutation.value
+        await stopping.value
+        await engine.stop()
+    }
+
     @Test func undoMatchesFractionalWakeTimeUsingStoredPrecision() async throws {
         let (engine, cache, _, _) = try await makeEngine()
         let (keeper, accounts) = try await makeKeeper(engine)
@@ -174,6 +199,16 @@ private let hour: TimeInterval = 60 * 60
         #expect(try await accounts.snoozes(accountID: account).map(\.threadID) == ["t1", "t2"])
         #expect(try await holds(cache) == ["t1": baseDate + hour, "t2": baseDate + 2 * hour])
         #expect(try await first(cache.snoozedThreads(accountID: account)).map(\.id) == ["t1", "t2"])
+    }
+}
+
+private extension SnoozeKeeper {
+    func observedStop(entered: AsyncStream<Void>.Continuation, finished: OSAllocatedUnfairLock<Bool>) -> Task<Void, Never> {
+        Task {
+            entered.yield(())
+            await stop()
+            #expect(finished.withLock { $0 })
+        }
     }
 }
 

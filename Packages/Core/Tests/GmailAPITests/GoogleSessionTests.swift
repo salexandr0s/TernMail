@@ -29,17 +29,22 @@ import Testing
         #expect(await tokens.refreshes == 0)
     }
 
-    @Test(arguments: [false, true])
-    func transportCancellationOnlyBecomesTaskCancellationWhenTheTaskWasCancelled(cancelTask: Bool) async {
+    @Test(arguments: [false, true], [false, true])
+    func transportCancellationOnlyBecomesTaskCancellationWhenTheTaskWasCancelled(cancelTask: Bool, sending: Bool) async {
         let transport = FailingTransport(code: .cancelled, cancelTask: cancelTask)
-        let budget = GmailRequestBudget(sleep: { _ in
-            Issue.record("A cancelled send must not wait to retry")
-            throw CancellationError()
+        let time = OSAllocatedUnfairLock(initialState: TimeInterval.zero)
+        let budget = GmailRequestBudget(now: { time.withLock { $0 } }, sleep: { duration in
+            try Task.checkCancellation()
+            let parts = duration.components
+            time.withLock { $0 += Double(parts.seconds) + Double(parts.attoseconds) / 1e18 }
         })
         let tokens = CountingTokens()
         let client = GmailClient(tokens: tokens, transport: transport, gmailRequestBudget: budget)
-        await withThrowingTaskGroup(of: GmailMessage.self) { group in
-            group.addTask { try await client.sendDraft(id: "d1") }
+        await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                if sending { _ = try await client.sendDraft(id: "d1") }
+                else { _ = try await client.profile() }
+            }
             do {
                 _ = try await group.next()
                 Issue.record("The cancelled transport request returned successfully")
@@ -52,7 +57,9 @@ import Testing
             }
         }
 
-        #expect(await transport.requests.count == 1)
+        let retries = !cancelTask && !sending
+        #expect(await transport.requests.count == (retries ? 4 : 1))
+        #expect(time.withLock { $0 } == (retries ? 7 : 0))
         #expect(await tokens.refreshes == 0)
         let state = await budget.snapshot()
         #expect(state.executing.isEmpty)

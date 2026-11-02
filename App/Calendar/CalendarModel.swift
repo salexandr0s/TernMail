@@ -80,10 +80,16 @@ final class CalendarModel {
     @ObservationIgnored private var refreshAgain = false
     @ObservationIgnored private var rangeRevision = 0
     @ObservationIgnored private var isStarted = false
+    @ObservationIgnored private var isStopped = false
+    @ObservationIgnored private var startGeneration = 0
+    @ObservationIgnored private var stopping: Task<Void, Never>?
+    @ObservationIgnored private let storeLoader: (@MainActor () async throws -> CalendarStore)?
     @ObservationIgnored private var didLoadCalendars = false
 
-    init(app: AppModel?, defaults: UserDefaults? = nil) {
+    init(app: AppModel?, defaults: UserDefaults? = nil,
+         storeLoader: (@MainActor () async throws -> CalendarStore)? = nil) {
         self.app = app
+        self.storeLoader = storeLoader
         let defaults = defaults ?? CalendarDefaults.store
         self.defaults = defaults
         workingHours = defaults.data(forKey: "calendarWorkingHours")
@@ -94,29 +100,57 @@ final class CalendarModel {
     func start() async {
         guard !isStarted else { return }
         isStarted = true
+        startGeneration += 1
+        let generation = startGeneration
+        await stopping?.value
+        guard generation == startGeneration else { return }
+        stopping = nil
+        isStopped = false
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
             await seedCalendarAudit(); return
         }
 #endif
         do {
-            if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
-                store = try CalendarStore.inMemory()
+            try Task.checkCancellation()
+            let openedStore: CalendarStore?
+            if let storeLoader {
+                openedStore = try await storeLoader()
+            } else if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+                openedStore = try CalendarStore.inMemory()
             } else if let app {
                 let url = try app.calendarStoreURL()
-                store = try await Task.detached { try CalendarStore.open(at: url) }.value
+                openedStore = try await Task.detached { try CalendarStore.open(at: url) }.value
+            } else {
+                openedStore = store
             }
+            guard generation == startGeneration, !isStopped else { return }
+            try Task.checkCancellation()
+            store = openedStore
             await refresh()
+            guard generation == startGeneration, !isStopped else { return }
+            try Task.checkCancellation()
             CalendarNotificationRouter.shared.bind(self)
             schedulePolling()
             let monitor = NWPathMonitor()
             monitor.pathUpdateHandler = { [weak self] path in
                 guard path.status == .satisfied else { return }
-                Task { @MainActor [weak self] in await self?.refresh() }
+                Task { @MainActor [weak self] in
+                    guard let self, generation == startGeneration, !isStopped else { return }
+                    await refresh()
+                }
             }
             monitor.start(queue: .main)
             self.monitor = monitor
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            guard generation == startGeneration, !isStopped else { return }
+            if error is CancellationError || Task.isCancelled {
+                await stop()
+            } else {
+                isStarted = false
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func schedulePolling() {
@@ -132,14 +166,29 @@ final class CalendarModel {
     }
 
     func stop() async {
+        isStopped = true
+        isStarted = false
+        startGeneration += 1
+        let generation = startGeneration
         lifecycleRevision += 1
+        refreshAgain = false
         pollTask?.cancel(); pollTask = nil
         monitor?.cancel(); monitor = nil
         rangeRevision += 1
-        for engine in engines.values { await engine.stop() }
-        for task in proposalTasks.values { await task.value }
-        for task in stoppingEngines.values { await task.value }
-        engines = [:]; services = [:]; isStarted = false
+        let engines = Array(engines.values)
+        let proposals = Array(proposalTasks.values)
+        let stoppingEngines = Array(stoppingEngines.values)
+        self.engines = [:]; services = [:]
+        let previous = stopping
+        let task = Task {
+            await previous?.value
+            for engine in engines { await engine.stop() }
+            for task in proposals { await task.value }
+            for task in stoppingEngines { await task.value }
+        }
+        stopping = task
+        await task.value
+        if generation == startGeneration { stopping = nil }
     }
 
     func accessExpired(_ accountID: String) {
@@ -178,6 +227,7 @@ final class CalendarModel {
     }
 
     func refresh() async {
+        guard !isStopped, !Task.isCancelled else { return }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
             await refreshCalendarAudit(); return
@@ -189,13 +239,21 @@ final class CalendarModel {
         let revision = lifecycleRevision
         defer {
             isLoading = false
-            if refreshAgain { refreshAgain = false; Task { await self.refresh() } }
+            if refreshAgain {
+                refreshAgain = false
+                let generation = startGeneration
+                Task {
+                    guard generation == startGeneration, !isStopped else { return }
+                    await refresh()
+                }
+            }
         }
         do {
             let records = try await app.calendarAccounts()
             guard revision == lifecycleRevision else { return }
             let recordIDs = Set(records.map(\.id))
             let removedIDs = try await store.accountIDs().subtracting(recordIDs)
+            guard revision == lifecycleRevision else { return }
             if !removedIDs.isEmpty {
                 for removed in removedIDs { await removeAccount(removed) }
                 refreshAgain = true; return
@@ -243,6 +301,7 @@ final class CalendarModel {
                 }
                 guard revision == lifecycleRevision else { return }
                 let storedPreferences = try await app.calendarPreferences(accountID: record.id)
+                guard revision == lifecycleRevision else { return }
                 for entry in entries where entry.deleted != true {
                     let preference = storedPreferences.first { $0.calendarID == entry.id }
                         ?? CalendarPreferences(accountID: record.id, calendarID: entry.id, visible: entry.hidden != true, notificationsEnabled: false)
@@ -291,9 +350,13 @@ final class CalendarModel {
             }
             guard revision == lifecycleRevision else { return }
             await reloadOccurrences()
+            guard revision == lifecycleRevision else { return }
             if !issues.isEmpty { statusText = Set(issues).sorted().joined(separator: " ") }
             await refreshNotifications()
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            guard revision == lifecycleRevision, !Task.isCancelled, !(error is CancellationError) else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 
     func reloadOccurrences(refresh: Bool = true, refreshIfIncomplete: Bool = false) async {

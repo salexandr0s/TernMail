@@ -40,6 +40,7 @@ public actor SnoozeKeeper {
         timer?.cancel()
         timer = nil
         await checking?.value
+        await operations.perform {}
     }
 
     /// Archives conversations until `wakeAt`. Keep the receipt for `undoSnooze`.
@@ -114,11 +115,13 @@ public actor SnoozeKeeper {
             await checking.value
             return
         }
-        let task = Task { await runChecks() }
+        let task = Task {
+            await runChecks()
+            checking = nil
+            scheduleNextCheck()
+        }
         checking = task
         await task.value
-        checking = nil
-        scheduleNextCheck()
     }
 
     private func runChecks() async {

@@ -32,6 +32,8 @@ public actor CalendarSyncEngine {
     var isFlushing = false
     var ongoingRequests = 0
     var stopWaiters: [CheckedContinuation<Void, Never>] = []
+    private typealias CalendarListSnapshot = (calendars: [GoogleCalendarEntry], epoch: Int)
+    private var calendarListRequest: Task<CalendarListSnapshot, any Error>?
 
     public init(accountID: String, service: any CalendarService, store: CalendarStore) {
         self.accountID = accountID; self.service = service; self.store = store
@@ -39,6 +41,7 @@ public actor CalendarSyncEngine {
 
     public func stop() async {
         isActive = false; accessEpoch += 1
+        calendarListRequest?.cancel()
         guard ongoingRequests > 0 else { return }
         await withCheckedContinuation { continuation in stopWaiters.append(continuation) }
     }
@@ -60,6 +63,24 @@ public actor CalendarSyncEngine {
     public func syncCalendars() async throws -> [GoogleCalendarEntry] {
         try beginRequest()
         defer { endRequest() }
+        let request: Task<CalendarListSnapshot, any Error>
+        if let current = calendarListRequest {
+            request = current
+        } else {
+            request = Task {
+                defer { calendarListRequest = nil }
+                return try await refreshCalendars()
+            }
+            calendarListRequest = request
+        }
+        // The engine owns the shared request; cancelling one caller must not
+        // cancel another caller's refresh. stop() cancels and drains the work.
+        let snapshot = try await request.value
+        try checkpoint(snapshot.epoch)
+        return snapshot.calendars
+    }
+
+    private func refreshCalendars() async throws -> CalendarListSnapshot {
         let epoch = try checkpoint()
         var calendars: [GoogleCalendarEntry] = []
         var token: String?
@@ -82,7 +103,7 @@ public actor CalendarSyncEngine {
         let commitEpoch = accessEpoch
         try await store.replaceCalendars(calendars, accountID: accountID)
         try checkpoint(commitEpoch)
-        return calendars.filter { $0.deleted != true }
+        return (calendars.filter { $0.deleted != true }, commitEpoch)
     }
 
     public func syncEvents(calendarID: String) async throws {
@@ -101,7 +122,7 @@ public actor CalendarSyncEngine {
                 return
             } catch CalendarAPIError.syncTokenExpired where attempt == 0 {
                 try checkpoint(epoch)
-                try await store.resetRemoteCalendar(accountID: accountID, calendarID: calendarID)
+                try await store.resetRemoteCalendar(accountID: accountID, calendarID: calendarID, expected: state)
                 state = try await store.syncState(accountID: accountID, calendarID: calendarID)
             } catch {
                 try checkpoint(epoch)

@@ -51,6 +51,50 @@ import Testing
         #expect(try await store.syncState(accountID: "a", calendarID: "c").syncToken == "sync-token")
     }
 
+    @Test(arguments: [false, true])
+    func aLateSyncResponseCannotReplaceOrResetANewerCursor(expired: Bool) async throws {
+        let store = try CalendarStore.inMemory()
+        let api = CalendarTestService()
+        let engine = CalendarSyncEngine(accountID: "a", service: api, store: store)
+        _ = try await engine.syncCalendars()
+        let original = CalendarTestService.event(id: "cached")
+        try await store.applyEventSync([original], accountID: "a", calendarID: "c",
+            token: "first", replacing: true, expected: .init())
+        await api.holdNextEvents(expired ? .failure(CalendarAPIError.syncTokenExpired)
+            : .success(CalendarEventPage(items: [], nextSyncToken: "late-token")))
+        let earlier = Task { try await engine.syncEvents(calendarID: "c") }
+        await api.waitForHeldEvents()
+
+        // An empty incremental response advances the cursor without changing the revision.
+        try await engine.syncEvents(calendarID: "c")
+        let current = try await store.syncState(accountID: "a", calendarID: "c")
+        #expect(current.syncToken == "sync-token")
+        await api.releaseEvents()
+
+        await #expect(throws: CalendarStoreError.self) { try await earlier.value }
+        #expect(try await store.syncState(accountID: "a", calendarID: "c") == current)
+        #expect(try await store.events(accountID: "a", calendarID: "c") == [original])
+    }
+
+    @Test func overlappingCalendarRefreshesShareWorkButNotCallerCancellation() async throws {
+        let store = try CalendarStore.inMemory()
+        let api = CalendarTestService()
+        let engine = CalendarSyncEngine(accountID: "a", service: api, store: store)
+        await api.holdNextCalendarList()
+        let first = Task { try await engine.syncCalendars() }
+        await api.waitForHeldCalendarList()
+        let second = Task { try await engine.syncCalendars() }
+        while await engine.ongoingRequests < 2 { await Task.yield() }
+        first.cancel()
+        await api.releaseCalendarList()
+
+        await #expect(throws: CancellationError.self) { try await first.value }
+        let calendars = try await second.value
+        #expect(calendars.map(\.id) == ["c"])
+        #expect(try await store.calendars(accountID: "a") == calendars)
+        #expect(await api.calendarListCount == 1)
+    }
+
     @Test func importedExceptionsResumeUsingTheSavedInstanceIdentity() async throws {
         let store = try CalendarStore.inMemory()
         let api = CalendarTestService()
@@ -220,6 +264,13 @@ private actor CalendarTestService: CalendarService {
     var holdRead = false
     var heldRead: CheckedContinuation<Void, Never>?
     var readWaiters: [CheckedContinuation<Void, Never>] = []
+    var nextHeldEvents: Result<CalendarEventPage, any Error>?
+    var heldEvents: CheckedContinuation<Void, Never>?
+    var eventWaiters: [CheckedContinuation<Void, Never>] = []
+    var calendarListCount = 0
+    var holdCalendarList = false
+    var heldCalendarLists: [CheckedContinuation<Void, Never>] = []
+    var calendarListWaiters: [CheckedContinuation<Void, Never>] = []
 
     static func event(id: String) -> GoogleCalendarEvent {
         GoogleCalendarEvent(rawValue: ["id": .string(id), "etag": .string("v1"), "summary": .string("Meeting"),
@@ -236,10 +287,43 @@ private actor CalendarTestService: CalendarService {
         await withCheckedContinuation { readWaiters.append($0) }
     }
     func releaseRead() { heldRead?.resume(); heldRead = nil }
+    func holdNextEvents(_ result: Result<CalendarEventPage, any Error>) { nextHeldEvents = result }
+    func waitForHeldEvents() async {
+        if heldEvents != nil { return }
+        await withCheckedContinuation { eventWaiters.append($0) }
+    }
+    func releaseEvents() { heldEvents?.resume(); heldEvents = nil }
+    func holdNextCalendarList() { holdCalendarList = true }
+    func waitForHeldCalendarList() async {
+        if !heldCalendarLists.isEmpty { return }
+        await withCheckedContinuation { calendarListWaiters.append($0) }
+    }
+    func releaseCalendarList() {
+        holdCalendarList = false
+        let requests = heldCalendarLists; heldCalendarLists = []
+        for request in requests { request.resume() }
+    }
     func calendarList(pageToken: String?, syncToken: String?) async throws -> CalendarListPage {
-        CalendarListPage(items: [GoogleCalendarEntry(rawValue: ["id": .string("c"), "summary": .string("Calendar"), "accessRole": .string("owner")])])
+        calendarListCount += 1
+        if holdCalendarList {
+            await withCheckedContinuation { continuation in
+                heldCalendarLists.append(continuation)
+                let waiters = calendarListWaiters; calendarListWaiters = []
+                for waiter in waiters { waiter.resume() }
+            }
+        }
+        return CalendarListPage(items: [GoogleCalendarEntry(rawValue: ["id": .string("c"), "summary": .string("Calendar"), "accessRole": .string("owner")])])
     }
     func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
+        if let result = nextHeldEvents {
+            nextHeldEvents = nil
+            await withCheckedContinuation { continuation in
+                heldEvents = continuation
+                let waiters = eventWaiters; eventWaiters = []
+                for waiter in waiters { waiter.resume() }
+            }
+            return try result.get()
+        }
         if query.syncToken == "expired" { throw CalendarAPIError.syncTokenExpired }
         if let pageFailure {
             if query.pageToken == nil { return CalendarEventPage(items: [Self.event(id: "new")], nextPageToken: "second") }

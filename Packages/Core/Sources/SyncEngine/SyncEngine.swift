@@ -108,6 +108,7 @@ public actor SyncEngine {
     /// them again: at launch, after a local label change, and after a refresh
     /// failed.
     var labelsRefreshedAt: Date?
+    private var labelRefreshGeneration = UUID()
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
     /// What the user is doing, from the app. Sets the poll interval.
@@ -277,14 +278,10 @@ public actor SyncEngine {
         }
         isStopped = true
         let background = [pollTask, peopleTask, requestedPasses, afterActionTask, attachmentIndexTask, prefetchTask].compactMap { $0 }
-        pollTask = nil
         for sleeper in sleepers.values { sleeper.cancel() }
-        prefetchTask = nil
         prefetchTargets = []
         let reading = Array(readingLoads.values.map(\.task)) + Array(retiredReadingLoads.values)
         reading.forEach { $0.cancel() }
-        peopleTask = nil
-        attachmentIndexTask = nil
         background.forEach { $0.cancel() }
         let attachmentPass = attachmentIndexPass
         attachmentPass?.cancel()
@@ -293,7 +290,6 @@ public actor SyncEngine {
         let contacts = contactSyncTask
         contacts?.cancel()
         let drains = Array(drainTasks.values)
-        drainTasks = [:]
         drains.forEach { $0.cancel() }
         // A cancelled drain asleep on its lane must wake to see the cancellation.
         let waiters = Array(laneWaiters.values)
@@ -311,6 +307,12 @@ public actor SyncEngine {
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
         }
+        // Keep handles until teardown ends so another stop() joins the same work.
+        pollTask = nil
+        prefetchTask = nil
+        peopleTask = nil
+        attachmentIndexTask = nil
+        drainTasks = [:]
         continuation.finish()
         mailNotificationContinuation.finish()
     }
@@ -398,8 +400,13 @@ public actor SyncEngine {
 
     /// Lists every label on the next pass, and asks for one as an activation.
     public func requestLabelRefresh() {
-        labelsRefreshedAt = nil
+        invalidateLabels()
         requestSync(reason: .activation)
+    }
+
+    func invalidateLabels() {
+        labelsRefreshedAt = nil
+        labelRefreshGeneration = UUID()
     }
 
     /// Returns once no pass is running. Background work waits here so a pass
@@ -410,8 +417,13 @@ public actor SyncEngine {
 
     /// Returns whether the pass found changes.
     func joinOrStartPass() async throws -> Bool {
+        try Task.checkCancellation()
         if isStopped { throw CancellationError() }
-        if let pass { return try await pass.value }
+        if let pass {
+            let changed = try await pass.value
+            try Task.checkCancellation()
+            return changed
+        }
         lastPassStartedAt = now()
         let task = Task {
             defer {
@@ -425,7 +437,9 @@ public actor SyncEngine {
             return changed
         }
         pass = task
-        return try await task.value
+        let changed = try await task.value
+        try Task.checkCancellation()
+        return changed
     }
 
     /// Reports `pass` on `events`. Returns whether it found changes, or nil
@@ -472,6 +486,7 @@ public actor SyncEngine {
     /// both an expired cursor (`reset`) and a first sync that quit partway through.
     private func fullSync(reset: Bool) async throws {
         let passStart = now()
+        let labelGeneration = labelRefreshGeneration
         let accountID = accountID
         let deleted = deletedMessageIDs
         let profile = try await gmail.profile()
@@ -534,7 +549,7 @@ public actor SyncEngine {
                 return []
             }
             guard !remaining.isEmpty else {
-                labelsRefreshedAt = passStart
+                if labelRefreshGeneration == labelGeneration { labelsRefreshedAt = passStart }
                 await publishMailNotification(from: nil, to: historyID)
                 return
             }
@@ -629,6 +644,7 @@ public actor SyncEngine {
     private func refreshLabels(touched: Set<String>, passStart: Date) async throws {
         let accountID = accountID
         let countedAt = now()
+        let labelGeneration = labelRefreshGeneration
         do {
             if let refreshedAt = labelsRefreshedAt, passStart.timeIntervalSince(refreshedAt) < Self.labelRefreshInterval {
                 guard !touched.isEmpty else { return }
@@ -637,10 +653,10 @@ public actor SyncEngine {
             } else {
                 let labels = try await fetchLabels()
                 try await write { tx in try tx.replaceLabels(labels, accountID: accountID, countedAt: countedAt) }
-                labelsRefreshedAt = passStart
+                if labelRefreshGeneration == labelGeneration { labelsRefreshedAt = passStart }
             }
         } catch {
-            labelsRefreshedAt = nil
+            invalidateLabels()
             throw error
         }
     }

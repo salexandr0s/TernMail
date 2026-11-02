@@ -84,12 +84,14 @@ public actor GmailRequestBudget {
     public init(
         unitsPerMinute: Double = 4_000,
         now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        sleep: (@Sendable (Duration) async throws -> Void)? = nil
     ) {
         precondition(unitsPerMinute.isFinite && unitsPerMinute > 0)
         unitsPerSecond = unitsPerMinute / 60
         self.now = now
-        self.sleep = sleep
+        // Keep the async closure in this module: Swift 6.2 can emit mismatched
+        // task frames for public default-argument closures (swiftlang/swift#92017).
+        self.sleep = sleep ?? { try await Task.sleep(for: $0) }
         updatedAt = now()
     }
 

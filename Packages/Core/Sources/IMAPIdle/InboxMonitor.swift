@@ -16,7 +16,7 @@ public actor InboxMonitor {
     private enum Input: Sendable {
         case data(Data)
         case ended
-        case timer(IdleSession.Timer)
+        case timer(IdleTimers.Expiration)
         case token(Result<String, any Error>)
         case restart
     }
@@ -141,11 +141,11 @@ public actor InboxMonitor {
 
         let (inputs, input) = AsyncStream<Input>.makeStream()
         self.input = input
-        var timers: [IdleSession.Timer: Task<Void, Never>] = [:]
+        var timers = IdleTimers()
         var tokenRequest: Task<Void, Never>?
         defer {
             connection.cancel()
-            timers.values.forEach { $0.cancel() }
+            timers.cancelAll()
             tokenRequest?.cancel()
             input.finish()
             self.input = nil
@@ -179,14 +179,11 @@ public actor InboxMonitor {
                         }
                     }
                 case .startTimer(let timer, let delay):
-                    timers[timer]?.cancel()
-                    timers[timer] = Task {
-                        try? await Task.sleep(for: delay)
-                        if !Task.isCancelled { input.yield(.timer(timer)) }
+                    timers.start(timer, after: delay) { expiration in
+                        input.yield(.timer(expiration))
                     }
                 case .cancelTimer(let timer):
-                    timers[timer]?.cancel()
-                    timers[timer] = nil
+                    timers.cancel(timer)
                 case .signal:
                     output.yield()
                 case .close(let ending):
@@ -199,14 +196,16 @@ public actor InboxMonitor {
         var session = IdleSession(address: address, startedAt: .now, forceRefresh: forceRefresh)
         if let ending = perform(session.start()) { return ending }
         for await next in inputs {
+            try Task.checkCancellation()
             let actions: [IdleSession.Action]
             switch next {
             case .data(let bytes):
                 actions = session.receive(bytes, at: .now)
             case .ended:
                 return session.connectionEnded(at: .now)
-            case .timer(let timer):
-                actions = session.timerFired(timer, at: .now)
+            case .timer(let expiration):
+                guard timers.consume(expiration) else { continue }
+                actions = session.timerFired(expiration.timer, at: .now)
             case .token(.success(let token)):
                 actions = session.provideToken(token)
             case .token(.failure(let error)):

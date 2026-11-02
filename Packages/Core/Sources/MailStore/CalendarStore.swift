@@ -97,8 +97,15 @@ public struct CalendarStore: Sendable {
         try await writer.read { try Self.state($0, accountID: accountID, calendarID: calendarID) }
     }
 
-    public func resetRemoteCalendar(accountID: String, calendarID: String) async throws {
-        try await writer.write { try Self.resetRemote($0, accountID: accountID, calendarID: calendarID) }
+    public func resetRemoteCalendar(accountID: String, calendarID: String, expected: CalendarSyncState? = nil) async throws {
+        try await writer.write { db in
+            if let expected {
+                let state = try Self.state(db, accountID: accountID, calendarID: calendarID)
+                guard state.generation == expected.generation, state.revision == expected.revision,
+                      state.syncToken == expected.syncToken else { throw CalendarStoreError.staleGeneration }
+            }
+            try Self.resetRemote(db, accountID: accountID, calendarID: calendarID)
+        }
     }
 
     /// A complete page sequence commits together with its cursor. Requests that
@@ -107,7 +114,8 @@ public struct CalendarStore: Sendable {
                                token: String?, replacing: Bool, expected: CalendarSyncState, at date: Date = .now) async throws {
         try await writer.write { db in
             let state = try Self.state(db, accountID: accountID, calendarID: calendarID)
-            guard state.generation == expected.generation, state.revision == expected.revision else { throw CalendarStoreError.staleGeneration }
+            guard state.generation == expected.generation, state.revision == expected.revision,
+                  state.syncToken == expected.syncToken else { throw CalendarStoreError.staleGeneration }
             if replacing {
                 try db.execute(sql: "DELETE FROM calendarEvent WHERE accountID = ? AND calendarID = ?", arguments: [accountID, calendarID])
             }

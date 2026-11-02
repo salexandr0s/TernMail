@@ -590,7 +590,7 @@ extension SyncEngine {
         // label that was renamed or recolored is listed again in full. A
         // sent or saved draft is fetched by the compose lane itself.
         if case .sent = outcome {
-            if current.kind.changesLabel { labelsRefreshedAt = nil }
+            if current.kind.changesLabel { invalidateLabels() }
             if sendsAutomatically, current.kind.lane != .compose { requestSync(reason: .afterAction) }
         }
     }

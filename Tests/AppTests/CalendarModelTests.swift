@@ -6,6 +6,40 @@ import Testing
 @testable import Tern
 
 @Suite @MainActor struct CalendarModelTests {
+    @Test(arguments: [false, true])
+    func interruptedStartCannotInstallALateStore(cancel: Bool) async throws {
+        let loader = SuspendedCalendarStoreLoader(store: try CalendarStore.inMemory())
+        let model = CalendarModel(app: nil, storeLoader: { await loader.load() })
+        let starting = Task { await model.start() }
+        await loader.waitUntilLoading()
+
+        if cancel { starting.cancel() }
+        else { await model.stop() }
+        loader.resume()
+        await starting.value
+
+        #expect(model.store == nil)
+        #expect(model.errorMessage == nil)
+        await model.start()
+        #expect(model.store != nil)
+        #expect(loader.calls == 2)
+        await model.stop()
+    }
+
+    @Test func stoppedRefreshCannotReconcileOrDeleteCachedAccounts() async throws {
+        let app = AppModel()
+        let model = CalendarModel(app: app)
+        let store = try CalendarStore.inMemory()
+        model.store = store
+        try await store.replaceCalendars([ModelCalendarService.entry], accountID: "retained")
+
+        await model.stop()
+        await model.refresh()
+
+        #expect(try await store.calendars(accountID: "retained") == [ModelCalendarService.entry])
+        #expect(!model.isLoading)
+    }
+
     @Test func initialRangeLoadsFromNetworkOnlyWhenItsCacheIsIncomplete() async throws {
         try await withFixture { fixture in
             let event = Self.event(id: "first-open")
@@ -461,6 +495,37 @@ import Testing
             event.etag = "remote-\(patchETags.count)"
             remote[eventID] = event
             return event
+        }
+    }
+
+    @MainActor private final class SuspendedCalendarStoreLoader {
+        let store: CalendarStore
+        private(set) var calls = 0
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var loadingWaiter: CheckedContinuation<Void, Never>?
+
+        init(store: CalendarStore) { self.store = store }
+
+        func load() async -> CalendarStore {
+            calls += 1
+            if calls == 1 {
+                await withCheckedContinuation {
+                    continuation = $0
+                    loadingWaiter?.resume()
+                    loadingWaiter = nil
+                }
+            }
+            return store
+        }
+
+        func waitUntilLoading() async {
+            if continuation != nil { return }
+            await withCheckedContinuation { loadingWaiter = $0 }
+        }
+
+        func resume() {
+            continuation?.resume()
+            continuation = nil
         }
     }
 }

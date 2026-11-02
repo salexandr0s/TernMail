@@ -6,6 +6,48 @@ import Testing
 @testable import SyncEngine
 
 @Suite struct SyncRequestTests {
+    @Test func aCancelledCallerDoesNotStartASyncPass() async throws {
+        let (engine, cache, gmail, _) = try await makeRequestEngine()
+        try await seed(cache, [], cursor: 100)
+        let caller = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await engine.sync()
+        }
+        await #expect(throws: CancellationError.self) { try await caller.value }
+        #expect(await gmail.historyCalls == 0)
+        await engine.stop()
+    }
+
+    @Test func cancellingOneCallerDoesNotCancelTheSharedPass() async throws {
+        let (engine, cache, gmail, _) = try await makeRequestEngine()
+        try await seed(cache, [], cursor: 100)
+        await gmail.holdHistory(call: 1)
+        let caller = Task { try await engine.sync() }
+        while await !gmail.isHoldingHistory { await Task.yield() }
+        caller.cancel()
+        let shared = try #require(await engine.pass)
+        await gmail.releaseHistory()
+        _ = try await shared.value
+        await #expect(throws: CancellationError.self) { try await caller.value }
+        #expect(await gmail.historyCalls == 1)
+        await engine.stop()
+    }
+
+    @Test func labelInvalidationDuringAFullSyncSurvivesItsCompletion() async throws {
+        let (engine, _, gmail, _) = try await makeRequestEngine()
+        await gmail.add(try decode(GmailMessage.self, try encodedMessage("m1", thread: "t1")), inInbox: true)
+        await gmail.holdNextMetadata()
+        let running = Task { try await engine.sync() }
+        while await !gmail.isHoldingMetadata { await Task.yield() }
+        await engine.requestLabelRefresh()
+        await gmail.releaseMetadata()
+        try await running.value
+
+        try await engine.sync()
+        #expect(await gmail.labelListRequests == 2)
+        await engine.stop()
+    }
+
     @Test func requestsDuringAPassRunExactlyOneMorePass() async throws {
         let (engine, cache, gmail, sleeps) = try await makeRequestEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox, SystemLabel.unread])], cursor: 100)
