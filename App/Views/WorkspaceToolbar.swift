@@ -37,6 +37,13 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             }
             .help(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar")
             .disabled(sidebar == nil)
+            .popover(isPresented: Binding(
+                get: { section == .attachments && library.isCompact && library.isPopoverPresented },
+                set: { library.isPopoverPresented = $0 }
+            ), arrowEdge: .top) {
+                SidebarView(mailbox: mailbox)
+                    .frame(width: Tokens.Layout.sidebarWidth, height: Tokens.Layout.windowMinHeight)
+            }
         }
         .customizationBehavior(.disabled)
         WorkspaceSectionToolbar(section: section, onSelect: onSelect)

@@ -52,7 +52,7 @@ struct MainView: View {
     /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
     private var sidebarToggle: SidebarToggle? {
         guard isActive else { return calendarSidebarState?.sidebarToggle }
-        if showsLibrary { return SidebarToggle(isVisible: libraryToolbar.showsSidebar, toggle: libraryToolbar.toggleSidebar) }
+        if showsLibrary { return libraryToolbar.sidebarToggle }
         return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
     }
 
@@ -106,6 +106,8 @@ struct MainView: View {
     }
 
     var body: some View {
+        // Snapshot Mail before the new destination changes native column constraints.
+        let _ = paneSizing.setToolbarSidebarWidth(toolbarSidebarWidth)
         let contentTopInset = toolbarInset.top
         GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
@@ -214,16 +216,22 @@ struct MainView: View {
         .navigationSubtitle(section == .mail ? mailbox.selectedMailboxSubtitle : "")
     }
 
-    /// The retained Mail split owns the shared toolbar. While Calendar is visible,
-    /// its sidebar geometry sets the toolbar's leading boundary.
+    /// The retained Mail split owns the shared toolbar. Each visible destination
+    /// supplies its sidebar geometry without changing Mail's saved layout.
+    private var toolbarSidebarWidth: CGFloat? {
+        if !isActive { return calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 } }
+        if showsLibrary { return libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0 }
+        return nil
+    }
+
     private var toolbarColumnVisibility: Binding<NavigationSplitViewVisibility> {
         Binding {
-            if !isActive, let calendarSidebarState {
-                return calendarSidebarState.showsSidebar ? .all : (hidesReader ? .detailOnly : .doubleColumn)
+            if let width = toolbarSidebarWidth {
+                return width > 0 ? .all : (hidesReader ? .detailOnly : .doubleColumn)
             }
             return columnVisibility
         } set: { visibility in
-            if isActive { columnVisibility = visibility }
+            if toolbarSidebarWidth == nil { columnVisibility = visibility }
         }
     }
 
@@ -231,7 +239,7 @@ struct MainView: View {
         MailColumnsContent(mailbox: mailbox,
             identity: .init(columnVisibility: toolbarColumnVisibility.wrappedValue, showsReader: !hidesReader,
                 showsAssistant: showsPanel, topInset: topInset, outboxFocused: outboxFocused,
-                toolbarSidebarWidth: isActive ? nil : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 }),
+                toolbarSidebarWidth: toolbarSidebarWidth),
             columnVisibility: toolbarColumnVisibility, sidebarColumnWidth: $sidebarColumnWidth,
             outboxFocused: $outboxFocused, paneSizing: paneSizing, toolbarInset: toolbarInset)
         .equatable()

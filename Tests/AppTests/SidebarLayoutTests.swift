@@ -68,6 +68,125 @@ import Testing
         await app.signOut()
     }
 
+    @Test func attachmentToolbarClearsSidebarAndRestoresMail() async throws {
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox)
+        let suite = "AttachmentToolbarBoundary.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        defer { settings.removePersistentDomain(forName: suite) }
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app)
+            .environment(\.workspaceToolbarID, workspaceToolbarIdentifier()).defaultAppStorage(settings))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 760),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unified
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: 1_280, height: 760))
+        window.orderBack(nil)
+        defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await settleMail(in: controller.view, window: window)
+        let mail = try mailSplit(in: controller.view)
+        let mailPanes = mail.arrangedSubviews
+        let mailWidths = mailPanes.map(\.frame.width)
+        let existingSplits = Set(descendants(in: controller.view).compactMap { $0 as? NSSplitView }.map(ObjectIdentifier.init))
+
+        func openAttachments() async throws -> NSSplitView {
+            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+            try await settle()
+            // Calendar also contains a table, but only Attachments mounts a new split.
+            let splits = descendants(in: controller.view).compactMap { $0 as? NSSplitView }.filter {
+                $0.isVertical && !existingSplits.contains(ObjectIdentifier($0)) && !tables(in: $0).isEmpty
+                    && !descendants(in: $0).contains { $0 is MailColumnProbe.ProbeView }
+            }
+            try #require(splits.count == 1)
+            return try #require(splits.first)
+        }
+
+        func expectBoundary(_ split: NSSplitView, showsSidebar: Bool = true) async throws {
+            try await settle()
+            #expect(split.window === window)
+            try #require(split.arrangedSubviews.count == (showsSidebar ? 2 : 1))
+            let firstPane = try #require(split.arrangedSubviews.first)
+            let frame = firstPane.convert(firstPane.bounds, to: nil)
+            let sidebarEdge = showsSidebar ? frame.maxX : 0
+            for identifier in ["workspace.sidebar", "workspace.destination", "mail.compose"] {
+                let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
+                let view = try #require(item.view)
+                let control = view.convert(view.bounds, to: nil)
+                #expect(control.minX >= sidebarEdge - 1 && control.maxX <= window.frame.width + 1,
+                    "\(identifier) must remain outside the Attachments sidebar and inside the window")
+            }
+            #expect(abs(frame.maxY - (window.contentLayoutRect.maxY - Tokens.Border.hairline)) <= 1,
+                "Attachments must start below the toolbar without an extra gap: \(frame)")
+            if !showsSidebar {
+                #expect(abs(frame.minX) <= 1 && abs(frame.maxX - window.frame.width) <= 1,
+                    "Attachments must use the sidebar's space when it is hidden")
+            }
+        }
+
+        var split = try await openAttachments()
+        try await expectBoundary(split)
+        for width in [Tokens.Layout.sidebarMinWidth, Tokens.Layout.sidebarMaxWidth] {
+            split.setPosition(width, ofDividerAt: 0)
+            try await expectBoundary(split)
+            #expect(abs(try #require(split.arrangedSubviews.first).frame.width - width) <= 1,
+                "The Attachments sidebar must remain resizable")
+        }
+        try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+        try await expectBoundary(split, showsSidebar: false)
+        try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+        try await expectBoundary(split)
+        #expect(abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) <= 1,
+            "Showing the Attachments sidebar must restore its dragged width")
+        app.destination = .calendar
+        try await settle()
+        app.destination = .mail
+        split = try await openAttachments()
+        try await expectBoundary(split)
+        #expect(abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) <= 1,
+            "Returning from Calendar must preserve the Attachments sidebar width")
+
+        // Compare at one fixed window size; native columns may resize with the window.
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        try await settleMail(in: controller.view, window: window)
+        #expect(try mailSplit(in: controller.view) === mail)
+        for (pane, width) in zip(mailPanes, mailWidths) {
+            #expect(abs(pane.frame.width - width) <= 1, "Returning from Attachments must restore Mail's pane widths")
+        }
+
+        split = try await openAttachments()
+        for width in [1_280, 960, 720, 1_280] {
+            window.setContentSize(NSSize(width: width, height: 760))
+            let compact = CGFloat(width) < Tokens.Layout.sidebarCompactWidth
+            try await expectBoundary(split, showsSidebar: !compact)
+            if compact {
+                let visibleWindows = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+                try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+                var popover: NSWindow?
+                let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+                repeat {
+                    try await settle()
+                    popover = NSApp.windows.first {
+                        $0.isVisible && !visibleWindows.contains(ObjectIdentifier($0))
+                            && $0.contentView.map { !tables(in: $0).isEmpty } == true
+                    }
+                } while popover == nil && ContinuousClock.now < deadline
+                let sidebarPopover = try #require(popover, "The compact Attachments sidebar button must open its sidebar")
+                let table = try #require(sidebarPopover.contentView.flatMap { tables(in: $0).first })
+                #expect(table.numberOfRows > 0, "Mailbox navigation must remain available in the compact sidebar")
+                try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+                let closeDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+                repeat { try await settle() } while sidebarPopover.isVisible && ContinuousClock.now < closeDeadline
+                #expect(!sidebarPopover.isVisible)
+            }
+        }
+        #expect(abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) <= 1,
+            "Widening the window must restore the Attachments sidebar's dragged width")
+        await app.signOut()
+    }
+
     @Test func workspaceKeepsFirstRowsAndMailSearchVisible() async throws {
         let app = AppModel()
         await app.start()
@@ -337,7 +456,7 @@ import Testing
         func isOpen() throws -> Bool { try mailSplit(in: rootView).frame.width < window.frame.width - Tokens.Border.hairline }
         for _ in 0..<2 {
             guard try isOpen() != opens else { break }
-            try await clickAssistantButton(in: window)
+            try await pressToolbarButton(in: window, identifier: "workspace.assistant")
             let deadline = ContinuousClock.now.advanced(by: .seconds(3))
             repeat { try await settle() } while try isOpen() != opens && ContinuousClock.now < deadline
         }
@@ -345,14 +464,14 @@ import Testing
         #expect(try isOpen() == opens, "The assistant didn't \(opens ? "open" : "close"): \(state)")
     }
 
-    private func clickAssistantButton(in window: NSWindow) async throws {
+    private func pressToolbarButton(in window: NSWindow, identifier: String) async throws {
         // Hosted tests cannot require foreground activation. Press the rendered
         // button through AppKit accessibility after checking it can be hit.
         var target: NSView?
         var seen = ""
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while target == nil, ContinuousClock.now < deadline {
-            let item = window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == "workspace.assistant" }
+            let item = window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier }
             if let item, let view = item.view, view.window === window {
                 let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
                 let hit = window.contentView?.superview?.hitTest(point)
@@ -363,7 +482,7 @@ import Testing
             }
             if target == nil { try await settle() }
         }
-        let view = try #require(target, "The assistant button can't be clicked: \(seen)")
+        let view = try #require(target, "The \(identifier) button can't be clicked: \(seen)")
         var visited: Set<ObjectIdentifier> = []
         func press(_ value: Any) -> Bool {
             guard let object = value as? NSObject,
@@ -382,7 +501,7 @@ import Testing
             let children = property("accessibilityChildren") as? [Any] ?? []
             return (children + NSAccessibility.unignoredChildren(from: children)).contains(where: press)
         }
-        try #require(descendants(in: view).contains(where: press), "The rendered assistant button must support accessibility Press")
+        try #require(descendants(in: view).contains(where: press), "The rendered \(identifier) button must support accessibility Press")
     }
 
     private func descendants(in view: NSView) -> [NSView] {

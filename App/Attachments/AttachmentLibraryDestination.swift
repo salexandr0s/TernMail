@@ -1,3 +1,4 @@
+import AppKit
 import MailStore
 import MessageContent
 import SwiftUI
@@ -15,7 +16,8 @@ struct AttachmentLibraryDestination: View {
             if toolbar.showsSidebar {
                 SidebarView(mailbox: mailbox)
                     .frame(minWidth: Tokens.Layout.sidebarMinWidth,
-                        idealWidth: Tokens.Layout.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
+                        idealWidth: toolbar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
+                    .background { AttachmentSidebarWidthProbe(toolbar: toolbar) }
             }
             AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
@@ -34,9 +36,15 @@ struct AttachmentLibraryDestination: View {
                     if model.isPageReady { reportReady() }
                 }
         }
+        // Bound the native split below the toolbar before clipping its material.
+        .padding(.top, Tokens.Border.hairline)
+        .clipped()
+        .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Layout.sidebarCompactWidth } action: {
+            toolbar.updateCompact($0)
+        }
         .toolbar(removing: .sidebarToggle)
         .modifier(MailNoticeOverlay(mailbox: mailbox))
-        .onDisappear { model.dismissPresentation() }
+        .onDisappear { model.dismissPresentation(); toolbar.isPopoverPresented = false }
         .onChange(of: toolbar.searchText) { _, text in if model.search != text { model.search = text } }
         .onChange(of: model.search, initial: true) { _, text in if toolbar.searchText != text { toolbar.searchText = text } }
         .onChange(of: toolbar.sort) { _, sort in if model.sort != sort { model.sort = sort } }
@@ -54,6 +62,60 @@ struct AttachmentLibraryDestination: View {
         guard app.destination == .mail, mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID else { return }
         NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained)
         NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .retained)
+    }
+}
+
+/// Restore the dragged width when AppKit inserts the sidebar into its split.
+/// An ideal SwiftUI width alone lets that insertion fall back to the minimum.
+private struct AttachmentSidebarWidthProbe: NSViewRepresentable {
+    let toolbar: AttachmentLibraryToolbarState
+
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
+        view.widthToRestore = toolbar.sidebarWidth
+        return view
+    }
+
+    func updateNSView(_ view: Probe, context: Context) {
+        view.toolbar = toolbar
+        view.scheduleMeasurement()
+    }
+
+    final class Probe: NSView {
+        weak var toolbar: AttachmentLibraryToolbarState?
+        var widthToRestore: CGFloat?
+        private var splitWidth: CGFloat?
+        private var scheduled = false
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); scheduleMeasurement() }
+        override func layout() { super.layout(); scheduleMeasurement() }
+
+        func scheduleMeasurement() {
+            guard !scheduled else { return }
+            scheduled = true
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                guard let self else { return }
+                scheduled = false
+                guard window != nil, let toolbar, toolbar.showsSidebar,
+                      let divider = EnclosingSplitDivider(of: self) else { return }
+                // Window resizing must not replace the user's dragged width.
+                if let previous = splitWidth, abs(previous - divider.split.bounds.width) > 0.5 {
+                    widthToRestore = toolbar.sidebarWidth
+                }
+                splitWidth = divider.split.bounds.width
+                if let width = widthToRestore {
+                    let lower = divider.split.minPossiblePositionOfDivider(at: divider.index)
+                    let upper = divider.split.maxPossiblePositionOfDivider(at: divider.index)
+                    guard width >= lower, width <= upper else { return }
+                    divider.split.setPosition(width, ofDividerAt: divider.index)
+                    widthToRestore = nil
+                }
+                let width = divider.pane.frame.width
+                if width > 0, abs(toolbar.sidebarWidth - width) > 0.5 { toolbar.sidebarWidth = width }
+            }
+        }
     }
 }
 

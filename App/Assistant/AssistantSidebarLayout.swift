@@ -65,6 +65,10 @@ final class AssistantMailPaneSizing {
         remainingAttempts = 0
         // A restore that hasn't finished still holds the user's positions.
         guard savedPositions.isEmpty else { return }
+        if toolbarSidebarWidth != nil {
+            savedPositions = toolbarPositions.isEmpty ? mailPositions : toolbarPositions
+            return
+        }
         savedPositions = dividers.compactMapValues { divider in
             guard let split = divider.split, let pane = divider.pane, !split.isSubviewCollapsed(pane) else { return nil }
             return pane.frame.maxX
@@ -77,8 +81,8 @@ final class AssistantMailPaneSizing {
         requestApply()
     }
 
-    /// Calendar temporarily uses this split to align the shared toolbar. Keep
-    /// its width changes separate from the positions saved for the assistant.
+    /// Other destinations use this split to align the shared toolbar. Keep
+    /// their width changes separate from the positions saved for the assistant.
     func setToolbarSidebarWidth(_ width: CGFloat?) {
         guard toolbarSidebarWidth != width else { return }
         let wasOverridden = toolbarSidebarWidth != nil
@@ -86,7 +90,7 @@ final class AssistantMailPaneSizing {
         if !wasOverridden, width != nil {
             if toolbarPositions.isEmpty {
                 // A native divider can move after the last probe layout. Read
-                // its current position before applying Calendar's constraints.
+                // its current position before applying another sidebar's width.
                 let current = dividers.compactMapValues { divider -> CGFloat? in
                     guard let split = divider.split, let pane = divider.pane, split.window != nil,
                           divider.index < split.arrangedSubviews.count - 1,
@@ -107,7 +111,7 @@ final class AssistantMailPaneSizing {
         let old = dividers[role]
         dividers[role] = SplitDivider(split: divider.split, pane: divider.pane, index: divider.index)
         // Cache ordinary Mail layout before a representable update changes the
-        // column constraints. Calendar's temporary geometry must not replace it.
+        // column constraints. Temporary toolbar geometry must not replace it.
         if toolbarSidebarWidth == nil, toolbarPositions.isEmpty, remainingAttempts == 0 {
             if divider.split.isSubviewCollapsed(divider.pane) {
                 mailPositions[role] = nil

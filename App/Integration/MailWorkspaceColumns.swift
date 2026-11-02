@@ -15,6 +15,9 @@ enum MailWindowPreferences {
 @MainActor @Observable
 final class AttachmentLibraryToolbarState {
     var columnVisibility = NavigationSplitViewVisibility.all
+    var sidebarWidth = Tokens.Layout.sidebarWidth
+    private(set) var isCompact = false
+    var isPopoverPresented = false
     var searchFocusRequest = 0
     /// The window's search field while the library shows; the library mirrors it.
     var searchText = ""
@@ -23,9 +26,21 @@ final class AttachmentLibraryToolbarState {
     var viewMode = AttachmentLibraryViewMode.saved {
         didSet { AttachmentLibraryViewMode.saved = viewMode }
     }
-    var showsSidebar: Bool { columnVisibility == .all }
+    var showsSidebar: Bool { !isCompact && columnVisibility == .all }
 
-    func toggleSidebar() { columnVisibility = showsSidebar ? .detailOnly : .all }
+    var sidebarToggle: SidebarToggle {
+        SidebarToggle(isVisible: isCompact ? isPopoverPresented : showsSidebar, toggle: toggleSidebar)
+    }
+
+    func toggleSidebar() {
+        if isCompact { isPopoverPresented.toggle() }
+        else { columnVisibility = showsSidebar ? .detailOnly : .all }
+    }
+
+    func updateCompact(_ compact: Bool) {
+        isCompact = compact
+        if !compact { isPopoverPresented = false }
+    }
 }
 
 extension NavigationSplitViewVisibility {

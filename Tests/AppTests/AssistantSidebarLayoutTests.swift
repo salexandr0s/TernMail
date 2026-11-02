@@ -140,6 +140,31 @@ import Testing
         }
     }
 
+    @Test func utilityPanelOpenedInAttachmentsRestoresMailWidths() {
+        let fixture = Fixture(width: 1600)
+        defer { fixture.window.close() }
+        fixture.setPaneWidths(navigation: 232, list: 372)
+        let originalNavigation = fixture.navigation.frame.width
+        let originalList = fixture.list.frame.width
+        fixture.sizing.setToolbarSidebarWidth(320)
+        fixture.setPaneWidths(navigation: 320, list: 448)
+
+        fixture.sizing.beginPresentation()
+        fixture.show(AssistantSidebarLayout(availableWidth: 1600, preferredWidth: 380, isPresented: true))
+        fixture.setPaneWidths(navigation: 320, list: AssistantSidebarLayout.listMinimum)
+        fixture.sizing.setToolbarSidebarWidth(nil)
+        fixture.compressAsColumnWidthsDo()
+        fixture.sizing.apply()
+        fixture.hide()
+        fixture.sizing.endPresentation()
+        fixture.sizing.apply()
+
+        #expect(abs(fixture.navigation.frame.width - originalNavigation) < 1,
+            "Closing Tasks opened from Attachments must restore Mail's sidebar width")
+        #expect(abs(fixture.list.frame.width - originalList) < 1,
+            "Closing Tasks opened from Attachments must restore Mail's list width")
+    }
+
     @MainActor private final class Fixture {
         let window: NSWindow
         let container: NSView

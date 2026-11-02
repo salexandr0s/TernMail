@@ -91,7 +91,7 @@ enum Tokens {
     /// Calendar panes and sheets share native control sizing and semantic surfaces.
     enum Calendar {
         static let sidebarWidth: CGFloat = 248
-        static let compactWidth: CGFloat = 760
+        static let compactWidth = Layout.sidebarCompactWidth
         static let contentMinWidth: CGFloat = 420
         static let editorWidth: CGFloat = 600
         static let editorHeight: CGFloat = 680
@@ -187,6 +187,7 @@ enum Tokens {
         static let sidebarMinWidth: CGFloat = 180
         static let sidebarWidth: CGFloat = 220
         static let sidebarMaxWidth: CGFloat = 320
+        static let sidebarCompactWidth: CGFloat = 760
         static let listMinWidth: CGFloat = 300
         static let listWidth: CGFloat = 360
         /// Grab gutter beside the sidebar and the list, outside their scroll views.
