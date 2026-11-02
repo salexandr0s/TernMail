@@ -55,6 +55,9 @@ import Testing
         try await capture(AnalyticsActivityChart(snapshot: snapshot, selectedDate: selected).padding(Tokens.Space.s6),
             size: NSSize(width: 880, height: 560), scheme: .light, waitFor: "Emails over time",
             name: "chart-selected-month", captureBottom: false)
+        try await capture(AnalyticsActivityChart(snapshot: largeSnapshot, selectedDate: selected).padding(Tokens.Space.s6),
+            size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Emails over time",
+            name: "chart-selected-narrow", captureBottom: false)
         try await capture(AnalyticsActivityChart(snapshot: snapshot, showsTable: true).padding(Tokens.Space.s6),
             size: NSSize(width: 560, height: 560), scheme: .dark, waitFor: "Show activity chart",
             name: "chart-values-month", captureBottom: true)
@@ -73,7 +76,7 @@ import Testing
         for scheme in [ColorScheme.light, .dark] {
             try await capture(SenderProfilePopover(accountID: account.id, address: "alex@example.invalid",
                 name: "Alex Morgan with a longer display name", mailbox: mailbox),
-                size: NSSize(width: 420, height: 440), scheme: scheme, waitFor: "Profiles and websites",
+                size: NSSize(width: 420, height: 440), scheme: scheme, waitFor: "linkedin.com/in/alex-morgan-example",
                 name: "sender-card-\(scheme == .light ? "light" : "dark")", captureBottom: true)
         }
         try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,

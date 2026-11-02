@@ -123,18 +123,7 @@ struct AnalyticsActivityChart: View {
     private var selectionSummary: some View {
         HStack(spacing: Tokens.Space.s3) {
             if !showsTable, let bucket = selectedBucket {
-                Text(bucketLabel(bucket.date)).fontWeight(.medium)
-                Spacer(minLength: Tokens.Space.s2)
-                HStack(spacing: Tokens.Space.s1) {
-                    Image(systemName: "tray.and.arrow.down").foregroundStyle(Tokens.Analytics.received)
-                    Text(bucket.receivedCount, format: .number)
-                }
-                    .accessibilityLabel("\(bucket.receivedCount) received")
-                HStack(spacing: Tokens.Space.s1) {
-                    Image(systemName: "paperplane").foregroundStyle(Tokens.Analytics.sent)
-                    Text(bucket.sentCount, format: .number)
-                }
-                    .accessibilityLabel("\(bucket.sentCount) sent")
+                selectedSummary(bucket)
             } else {
                 Label(showsTable ? "Individual emails per \(bucketHeading.lowercased())" : "Select a bar to see its counts",
                       systemImage: showsTable ? "number" : "cursorarrow")
@@ -144,6 +133,26 @@ struct AnalyticsActivityChart: View {
         }
         .font(.caption).monospacedDigit()
         .accessibilityElement(children: .combine)
+    }
+
+    private func selectedSummary(_ bucket: MailAnalyticsBucket) -> some View {
+        let date = bucketLabel(bucket.date)
+        let counts = "\(bucket.receivedCount.formatted()) received · \(bucket.sentCount.formatted()) sent"
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s3) {
+                Text(date).fontWeight(.medium).fixedSize()
+                Spacer(minLength: 0)
+                Text(counts).foregroundStyle(.secondary).fixedSize()
+            }
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(date).fontWeight(.medium)
+                Text(counts).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(date): \(bucket.receivedCount.formatted()) received, \(bucket.sentCount.formatted()) sent")
     }
 
     private var valuesTable: some View {

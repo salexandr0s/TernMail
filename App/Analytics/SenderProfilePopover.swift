@@ -45,18 +45,23 @@ struct SenderProfilePopover: View {
                                 symbol: "arrow.down.left", tint: Tokens.Analytics.received)
                             compactMetric("Sent", count: snapshot.sentCount,
                                 symbol: "arrow.up.right", tint: Tokens.Analytics.sent)
+                            AnalyticsCoverageLabel(coverage: snapshot.coverage)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
-                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            if let first = snapshot.firstReceivedAt {
-                                dateRow("First received", date: first)
-                            }
-                            if let last = snapshot.lastContactAt {
-                                dateRow("Last email", date: last)
-                            }
-                        }
-                        AnalyticsCoverageLabel(coverage: snapshot.coverage)
+                        .frame(height: Tokens.Space.s10)
                         Divider()
                         SenderProfileLinksView(links: model.profileLinks)
+                        if snapshot.firstReceivedAt != nil || snapshot.lastContactAt != nil {
+                            Divider()
+                            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                                if let first = snapshot.firstReceivedAt {
+                                    dateRow("First received", date: first)
+                                }
+                                if let last = snapshot.lastContactAt {
+                                    dateRow("Last email", date: last)
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(Tokens.Space.s5)
@@ -121,19 +126,18 @@ struct SenderProfilePopover: View {
     }
 
     private func compactMetric(_ title: String, count: Int, symbol: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Label {
-                Text(title).foregroundStyle(.secondary)
-            } icon: {
-                Image(systemName: symbol).foregroundStyle(tint)
+        HStack(spacing: Tokens.Space.s1) {
+            Image(systemName: symbol).font(.caption).foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                Text(count, format: .number).font(.headline).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
+                Text(title).font(.caption).foregroundStyle(.secondary)
             }
-            .font(.caption.weight(.medium))
-            Text(count, format: .number).font(.title.weight(.semibold)).monospacedDigit()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Tokens.Space.s3)
-        .background(tint.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .accessibilityElement(children: .combine)
+        .help("\(count.formatted()) \(title.lowercased())")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(count.formatted()) \(title.lowercased())")
     }
 
     private func dateRow(_ title: String, date: Date) -> some View {
