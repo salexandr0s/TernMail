@@ -15,7 +15,6 @@ struct WorkspaceView: View {
     @State private var calendarSidebar = CalendarSidebarState()
     @State private var tasksAllowClosing = true
     @FocusState private var compactBackFocused: Bool
-    @FocusedValue(\.calendarWorkspaceHasFocus) private var calendarHasFocus
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     let mailbox: MailboxModel
@@ -89,8 +88,9 @@ struct WorkspaceView: View {
                     .accessibilityHidden(true)
             }
             .toolbar(removing: .sidebarToggle)
-            .onChange(of: layout.isCompact) { _, compact in
-                if compact, app.destination == .calendar, calendarHasFocus == true {
+            .background {
+                CalendarWorkspaceFocusTransfer(isCompact: layout.isCompact,
+                    isCalendarActive: app.destination == .calendar) {
                     compactBackFocused = true
                 }
             }
@@ -130,6 +130,24 @@ struct WorkspaceView: View {
     private func openAssistant(fullScreen: Bool) {
         calendarPanel = nil
         AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
+    }
+}
+
+private struct CalendarWorkspaceFocusTransfer: View {
+    let isCompact: Bool
+    let isCalendarActive: Bool
+    let onNeedsBackFocus: () -> Void
+    @FocusedValue(\.calendarWorkspaceHasFocus) private var calendarHasFocus
+
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onChange(of: isCompact) { _, compact in
+                if compact, isCalendarActive, calendarHasFocus == true {
+                    onNeedsBackFocus()
+                }
+            }
     }
 }
 
