@@ -20,18 +20,18 @@ final class ReviewFixesUITests: XCTestCase {
 
         let create = app.buttons["compose-template-new"]
         create.click()
-        XCTAssertTrue(app.buttons["Discard Changes"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].click()
+        XCTAssertTrue(app.sheets.buttons["Discard Changes"].waitForExistence(timeout: 5))
+        app.sheets.buttons["Cancel"].click()
         XCTAssertEqual(name.value as? String, "Unfinished reply")
 
         app.staticTexts["General"].firstMatch.click()
-        XCTAssertTrue(app.buttons["Discard Changes"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].click()
+        XCTAssertTrue(app.sheets.buttons["Discard Changes"].waitForExistence(timeout: 5))
+        app.sheets.buttons["Cancel"].click()
         XCTAssertEqual(name.value as? String, "Unfinished reply")
 
         create.click()
-        XCTAssertTrue(app.buttons["Discard Changes"].waitForExistence(timeout: 5))
-        app.buttons["Discard Changes"].click()
+        XCTAssertTrue(app.sheets.buttons["Discard Changes"].waitForExistence(timeout: 5))
+        app.sheets.buttons["Discard Changes"].click()
         let cleared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: name)
         XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 5), .completed)
     }
@@ -40,13 +40,16 @@ final class ReviewFixesUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--ui-audit", "--ui-audit-cached-reauth", "--ui-audit-light",
-                               "-ApplePersistenceIgnoreState", "YES"]
+                               "-ApplePersistenceIgnoreState", "YES", "-hideViewingPane", "NO"]
         app.launch()
         defer { app.terminate() }
 
+        let window = app.windows.matching(identifier: "main").firstMatch
+        if !window.exists { app.typeKey("0", modifierFlags: .command) }
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
         let reconnect = app.buttons["Sign in again to audit@example.invalid"]
         XCTAssertTrue(reconnect.waitForExistence(timeout: 15))
-        let subject = app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Field notes", "Field notes")).firstMatch
+        let subject = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Field notes")).firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 10), "Cached Inbox must remain available after the only account expires.")
         subject.click()
         let message = app.descendants(matching: .any).matching(identifier: "message-disclosure-m1").firstMatch
