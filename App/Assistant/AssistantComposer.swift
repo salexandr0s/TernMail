@@ -23,23 +23,11 @@ struct AssistantComposer: View {
                 }
                 .ternTransition(.disclosure)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s2) {
-                    accessButton
-                    scopeMenu.fixedSize()
-                    Spacer(minLength: Tokens.Space.s3)
-                    modelMenu.fixedSize()
-                    sendButton
-                }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    scopeMenu
-                    HStack(spacing: Tokens.Space.s2) {
-                        accessButton
-                        Spacer(minLength: Tokens.Space.s2)
-                        modelMenu
-                        sendButton
-                    }
-                }
+            HStack(spacing: Tokens.Space.s2) {
+                scopeMenu
+                Spacer(minLength: 0)
+                modelMenu
+                sendButton.fixedSize()
             }
         }
         .padding(Tokens.Space.s3)
@@ -83,14 +71,7 @@ struct AssistantComposer: View {
             Divider()
             Button("Manage Mail & Calendar Access…", systemImage: "slider.horizontal.3", action: onSettings)
         } label: {
-            Group {
-                if model.conversationAccounts.count == 1, let account = model.conversationAccounts.first {
-                    SenderAccountLabel(account: account, address: scopeTitle)
-                } else {
-                    Label(scopeTitle, systemImage: "envelope")
-                }
-            }
-            .lineLimit(1)
+            Text(scopeTitle).lineLimit(1).truncationMode(.middle)
             .padding(.horizontal, Tokens.Space.s1)
             .frame(minHeight: Tokens.Control.iconButton)
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
@@ -129,20 +110,6 @@ struct AssistantComposer: View {
         .accessibilityLabel("Model").accessibilityValue(modelName)
         .accessibilityIdentifier("assistant.model")
         .help(modelName)
-    }
-
-    private var accessButton: some View {
-        Button(action: onSettings) {
-            Image(systemName: "slider.horizontal.3")
-                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain).foregroundStyle(.secondary)
-        .ternHover(radius: Tokens.Radius.md)
-        .contentShape(.focusEffect, Circle())
-        .help("Manage mail and calendar access")
-        .accessibilityLabel("Manage assistant access. \(model.enabledAccountIDs.count) enabled mail accounts")
-        .accessibilityIdentifier("assistant.access")
     }
 
     private var sendButton: some View {
