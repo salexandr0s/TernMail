@@ -49,8 +49,11 @@ struct CalendarEventChip: View {
     private var calendarTitle: String { identities.title(for: event.calendarKey) }
 
     private var dateDescription: String {
-        event.start.formatted(Date.FormatStyle(date: .abbreviated, time: event.isAllDay ? .omitted : .shortened, timeZone: timeZone))
-            + (event.isAllDay ? ", all day" : " – " + event.end.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: timeZone)))
-            + (event.isPending ? ", pending sync" : "")
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.timeZone = timeZone
+        var parts = [CalendarEventDateDescription.text(start: event.start, end: event.end, isAllDay: event.isAllDay, calendar: calendar)]
+        if event.isAllDay { parts.append(String(localized: "All day")) }
+        if event.isPending { parts.append(String(localized: "Pending sync")) }
+        return parts.joined(separator: ", ")
     }
 }

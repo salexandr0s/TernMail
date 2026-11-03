@@ -208,7 +208,7 @@
 		5B15CE9A2D8D138AD02AFA26 /* CalendarEventEditorComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A1CA4EF1800933760838B1 /* CalendarEventEditorComponents.swift */; };
 		5BBA04B93006B1D77BA44E4A /* ComposeAssistantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA77B4F0A4C3E3B0981C7BC /* ComposeAssistantTests.swift */; };
 		5BC3C8D2A0620D55903EAFD3 /* MailSidebarBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87E8FA60DF0688814267F564 /* MailSidebarBadgeTests.swift */; };
-		5BD94A620EC5CB7B946764FC /* CalendarSearchDateDescription.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC0E63094F70F144E2C94BC /* CalendarSearchDateDescription.swift */; };
+		5BD94A620EC5CB7B946764FC /* CalendarEventDateDescription.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC0E63094F70F144E2C94BC /* CalendarEventDateDescription.swift */; };
 		5BEFB514E521AE661D45D4A6 /* RecipientAvatarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEBAF0C5D5B662AD2DEF77F1 /* RecipientAvatarTests.swift */; };
 		5C30FBE0355DB8FC13FB6FAB /* FailedChangePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9F14FCEE1BA143B2CFF0BD /* FailedChangePresentation.swift */; };
 		5D4037A78D24C68351B74543 /* UnsubscribeWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400D0779A1932B3CAF970775 /* UnsubscribeWindow.swift */; };
@@ -1073,7 +1073,7 @@
 		EBA235831D99907D2840860A /* CalendarEventMenuItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventMenuItems.swift; sourceTree = "<group>"; };
 		EBB8E313E484591248110FD3 /* AssistantCalendarActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCalendarActionsView.swift; sourceTree = "<group>"; };
 		EBC065B40FE60E04F167878A /* AccountProfileImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileImages.swift; sourceTree = "<group>"; };
-		EBC0E63094F70F144E2C94BC /* CalendarSearchDateDescription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSearchDateDescription.swift; sourceTree = "<group>"; };
+		EBC0E63094F70F144E2C94BC /* CalendarEventDateDescription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventDateDescription.swift; sourceTree = "<group>"; };
 		ED1D80F010F9CEEDE9C257F4 /* MailboxModel+Triage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MailboxModel+Triage.swift"; sourceTree = "<group>"; };
 		EE0A763203E136998ADE6400 /* AddressAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressAvatar.swift; sourceTree = "<group>"; };
 		EE3FFAB04ABFE17C13D20FDF /* GoogleAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuth.swift; sourceTree = "<group>"; };
@@ -1740,7 +1740,7 @@
 				DB815A60DBAEA19559D77D5B /* CalendarRecurrenceDescription.swift */,
 				71B61F7661A34A6EB39E6A3E /* CalendarScheduleView.swift */,
 				1C7363458CD72C33D218A1EE /* CalendarScrollNavigation.swift */,
-				EBC0E63094F70F144E2C94BC /* CalendarSearchDateDescription.swift */,
+				EBC0E63094F70F144E2C94BC /* CalendarEventDateDescription.swift */,
 				558BC298EF99BF1AE09BEC08 /* CalendarSearchResults.swift */,
 				C5CCACB4E202DBA913F46E36 /* CalendarShareList.swift */,
 				E369609B58005DA935BBD452 /* CalendarSidebar.swift */,
@@ -2296,7 +2296,7 @@
 				FFCC83A9F1AA7079EA352A50 /* CalendarRecurrenceDescription.swift in Sources */,
 				820BEE067D5DBA31CA676359 /* CalendarScheduleView.swift in Sources */,
 				41764A930D3F9D50074C6B51 /* CalendarScrollNavigation.swift in Sources */,
-				5BD94A620EC5CB7B946764FC /* CalendarSearchDateDescription.swift in Sources */,
+				5BD94A620EC5CB7B946764FC /* CalendarEventDateDescription.swift in Sources */,
 				1FDD93965A0E764BF1F48377 /* CalendarSearchResults.swift in Sources */,
 				47E2541E90732372C5E808AC /* CalendarShareList.swift in Sources */,
 				88B80DF79331FCA7A77B6976 /* CalendarSidebar.swift in Sources */,

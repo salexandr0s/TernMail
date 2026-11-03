@@ -33,27 +33,27 @@ import Testing
         #expect(environment.calendarIdentities == CalendarIdentityPresentation(calendars: []))
     }
 
-    @Test func allDaySearchDescriptionsUseIncludedDatesAcrossDaylightSavingTime() throws {
+    @Test func allDayEventDescriptionsUseIncludedDatesAcrossDaylightSavingTime() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))
-        for (month, startDay, endDay, includedLastDay) in [(11, 3, 4, 3), (11, 3, 6, 5), (3, 28, 30, 29)] {
+        for (month, startDay, endDay, includedLastDay) in [(11, 3, 4, 3), (11, 3, 6, 5), (3, 28, 30, 29), (10, 24, 26, 25)] {
             let start = try #require(calendar.date(from: DateComponents(year: 2026, month: month, day: startDay)))
             let end = try #require(calendar.date(from: DateComponents(year: 2026, month: month, day: endDay)))
             let includedLast = try #require(calendar.date(from: DateComponents(year: 2026, month: month, day: includedLastDay)))
             let firstText = CalendarLayout.format(start, style: .dateTime.month(.wide).day().year(), calendar: calendar)
             let lastText = CalendarLayout.format(includedLast, style: .dateTime.month(.wide).day().year(), calendar: calendar)
-            #expect(CalendarSearchDateDescription.text(start: start, end: end, isAllDay: true, calendar: calendar)
+            #expect(CalendarEventDateDescription.text(start: start, end: end, isAllDay: true, calendar: calendar)
                 == (startDay == includedLastDay ? firstText : "\(firstText) – \(lastText)"))
         }
     }
 
-    @Test func timedSearchDescriptionsRetainBothExactEndpoints() throws {
+    @Test func timedEventDescriptionsRetainBothExactEndpoints() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))
         let start = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 28, hour: 23, minute: 30)))
         let end = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 29, hour: 4, minute: 15)))
         let style: Date.FormatStyle = .dateTime.month(.wide).day().year().hour().minute()
-        #expect(CalendarSearchDateDescription.text(start: start, end: end, isAllDay: false, calendar: calendar)
+        #expect(CalendarEventDateDescription.text(start: start, end: end, isAllDay: false, calendar: calendar)
             == "\(CalendarLayout.format(start, style: style, calendar: calendar)) – \(CalendarLayout.format(end, style: style, calendar: calendar))")
     }
 }

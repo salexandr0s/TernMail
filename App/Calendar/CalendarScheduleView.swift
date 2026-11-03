@@ -106,10 +106,9 @@ struct CalendarScheduleView: View {
     }
 
     private func eventDescription(_ event: CalendarDisplayEvent, calendarTitle: String) -> String {
-        let dateStyle: Date.FormatStyle = event.isAllDay ? .dateTime.month(.wide).day().year() : .dateTime.month(.wide).day().year().hour().minute()
-        let start = CalendarLayout.format(event.start, style: dateStyle, calendar: calendar)
-        let end = CalendarLayout.format(event.end, style: dateStyle, calendar: calendar)
-        var parts = [event.title, calendarTitle, event.isAllDay ? String(localized: "\(start), all day") : "\(start) – \(end)"]
+        let dates = CalendarEventDateDescription.text(start: event.start, end: event.end, isAllDay: event.isAllDay, calendar: calendar)
+        var parts = [event.title, calendarTitle, dates]
+        if event.isAllDay { parts.append(String(localized: "All day")) }
         if let location = event.event.location, !location.isEmpty { parts.append(location) }
         if event.isPending { parts.append(String(localized: "Pending sync")) }
         if event.isRecurring { parts.append(String(localized: "Repeating event")) }

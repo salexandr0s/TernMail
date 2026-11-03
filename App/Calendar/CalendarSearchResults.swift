@@ -79,7 +79,7 @@ struct CalendarSearchResults: View {
     }
 
     private func eventDescription(_ event: CalendarDisplayEvent, calendarTitle: String) -> String {
-        let dates = CalendarSearchDateDescription.text(start: event.start, end: event.end, isAllDay: event.isAllDay, calendar: calendar)
+        let dates = CalendarEventDateDescription.text(start: event.start, end: event.end, isAllDay: event.isAllDay, calendar: calendar)
         var parts = [event.title, calendarTitle, dates]
         if event.isAllDay { parts.append(String(localized: "All day")) }
         if let location = event.event.location, !location.isEmpty { parts.append(location) }

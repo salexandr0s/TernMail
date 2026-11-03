@@ -1,7 +1,7 @@
 import Foundation
 
 /// Provider all-day ranges end at the start of the following calendar day.
-enum CalendarSearchDateDescription {
+enum CalendarEventDateDescription {
     static func text(start: Date, end: Date, isAllDay: Bool, calendar: Calendar) -> String {
         let style: Date.FormatStyle = isAllDay ? .dateTime.month(.wide).day().year() : .dateTime.month(.wide).day().year().hour().minute()
         let first = CalendarLayout.format(start, style: style, calendar: calendar)
