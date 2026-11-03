@@ -517,6 +517,12 @@ enum Schema {
                 """)
         }
         NewsletterSchema.register(in: &migrator)
+        migrator.registerMigration("sender-image-authentication-v1") { db in
+            try db.alter(table: "message") { $0.add(column: "verifiedImageSender", .text) }
+            // Existing bodies need one receiver-evidence read before their
+            // sender's remembered image permission can apply again.
+            try db.execute(sql: "UPDATE messageBody SET enrichedAt = NULL WHERE messageID NOT LIKE 'local-send:%'")
+        }
         return migrator
     }
 
@@ -584,6 +590,7 @@ enum Schema {
         }
         Milestone5ConfigSchema.register(in: &migrator)
         MessageSnoozeSchema.registerConfig(in: &migrator)
+        AccountRemovalSchema.register(in: &migrator)
         return migrator
     }
 }

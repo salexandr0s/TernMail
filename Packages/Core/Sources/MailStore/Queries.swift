@@ -258,11 +258,22 @@ public struct AccountStore: Sendable {
     }
 
     public func accounts() async throws -> [AccountRecord] {
-        try await writer.read { db in try AccountRecord.order(Column("addedAt")).fetchAll(db) }
+        try await writer.read { db in
+            try AccountRecord.fetchAll(db, sql: """
+                SELECT account.* FROM account
+                WHERE NOT EXISTS (SELECT 1 FROM pendingAccountRemoval p WHERE p.accountID = account.id)
+                ORDER BY addedAt
+                """)
+        }
     }
 
     public func save(_ account: AccountRecord) async throws {
-        try await writer.write { db in try account.upsert(db) }
+        try await writer.write { db in
+            let pending = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM pendingAccountRemoval WHERE accountID = ?)",
+                arguments: [account.id]) ?? false
+            guard !pending else { throw AccountRemovalError.incomplete }
+            try account.upsert(db)
+        }
     }
 
     public func deleteAccount(id: String) async throws {

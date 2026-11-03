@@ -34,8 +34,8 @@ struct MessageView: View {
     @State private var contentHeight: CGFloat = 0
     @State private var inlineResources = InlineResourceMap()
     /// Load Images was chosen for this message.
-    @State private var loadsImages = false
-    @State private var allowsSenderImages = false
+    @State private var explicitImagePermission: SenderImageIdentity?
+    @State private var rememberedImagePermission: SenderImageIdentity?
     @State private var selectedText = ""
     @State private var activeBlocker: WKContentRuleList?
     @State private var resourceSnapshot: ReadingResourceSnapshot?
@@ -65,7 +65,15 @@ struct MessageView: View {
         let isRealized: Bool
     }
 
-    private var allowsImages: Bool { loadsImages || allowsSenderImages || !blocksImages }
+    private var imageSenderIdentity: SenderImageIdentity {
+        SenderImageIdentity(accountID: message.record.accountID, messageID: message.id,
+            from: message.record.sender, verifiedSender: message.record.verifiedImageSender)
+    }
+    private var allowsSenderImages: Bool { imageSenderIdentity.permitsRemembered(rememberedImagePermission) }
+    private var allowsImages: Bool {
+        imageSenderIdentity.allowsImages(blocksRemoteImages: blocksImages, explicit: explicitImagePermission,
+            remembered: rememberedImagePermission)
+    }
     private var isRealized: Bool {
         isExpanded && ((isReaderActive && (isInViewport || finder.requestedMessageID == message.id)) || retainsHiddenBody)
     }
@@ -128,10 +136,13 @@ struct MessageView: View {
             textScale: textScale, isExpanded: isExpanded, isActive: isReaderActive, isRealized: isRealized)) {
             await render()
         }
-        .task(id: message.record.sender) {
-            let allowed = try? await mailbox.accountStore?.allowedImageSenders(accountID: message.record.accountID)
-            guard !Task.isCancelled else { return }
-            allowsSenderImages = allowed?.contains(senderAddress.lowercased()) == true
+        .task(id: imageSenderIdentity) {
+            let identity = imageSenderIdentity
+            rememberedImagePermission = nil
+            guard let address = identity.address else { return }
+            let allowed = try? await mailbox.accountStore?.allowedImageSenders(accountID: identity.accountID)
+            guard !Task.isCancelled, identity == imageSenderIdentity else { return }
+            rememberedImagePermission = allowed?.contains(address) == true ? identity : nil
         }
         .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; onHoverLink(nil) } }
         .onChange(of: isRealized) { _, realized in
@@ -150,9 +161,9 @@ struct MessageView: View {
             guard change.userInfo?["account"] as? String == message.record.accountID,
                   change.userInfo?["sender"] as? String == senderAddress.lowercased(),
                   let allowed = change.userInfo?["allowed"] as? Bool else { return }
-            allowsSenderImages = allowed
+            rememberedImagePermission = allowed && imageSenderIdentity.address != nil ? imageSenderIdentity : nil
             // Blocking the sender's images ends Load Images too.
-            if !allowed { loadsImages = false }
+            if !allowed { explicitImagePermission = nil }
         }
     }
 
@@ -173,11 +184,13 @@ struct MessageView: View {
         } else if let rendered {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 if rendered.blockedRemoteImages > 0 {
-                    RemoteImagesBar(sender: message.parsedSenderAddress, onLoad: { loadsImages = true }) {
+                    RemoteImagesBar(sender: imageSenderIdentity.address, onLoad: { explicitImagePermission = imageSenderIdentity }) {
                         mailbox.setImageSenderAllowed(true, address: senderAddress, accountID: message.record.accountID)
                     }
                 }
                 MessageWebView(html: rendered.html, blocker: activeBlocker ?? blocker, height: $height, resources: inlineResources,
+                    allowsRemoteImages: allowsImages,
+                    remoteImageURLs: rendered.remoteImageURLs,
                     adaptsDarkMode: adaptsDark && !showsLightBackground,
                     forcesLightAppearance: showsLightBackground,
                     isActive: isReaderActive,
@@ -196,7 +209,7 @@ struct MessageView: View {
                     onOpenMailLink: { app.mailURLs.receive($0) },
                     onCreate: { finder.register($0, for: message.id) },
                     onDismantle: { finder.unregister($0) })
-                    .id(inlineResources.scope + ":\(showsLightBackground):\(adaptsDark)")
+                    .id(inlineResources.scope + ":\(allowsImages):\(showsLightBackground):\(adaptsDark)")
                     .frame(height: max(height, Tokens.Space.s5))
                     .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                     .accessibilityLabel("Message from \(senderName)")
@@ -304,7 +317,7 @@ struct MessageView: View {
 /// Load Images shows them in this message; Always Load keeps them on for the
 /// sender.
 private struct RemoteImagesBar: View {
-    /// The sender's address, when the From header has one.
+    /// A sender whose domain passed Gmail's receiver DMARC evaluation.
     let sender: String?
     let onLoad: () -> Void
     let onAlwaysLoad: () -> Void

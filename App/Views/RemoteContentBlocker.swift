@@ -29,14 +29,12 @@ enum RemoteContentBlocker {
             ["trigger": ["url-filter": "^tern-message:"], "action": ["type": "ignore-previous-rules"]],
         ]
         if allowsRemoteImages {
-            rules.append(["trigger": ["url-filter": "^https:", "resource-type": ["image"]], "action": ["type": "ignore-previous-rules"]])
-            for pattern in TrackerMatcher.blockedURLPatterns {
-                rules.append(["trigger": ["url-filter": pattern], "action": ["type": "block"]])
-            }
+            rules.append(["trigger": ["url-filter": "^\(RemoteImageResourceURL.scheme):", "resource-type": ["image"]],
+                          "action": ["type": "ignore-previous-rules"]])
         }
         guard let data = try? JSONSerialization.data(withJSONObject: rules), let encoded = String(data: data, encoding: .utf8) else { return RuleListBox(list: nil) }
         return await withCheckedContinuation { (continuation: CheckedContinuation<RuleListBox, Never>) in
-            store.compileContentRuleList(forIdentifier: "TernReadingImages-\(allowsRemoteImages)-v1", encodedContentRuleList: encoded) { list, _ in
+            store.compileContentRuleList(forIdentifier: "TernReadingImages-\(allowsRemoteImages)-v2", encodedContentRuleList: encoded) { list, _ in
                 continuation.resume(returning: RuleListBox(list: list))
             }
         }

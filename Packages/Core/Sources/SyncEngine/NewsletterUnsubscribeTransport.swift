@@ -27,9 +27,12 @@ public struct NewsletterHTTPSession: NewsletterUnsubscribeTransport {
     public static let shared = NewsletterHTTPSession()
     private let client: NewsletterHTTPClient
     private let validateHost: @Sendable (String) async throws -> Void
+    private let pinsResolvedAddress: Bool
 
     public init() {
-        self.init(configuration: .ephemeral, validateHost: Self.validatePublicHost)
+        client = NewsletterHTTPClient(configuration: .ephemeral)
+        validateHost = Self.validatePublicHost
+        pinsResolvedAddress = true
     }
 
     /// The override is internal so tests can use a URLProtocol without DNS or
@@ -37,20 +40,34 @@ public struct NewsletterHTTPSession: NewsletterUnsubscribeTransport {
     init(configuration: URLSessionConfiguration, validateHost: @escaping @Sendable (String) async throws -> Void) {
         client = NewsletterHTTPClient(configuration: configuration)
         self.validateHost = validateHost
+        pinsResolvedAddress = false
     }
 
     public func unsubscribe(at url: URL) async throws {
         try Task.checkCancellation()
         guard let safe = NewsletterURLPolicy.webURL(url.absoluteString, requiresHTTPS: true),
               let host = safe.host else { throw NewsletterTransportError.unsafeURL }
-        try await validateHost(host)
+        let address: String?
+        if pinsResolvedAddress {
+            // The connection below uses this numeric endpoint directly. A
+            // second DNS lookup cannot silently replace the checked address.
+            address = try await NewsletterDNSCheck.resolve {
+                NewsletterNetworkPolicy.publicAddresses(host)
+            }.first
+            guard address != nil else { throw NewsletterTransportError.unsafeURL }
+        } else {
+            // Test transports inject URLProtocol and do not resolve DNS.
+            try await validateHost(host)
+            address = nil
+        }
         try Task.checkCancellation()
         var request = URLRequest(url: safe, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.httpBody = Data("List-Unsubscribe=One-Click".utf8)
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpShouldHandleCookies = false
-        try await client.post(request)
+        if let address { try await PinnedNewsletterHTTP.post(request, address: address, hostname: host) }
+        else { try await client.post(request) }
     }
 
     private static func validatePublicHost(_ host: String) async throws {
@@ -64,24 +81,29 @@ public struct NewsletterHTTPSession: NewsletterUnsubscribeTransport {
 /// lookup may finish later, but it cannot start an HTTP request or resume twice.
 final class NewsletterDNSCheck: Sendable {
     private struct State {
-        var continuation: CheckedContinuation<Void, any Error>?
-        var result: Result<Void, any Error>?
+        var continuation: CheckedContinuation<[String], any Error>?
+        var result: Result<[String], any Error>?
     }
     private let state = Mutex(State())
 
     static func validate(timeout: TimeInterval = 8, resolve: @escaping @Sendable () -> Bool) async throws {
+        _ = try await self.resolve(timeout: timeout) { resolve() ? ["valid"] : nil }
+    }
+
+    static func resolve(timeout: TimeInterval = 8,
+                        lookup: @escaping @Sendable () -> [String]?) async throws -> [String] {
         let check = NewsletterDNSCheck()
-        try await withTaskCancellationHandler {
+        return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try await withCheckedThrowingContinuation { continuation in
-                let result = check.state.withLock { state -> Result<Void, any Error>? in
+            return try await withCheckedThrowingContinuation { continuation in
+                let result = check.state.withLock { state -> Result<[String], any Error>? in
                     if let result = state.result { return result }
                     state.continuation = continuation
                     return nil
                 }
                 if let result { continuation.resume(with: result); return }
                 DispatchQueue.global(qos: .utility).async {
-                    check.finish(resolve() ? .success(()) : .failure(NewsletterTransportError.unsafeURL))
+                    check.finish(lookup().map(Result.success) ?? .failure(NewsletterTransportError.unsafeURL))
                 }
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
                     check.finish(.failure(URLError(.timedOut)))
@@ -90,8 +112,8 @@ final class NewsletterDNSCheck: Sendable {
         } onCancel: { check.finish(.failure(CancellationError())) }
     }
 
-    private func finish(_ result: Result<Void, any Error>) {
-        let continuation = state.withLock { state -> CheckedContinuation<Void, any Error>? in
+    private func finish(_ result: Result<[String], any Error>) {
+        let continuation = state.withLock { state -> CheckedContinuation<[String], any Error>? in
             guard state.result == nil else { return nil }
             state.result = result
             defer { state.continuation = nil }
@@ -209,29 +231,48 @@ private final class NewsletterHTTPPending: Sendable {
 
 enum NewsletterNetworkPolicy {
     static func isPublicHost(_ host: String) -> Bool {
-        guard NewsletterURLPolicy.isPublicHostname(host) else { return false }
+        publicAddresses(host) != nil
+    }
+
+    static func publicAddresses(_ host: String) -> [String]? {
+        guard NewsletterURLPolicy.isPublicHostname(host) else { return nil }
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
         hints.ai_protocol = IPPROTO_TCP
         var result: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, "443", &hints, &result) == 0, let first = result else { return false }
+        guard getaddrinfo(host, "443", &hints, &result) == 0, let first = result else { return nil }
         defer { freeaddrinfo(first) }
         var cursor: UnsafeMutablePointer<addrinfo>? = first
+        var addresses: [String] = []
         while let item = cursor {
-            guard let address = item.pointee.ai_addr else { return false }
+            guard let address = item.pointee.ai_addr else { return nil }
             switch Int32(address.pointee.sa_family) {
             case AF_INET:
                 let value = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr.s_addr.bigEndian
-                guard isPublicIPv4(value) else { return false }
+                guard isPublicIPv4(value) else { return nil }
             case AF_INET6:
                 let value = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_addr
-                guard withUnsafeBytes(of: value, { isPublicIPv6(Array($0)) }) else { return false }
-            default: return false
+                guard withUnsafeBytes(of: value, { isPublicIPv6(Array($0)) }) else { return nil }
+            default: return nil
             }
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(address, item.pointee.ai_addrlen, &buffer, socklen_t(buffer.count),
+                              nil, 0, NI_NUMERICHOST) == 0 else { return nil }
+            addresses.append(String(decoding: buffer.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self))
             cursor = item.pointee.ai_next
         }
-        return true
+        return addresses.isEmpty ? nil : addresses
+    }
+
+    static func isPublicNumericAddress(_ address: String) -> Bool {
+        var ipv4 = in_addr()
+        if inet_pton(AF_INET, address, &ipv4) == 1 { return isPublicIPv4(ipv4.s_addr.bigEndian) }
+        var ipv6 = in6_addr()
+        if inet_pton(AF_INET6, address, &ipv6) == 1 {
+            return withUnsafeBytes(of: ipv6) { isPublicIPv6(Array($0)) }
+        }
+        return false
     }
 
     static func isPublicIPv4(_ value: UInt32) -> Bool {
@@ -240,6 +281,9 @@ enum NewsletterNetworkPolicy {
             && !(a == 100 && (64...127).contains(b))
             && !(a == 169 && b == 254) && !(a == 172 && (16...31).contains(b))
             && !(a == 192 && (b == 168 || b == 0)) && !(a == 198 && (b == 18 || b == 19))
+            // These IANA special-purpose blocks are not general web origins.
+            && !(a == 192 && ((b == 31 && c == 196) || (b == 52 && c == 193)
+                             || (b == 88 && c == 99) || (b == 175 && c == 48)))
             && !(a == 198 && b == 51 && c == 100) && !(a == 203 && b == 0 && c == 113)
     }
 
@@ -250,5 +294,6 @@ enum NewsletterNetworkPolicy {
             && !(bytes[0] == 0x20 && bytes[1] == 0x02)
             && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] < 2)
             && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8)
+            && !(bytes[0] == 0x3f && bytes[1] == 0xff && (bytes[2] & 0xf0) == 0)
     }
 }

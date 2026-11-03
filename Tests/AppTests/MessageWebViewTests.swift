@@ -2,7 +2,9 @@ import AppKit
 import JavaScriptCore
 import MailStore
 import MessageContent
+import SyncEngine
 import SwiftUI
+import Synchronization
 import Testing
 import WebKit
 @testable import Tern
@@ -189,6 +191,39 @@ import WebKit
     @Test func bothImagePrivacyRuleSetsCompileInWebKit() async throws {
         _ = try #require(await RemoteContentBlocker.ruleList())
         _ = try #require(await RemoteContentBlocker.ruleList(allowsRemoteImages: true))
+    }
+
+    @Test(.timeLimit(.minutes(1))) func consentedImageUsesMessageSchemeWithNoHTTPSWebKitLoad() async throws {
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        let resources = InlineResourceMap()
+        let rendered = MessageDocument.render(html: "<img id='remote' src='https://images.example.com/photo.png'>",
+            policy: .init(allowsRemoteImages: true, inlineResources: resources))
+        #expect(!rendered.html.contains("src=\"https:"))
+        let fetched = Mutex<URL?>(nil)
+        let handler = RemoteImageHandler(scope: resources.scope, enabled: true, allowedURLs: rendered.remoteImageURLs) { url in
+            fetched.withLock { $0 = url }
+            return PinnedRemoteImage(data: png, mimeType: "image/png")
+        }
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.setURLSchemeHandler(handler, forURLScheme: RemoteImageResourceURL.scheme)
+        configuration.userContentController.add(try #require(await RemoteContentBlocker.ruleList(allowsRemoteImages: true)))
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 100), configuration: configuration)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+        defer { view.stopLoading(); window.close() }
+        view.loadHTMLString(rendered.html, baseURL: nil)
+        try await waitFor { fetched.withLock { $0 != nil } }
+        #expect(fetched.withLock { $0?.absoluteString } == "https://images.example.com/photo.png")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        var loaded = false
+        repeat {
+            loaded = (try? await view.evaluateJavaScript("document.getElementById('remote').naturalWidth > 0",
+                in: nil, contentWorld: .defaultClient) as? Bool) == true
+            if !loaded { try await Task.sleep(for: .milliseconds(20)) }
+        } while !loaded && ContinuousClock.now < deadline
+        #expect(loaded)
     }
 
     @Test(.timeLimit(.minutes(1))) func inlineImageLoadsOnlyThroughItsOwnImmutableMessageMap() async throws {

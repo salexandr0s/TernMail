@@ -29,8 +29,13 @@ enum ChatGPTConnectionError: Error, LocalizedError {
 /// A temporary HTTP endpoint used only for the browser's OAuth redirect.
 @MainActor
 final class LoopbackAuthListener: ChatGPTCallbackListener {
+    private struct AcceptedConnection {
+        let connection: NWConnection
+        let deadline: Task<Void, Never>
+    }
+
     private var listener: NWListener?
-    private var connections: [UUID: NWConnection] = [:]
+    private var connections: [UUID: AcceptedConnection] = [:]
     private var startContinuation: CheckedContinuation<URL, any Error>?
     private var callbackContinuation: CheckedContinuation<URL, any Error>?
     private var callbackURL: URL?
@@ -38,8 +43,21 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
     private var result: Result<URL, any Error>?
     private var deadline: Task<Void, Never>?
     private let timeout: Duration
+    private let connectionTimeout: Duration
 
-    init(timeout: Duration = .seconds(600)) { self.timeout = timeout }
+    init(timeout: Duration = .seconds(600), connectionTimeout: Duration = .seconds(5)) {
+        self.timeout = timeout
+        self.connectionTimeout = connectionTimeout
+    }
+
+    deinit {
+        deadline?.cancel()
+        listener?.cancel()
+        for accepted in connections.values {
+            accepted.deadline.cancel()
+            accepted.connection.cancel()
+        }
+    }
 
     func start() async throws -> URL {
         guard listener == nil, result == nil else { throw ChatGPTConnectionError.listenerUnavailable }
@@ -53,7 +71,10 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
             Task { @MainActor in self?.stateChanged(state) }
         }
         listener.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor in self?.accept(connection) }
+            Task { @MainActor in
+                guard let self else { connection.cancel(); return }
+                self.accept(connection)
+            }
         }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -107,9 +128,29 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
     private func accept(_ connection: NWConnection) {
         guard result == nil, connections.count < 8 else { connection.cancel(); return }
         let id = UUID()
-        connections[id] = connection
+        // An absolute deadline bounds slow headers and clients that stop reading
+        // the response. Incoming bytes never extend a socket's reservation.
+        let deadline = Task { [weak self, connectionTimeout] in
+            do { try await Task.sleep(for: connectionTimeout) }
+            catch { return }
+            self?.closeConnection(id)
+        }
+        connections[id] = AcceptedConnection(connection: connection, deadline: deadline)
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .failed, .cancelled:
+                Task { @MainActor in self?.closeConnection(id) }
+            default: break
+            }
+        }
         connection.start(queue: .main)
         receive(connection, id: id, buffer: Data())
+    }
+
+    private func closeConnection(_ id: UUID) {
+        guard let accepted = connections.removeValue(forKey: id) else { return }
+        accepted.deadline.cancel()
+        accepted.connection.cancel()
     }
 
     private func receive(_ connection: NWConnection, id: UUID, buffer: Data) {
@@ -182,7 +223,7 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
             + "Connection: close\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
         connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
             connection.cancel()
-            Task { @MainActor in self?.connections.removeValue(forKey: id) }
+            Task { @MainActor in self?.closeConnection(id) }
         })
     }
 
@@ -191,7 +232,7 @@ final class LoopbackAuthListener: ChatGPTCallbackListener {
         self.result = result
         deadline?.cancel(); deadline = nil
         listener?.cancel(); listener = nil
-        for (key, connection) in connections where key != id { connection.cancel(); connections.removeValue(forKey: key) }
+        for key in Array(connections.keys) where key != id { closeConnection(key) }
         if let startContinuation { startContinuation.resume(with: result); self.startContinuation = nil }
         if let callbackContinuation { callbackContinuation.resume(with: result); self.callbackContinuation = nil }
     }

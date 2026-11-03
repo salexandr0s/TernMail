@@ -400,6 +400,7 @@ final class AppModel {
     let auth = GoogleAuth(configuration: .fromBundle())
     private(set) var cache: MailCache?
     private var accounts: AccountStore?
+    @ObservationIgnored private var accountCleanup: AccountCleanupCoordinator?
     /// Each signed-in account's tokens, by account ID.
     private var sessions: [String: AccountSession] = [:]
     @ObservationIgnored private var inboxWatchers: [String: InboxWatcher] = [:]
@@ -558,6 +559,9 @@ final class AppModel {
             self.accounts = accounts
             if let cache { await startMailPreferences(store: accounts, cache: cache) }
 
+            if try await cleanupCoordinator().retryPending() == false {
+                reportSignInError(AccountRemovalError.incomplete.localizedDescription)
+            }
             let stored = try await accounts.accounts()
             onboarding.resolve(hasExistingAccounts: !stored.isEmpty)
             try await removeLeftovers(keeping: Set(stored.map(\.id)))
@@ -578,6 +582,7 @@ final class AppModel {
             let expired = signedIn.filter { sessions[$0.id]?.isSignedIn != true }
             accountsNeedingSignIn = Set(expired.map(\.id))
             await openMailbox(for: signedIn)
+            if let signInError { reportSignInError(signInError) }
         } catch {
             phase = .failed(error.localizedDescription)
         }
@@ -635,6 +640,7 @@ final class AppModel {
                 reportSignInError("Signed in as \(user.email). Use \(returning.email) to keep its drafts and unsent mail, or sign out of that account first.")
                 return
             }
+            try await cleanupCoordinator().prepareForSignIn(accountID: user.id)
             let stored = try await accounts.accounts().first { $0.id == user.id }
             if returning != nil, stored == nil {
                 // Signed out while Google's page was open. The new session
@@ -890,12 +896,8 @@ final class AppModel {
         accountsNeedingSignIn = []
         do {
             for account in try await accounts.accounts() {
-                try await removeAccountData(account, session: signedOut[account.id], from: accounts)
+                try await removeAccountData(account, session: signedOut[account.id])
             }
-            // Only signed-in accounts keep downloaded attachments and the
-            // files attached to their drafts.
-            try? FileManager.default.removeItem(at: cacheDownloadDirectory)
-            if let outgoingDirectory { try? FileManager.default.removeItem(at: outgoingDirectory) }
             phase = .signedOut
         } catch {
             phase = .failed(error.localizedDescription)
@@ -909,7 +911,7 @@ final class AppModel {
     }
 
     private func signOutOfOne(_ accountID: String) async {
-        guard let mailbox, mailbox.hasSeveralAccounts, let accounts, let owner = mailbox.account(id: accountID) else {
+        guard let mailbox, mailbox.hasSeveralAccounts, accounts != nil, let owner = mailbox.account(id: accountID) else {
             // The last account signs out of Tern. One that an earlier change
             // already signed out needs nothing more.
             if mailbox == nil || mailbox?.account(id: accountID) != nil { await signOutOfEveryAccount() }
@@ -926,7 +928,7 @@ final class AppModel {
         accountsNeedingSignIn.remove(accountID)
         phase = .signedIn(mailbox.account)
         do {
-            try await removeAccountData(account, session: session, from: accounts)
+            try await removeAccountData(account, session: session)
         } catch {
             // Once its record is gone, the next launch deletes what's left.
             mailbox.notice = MailboxModel.Notice(message: "Couldn't remove all local data for \(account.email).", isError: true)
@@ -1152,38 +1154,69 @@ final class AppModel {
         refreshMailBadges()
     }
 
-    /// Deletes an account's record, snoozes, Keychain item, cache rows and
-    /// files. The record goes first, so if this stops partway the next
-    /// launch deletes the rest instead of asking to sign in again.
+    /// Checkpoints deletion intent and file identities before removing records.
     private func removeAccountData(
-        _ account: AccountRecord, session: AccountSession?, from accounts: AccountStore
+        _ account: AccountRecord, session: AccountSession?
     ) async throws {
         assistantModel?.forgetAccount(account.id)
         await mailNotifications?.removeAccount(account.id)
-        try await accounts.deleteAccount(id: account.id)
-        await calendarModel?.removeAccount(account.id)
-        await tasksModel?.removeAccount(account.id)
-        await session?.signOut()
-        // A session that failed to restore at launch can leave its item behind.
-        try? await KeychainStore.delete(account: account.id)
-        do { try AssistantWritingStyleCleanup.remove(accountID: account.id) }
-        catch { reportSignInError("Some saved writing-style data could not be deleted.") }
-        try await removeCachedData(accountIDs: [account.id])
+        try await scheduleAccountRemoval(accountID: account.id, session: session)
     }
 
     /// Deletes what the cache and disk still hold for accounts that aren't
     /// signed in, such as one whose sign-out stopped partway.
     private func removeLeftovers(keeping signedIn: Set<String>) async throws {
         guard let cache else { return }
-        let stale = try await cache.read { tx in try tx.cachedAccountIDs() }.subtracting(signedIn)
-        guard !stale.isEmpty else { return }
-        try await removeCachedData(accountIDs: stale)
+        guard let accounts else { return }
+        let pending = Set(try await accounts.pendingAccountRemovals().map(\.accountID))
+        let stale = try await cache.read { tx in try tx.cachedAccountIDs() }.subtracting(signedIn.union(pending))
+        for accountID in stale { try await scheduleAccountRemoval(accountID: accountID, session: nil) }
     }
 
-    /// Deletes the accounts' cache rows, downloaded attachments and the files
-    /// attached to their drafts, which only their local drafts lead to.
+    private func scheduleAccountRemoval(accountID: String, session: AccountSession?) async throws {
+        guard let cache else { throw AccountRemovalError.incomplete }
+        let draftIDs = try await cache.read { tx in Set(try tx.localDrafts(accountID: accountID).map(\.id)) }
+        let complete = try await cleanupCoordinator().remove(accountID: accountID, draftIDs: draftIDs) {
+            await session?.invalidateForRemoval()
+        }
+        if !complete { reportSignInError(AccountRemovalError.incomplete.localizedDescription) }
+    }
+
+    private func cleanupCoordinator() throws -> AccountCleanupCoordinator {
+        if let accountCleanup { return accountCleanup }
+        guard let accounts else { throw AccountRemovalError.incomplete }
+        let isolated = AssistantRuntimeEnvironment.isTestHost
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit")
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar")
+        let calendarURL = isolated ? nil : try Self.dataDirectory().appending(path: "calendar.sqlite")
+        let coordinator = AccountCleanupCoordinator(store: accounts, downloadsRoot: cacheDownloadDirectory,
+            outgoingRoot: outgoingDirectory, operations: .init(
+                removeAccount: { [weak self] accountID in
+                    await self?.calendarModel?.removeAccount(accountID)
+                    await self?.tasksModel?.removeAccount(accountID)
+                    if let calendarURL {
+                        try await AccountCleanupCoordinator.removeCalendarCache(accountID: accountID, at: calendarURL)
+                    }
+                    try await accounts.deleteAccount(id: accountID)
+                },
+                removeCredentials: { accountID in
+                    if !isolated { try await KeychainStore.delete(account: accountID) }
+                },
+                removeCache: { [weak self] accountID in
+                    guard let self else { throw AccountRemovalError.incomplete }
+                    try await removeCachedData(accountIDs: [accountID])
+                },
+                removeWritingStyle: { accountID in
+                    if !isolated { try AssistantWritingStyleCleanup.remove(accountID: accountID) }
+                }
+            ))
+        accountCleanup = coordinator
+        return coordinator
+    }
+
+    /// File deletion runs separately using the manifest's durable draft IDs.
     private func removeCachedData(accountIDs: Set<String>) async throws {
-        guard let cache else { return }
+        guard let cache else { throw AccountRemovalError.incomplete }
         for accountID in accountIDs {
             ReaderCacheLifecycle.invalidate(accountID: accountID)
             ContactThumbnailCache.shared.remove(accountID: accountID)
@@ -1191,22 +1224,10 @@ final class AppModel {
         }
         AttachmentPresentation.removeAll()
         spotlight.remove(accountIDs: accountIDs)
-        let draftIDs = try await cache.write { tx in
-            var draftIDs: [String] = []
+        try await cache.write { tx in
             for accountID in accountIDs {
-                draftIDs += try tx.localDrafts(accountID: accountID).map(\.id)
                 try tx.deleteAccountData(accountID: accountID)
             }
-            return draftIDs
-        }
-        for accountID in accountIDs {
-            try? FileManager.default.removeItem(
-                at: cacheDownloadDirectory.appending(path: accountID, directoryHint: .isDirectory)
-            )
-        }
-        guard let outgoingDirectory else { return }
-        for draftID in draftIDs {
-            try? FileManager.default.removeItem(at: outgoingDirectory.appending(path: draftID, directoryHint: .isDirectory))
         }
     }
 
@@ -1216,6 +1237,10 @@ final class AppModel {
         )
         let directory = support.appending(path: "Tern", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Mail bodies and unsent drafts are plaintext SQLite data. Keep the
+        // app-owned directory private even if its containing path is copied or
+        // its sandbox container permissions change.
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         return directory
     }
 }

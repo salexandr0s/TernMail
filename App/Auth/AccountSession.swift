@@ -75,6 +75,14 @@ final class AccountSession: AccessTokenProvider {
         try? await write.task.value
     }
 
+    /// Account removal owns durable credential deletion. Invalidate immediately
+    /// and drain writes first so a late refresh cannot recreate its Keychain item.
+    func invalidateForRemoval() async {
+        authState = nil
+        persistedAccessToken = nil
+        _ = try? await credentialWrite?.value
+    }
+
     // MARK: AccessTokenProvider
 
     func accessToken(forceRefresh: Bool) async throws -> String {

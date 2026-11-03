@@ -23,9 +23,14 @@ enum HTMLSanitizer {
     private static let svgReferenceElements: Set<String> = ["image", "use", "feimage"]
 
     /// With `allowsRemoteImages`, an image that isn't a tracker loads only over
-    /// HTTPS from a named host.
+    /// HTTPS from a public-looking DNS name. IP literals and local/special-use
+    /// names cannot be embedded in mail even after the reader grants consent.
     static func isConsentLoadable(_ url: URL) -> Bool {
-        url.scheme?.lowercased() == "https" && url.host != nil
+        guard url.scheme?.lowercased() == "https", let host = url.host,
+              url.user == nil, url.password == nil, url.fragment == nil,
+              url.port == nil || url.port == 443,
+              url.absoluteString.utf8.count <= 8_192 else { return false }
+        return NewsletterURLPolicy.isPublicHostname(host)
     }
 
     /// Cleans `document` in place and returns how many remote loads it removed.

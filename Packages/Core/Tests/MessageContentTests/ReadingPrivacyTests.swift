@@ -30,12 +30,14 @@ import Testing
         """
         let blocked = MessageDocument.render(html: html)
         #expect(try SwiftSoup.parse(blocked.html).select("img[src]").array().allSatisfy { try $0.attr("src").hasPrefix("data:") })
-        #expect(!blocked.html.contains("img-src data: tern-message: https:"))
+        #expect(!blocked.html.contains("img-src data: tern-message: tern-remote-image:"))
         // Only the HTTPS images would load: not the background, the HTTP image or the trackers.
         #expect(blocked.blockedRemoteImages == 2)
-        let allowed = MessageDocument.render(html: html, policy: .init(allowsRemoteImages: true))
-        #expect(allowed.html.contains("src=\"https://images.example.com/photo.png\""))
-        #expect(try SwiftSoup.parse(allowed.html).select("img[src]").array().map { try $0.attr("src").trimmingCharacters(in: .whitespaces) }.filter { !$0.hasPrefix("data:") }
+        let resources = InlineResourceMap()
+        let allowed = MessageDocument.render(html: html, policy: .init(allowsRemoteImages: true, inlineResources: resources))
+        #expect(!allowed.html.contains("src=\"https:"))
+        #expect(try SwiftSoup.parse(allowed.html).select("img[src]").array()
+            .compactMap { RemoteImageResourceURL.original(for: URL(string: try $0.attr("src"))!, scope: resources.scope)?.absoluteString }
             == ["https://images.example.com/photo.png", "https://images.example.com/padded.png"])
         #expect(!allowed.html.contains("google-analytics.com"))
         #expect(!allowed.html.contains("open.png"))
@@ -44,8 +46,57 @@ import Testing
         #expect(!allowed.html.contains("<script"))
         #expect(allowed.blockedTrackers == 2)
         #expect(allowed.blockedRemoteImages == 0)
-        #expect(allowed.html.contains("img-src data: tern-message: https:"))
+        #expect(allowed.html.contains("img-src data: tern-message: tern-remote-image:"))
         #expect(!TrackerMatcher.matches(URL(string: "https://google-analytics.com.attacker.example/photo.png")!))
+    }
+
+    @Test func remoteImageConsentRejectsLocalAndSpecialUseDestinations() throws {
+        let sources = [
+            "https://127.0.0.1/photo.png", "https://[::1]/photo.png",
+            "https://192.168.1.1/photo.png", "https://localhost/photo.png",
+            "https://printer.local/photo.png", "https://service.internal/photo.png",
+            "https://user@images.example.com/photo.png", "https://images.example.com:8443/photo.png",
+        ]
+        let html = sources.enumerated().map { "<img id=\"image-\($0.offset)\" src=\"\($0.element)\">" }.joined()
+        let rendered = try SwiftSoup.parse(MessageDocument.render(html: html, policy: .init(allowsRemoteImages: true)).html)
+        for index in sources.indices {
+            let image = try #require(try rendered.getElementById("image-\(index)"))
+            #expect(try image.attr("src").hasPrefix("data:image/svg+xml;base64,"))
+            #expect(try image.attr("data-tern-image-state") == "blocked")
+        }
+        #expect(HTMLSanitizer.isConsentLoadable(URL(string: "https://images.example.com/photo.png")!))
+    }
+
+    @Test func remoteImageCapabilitiesAreCanonicalAndMessageScoped() throws {
+        let first = InlineResourceMap()
+        let second = InlineResourceMap()
+        let original = try #require(URL(string: "https://images.example.com/photo.png?size=2"))
+        let capability = try #require(RemoteImageResourceURL.make(original, scope: first.scope))
+        #expect(RemoteImageResourceURL.original(for: capability, scope: first.scope) == original)
+        #expect(RemoteImageResourceURL.original(for: capability, scope: second.scope) == nil)
+        #expect(RemoteImageResourceURL.original(for: URL(string: capability.absoluteString + "?extra=1")!, scope: first.scope) == nil)
+        #expect(RemoteImageResourceURL.make(URL(string: "https://127.0.0.1/photo.png")!, scope: first.scope) == nil)
+        let forged = MessageDocument.render(html: "<img src=\"\(capability.absoluteString)\">",
+            policy: .init(allowsRemoteImages: true, inlineResources: first))
+        let forgedImage = try #require(try SwiftSoup.parse(forged.html).select("img").first())
+        #expect(try forgedImage.attr("src").hasPrefix("data:image/svg+xml;base64,"))
+        #expect(forged.remoteImageURLs.isEmpty)
+    }
+
+    @Test func nativeImageAuthorizationIncludesOnlyPreparedImagesAndBoundsUniqueURLs() throws {
+        let sources = (0...RemoteImageResourceURL.maximumCount).map { "https://images.example.com/\($0).png" }
+        let html = sources.map { "<img src='\($0)'>" }.joined()
+            + "<img src='\(sources[0])'><style>.hidden{background:u\\72l(https://other.example.com/hidden)}</style>"
+        let policy = MessageRenderPolicy(allowsRemoteImages: true)
+        let rendered = MessageDocument.render(html: html, policy: policy)
+        #expect(rendered.remoteImageURLs.count == RemoteImageResourceURL.maximumCount)
+        #expect(rendered.remoteImageURLs.contains(try #require(URL(string: sources[0]))))
+        #expect(!rendered.remoteImageURLs.contains(try #require(URL(string: sources.last!))))
+        #expect(!rendered.remoteImageURLs.contains(try #require(URL(string: "https://other.example.com/hidden"))))
+        let images = try SwiftSoup.parse(rendered.html).select("img").array()
+        #expect(try images[RemoteImageResourceURL.maximumCount].attr("src").hasPrefix("data:"))
+        #expect(try images.last?.attr("src").hasPrefix(RemoteImageResourceURL.scheme + ":") == true)
+        #expect(!policy.contentSecurityPolicy.contains("https:"))
     }
 
     @Test func inlineResourceURLsAreImmutableAndCannotCrossMessageScopes() throws {
@@ -104,8 +155,10 @@ import Testing
         #expect(blocked.blockedTrackers == 1)
         #expect(blocked.blockedRemoteImages == 2)
 
-        let allowed = try SwiftSoup.parse(MessageDocument.render(html: html, policy: .init(allowsRemoteImages: true)).html)
-        #expect(try allowed.getElementById("photo")?.attr("src") == "https://images.example.com/photo.png")
+        let resources = InlineResourceMap()
+        let allowed = try SwiftSoup.parse(MessageDocument.render(html: html, policy: .init(allowsRemoteImages: true, inlineResources: resources)).html)
+        let photoURL = try #require(try allowed.getElementById("photo").flatMap { URL(string: try $0.attr("src")) })
+        #expect(RemoteImageResourceURL.original(for: photoURL, scope: resources.scope)?.absoluteString == "https://images.example.com/photo.png")
         #expect(try allowed.getElementById("photo")?.hasAttr("data-tern-image-state") == false)
         #expect(try allowed.getElementById("photo")?.attr("style") == "display:block")
         #expect(try allowed.getElementById("photo")?.parent()?.attr("href") == "https://shop.example.com")

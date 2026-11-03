@@ -95,7 +95,8 @@ enum Mapping {
             referencesHeader: message.header("References"),
             replyTo: message.header("Reply-To"),
             dateHeaderOffset: message.dateHeaderOffset,
-            bcc: message.header("Bcc") ?? ""
+            bcc: message.header("Bcc") ?? "",
+            verifiedImageSender: SenderImagePolicy.verifiedSender(in: message)
         )
         return CacheTransaction.MessageUpdate(record: record, labelIDs: message.labelIds ?? [])
     }

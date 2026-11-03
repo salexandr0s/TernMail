@@ -82,10 +82,112 @@ import Testing
             #expect(!NewsletterNetworkPolicy.isPublicIPv4(value))
         }
         #expect(NewsletterNetworkPolicy.isPublicIPv4(0x08080808))
+        for parts in [[192, 31, 196, 1], [192, 52, 193, 1], [192, 88, 99, 2], [192, 175, 48, 1]] {
+            let value = parts.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+            #expect(!NewsletterNetworkPolicy.isPublicIPv4(value))
+        }
         #expect(!NewsletterNetworkPolicy.isPublicIPv6(Array(repeating: 0, count: 16)))
         #expect(!NewsletterNetworkPolicy.isPublicIPv6([0xfc] + Array(repeating: 0, count: 15)))
         #expect(!NewsletterNetworkPolicy.isPublicIPv6([0x20, 0x01, 0x0d, 0xb8] + Array(repeating: 0, count: 12)))
+        #expect(!NewsletterNetworkPolicy.isPublicIPv6([0x3f, 0xff, 0x00, 0x01] + Array(repeating: 0, count: 12)))
         #expect(NewsletterNetworkPolicy.isPublicIPv6([0x26, 0x06, 0x47, 0x00] + Array(repeating: 0, count: 12)))
+        for address in ["127.0.0.1", "10.0.0.1", "192.168.1.2", "::1", "fe80::1", "not-an-ip"] {
+            #expect(!NewsletterNetworkPolicy.isPublicNumericAddress(address))
+        }
+        #expect(NewsletterNetworkPolicy.isPublicNumericAddress("8.8.8.8"))
+        #expect(NewsletterNetworkPolicy.isPublicNumericAddress("2606:4700:4700::1111"))
+    }
+
+    @Test func pinnedTransportRejectsUncheckedAddressesBeforeConnecting() async throws {
+        let url = try #require(URL(string: "https://news.example.com/unsubscribe"))
+        let request = URLRequest(url: url)
+        for address in ["127.0.0.1", "192.168.1.1", "::1", "news.example.com"] {
+            await #expect(throws: NewsletterTransportError.unsafeURL) {
+                try await PinnedNewsletterHTTP.post(request, address: address, hostname: "news.example.com")
+            }
+        }
+    }
+
+    @Test func pinnedRequestCarriesNoAmbientContextAndParsesInterimHeaders() throws {
+        let url = try #require(URL(string: "https://news.example.com/unsubscribe?token=A%2fb+c"))
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let bytes = try PinnedNewsletterHTTP.requestBytes(components: components, hostname: "news.example.com",
+            body: Data("List-Unsubscribe=One-Click".utf8))
+        let text = String(decoding: bytes, as: UTF8.self)
+        #expect(text.hasPrefix("POST /unsubscribe?token=A%2fb+c HTTP/1.1\r\nHost: news.example.com\r\n"))
+        #expect(text.contains("Content-Length: 26\r\n"))
+        #expect(!text.contains("Authorization:"))
+        #expect(!text.contains("Cookie:"))
+        let response = Data("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n".utf8)
+        let interim = try #require(try PinnedNewsletterHTTP.responseHeaders(in: response))
+        #expect(interim.status == 100)
+        let final = try #require(try PinnedNewsletterHTTP.responseHeaders(in: Data(response[interim.endIndex...])))
+        #expect(final.status == 204)
+        #expect(throws: NewsletterTransportError.invalidResponse) {
+            try PinnedNewsletterHTTP.responseHeaders(in: Data("HTTP/1.1 20X Bad\r\n\r\n".utf8))
+        }
+    }
+
+    @Test func pinnedImageLoaderRejectsPrivateHostsAndMalformedResponses() async throws {
+        for url in ["https://127.0.0.1/image.png", "https://localhost/image.png", "https://service.internal/image.png"] {
+            await #expect(throws: NewsletterTransportError.unsafeURL) {
+                try await PinnedRemoteImageClient.load(URL(string: url)!)
+            }
+        }
+        let good = Data("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 3\r\n\r\nabc".utf8)
+        let header = try #require(try PinnedRemoteImageClient.parseHeader(good))
+        #expect(header.mimeType == "image/png")
+        #expect(header.contentLength == 3)
+        #expect(Data(good[header.bodyStart...]) == Data("abc".utf8))
+        #expect(try PinnedRemoteImageClient.decodeChunked(Data("3\r\nabc\r\n0\r\n\r\n".utf8)) == Data("abc".utf8))
+        for raw in [
+            "HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1/image.png\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 9000000\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: gzip\r\n\r\n",
+        ] {
+            #expect(throws: NewsletterTransportError.invalidResponse) {
+                try PinnedRemoteImageClient.parseHeader(Data(raw.utf8))
+            }
+        }
+    }
+
+    @Test func imageDestinationRejectsMixedDNSAnswersAndPinsOneValidatedAddress() {
+        #expect(PinnedRemoteImageClient.validatedAddress(["8.8.8.8", "1.1.1.1"]) == "8.8.8.8")
+        for addresses in [[], ["8.8.8.8", "127.0.0.1"], ["8.8.8.8", "192.168.1.2"],
+                          ["8.8.8.8", "::1"], ["example.com"]] {
+            #expect(PinnedRemoteImageClient.validatedAddress(addresses) == nil)
+        }
+    }
+
+    @Test func interimResponsesShareOneBoundedHeaderBudgetAcrossPackets() throws {
+        let interim = Data("HTTP/1.1 100 Continue\r\n\r\n".utf8)
+        var data = interim + Data("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\nabc".utf8)
+        var consumed = 0
+        #expect(try PinnedNewsletterHTTP.finalResponseHeaders(in: &data, consumedHeaderBytes: &consumed)?.status == 200)
+        #expect(consumed == interim.count)
+        #expect(try PinnedRemoteImageClient.parseHeader(data)?.mimeType == "image/png")
+        #expect(throws: NewsletterTransportError.invalidResponse) {
+            var bytes = Data()
+            var total = 0
+            for _ in 0..<1_024 {
+                bytes.append(interim)
+                _ = try PinnedNewsletterHTTP.finalResponseHeaders(in: &bytes, consumedHeaderBytes: &total)
+            }
+        }
+    }
+
+    @Test func chunkedImagesDecodeIncrementallyAcrossEveryFramingBoundary() throws {
+        var decoder = PinnedRemoteImageClient.ChunkedDecoder()
+        let encoded = Data("3;name=value\r\nabc\r\n2\r\nde\r\n0\r\nX-Info: ignored\r\n\r\n".utf8)
+        var result: Data?
+        for byte in encoded { result = try decoder.append(Data([byte])) }
+        #expect(result == Data("abcde".utf8))
+        for malformed in ["+3\r\nabc\r\n0\r\n\r\n", ";a\r\na\r\n0\r\n\r\n", "3\r\nabcXX", "800001\r\n"] {
+            #expect(throws: NewsletterTransportError.invalidResponse) {
+                try PinnedRemoteImageClient.decodeChunked(Data(malformed.utf8))
+            }
+        }
     }
 
     @Test func redirectDelegateAlwaysRefusesNewDestination() async throws {

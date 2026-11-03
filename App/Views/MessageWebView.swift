@@ -13,6 +13,8 @@ struct MessageWebView: NSViewRepresentable {
     let blocker: WKContentRuleList?
     @Binding var height: CGFloat
     var resources = InlineResourceMap()
+    var allowsRemoteImages = false
+    var remoteImageURLs: Set<URL> = []
     var adaptsDarkMode = true
     var forcesLightAppearance = false
     /// Hidden retained readers keep their document, but stop remote loads.
@@ -54,6 +56,9 @@ struct MessageWebView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternHeight")
         configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternReading")
         configuration.setURLSchemeHandler(InlineResourceHandler(resources: resources), forURLScheme: InlineResourceMap.scheme)
+        configuration.setURLSchemeHandler(RemoteImageHandler(scope: resources.scope, enabled: allowsRemoteImages,
+            allowedURLs: remoteImageURLs),
+            forURLScheme: RemoteImageResourceURL.scheme)
         configureScripts(configuration.userContentController, revision: 1)
         if let blocker {
             configuration.userContentController.add(blocker)
@@ -87,6 +92,8 @@ struct MessageWebView: NSViewRepresentable {
         context.coordinator.onOpenMailLink = onOpenMailLink
         context.coordinator.onDismantle = onDismantle
         context.coordinator.onReadable = onReadable
+        (view.configuration.urlSchemeHandler(forURLScheme: RemoteImageResourceURL.scheme) as? RemoteImageHandler)?
+            .update(scope: resources.scope, enabled: allowsRemoteImages, allowedURLs: remoteImageURLs)
         context.coordinator.setActive(isActive, in: view)
         if context.coordinator.needsLoad(html) {
             view.configuration.userContentController.removeAllContentRuleLists()
@@ -201,6 +208,8 @@ struct MessageWebView: NSViewRepresentable {
         private var interruptedLoad = false
 
         func setActive(_ active: Bool, in view: WKWebView) {
+            (view.configuration.urlSchemeHandler(forURLScheme: RemoteImageResourceURL.scheme) as? RemoteImageHandler)?
+                .setActive(active)
             (view as? ContentSizedWebView)?.setReaderActive(active)
             #if DEBUG || TERN_PERFORMANCE
             if let view = view as? ContentSizedWebView {

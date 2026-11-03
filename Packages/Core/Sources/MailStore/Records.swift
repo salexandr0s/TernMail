@@ -64,6 +64,9 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
     public var date: Date
     public var snippet: String
     public var sender: String
+    /// The From address whose domain passed Gmail's receiver DMARC evaluation.
+    /// Nil for old rows, missing evidence, and authentication failures.
+    public var verifiedImageSender: String?
     public var recipients: String
     public var cc: String?
     /// Nil until Gmail has supplied this header; an empty string means no Bcc.
@@ -87,7 +90,8 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
         accountID: String, id: String, threadID: String, historyID: Int64, date: Date,
         snippet: String, sender: String, recipients: String, cc: String?, subject: String, sizeEstimate: Int,
         rfcMessageID: String? = nil, inReplyTo: String? = nil, referencesHeader: String? = nil, replyTo: String? = nil,
-        dateHeaderOffset: Int? = nil, addressedToMe: Bool = false, bcc: String? = nil
+        dateHeaderOffset: Int? = nil, addressedToMe: Bool = false, bcc: String? = nil,
+        verifiedImageSender: String? = nil
     ) {
         self.accountID = accountID
         self.id = id
@@ -96,6 +100,7 @@ public struct MessageRecord: Codable, Sendable, Hashable, FetchableRecord, Persi
         self.date = date
         self.snippet = snippet
         self.sender = sender
+        self.verifiedImageSender = verifiedImageSender
         self.recipients = recipients
         self.cc = cc
         self.bcc = bcc

@@ -12,6 +12,6 @@ public struct MessageRenderPolicy: Sendable, Equatable {
     }
 
     public var contentSecurityPolicy: String {
-        "default-src 'none'; img-src data: \(InlineResourceMap.scheme):\(allowsRemoteImages ? " https:" : ""); style-src 'unsafe-inline'; font-src data:"
+        "default-src 'none'; img-src data: \(InlineResourceMap.scheme):\(allowsRemoteImages ? " \(RemoteImageResourceURL.scheme):" : ""); style-src 'unsafe-inline'; font-src data:"
     }
 }

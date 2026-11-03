@@ -12,6 +12,8 @@ public struct RenderedMessage: Sendable, Equatable {
     public var blockedTrackers: Int = 0
     /// Full visible text, including quoted replies, for conversation-wide Find.
     public var searchableText: String = ""
+    /// Native loading is limited to URLs approved while preparing this message.
+    public var remoteImageURLs: Set<URL> = []
 }
 
 public enum MessageDocument {
@@ -64,7 +66,24 @@ public enum MessageDocument {
                     hiddenImages += 1
                 }
             }
-            let blocked = try HTMLSanitizer.clean(document, policy: policy)
+            var blocked = try HTMLSanitizer.clean(document, policy: policy)
+            var remoteImageURLs = Set<URL>()
+            if policy.allowsRemoteImages {
+                for image in try document.select("img[src]") {
+                    let source = try image.attr("src").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let original = URL(string: source),
+                       let capability = RemoteImageResourceURL.make(original, scope: policy.inlineResources.scope) {
+                        if remoteImageURLs.contains(original) || remoteImageURLs.count < RemoteImageResourceURL.maximumCount {
+                            remoteImageURLs.insert(original)
+                            try image.attr("src", capability.absoluteString)
+                        } else {
+                            try image.attr("data-blocked-src", source)
+                            try image.removeAttr("src")
+                            blocked += 1
+                        }
+                    }
+                }
+            }
             for image in try document.select("img:not([src])") {
                 let wasBlocked = !(try image.attr("data-blocked-src")).isEmpty
                 let missingInline = try image.attr("data-tern-image-state") == "inline-unavailable"
@@ -76,7 +95,7 @@ public enum MessageDocument {
             document.outputSettings().prettyPrint(pretty: false)
             return RenderedMessage(html: try document.outerHtml(), blockedRemoteContent: blocked,
                 blockedRemoteImages: hiddenImages, blockedTrackers: trackers,
-                searchableText: try document.body()?.text() ?? "")
+                searchableText: try document.body()?.text() ?? "", remoteImageURLs: remoteImageURLs)
         } catch {
             // Showing the escaped source is safe; showing nothing would hide the mail.
             return render(plainText: html)
