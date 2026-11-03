@@ -65,7 +65,7 @@ Supporting commits: `53fc48f` records the initial ranked findings; `ffedd53` rem
 
 ## Verification and limits
 
-The final verification results are recorded in `SESSION_HANDOFF.md`. The baseline passed all requested checks before changes. No dependency versions, SQL migrations, OAuth clients, credentials or macOS security/privacy settings were changed. Nothing was pushed.
+The baseline passed all requested checks before changes. No dependency versions, SQL migrations, OAuth clients, credentials or macOS security/privacy settings were changed. Nothing was pushed.
 
 UI exercised through the DEBUG fake: sidebar and counts, HTML and plain text, blocked-content notice, message expansion, archive/trash/read/star actions and their shortcuts, selection, notice Undo, Edit-menu Undo and sign-out. Dark appearance and accessibility labels were inspected. Closing and reopening the exact app bundle worked. The app test host also uses the fake argument and in-memory stores.
 

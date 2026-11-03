@@ -10,6 +10,31 @@ DerivedData/
 build/
 __pycache__/
 
-# Local secrets and research captures
-Config/Secrets.xcconfig
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+Config/Secrets*.xcconfig
+!Config/Secrets.example.xcconfig
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+*.keychain
+*.keychain-db
+
+# Local mailbox data, exports, and research captures
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.eml
+*.mbox
+*.har
 tools/research/capture.jsonl
+
+# Local session notes
+SESSION_HANDOFF.md

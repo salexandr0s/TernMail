@@ -1,35 +1,74 @@
-# Tern
+<p align="center">
+  <img src="App/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="112" alt="Tern app icon">
+</p>
 
-Tern is a native macOS mail and calendar app with Gmail integration, a ChatGPT assistant, an attachment library, and account-specific settings.
+<h1 align="center">Tern</h1>
 
-[Organize Mail](docs/mail-organization.md) suggests personalized labels from the latest 250 received and sent messages. Review the categories in Settings, then apply labels and optional sender filters directly to Gmail.
+<p align="center">Gmail, Calendar, and Tasks in a native Mac app.</p>
 
-The [design-token guide](docs/design/README.md) documents the app's components, shared values, native appearance rules, and refinement backlog. Open the [searchable design catalog](docs/design/catalog.html) locally to inspect token definitions and their source uses.
+<p align="center">
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="docs/development.md">Development</a> ·
+  <a href="#privacy">Privacy</a>
+</p>
 
-The canonical source is `/Users/developer/GitHub/TernMail` on `main`, with [TernMail on GitHub](https://github.com/salexandr0s/TernMail) as `origin`. Development branches and validation snapshots are retained in main's history. The old branches and worktrees were removed on 2026-11-02.
+<p align="center"><sub>macOS 26+ · Swift 6 · Development build</sub></p>
 
-The installed app is `/Users/developer/Applications/Tern.app`. The universal Release build includes the performance and Contacts work alongside the current interface, onboarding, assistant, and concurrency fixes. `build/Tern-build-info.json` records its source revision, executable hash, and signing verification.
+![Tern in light mode, with a populated inbox, colored labels, and an open conversation](docs/screenshots/mail-light.png)
+
+Tern brings your Gmail accounts into a SwiftUI app with a conversation reader, Google Calendar, Google Tasks, and an attachment library. An optional ChatGPT assistant helps you find mail, summarize conversations, and prepare replies.
+
+All screenshots show fictional demo accounts, messages, labels, and events. [Reproduce the screenshots](docs/development.md#screenshots) from the native app.
+
+## Inside the app
+
+| Feature | What you can do |
+|---|---|
+| Mail | Read across accounts, organize with colored Gmail labels, save searches, pin favorites, and snooze conversations. |
+| Compose | Write rich-text replies, attach files, use signatures and templates, and undo a send during the configured delay. |
+| Calendar & Tasks | Browse Google calendars, edit events and recurring meetings, and keep Google Tasks beside your mail. |
+| Attachments | Find files across accounts and archived mail, filter by type or label, preview with Quick Look, and open the source conversation. |
+| Assistant | Search permitted mail, summarize threads, prepare editable replies, and review suggested tasks and events before saving. |
+| Organize Mail | Review suggested labels from recent mail, then apply selected labels and optional sender filters to Gmail. |
+
+Native menus, keyboard shortcuts, light and dark appearances, and macOS sharing keep everyday actions close at hand.
+
+## A closer look
+
+<table>
+  <tr>
+    <td width="50%">
+      <a href="docs/screenshots/mail-dark.png"><img src="docs/screenshots/mail-dark.png" alt="Tern's populated mail workspace in dark mode"></a>
+      <p align="center">Mail in dark mode</p>
+    </td>
+    <td width="50%">
+      <a href="docs/screenshots/calendar.png"><img src="docs/screenshots/calendar.png" alt="Tern's calendar populated with fictional events"></a>
+      <p align="center">Google Calendar</p>
+    </td>
+  </tr>
+</table>
+
+## Build from source
+
+You need macOS 26 or later and Xcode 26 or later with Swift 6.2. Google sign-in requires your own OAuth client; the [development guide](docs/development.md#google-sign-in) explains the setup.
+
+```sh
+git clone https://github.com/salexandr0s/TernMail.git
+cd TernMail
+cp Config/Secrets.example.xcconfig Config/Secrets.xcconfig
+open Tern.xcodeproj
+```
+
+Set `GOOGLE_CLIENT_ID_PREFIX` in `Config/Secrets.xcconfig`, select the **Tern** scheme in Xcode, and run. The app builds without an OAuth client, but Google sign-in stays unavailable until it is configured. Local settings in `Secrets.xcconfig` are ignored by Git.
+
+ChatGPT is optional and connects separately in **Settings → Assistant**. Available models and plan usage depend on the connected ChatGPT account. See the [assistant guide](docs/chatgpt-assistant.md) for access controls and setup.
+
+## Privacy
+
+Google and ChatGPT credentials are stored in macOS Keychain. Account data, cached mail, and downloaded attachments are stored locally. Remote message images are blocked by default, and company-logo requests require an explicit choice.
+
+Assistant mail access starts disabled. Once you enable it, relevant content is sent to OpenAI for requests, automatic conversation summaries and event interpretation, and writing-style learning when enabled. Calendar access is controlled separately. Review the [assistant's data behavior](docs/chatgpt-assistant.md#chat-controls-and-data) before connecting it.
 
 ## Development
 
-Read [CLAUDE.md](CLAUDE.md) for project conventions and local OAuth setup. Build and test from this checkout:
-
-```sh
-xcodegen generate
-xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug -derivedDataPath build test
-xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Release -derivedDataPath build ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO TERN_BUILD_REVISION="$(git rev-parse HEAD)" build
-swift test --package-path Packages/Core
-```
-
-Run SwiftPM after Xcode checks to leave `Packages/Core/Package.resolved` with package-only dependencies. Xcode creates development build products under `build/`; the installed app above is the copy to use normally.
-
-For persistent Keychain approvals, set both signing values in the ignored `Config/Secrets.xcconfig` to an installed certificate and its team:
-
-```xcconfig
-TERN_CODE_SIGN_IDENTITY = Developer ID Application: Your Name (TEAMID)
-TERN_DEVELOPMENT_TEAM = TEAMID
-```
-
-The app and hosted tests use that identity in both Debug and Release. Without these values, builds use ad-hoc signing, which can require fresh Keychain approval after a rebuild. When first switching to certificate signing, macOS may ask for **Always Allow** approval for each existing saved connection. Keep the signing identity consistent for subsequent builds to retain those approvals.
-
-See [SESSION_HANDOFF.md](SESSION_HANDOFF.md) for consolidation verification and test limitations. Keep `Config/Secrets.xcconfig`, the macOS Keychain, and Tern's account data when cleaning build products.
+The [development guide](docs/development.md) covers builds, tests, signing, and the source layout. Feature details live in the [attachment library](docs/attachment-library.md), [mail organization](docs/mail-organization.md), [contacts](docs/contacts.md), and [design](docs/design/README.md) guides. Read [CLAUDE.md](CLAUDE.md) for repository conventions.

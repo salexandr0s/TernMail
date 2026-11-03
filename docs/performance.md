@@ -5,6 +5,8 @@ images. Foreground reading has priority over speculative preparation. The
 implementation is still being measured: warm mode switches currently miss the
 acceptance targets below, and the new build has not been installed.
 
+Paths under `evidence/` refer to the local audit archive; those artifacts are not included in this repository.
+
 ## Acceptance targets
 
 | Interaction | Release target on the reference Mac |
@@ -171,7 +173,7 @@ App footprint grew from 228.5 to 309.8 MiB; the last 100 switches account for
 4.9 MiB of that growth. Stored corpus bytes stayed fixed and no reader WebViews
 were attached. This does not establish a memory plateau or a leak. Raw results,
 phase distributions and provenance are in
-`~/.codex/backups/tern-performance-20261101/evidence/20261101T100342Z-100-workspace-only-normal/`.
+`evidence/20261101T100342Z-100-workspace-only-normal/`.
 Two earlier launches failed foreground eligibility and collected no samples;
 they are excluded from performance comparisons.
 
@@ -256,7 +258,7 @@ The background CPU baseline and column-isolation results are in
 `/tmp/tern-workspace-isolation-verification/test.log`.
 The optimized control is in `/tmp/tern-performance-release-background-4/`.
 A copy of these reports, the original process samples, and the final Core log is
-kept in `~/.codex/backups/tern-performance-20261101/evidence/`.
+kept in `evidence/`.
 
 The full Core suite passed 590 tests in 101 suites
 (`/tmp/tern-perf-core-final-tests.log`). Calendar, preparation, WebKit, and five
@@ -281,7 +283,7 @@ A normal universal Release build at `fcb181f` passed arm64/x86_64, embedded revi
 hardened runtime and strict signature checks without audit/test overrides.
 The source and lockfiles stayed unchanged. It has not been launched or installed;
 this is build verification, not performance acceptance. Logs and metadata are in
-`~/.codex/backups/tern-performance-20261101/evidence/normal-universal-fcb181f/`.
+`evidence/normal-universal-fcb181f/`.
 
 ## Retained-reader result after selection isolation
 
@@ -338,7 +340,7 @@ The test app was terminated after reporting; this run does not verify graceful
 quit. No production installation has occurred.
 
 Evidence, source manifest, raw results and assessment are retained at
-`~/.codex/backups/tern-performance-20261101/evidence/20261101T143859Z-100-reader-only-normal/`.
+`evidence/20261101T143859Z-100-reader-only-normal/`.
 For another uninterrupted run, prepare the gated window before asking the user
 for availability, then release it immediately when ready.
 
@@ -394,7 +396,7 @@ comparisons, not an isolated attribution. Future runs must record geometry.
 The normal hardened arm64 executable hash is
 `7293e518febb4bbbcfa6458a92a2899a6792c556fa98fea318d364bae0cbec36`.
 Evidence and complete cache/memory/stage reports are in
-`~/.codex/backups/tern-performance-20261101/evidence/20261101T153445Z-100-reader-only-normal/`.
+`evidence/20261101T153445Z-100-reader-only-normal/`.
 The later visual-row candidate passed 28 focused tests and built successfully,
 but no after timings were collected within the three-minute user slot. No new
 production installation has occurred.
@@ -465,7 +467,7 @@ It excludes the pending prefetch experiment and Stage A layout tracing. The
 normal hardened arm64 executable SHA-256 is
 `b31f96ae1f294aa31d406b1adb701a65d2719dae72632d9706afbcf4a503f11b`.
 Raw results, gate metadata and process reports are in
-`~/.codex/backups/tern-performance-20261101/evidence/tern-selection-feedback-reader-20261101T174918Z/`.
+`evidence/tern-selection-feedback-reader-20261101T174918Z/`.
 The previous baseline did not capture geometry and used different diagnostics;
 reader differences cannot be attributed to the visual-row or hover change alone.
 The active selection-feedback goal remains incomplete, and the production app
@@ -504,7 +506,7 @@ Root released this run at 18:48:14.810 UTC, too late in the user's
 18:46:17–18:48:17 slot. The relative watcher budget then ended at 18:48:32.849,
 15.85 seconds after the promised stop. The next runner must enforce an absolute
 availability deadline and reserve cleanup time. Evidence is preserved under
-`~/.codex/backups/tern-performance-20261101/evidence/tern-reader-session-partial-20261101T184736Z/`.
+`evidence/tern-reader-session-partial-20261101T184736Z/`.
 
 The complete run on the same `a086e262` artifact at 19:21 UTC supersedes that
 partial run for acceptance. It completed 100 retained and 100 local selections
@@ -547,7 +549,7 @@ needed before changing that path. Local list reconstruction remains a measured
 source of repeated work, with its contribution to elapsed time still unisolated.
 
 Raw reports, gate/cleanup records, validation and analysis are archived under
-`~/.codex/backups/tern-performance-20261101/evidence/tern-reader-session-reader-20261101T192114Z/`.
+`evidence/tern-reader-session-reader-20261101T192114Z/`.
 Hover appearance, mode switching, scrolling and normal-mailbox verification
 remain incomplete. No new production build has been installed.
 
@@ -569,7 +571,7 @@ under the same backup root. No further benchmark is planned before the manual
 testing handover requested by the user.
 
 For that handover, the full committed `fa1c75e` source was built as a normal
-universal Release and installed at `/Users/developer/Applications/Tern.app`
+universal Release and installed at `~/Applications/Tern.app`
 at 20:07:02 UTC. It includes the sidebar, Favorites, saved-search, Calendar-sidebar
 and mail-row hover changes. Both architectures, strict signature, embedded
 revision, normal build flags and unchanged OAuth configuration were verified.

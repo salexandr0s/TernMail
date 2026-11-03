@@ -46,7 +46,7 @@ actor AuditGmail: GmailService {
     private let beforeFullThread: (@Sendable (String) async throws -> Void)?
 
     private var version = 200
-    private let referenceDate = Date.now
+    private let referenceDate = ReadmeDemoFixtures.isEnabled ? ReadmeDemoFixtures.date : Date.now
     private var mail: [Message] = [
         Message(id: "m1", thread: "t1", subject: "Field notes", text: "<p>Today’s field notes.</p><img src='https://example.invalid/pixel'><img src='https://example.invalid/open.gif' width='1' height='1'><img src='https://example.invalid/click.gif' style='width:1px;height:1px'><p><a href='https://example.com/'>Example link</a></p><div style='width:900px;background:#eef'>Wide message, right edge →</div>" + String(repeating: "<p>Another paragraph of synthetic mail.</p>", count: 18), html: true, labels: ["INBOX", "UNREAD"]),
         Message(id: "m2", thread: "t2", subject: "Weekend plans", text: "The earlier message.", html: false, labels: ["INBOX"]),
@@ -75,6 +75,22 @@ actor AuditGmail: GmailService {
         hasPerformanceCorpus = performance || performanceFixtureCount != nil
         if hasPerformanceCorpus {
             mail = Self.performanceMail(countOverride: performanceFixtureCount)
+            return
+        }
+        if ReadmeDemoFixtures.isEnabled {
+            let fixtures = account == .first ? ReadmeDemoFixtures.studioMail : ReadmeDemoFixtures.personalMail
+            mail = fixtures.map {
+                Message(id: "demo-" + $0.id, thread: "demo-" + $0.id, subject: $0.subject,
+                    text: $0.text, html: false, labels: $0.labels, from: $0.sender, attachment: $0.attachment)
+            }
+            let labels = account == .first
+                ? [("Projects", "#4a86e8"), ("Design", "#a479e2"), ("Finance", "#16a766"),
+                   ("Personal", "#f691b3"), ("Read later", "#ffad47")]
+                : [("Travel", "#4a86e8"), ("Friends", "#43d692"), ("Receipts", "#ffad47")]
+            userLabels = labels.enumerated().map { index, label in
+                UserLabel(id: "Label_\(index + 1)", name: label.0, color: LabelColor(backgroundColor: label.1))
+            }
+            nextLabel = userLabels.count + 1
             return
         }
         if account == .second {
@@ -423,11 +439,12 @@ actor AuditGmail: GmailService {
         let ageHours = message.ageDays.map { Double($0 * 24) } ?? (message.id == "m2" ? 3 : Double(index))
         return ["id": message.id, "threadId": message.thread, "labelIds": Array(message.labels),
                 "historyId": String(message.history), "internalDate": String(Int(referenceDate.addingTimeInterval(-ageHours * 3600).timeIntervalSince1970 * 1000)),
-                "snippet": message.id.hasPrefix("list") ? message.text : "Synthetic mail for the UI audit", "payload": payload(message, includesBody: !hasPerformanceCorpus || format == .full)]
+                "snippet": message.id.hasPrefix("list") || message.id.hasPrefix("demo-") ? message.text : "Synthetic mail for the UI audit", "payload": payload(message, includesBody: !hasPerformanceCorpus || format == .full)]
     }
 
     private func payload(_ message: Message, includesBody: Bool = true) -> [String: Any] {
-        let headers = [["name": "From", "value": message.from], ["name": "To", "value": "audit@example.invalid"], ["name": "Subject", "value": message.subject]]
+        let recipient = ReadmeDemoFixtures.isEnabled ? "Alex Morgan <alex@studio.example.invalid>" : "audit@example.invalid"
+        let headers = [["name": "From", "value": message.from], ["name": "To", "value": recipient], ["name": "Subject", "value": message.subject]]
         let imageTags = (0..<message.inlineImageCount).map { "<img src='cid:audit-image-\($0)' width='512' height='256'>" }.joined()
         let source = message.text + imageTags
         let text: [String: Any] = ["mimeType": message.html ? "text/html" : "text/plain", "body": includesBody ? ["data": Data(source.utf8).base64EncodedString()] : ["size": source.utf8.count]]

@@ -2,7 +2,7 @@
 
 Updated 2026-10-30. The owner authorized completing milestone 4, then all of [milestone 5](milestone-5.md). Milestone 4 passed its integration checkpoint before this implementation. All 72 A–J implementation items are integrated and reviewed. Core tests pass (471 in 82 suites), and the committed milestone snapshot passes 242 hosted tests in 44 suites. The universal Release build and strict signature verification pass for arm64 and x86_64. Milestone 5 implementation is complete. This checklist maps every scope item to its workflow. [Verification records](../milestone-5-verification.md) distinguish local implementation from live provider acceptance.
 
-Work in `/Users/developer/GitHub/REA_Mime` on `codex/tern-unified`. Root owns `AppModel.swift`, package/project files, generated Xcode project and `SESSION_HANDOFF.md`. Workers own the subsystems below, coordinate shared-file transfers, and preserve each other's changes. Proposed new filenames may change; update this checklist when they do.
+Work on `codex/tern-unified`. Root owns `AppModel.swift`, package/project files, generated Xcode project and `SESSION_HANDOFF.md`. Workers own the subsystems below, coordinate shared-file transfers, and preserve each other's changes. Proposed new filenames may change; update this checklist when they do.
 
 ## Delivery phases and ownership
 

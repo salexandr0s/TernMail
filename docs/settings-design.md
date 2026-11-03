@@ -23,7 +23,7 @@ Verification:
 
 The temporary populated preview source is `/tmp/tern-settings-fixture-source-20261102`, with its app under `/tmp/tern-settings-fixture-build-20261102/Build/Products/Debug/Tern.app`. Its synthetic model setup and smaller default size are confined to that snapshot. The main offline preview is `/tmp/Tern-Settings-Preview-20261102.app`. Both previews were closed after inspection.
 
-No live provider writes or permission changes were made. Spoken VoiceOver, increased contrast, and older macOS versions were not exercised. The installed Release app was not replaced by this pass; follow the release/performance integration notes in `SESSION_HANDOFF.md` before installation.
+No live provider writes or permission changes were made. Spoken VoiceOver, increased contrast, and older macOS versions were not exercised. The installed Release app was not replaced by this pass. See the [development guide](development.md) for build instructions.
 
 ## Earlier coverage — 2026-10-30
 

@@ -6,7 +6,7 @@ The installed compiler is Swift 6.2.4. Core specifies Swift tools 6.2; the app u
 
 ## GmailRequestBudget.swift
 
-[Default sleeper at line 88](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/GmailAPI/GmailRequestBudget.swift:88): **Async closure code generation on Swift 6.2.4.** The full core run aborted in `scheduleWake` during `swift_task_dealloc`, with `freed pointer was not the last allocation`. Its async sleeper was a public default argument. This matches [Swift issue #92017](https://github.com/swiftlang/swift/issues/92017), including the compiler version: default-argument closure copies in different modules can disagree on task-frame size. The default closure now lives in the library initializer body, avoiding those competing copies. Existing calls remain source compatible.
+[Default sleeper at line 88](../Packages/Core/Sources/GmailAPI/GmailRequestBudget.swift#L88): **Async closure code generation on Swift 6.2.4.** The full core run aborted in `scheduleWake` during `swift_task_dealloc`, with `freed pointer was not the last allocation`. Its async sleeper was a public default argument. This matches [Swift issue #92017](https://github.com/swiftlang/swift/issues/92017), including the compiler version: default-argument closure copies in different modules can disagree on task-frame size. The default closure now lives in the library initializer body, avoiding those competing copies. Existing calls remain source compatible.
 
 ```swift
 // Before
@@ -21,7 +21,7 @@ self.sleep = sleep ?? { try await Task.sleep(for: $0) }
 
 ## SyncEngine.swift
 
-[Shutdown at line 273](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/SyncEngine.swift:273): **Actor reentrancy and task ownership.** The first `stop()` cleared task handles before awaiting them. A second caller could therefore return while background work was still running. Retaining handles until the joins finish makes concurrent shutdown callers wait for the same work.
+[Shutdown at line 273](../Packages/Core/Sources/SyncEngine/SyncEngine.swift#L273): **Actor reentrancy and task ownership.** The first `stop()` cleared task handles before awaiting them. A second caller could therefore return while background work was still running. Retaining handles until the joins finish makes concurrent shutdown callers wait for the same work.
 
 ```swift
 // Before
@@ -33,7 +33,7 @@ for task in background { await task.value }
 pollTask = nil
 ```
 
-[Shared sync at line 419](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/SyncEngine.swift:419): **Cooperative cancellation.** A cancelled caller could start a new pass or report success after awaiting an existing pass. Cancellation is now checked before admission and after the shared task completes. Cancelling one caller leaves the shared pass available to other callers.
+[Shared sync at line 419](../Packages/Core/Sources/SyncEngine/SyncEngine.swift#L419): **Cooperative cancellation.** A cancelled caller could start a new pass or report success after awaiting an existing pass. Cancellation is now checked before admission and after the shared task completes. Cancelling one caller leaves the shared pass available to other callers.
 
 ```swift
 // Before
@@ -46,7 +46,7 @@ try Task.checkCancellation()
 return changed
 ```
 
-[Label freshness at line 489](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/SyncEngine.swift:489) and [line 647](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/SyncEngine.swift:647): **Revalidate shared state after suspension.** A label change could invalidate the cache while a full or incremental sync was fetching an older snapshot. That sync then marked labels fresh again, suppressing the required full listing. A generation now records invalidation independently of the timestamp.
+[Label freshness at line 489](../Packages/Core/Sources/SyncEngine/SyncEngine.swift#L489) and [line 647](../Packages/Core/Sources/SyncEngine/SyncEngine.swift#L647): **Revalidate shared state after suspension.** A label change could invalidate the cache while a full or incremental sync was fetching an older snapshot. That sync then marked labels fresh again, suppressing the required full listing. A generation now records invalidation independently of the timestamp.
 
 ```swift
 // Before
@@ -58,7 +58,7 @@ if labelRefreshGeneration == labelGeneration { labelsRefreshedAt = passStart }
 
 ## ActionQueue.swift and LabelQueue.swift
 
-[ActionQueue.swift:593](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/ActionQueue.swift:593), [LabelQueue.swift:384](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/LabelQueue.swift:384), and [LabelQueue.swift:426](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/LabelQueue.swift:426): **Consistent shared-state invalidation.** Label edits, creation, and deletion now invalidate the generation as well as the timestamp. These are the call sites for the label race above.
+[ActionQueue.swift:593](../Packages/Core/Sources/SyncEngine/ActionQueue.swift#L593), [LabelQueue.swift:384](../Packages/Core/Sources/SyncEngine/LabelQueue.swift#L384), and [LabelQueue.swift:426](../Packages/Core/Sources/SyncEngine/LabelQueue.swift#L426): **Consistent shared-state invalidation.** Label edits, creation, and deletion now invalidate the generation as well as the timestamp. These are the call sites for the label race above.
 
 ```swift
 // Before
@@ -69,7 +69,7 @@ invalidateLabels()
 
 ## SnoozeKeeper.swift
 
-[Shutdown at line 38](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/SnoozeKeeper.swift:38): **Drain owned work before returning.** Shutdown waited for automatic checks but could return while an explicit snooze mutation was still writing durable account configuration. An operation-gate barrier now waits for mutations already admitted.
+[Shutdown at line 38](../Packages/Core/Sources/SyncEngine/SnoozeKeeper.swift#L38): **Drain owned work before returning.** Shutdown waited for automatic checks but could return while an explicit snooze mutation was still writing durable account configuration. An operation-gate barrier now waits for mutations already admitted.
 
 ```swift
 // Before
@@ -79,7 +79,7 @@ await checking?.value
 await operations.perform {}
 ```
 
-[Check ownership at line 118](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/SnoozeKeeper.swift:118): **Clear a shared task within its owner.** A new check could join a task that had finished but whose original caller had not yet cleared its handle. Its requested rerun would be lost. Cleanup now happens inside the task before it completes.
+[Check ownership at line 118](../Packages/Core/Sources/SyncEngine/SnoozeKeeper.swift#L118): **Clear a shared task within its owner.** A new check could join a task that had finished but whose original caller had not yet cleared its handle. Its requested rerun would be lost. Cleanup now happens inside the task before it completes.
 
 ```swift
 // Before
@@ -98,7 +98,7 @@ let task = Task {
 
 ## CalendarStore.swift
 
-[Commit validation at line 117](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/MailStore/CalendarStore.swift:117): **Atomically validate the complete expected state.** Empty incremental responses advance the sync token without changing the event revision. Comparing only generation and revision allowed a late response to roll the cursor backward. Commits now compare the token in the same database transaction.
+[Commit validation at line 117](../Packages/Core/Sources/MailStore/CalendarStore.swift#L117): **Atomically validate the complete expected state.** Empty incremental responses advance the sync token without changing the event revision. Comparing only generation and revision allowed a late response to roll the cursor backward. Commits now compare the token in the same database transaction.
 
 ```swift
 // Before
@@ -108,11 +108,11 @@ guard state.generation == expected.generation, state.revision == expected.revisi
       state.syncToken == expected.syncToken else { /* reject */ }
 ```
 
-[Conditional reset at line 100](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/MailStore/CalendarStore.swift:100): **Stale failures must not erase newer state.** A delayed expired-token response could reset events and a cursor already committed by another sync. Reset now optionally requires the request's expected generation, revision, and token, checked atomically. Existing intentional unconditional resets retain their behavior.
+[Conditional reset at line 100](../Packages/Core/Sources/MailStore/CalendarStore.swift#L100): **Stale failures must not erase newer state.** A delayed expired-token response could reset events and a cursor already committed by another sync. Reset now optionally requires the request's expected generation, revision, and token, checked atomically. Existing intentional unconditional resets retain their behavior.
 
 ## CalendarSyncEngine.swift
 
-[Calendar listing at line 63](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/CalendarSyncEngine.swift:63): **Serialize shared snapshot replacement.** Overlapping list requests could commit out of order. Callers now share one engine-owned task; each validates cancellation and access after joining, and shutdown cancels and drains it.
+[Calendar listing at line 63](../Packages/Core/Sources/SyncEngine/CalendarSyncEngine.swift#L63): **Serialize shared snapshot replacement.** Overlapping list requests could commit out of order. Callers now share one engine-owned task; each validates cancellation and access after joining, and shutdown cancels and drains it.
 
 ```swift
 // Before: each caller independently fetches and replaces the list.
@@ -122,7 +122,7 @@ try checkpoint(snapshot.epoch)
 return snapshot.calendars
 ```
 
-[Expired-token recovery at line 125](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/SyncEngine/CalendarSyncEngine.swift:125) uses the store's conditional reset:
+[Expired-token recovery at line 125](../Packages/Core/Sources/SyncEngine/CalendarSyncEngine.swift#L125) uses the store's conditional reset:
 
 ```swift
 // Before
@@ -133,7 +133,7 @@ try await store.resetRemoteCalendar(accountID: accountID, calendarID: calendarID
 
 ## InboxMonitor.swift and IdleTimers.swift
 
-[Input handling at line 199](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/IMAPIdle/InboxMonitor.swift:199) and [timer identity validation](/Users/developer/GitHub/REA_Mime/Packages/Core/Sources/IMAPIdle/IdleTimers.swift:35): **Cancellation cannot retract buffered stream events.** A timeout already queued behind a server reply could survive cancellation and close a healthy connection after a replacement timer was armed. Each expiration now carries its registration identity; cancelled, replaced, and duplicate events are rejected. Input processing also checks task cancellation after stream suspension.
+[Input handling at line 199](../Packages/Core/Sources/IMAPIdle/InboxMonitor.swift#L199) and [timer identity validation](../Packages/Core/Sources/IMAPIdle/IdleTimers.swift#L35): **Cancellation cannot retract buffered stream events.** A timeout already queued behind a server reply could survive cancellation and close a healthy connection after a replacement timer was armed. Each expiration now carries its registration identity; cancelled, replaced, and duplicate events are rejected. Input processing also checks task cancellation after stream suspension.
 
 ```swift
 // Before
@@ -145,7 +145,7 @@ actions = session.timerFired(expiration.timer, at: .now)
 
 ## CalendarModel.swift
 
-[Startup at line 100](/Users/developer/GitHub/REA_Mime/App/Calendar/CalendarModel.swift:100), [shutdown at line 168](/Users/developer/GitHub/REA_Mime/App/Calendar/CalendarModel.swift:168), and [refresh at line 229](/Users/developer/GitHub/REA_Mime/App/Calendar/CalendarModel.swift:229): **Lifecycle admission, reentrancy, and cancellation.** Delayed startup could install a store or monitor after shutdown. A queued refresh could recreate engines after shutdown. Startup now validates its generation after suspension, shutdown retains teardown work, and replacement startup waits for that work before reopening refresh admission. Refresh checks its revision after account, preference, and occurrence reads and ignores stale failures.
+[Startup at line 100](../App/Calendar/CalendarModel.swift#L100), [shutdown at line 168](../App/Calendar/CalendarModel.swift#L168), and [refresh at line 229](../App/Calendar/CalendarModel.swift#L229): **Lifecycle admission, reentrancy, and cancellation.** Delayed startup could install a store or monitor after shutdown. A queued refresh could recreate engines after shutdown. Startup now validates its generation after suspension, shutdown retains teardown work, and replacement startup waits for that work before reopening refresh admission. Refresh checks its revision after account, preference, and occurrence reads and ignores stale failures.
 
 ```swift
 // Before
@@ -163,7 +163,7 @@ guard !isStopped, !Task.isCancelled else { return }
 
 ## AppModel.swift
 
-[Watcher reconciliation at line 371](/Users/developer/GitHub/REA_Mime/App/AppModel.swift:371): **Revalidate loop decisions after suspension.** An old reconciliation could stop one watcher, suspend, then remove a newly installed watcher for a later account using its stale eligibility list. Each removal now checks that the reconciliation is still current.
+[Watcher reconciliation at line 371](../App/AppModel.swift#L371): **Revalidate loop decisions after suspension.** An old reconciliation could stop one watcher, suspend, then remove a newly installed watcher for a later account using its stale eligibility list. Each removal now checks that the reconciliation is still current.
 
 ```swift
 // Before
@@ -175,7 +175,7 @@ await inboxWatchers.removeValue(forKey: id)?.stop()
 
 ## AccountMailbox.swift
 
-[Event handling at line 206](/Users/developer/GitHub/REA_Mime/App/Mailbox/AccountMailbox.swift:206): **Reject callbacks after lifecycle invalidation.** Shutdown released the process activity, then awaited snooze shutdown before cancelling event consumption. A queued sync-start event could reacquire that activity and leave it held. Stopped or cancelled consumers now ignore events.
+[Event handling at line 206](../App/Mailbox/AccountMailbox.swift#L206): **Reject callbacks after lifecycle invalidation.** Shutdown released the process activity, then awaited snooze shutdown before cancelling event consumption. A queued sync-start event could reacquire that activity and leave it held. Stopped or cancelled consumers now ignore events.
 
 ```swift
 // Before
@@ -191,7 +191,7 @@ switch event { /* update status and process activity */ }
 - App tests for `CalendarModelTests`, `InboxWatcherTests`, `AccountMailboxTests`, `SyncActivityGuardTests`, and `CacheResetLifecycleTests`: 26 tests in five suites passed against the final calendar lifecycle changes. [App test log](/tmp/tern-concurrency-app-tests-final.log).
 - A final Debug app build passed after rebuilding `GmailRequestBudget.swift` with the default-sleeper workaround. [Build log](/tmp/tern-concurrency-app-build-verified.log).
 - The final full core run passed all 601 tests in 103 suites. On follow-up, `GoogleSessionTests.transportCancellationOnlyBecomesTaskCancellationWhenTheTaskWasCancelled` was extended to cover reads and sends with and without Swift-task cancellation. It expects four attempts and seven seconds of simulated backoff only for an active read; sends and cancelled Swift tasks make one attempt without backoff. Production retry behavior is unchanged, and the previous expectation mismatch is resolved. [Full core log](/tmp/tern-concurrency-core-tests-all-passed.log).
-- The full core run no longer crashed after the default-sleeper workaround. The earlier allocator crash is recorded in [the crash report](/Users/developer/Library/Logs/DiagnosticReports/swiftpm-testing-helper-2026-11-02-012154.ips).
+- The full core run no longer crashed after the default-sleeper workaround. The earlier allocator crash is recorded in the local crash report (`swiftpm-testing-helper-2026-11-02-012154.ips`).
 - `git diff --check` passed. Independent review covered the changed task ownership, cancellation, and database commit checks.
 
 Validation used controlled service responses and local stores; a live Gmail, Calendar, or IMAP round trip was not performed. Existing and concurrently produced workspace changes were preserved.

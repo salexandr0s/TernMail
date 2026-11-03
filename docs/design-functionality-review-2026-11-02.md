@@ -1,6 +1,6 @@
 # Tern design and functionality review
 
-Reviewed 2026-11-02, checkout `d05663c`, using the [swiftui-pro skill](/Users/developer/.agents/skills/swiftui-pro/SKILL.md). Target: macOS 26; installed toolchain: Xcode 26.3 / Swift 6.2.4, Swift 6 language mode. The review does not recommend iPhone-only APIs, UIKit replacements, or a deployment-target change.
+Reviewed 2026-11-02, checkout `d05663c`, using the `swiftui-pro` skill. Target: macOS 26; installed toolchain: Xcode 26.3 / Swift 6.2.4, Swift 6 language mode. The review does not recommend iPhone-only APIs, UIKit replacements, or a deployment-target change.
 
 Tern has built an impressive number of ways to start work and too many ways to lose control of finishing it. You can compose a message but cannot remove its signature or trim its forwarded history. You can review AI categories but cannot reject one bad match. You can retry a calendar conflict through a button that sends you back to the same dead end. These are failures in the product's basic interaction contracts.
 

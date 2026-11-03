@@ -26,7 +26,7 @@ Regression coverage includes closed versus unfinished Mermaid fences, whole-bloc
 
 Independent review resolved accessible sender labels, toolbar focus, arrow routing, and label measurements. The conversation view uses smaller builders and a single comparable content snapshot to observe the same streaming and tool-result changes without exceeding Swift's expression-checking limit.
 
-The validation snapshot is `/tmp/tern-agent-experience-jxxz4ije/source`. Concurrent Calendar implementation files were excluded after their unfinished timeline view failed compilation. Existing settings changes are included; this work does not certify the concurrent Calendar changes.
+Validation used an isolated temporary source snapshot. Concurrent Calendar implementation files were excluded after their unfinished timeline view failed compilation. Existing settings changes are included; this work does not certify the concurrent Calendar changes.
 
 Native inspection used an isolated preview with synthetic connection state and streamed, canned responses. Checks covered the 320-point minimum and 380-point default widths, light/dark appearance, a 360-point height, a 720-point detached window, diagram/source switching, source disclosure, Markdown tables/lists/quotes, initial composer focus, and Command-Return sending. The detached window retained the conversation and unfinished input. The preview build passed in `/tmp/tern-agent-experience-preview.log`; it is not a live provider check.
 

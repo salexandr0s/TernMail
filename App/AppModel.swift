@@ -501,10 +501,15 @@ final class AppModel {
                         .flatMap { OnboardingState.Step(rawValue: String($0.dropFirst("--ui-audit-onboarding-step=".count))) }
                     onboarding.step = requested ?? (emptyOnboarding ? .welcome : .google)
                 }
-                let account = AccountRecord(id: "ui-audit", email: "audit@example.invalid", displayName: "UI Audit", grantedScopes: [], addedAt: .now)
+                let readmeDemo = ReadmeDemoFixtures.isEnabled
+                let account = AccountRecord(id: "ui-audit",
+                    email: readmeDemo ? "alex@studio.example.invalid" : "audit@example.invalid",
+                    displayName: readmeDemo ? "Northstar Studio" : "UI Audit", grantedScopes: [], addedAt: .now)
                 // A second account with other mail under the same thread,
                 // message and label IDs.
-                let second = AccountRecord(id: "ui-audit-2", email: "second@example.invalid", displayName: "Second Audit", grantedScopes: [], addedAt: .now)
+                let second = AccountRecord(id: "ui-audit-2",
+                    email: readmeDemo ? "alex@example.invalid" : "second@example.invalid",
+                    displayName: readmeDemo ? "Personal" : "Second Audit", grantedScopes: [], addedAt: .now)
                 if !emptyOnboarding {
                     try await accounts.save(account)
                     if !cachedReauthentication { try await accounts.save(second) }

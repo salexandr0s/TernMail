@@ -203,7 +203,7 @@ The `macos-design-guidelines` evaluation checklist, walked against the code, the
 - The Debug build succeeded after every merge and fix. The universal Release build covers arm64 and x86_64, passes `codesign --verify --deep --strict` and reports no app warnings. Its three Core warnings predate this work. It was built from `e877fdc`, before the last two merges with `main`.
 - Native checks used the Debug `--ui-audit` app with synthetic accounts: light and dark captures at 720, 960 and 1280 points, sidebar symbols at Small, Medium and Large through a per-process `NSTableViewDefaultSizeMode` override, the menu bar read through accessibility, and Window ▸ Tern reopening a closed main window. After the `6b977fc` merge the audit app opened on another Space, where its windows could not be reached without switching the user's Space, so the merged toolbar was checked in hosted test windows instead: the visible items and rendered captures at 1,280, 960 and 720 points.
 - Two full hosted runs were disturbed by other sessions. In one, another session quit the shared test host. The other ran 40 to 50 times slower while other sessions built and tested, and seven suites failed on timed waits. Each rerun on a quiet machine passed.
-- `SESSION_HANDOFF.md` records the install of the Release build and its first launch.
+- Local verification records documented the Release installation and its first launch.
 
 ## Known limits
 

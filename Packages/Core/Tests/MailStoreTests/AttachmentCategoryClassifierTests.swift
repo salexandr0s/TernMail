@@ -1,6 +1,7 @@
 import Testing
 @testable import MailStore
 
+/// Synthetic document samples; identifiers and businesses do not come from a mailbox.
 @Suite struct AttachmentCategoryClassifierTests {
     @Test(arguments: [
         ("Invoice2026-1042.PDF", AttachmentCategory.invoice),

@@ -8,7 +8,7 @@ import SwiftUI
 struct AvatarAuditFixtures: View {
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var section = 0
-    @State private var to = [EmailAddress(name: "Example Bank", address: "team@harbor.example.invalid")]
+    @State private var to = [EmailAddress(name: "Example Bank", address: "team@bank.example.invalid")]
     @State private var cc = [EmailAddress(name: "Alex Example", address: "alex@example.invalid")]
     @State private var bcc = [EmailAddress(name: "Personal", address: "someone@example.invalid")]
     @State private var toFocus = false
@@ -20,7 +20,7 @@ struct AvatarAuditFixtures: View {
 
     private static let accounts = [
         AccountRecord(id: "avatar-photo", email: "alex@example.invalid", displayName: "Alex Example", grantedScopes: [], addedAt: .distantPast),
-        AccountRecord(id: "avatar-company", email: "sender@studio.example.invalid", displayName: "Company account", grantedScopes: [], addedAt: .distantPast)
+        AccountRecord(id: "avatar-company", email: "sender@company.example.invalid", displayName: "Company account", grantedScopes: [], addedAt: .distantPast)
     ]
     private var senders: [ComposeSender] { Self.accounts.flatMap { ComposeSender.choices(account: $0, identities: []) } }
     private var context: AddressAvatarContext {
@@ -69,7 +69,7 @@ struct AvatarAuditFixtures: View {
             Text("To value: \(to.map(\.displayString).joined(separator: ", "))")
                 .font(.caption).textSelection(.enabled)
             Button("Reset recipients") {
-                to = [.init(name: "Example Bank", address: "team@harbor.example.invalid")]
+                to = [.init(name: "Example Bank", address: "team@bank.example.invalid")]
                 cc = [.init(name: "Alex Example", address: "alex@example.invalid")]
                 bcc = [.init(name: "Personal", address: "someone@example.invalid")]
             }
@@ -81,8 +81,8 @@ struct AvatarAuditFixtures: View {
             Text(title).frame(width: Tokens.Space.s10, alignment: .leading)
             RecipientField(label: title, addresses: addresses, requestsFocus: focus, isEditable: true,
                            accountID: Self.accounts[0].id, avatarContext: context) { query in
-                let choices = [EmailAddress(name: "Harbor Bank", address: "team@harbor.example.invalid"),
-                               EmailAddress(name: "Cedar Bank", address: "bank@cedar.example.invalid")]
+                let choices = [EmailAddress(name: "Example Bank", address: "team@bank.example.invalid"),
+                               EmailAddress(name: "Sample Bank", address: "bank@company.example.invalid")]
                 return choices.filter { $0.displayString.localizedCaseInsensitiveContains(query) }
             }
             .frame(minHeight: Tokens.Space.s8)
@@ -113,7 +113,7 @@ struct AvatarAuditFixtures: View {
         var event = GoogleCalendarEvent(id: "avatar-event", summary: "Synthetic guest preview",
             start: CalendarDateTime(date: Date(timeIntervalSince1970: 1_793_520_000), timeZone: .current),
             end: CalendarDateTime(date: Date(timeIntervalSince1970: 1_793_523_600), timeZone: .current))
-        event.attendees = [CalendarAttendee(email: "team@harbor.example.invalid", displayName: "Example Bank", responseStatus: "accepted"),
+        event.attendees = [CalendarAttendee(email: "team@bank.example.invalid", displayName: "Example Bank", responseStatus: "accepted"),
                            CalendarAttendee(email: accounts[0].email, displayName: "Alex Example", responseStatus: "accepted"),
                            CalendarAttendee(email: "someone@example.invalid", displayName: "Personal", responseStatus: "needsAction")]
         return CalendarEditorDraft(event: event, calendarKey: displayCalendar.id, isImport: true)

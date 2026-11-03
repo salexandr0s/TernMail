@@ -1,7 +1,7 @@
 # Open-source performance comparisons
 
 Research checkpoint: November 1, 2026. Work continues on
-`codex/instant-navigation` in `/Users/developer/GitHub/REA_Mime-perf`.
+`codex/instant-navigation` in a separate performance worktree.
 Tern's measured navigation still misses the acceptance targets in
 [performance.md](../performance.md). No new production build has been installed.
 
