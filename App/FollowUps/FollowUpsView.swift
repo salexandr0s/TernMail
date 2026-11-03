@@ -106,7 +106,8 @@ struct FollowUpsView: View {
                             onReopen: { Task { await model.setStatus(entry, status: .open) } },
                             onSnooze: { date in Task { await model.snooze(entry, until: date) } },
                             onOpenSource: { model.openSource(entry) },
-                            onDraft: { draft(entry) })
+                            onDraft: { draft(entry) },
+                            onBringBack: { Task { await model.deferAttention(entry, until: nil) } })
                             .tag(entry.id)
                             .id(entry.id)
                     }

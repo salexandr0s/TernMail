@@ -2,6 +2,8 @@
 
 Implementation authorized on November 3, 2026, before F05 Today and F16 Meeting preparation. The accepted feature scope is in the [roadmap](ai-and-features-roadmap.md). Work uses the clean public repository's `codex/followups-today-meeting-prep` branch; private repository history and concurrent changes in other checkouts stay separate.
 
+The owner subsequently requested settings-driven automatic sent-mail reminders and optional context-aware drafts. That extension is specified in [Automatic follow-ups](automatic-follow-ups.md); the verification below describes the initial manual-tracking implementation.
+
 ## Behavior
 
 Track a conversation or accept an open task from its summary. Review the description, person, direction (I owe or Waiting for), optional deadline, and optional reminder before saving. Generated summaries remain suggestions; accepted commitments and user corrections persist separately.

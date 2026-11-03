@@ -4,7 +4,7 @@ import SwiftUI
 enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
     case general, mailActions, notifications
     case connections, accountPreferences, profiles
-    case reading, messageList, attachments
+    case reading, messageList, attachments, followUps
     case writing, templates, signatures, suggestions
     case organizeMail, filters, blocked, vacation, calendar
     case assistant, failedChanges, maintenance
@@ -44,6 +44,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .reading: "Reading"
         case .messageList: "Message List"
         case .attachments: "Attachments"
+        case .followUps: "Follow-ups"
         case .writing: "Writing"
         case .templates: "Templates"
         case .signatures: "Signatures"
@@ -70,6 +71,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .reading: "doc.text"
         case .messageList: "list.bullet.rectangle"
         case .attachments: "paperclip"
+        case .followUps: "clock.arrow.circlepath"
         case .writing: "square.and.pencil"
         case .templates: "doc.on.doc"
         case .signatures: "signature"
@@ -103,7 +105,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .general, .mailActions, .maintenance: .gray
         case .notifications: .red
         case .connections, .accountPreferences, .profiles, .assistant: .indigo
-        case .reading, .messageList: .blue
+        case .reading, .messageList, .followUps: .blue
         case .attachments: .cyan
         case .writing, .templates, .signatures, .suggestions: .purple
         case .organizeMail, .filters, .blocked, .failedChanges: .orange
@@ -123,6 +125,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable, Sendable {
         case .reading: "appearance remote images privacy tracking company business bank logos sender photos website icons dark mode conversation order mark read delay text size spotlight search index"
         case .messageList: "inbox appearance density compact comfortable preview swipe sidebar mailbox count badges importance"
         case .attachments: "download open files preview cache"
+        case .followUps: "automatic unanswered sent conversations waiting reminders days delay drafts ai today notifications"
         case .writing: "font reply format markdown quote recipients sender send from default account"
         case .templates: "reusable replies canned responses"
         case .signatures: "local gmail new messages replies separator send as identity footer"
@@ -155,7 +158,7 @@ struct SettingsNavigationSection: Identifiable, Sendable {
     static let sections = [
         SettingsNavigationSection(title: "", destinations: [.general, .mailActions, .notifications]),
         SettingsNavigationSection(title: "Accounts", destinations: [.connections, .accountPreferences, .profiles]),
-        SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .attachments]),
+        SettingsNavigationSection(title: "Mail", destinations: [.reading, .messageList, .attachments, .followUps]),
         SettingsNavigationSection(title: "Composing", destinations: [.writing, .templates, .signatures, .suggestions]),
         SettingsNavigationSection(title: "Google", destinations: [.organizeMail, .filters, .blocked, .vacation, .calendar]),
         SettingsNavigationSection(title: "Tools", destinations: [.assistant, .failedChanges, .maintenance])

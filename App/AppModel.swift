@@ -32,6 +32,12 @@ final class AppModel {
     @ObservationIgnored private var calendarModel: CalendarModel?
     @ObservationIgnored private var tasksModel: GoogleTasksModel?
     @ObservationIgnored private var followUpsModel: FollowUpsModel?
+    @ObservationIgnored private var todayModel: TodayModel?
+    @ObservationIgnored private var todayDashboardModel: TodayDashboardModel?
+    @ObservationIgnored private var automaticFollowUpsModel: AutomaticFollowUpCoordinator?
+    let followUpPreferences = FollowUpPreferences(defaults:
+        AssistantRuntimeEnvironment.isTestHost || ProcessInfo.processInfo.arguments.contains("--ui-audit")
+            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") ? nil : .standard)
     /// A task created from a detached reader can reveal the main window's sidebar.
     private(set) var tasksSidebarRequest: UUID?
     private(set) var accountPreferences: AccountPreferencesModel?
@@ -48,6 +54,10 @@ final class AppModel {
     var destination: WorkspaceDestination = .mail {
         didSet {
             guard destination != oldValue else { return }
+            if destination != .today {
+                todayModel?.endVisit()
+                todayDashboardModel?.stop()
+            }
             NavigationPerformance.shared.begin(.workspace, destination: destination.rawValue)
             if destination != .mail {
                 NavigationPerformance.shared.cancel(.reader)
@@ -212,7 +222,9 @@ final class AppModel {
         owner.onMailSync = { [weak self] snapshot in
             self?.spotlight.mailSynced(accountID: snapshot.accountID)
             await self?.mailNotifications?.process(snapshot)
+            await self?.automaticFollowUpsModel?.process(snapshot)
             await self?.followUpsModel?.process(snapshot)
+            await self?.todayDashboardModel?.process(snapshot)
         }
         owner.onUnreadCountChange = { [weak self] in self?.refreshMailBadges() }
         owner.activityGuard = activityGuard
@@ -245,12 +257,36 @@ final class AppModel {
         let activity: SyncActivity = isMacAsleep ? .suspended : NSApplication.shared.isActive ? .active : .inactive
         guard activity != syncActivity else { return }
         syncActivity = activity
+        syncActivityGeneration += 1
+        let generation = syncActivityGeneration
+        let expectedMailbox = mailbox
+        if activity != .active {
+            todayModel?.endVisit()
+            todayDashboardModel?.stop()
+        }
         for owner in mailbox?.accounts ?? [] { owner.setActivity(activity) }
         if activity == .suspended {
+            automaticFollowUpsModel?.stop()
             followUpsModel?.stop()
         } else if let followUpsModel, !inboxUpdatesAreStopped {
-            Task { await followUpsModel.resume() }
+            Task {
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
+                await self.automaticFollowUpsModel?.start()
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
+                await followUpsModel.resume()
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
+                if self.syncActivity == .active, self.destination == .today {
+                    await self.todayModel?.beginVisit()
+                    await self.todayDashboardModel?.refresh()
+                }
+            }
         }
+    }
+
+    private func canResumeFollowUps(in expectedMailbox: MailboxModel?, generation: Int) -> Bool {
+        guard let expectedMailbox else { return false }
+        return generation == syncActivityGeneration && !inboxUpdatesAreStopped
+            && syncActivity != .suspended && mailbox === expectedMailbox
     }
 
     private func schedulePreferenceReconciliation() {
@@ -272,7 +308,11 @@ final class AppModel {
             }
             await refreshInboxUpdates()
             refreshMailBadges()
-            await followUpsModel?.refresh()
+            let generation = syncActivityGeneration
+            if canResumeFollowUps(in: mailbox, generation: generation) {
+                await automaticFollowUpsModel?.start()
+                if canResumeFollowUps(in: mailbox, generation: generation) { await followUpsModel?.refresh() }
+            }
         }
     }
 
@@ -359,6 +399,30 @@ final class AppModel {
         return value
     }
 
+    var today: TodayModel {
+        if let todayModel { return todayModel }
+        let value = TodayModel(app: self)
+        todayModel = value
+        return value
+    }
+
+    var todayDashboard: TodayDashboardModel {
+        if let todayDashboardModel { return todayDashboardModel }
+        let value = TodayDashboardModel(app: self)
+        todayDashboardModel = value
+        return value
+    }
+
+    var automaticFollowUps: AutomaticFollowUpCoordinator {
+        if let automaticFollowUpsModel { return automaticFollowUpsModel }
+        let value = AutomaticFollowUpCoordinator(app: self, preferences: followUpPreferences, followUps: followUps)
+        automaticFollowUpsModel = value
+        followUpPreferences.onChange = { [weak self] in
+            Task { await self?.automaticFollowUpsModel?.preferencesChanged() }
+        }
+        return value
+    }
+
     func showTasks() {
         showMainWindow()
         tasksSidebarRequest = UUID()
@@ -433,6 +497,7 @@ final class AppModel {
     @ObservationIgnored private let activityGuard = SyncActivityGuard()
     /// What the user is doing, which sets how often each account checks for mail.
     private(set) var syncActivity: SyncActivity = .active
+    @ObservationIgnored private var syncActivityGeneration = 0
     @ObservationIgnored private var inboxUpdatesAreStopped = false
     @ObservationIgnored private var inboxReconciliationRevision = 0
 
@@ -716,6 +781,7 @@ final class AppModel {
             if turnedOff.contains(.calendar) { await EmailCalendarPreparation.shared.remove(accountID: account.id) }
             tasksModel?.invalidateAccount(account.id)
             followUpsModel?.restoreAccount(account.id)
+            automaticFollowUpsModel?.restoreAccount(account.id)
             defer { if !turnedOff.isEmpty { reportTurnedOff(turnedOff, for: account) } }
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
@@ -740,6 +806,11 @@ final class AppModel {
             await inboxWatchers.removeValue(forKey: account.id)?.stop()
             await refreshInboxUpdates()
             await accountPreferences?.refresh()
+            let generation = syncActivityGeneration
+            if canResumeFollowUps(in: mailbox, generation: generation) {
+                await automaticFollowUps.start()
+                if canResumeFollowUps(in: mailbox, generation: generation) { await followUps.resume() }
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -1044,6 +1115,10 @@ final class AppModel {
     /// Stops background work before quitting. `cancelQuit()` starts it again.
     func prepareToQuit() async {
         inboxUpdatesAreStopped = true
+        syncActivityGeneration += 1
+        todayModel?.endVisit()
+        todayDashboardModel?.stop()
+        automaticFollowUpsModel?.stop()
         await maintenanceModel?.suspend()
         maintenanceTask?.cancel()
         maintenanceTask = nil
@@ -1059,11 +1134,21 @@ final class AppModel {
     /// A user can keep Tern open after its final send attempt fails.
     func cancelQuit() async {
         inboxUpdatesAreStopped = false
+        let expectedMailbox = mailbox
+        let generation = syncActivityGeneration
         maintenanceModel?.resume()
         await refreshInboxUpdates()
         await calendarModel?.start()
         tasksModel?.resume()
-        await followUpsModel?.resume()
+        if canResumeFollowUps(in: expectedMailbox, generation: generation) {
+            await automaticFollowUpsModel?.start()
+            if canResumeFollowUps(in: expectedMailbox, generation: generation) { await followUpsModel?.resume() }
+            if canResumeFollowUps(in: expectedMailbox, generation: generation),
+               destination == .today, NSApplication.shared.isActive {
+                await todayModel?.beginVisit()
+                if canResumeFollowUps(in: expectedMailbox, generation: generation) { await todayDashboardModel?.refresh() }
+            }
+        }
         assistantModel?.refreshAccess()
         schedulePreferenceReconciliation()
         mailURLRouter?.resume()
@@ -1167,13 +1252,24 @@ final class AppModel {
         startCacheMaintenance()
         spotlight.start()
         Task { await mailbox.start() }
-        for owner in mailbox.accounts { followUps.restoreAccount(owner.account.id) }
-        await followUps.start()
+        for owner in mailbox.accounts {
+            followUps.restoreAccount(owner.account.id)
+            automaticFollowUps.restoreAccount(owner.account.id)
+        }
+        let generation = syncActivityGeneration
+        if canResumeFollowUps(in: mailbox, generation: generation) {
+            await automaticFollowUps.start()
+            if canResumeFollowUps(in: mailbox, generation: generation) { await followUps.start() }
+        }
     }
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        syncActivityGeneration += 1
         organizationSessionsModel?.clear()
+        todayModel?.endVisit()
+        todayDashboardModel?.stop()
+        automaticFollowUpsModel?.stop()
         followUpsModel?.stop()
         MailNotificationRouter.shared.unbind()
         mailURLRouter?.stop()
@@ -1232,6 +1328,7 @@ final class AppModel {
                 removeAccount: { [weak self] accountID in
                     await self?.calendarModel?.removeAccount(accountID)
                     await self?.tasksModel?.removeAccount(accountID)
+                    await self?.automaticFollowUpsModel?.removeAccount(accountID)
                     await self?.followUpsModel?.removeAccount(accountID)
                     if let calendarURL {
                         try await AccountCleanupCoordinator.removeCalendarCache(accountID: accountID, at: calendarURL)

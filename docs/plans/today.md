@@ -4,9 +4,13 @@ Implementation is authorized after F06 Waiting for and follow-ups, and before F1
 
 ## Behavior
 
-Today is a daily briefing of commitments the user tracks in Tern. Its scope description is "From follow-ups you track in Tern." It uses the active mail profile and shows work owed by the user, approaching deadlines, unanswered requests, and changes to tracked work since the previous visit. It does not claim to have inspected every email.
+The owner refined the design on November 3: Today is a full dashboard and the third main destination after Mail and Calendar. Use a responsive two-column layout: to-dos on the left, a compact calendar with the selected day's events on the right, and unread inbox mail plus follow-up conversations below. Narrow windows use a single column. Reuse the existing Google Tasks, Calendar, mail cache, and follow-up services; selecting a day here must not change the Calendar destination's selected date.
 
-Use a native list with these sections. Each commitment appears once, in the first applicable section, and its row carries all relevant reasons.
+The active mail profile scopes task account choices, unread mail, and follow-ups. Calendar visibility and access use the existing calendar settings. Show the selected task list, source coverage, and unavailable or stale data clearly. Unread mail is a bounded cache projection and must not imply complete server coverage. Opening an email is explicit; displaying it in the dashboard does not mark it read.
+
+The follow-up region includes automatically tracked unanswered sent conversations and manually accepted commitments. Its scope description identifies the actual tracked coverage. It shows work owed by the user, approaching deadlines, unanswered requests, and changes since the previous visit without claiming to have inspected every email.
+
+Use these sections within the follow-up region. Each commitment appears once, in the first applicable section, and its row carries all relevant reasons.
 
 | Section | Selection and explanation |
 |---|---|
@@ -28,7 +32,7 @@ For unanswered requests, use F06's reply evidence and check state. A failed or u
 - Select from `FollowUpsModel.entries` using `AccountPreferencesModel.visibleAccountIDs`. Do not use `FollowUpsModel.visibleEntries`, which also applies the Waiting for destination's search text. Today keeps any search query separate.
 - Reuse `FollowUpsModel.setStatus`, `edit`, `openSource`, and `draftFollowUp`. Complete, dismiss, and edits must immediately agree across Today and Waiting for. Drafting opens an editable draft and leaves the commitment status unchanged.
 - `AccountPreferencesModel.activeProfileID` supplies a stable visit scope: all accounts when nil, otherwise the specific profile. Capture the entry/account for an action so a later profile switch cannot retarget it.
-- Reuse F06 reply reconciliation and notification lifecycle. Today adds no provider calls or mailbox scans. Opening a source or preparing a draft may use the existing mail-loading path.
+- Reuse F06 reply reconciliation and notification lifecycle. The Today projection adds no provider calls or mailbox scans. Automatic sent-mail tracking and optional draft generation belong to the follow-up service and settings. Opening a source or preparing a draft may use the existing mail-loading path.
 
 ## Snoozing attention
 
@@ -79,5 +83,14 @@ Workers must retain others' changes and keep ownership disjoint. Use the existin
 - Complete, dismiss, source opening, and draft preparation act on the same F06 record and original account. Draft preparation never sends mail or completes work.
 - Account/profile removal cleans up visit state; cache reset preserves commitments and seen baselines.
 - A synthetic native check covers each section, a row with multiple reasons, snooze/restore, complete/dismiss, source and draft actions, narrow-window layout, and unavailable visit history.
+- The dashboard displays the canonical selected task list, an independent mini-calendar/day agenda, and account-scoped unread inbox mail. Task and event actions use the original service and account. Minimized, occluded, or closed Today windows cannot acknowledge unseen follow-up changes.
 
 Core and app-model tests should target these state and lifecycle failures. Native checks should verify the user workflow without repeating every storage case. No live mailbox scan or email send is needed for F05 acceptance.
+
+## Verification: November 3, 2026
+
+F05 is implemented and its verification gate has passed. The full Core run covered 837 tests; one assistant recipient regression was fixed, then all nine tests in that suite passed. The broad app run passed 135 tests across 13 suites. A subsequent automatic-follow-up run passed 12 tests, including the added in-memory settings regression. The focused native Today workflow passed and its wide, narrow, and snooze-sheet screenshots were inspected.
+
+The native workflow exercises source and draft actions, snoozing a commitment without a reminder, restoring it, completing it, hidden-window visit handling, and unavailable history. The dashboard shows tasks, an independent calendar and agenda, unread inbox mail, and shared follow-ups. No live email or calendar mutation was used. Logs and native artifacts are under `build/today/`.
+
+Meeting preparation may now proceed. Subsequent native checks also verified the editable reminder delay and dependent settings controls, the provider logo and selector at the assistant's top left, and the model selector at the composer's bottom right. The final Debug build passed.

@@ -3,16 +3,18 @@ import SwiftUI
 
 extension FocusedValues {
     @Entry var followUpsWorkspaceHasFocus: Bool?
+    @Entry var todayWorkspaceHasFocus: Bool?
 }
 
 enum WorkspaceDestination: String, CaseIterable, Identifiable {
-    case mail, calendar, followUps
+    case mail, calendar, today, followUps
     var id: String { rawValue }
     var title: String {
         switch self {
         case .mail: "Mail"
         case .calendar: "Calendar"
         case .followUps: "Waiting for"
+        case .today: "Today"
         }
     }
 }
@@ -63,6 +65,17 @@ struct WorkspaceView: View {
                             .background {
                                 FollowUpsWorkspacePerformance(model: app.followUps,
                                     isActive: app.destination == .followUps && !layout.isCompact)
+                            }
+                        TodayView(model: app.today, dashboard: app.todayDashboard,
+                            isActive: app.destination == .today && !layout.isCompact,
+                            automaticFollowUps: app.automaticFollowUps)
+                            .opacity(app.destination == .today ? 1 : 0)
+                            .allowsHitTesting(app.destination == .today)
+                            .accessibilityHidden(app.destination != .today)
+                            .focusedValue(\.todayWorkspaceHasFocus, app.destination == .today)
+                            .background {
+                                TodayWorkspacePerformance(model: app.today,
+                                    isActive: app.destination == .today && !layout.isCompact)
                             }
                     }
                     .frame(width: layout.calendarWidth, height: geometry.size.height, alignment: .leading)
@@ -116,7 +129,8 @@ struct WorkspaceView: View {
             .background {
                 CalendarWorkspaceFocusTransfer(isCompact: layout.isCompact,
                     isCalendarActive: app.destination == .calendar,
-                    isFollowUpsActive: app.destination == .followUps) {
+                    isFollowUpsActive: app.destination == .followUps,
+                    isTodayActive: app.destination == .today) {
                     compactBackFocused = true
                 }
             }
@@ -163,9 +177,11 @@ private struct CalendarWorkspaceFocusTransfer: View {
     let isCompact: Bool
     let isCalendarActive: Bool
     let isFollowUpsActive: Bool
+    let isTodayActive: Bool
     let onNeedsBackFocus: () -> Void
     @FocusedValue(\.calendarWorkspaceHasFocus) private var calendarHasFocus
     @FocusedValue(\.followUpsWorkspaceHasFocus) private var followUpsHasFocus
+    @FocusedValue(\.todayWorkspaceHasFocus) private var todayHasFocus
 
     var body: some View {
         Color.clear
@@ -173,7 +189,8 @@ private struct CalendarWorkspaceFocusTransfer: View {
             .accessibilityHidden(true)
             .onChange(of: isCompact) { _, compact in
                 if compact, (isCalendarActive && calendarHasFocus == true)
-                    || (isFollowUpsActive && followUpsHasFocus == true) {
+                    || (isFollowUpsActive && followUpsHasFocus == true)
+                    || (isTodayActive && todayHasFocus == true) {
                     onNeedsBackFocus()
                 }
             }
@@ -221,6 +238,23 @@ private struct CalendarWorkspacePerformance: View {
 
 private struct FollowUpsWorkspacePerformance: View {
     let model: FollowUpsModel
+    let isActive: Bool
+
+    private var ready: Bool { isActive && model.hasLoadedEntries }
+
+    var body: some View {
+        VisibleContentProbe(kind: .workspace, isActive: ready, revision: model.presentationRevision)
+            .onChange(of: ready, initial: true) { _, value in
+                if value { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained) }
+            }
+            .onChange(of: model.presentationRevision) { _, _ in
+                if ready { NavigationPerformance.shared.contentReady(.workspace, cacheTier: .local) }
+            }
+    }
+}
+
+private struct TodayWorkspacePerformance: View {
+    let model: TodayModel
     let isActive: Bool
 
     private var ready: Bool { isActive && model.hasLoadedEntries }

@@ -2,7 +2,7 @@ import Foundation
 
 /// What the main window shows. The toolbar's picker and the Go menu switch it.
 enum WorkspaceSection: String, CaseIterable, Identifiable {
-    case mail, calendar, attachments, followUps
+    case mail, calendar, today, attachments, followUps
     var id: String { rawValue }
     var title: String { self == .followUps ? "Waiting for" : rawValue.capitalized }
     var systemImage: String {
@@ -11,6 +11,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .calendar: "calendar"
         case .attachments: "paperclip"
         case .followUps: "clock.badge.checkmark"
+        case .today: "sun.max"
         }
     }
 }

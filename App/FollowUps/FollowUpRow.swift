@@ -14,6 +14,7 @@ struct FollowUpRow: View {
     let onSnooze: (Date) -> Void
     let onOpenSource: () -> Void
     let onDraft: () -> Void
+    var onBringBack: (() -> Void)? = nil
 
     private var record: CommitmentRecord { entry.record }
     private var isOpen: Bool { record.status == .open }
@@ -68,6 +69,17 @@ struct FollowUpRow: View {
                         .foregroundStyle(isOpen && FollowUpSchedule.isOverdue(dueAt, now: now) ? Tokens.Status.warning : Color.secondary)
                 }
 
+                if isOpen, let deferredUntil = record.deferredUntil, deferredUntil > now {
+                    Label("Snoozed in Today until \(deferredUntil.formatted(date: .abbreviated, time: .shortened))", systemImage: "moon.zzz")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let onBringBack {
+                        Button("Bring Back to Today", action: onBringBack)
+                            .controlSize(.small).disabled(isBusy)
+                            .accessibilityIdentifier("follow-up-bring-back-\(record.id)")
+                    }
+                }
+
                 ForEach(entry.reminders, id: \.kind) { reminder in
                     reminderStatus(reminder)
                 }
@@ -112,6 +124,9 @@ struct FollowUpRow: View {
         Button("Open Email", systemImage: "envelope", action: onOpenSource)
         if isOpen {
             Button("Draft Follow-up", systemImage: "square.and.pencil", action: onDraft)
+            if let deferredUntil = record.deferredUntil, deferredUntil > now, let onBringBack {
+                Button("Bring Back to Today", systemImage: "sun.max", action: onBringBack)
+            }
             if entry.reminders.contains(where: { $0.receivedReplyMessageID == nil }) {
                 Menu("Remind Me") {
                     Button("Tomorrow Morning") { onSnooze(FollowUpSchedule.tomorrow(from: now)) }

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The window's search field. It searches whatever the window shows: mail,
-/// events, attachments or follow-ups. Find focuses it.
+/// events, attachments, follow-ups or Today. Find focuses it.
 ///
 /// This is an `NSSearchField`, not `.searchable`. On macOS 26 the system
 /// search item inside a customizable toolbar rebuilds the toolbar on every
@@ -12,6 +12,7 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
     let calendar: CalendarModel
     let libraryToolbar: AttachmentLibraryToolbarState
     let followUps: FollowUpsModel
+    let today: TodayModel
     let section: WorkspaceSection
     /// The toolbar is short of room, so an idle field folds into a button
     /// rather than pushing the assistant into the overflow menu.
@@ -22,7 +23,8 @@ struct WorkspaceSearchToolbar: CustomizableToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(id: "workspace.search", placement: .primaryAction) {
-            WorkspaceSearchContent(mailbox: mailbox, calendar: calendar, libraryToolbar: libraryToolbar, followUps: followUps,
+            WorkspaceSearchContent(mailbox: mailbox, calendar: calendar, libraryToolbar: libraryToolbar,
+                followUps: followUps, today: today,
                 section: section, isFolded: isFolded)
         }
         .customizationBehavior(.disabled)
@@ -36,6 +38,7 @@ struct WorkspaceSearchContent: View {
     let calendar: CalendarModel
     let libraryToolbar: AttachmentLibraryToolbarState
     let followUps: FollowUpsModel
+    let today: TodayModel
     let section: WorkspaceSection
     var isFolded = false
 
@@ -56,6 +59,7 @@ struct WorkspaceSearchContent: View {
         case .calendar: "Search events"
         case .attachments: "Search attachments"
         case .followUps: "Search follow-ups"
+        case .today: "Search Today"
         }
     }
 
@@ -65,6 +69,7 @@ struct WorkspaceSearchContent: View {
         case .calendar: "Search events (\(ShortcutCatalog.find.label))"
         case .attachments: "Search filenames, senders and subjects (\(ShortcutCatalog.find.label)). Document contents aren't searched."
         case .followUps: "Search follow-ups (\(ShortcutCatalog.find.label))"
+        case .today: "Search Today (\(ShortcutCatalog.find.label))"
         }
     }
 
@@ -74,6 +79,7 @@ struct WorkspaceSearchContent: View {
         case .calendar: calendar.searchText
         case .attachments: libraryToolbar.searchText
         case .followUps: followUps.searchText
+        case .today: today.searchText
         }
     }
 
@@ -87,6 +93,8 @@ struct WorkspaceSearchContent: View {
             .init(section: section, owner: libraryToolbar, generation: libraryToolbar.searchFocusRequest)
         case .followUps:
             .init(section: section, owner: followUps, generation: followUps.searchFocusRequest)
+        case .today:
+            .init(section: section, owner: today, generation: today.searchFocusRequest)
         }
     }
 
@@ -96,6 +104,7 @@ struct WorkspaceSearchContent: View {
         case .calendar: calendar.searchText = text
         case .attachments: libraryToolbar.searchText = text
         case .followUps: followUps.searchText = text
+        case .today: today.searchText = text
         }
     }
 
@@ -109,6 +118,7 @@ struct WorkspaceSearchContent: View {
         case .calendar: calendar.searchText = ""
         case .attachments: libraryToolbar.searchText = ""
         case .followUps: followUps.searchText = ""
+        case .today: today.searchText = ""
         }
     }
 }

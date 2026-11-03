@@ -41,4 +41,5 @@ extension FocusedValues {
     @Entry var assistantModel: AssistantModel?
     @Entry var attachmentLibraryToolbar: AttachmentLibraryToolbarState?
     @Entry var followUpsModel: FollowUpsModel?
+    @Entry var todayModel: TodayModel?
 }

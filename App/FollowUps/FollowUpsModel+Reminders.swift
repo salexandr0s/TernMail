@@ -4,6 +4,10 @@ import MessageContent
 import SyncEngine
 
 extension FollowUpsModel {
+    func refreshNotificationPermission() async {
+        notificationPermission = await scheduler.permission()
+    }
+
     func requestNotificationPermission() async {
         do {
             _ = try await scheduler.requestPermission()
@@ -144,17 +148,23 @@ extension FollowUpsModel {
     private func deliver(_ entry: CommitmentEntry, reminder: CommitmentReminderRecord, store: AccountStore, epoch: Int) async {
         let identifier = Self.notificationID(entry.record, reminder)
         do {
+            let automatic = try await store.automaticFollowUps(accountIDs: [entry.record.accountID])
+                .first { $0.commitmentID == entry.record.id && $0.managed }
+            guard automatic == nil || canDeliverAutomaticReminders() else { return }
             let current = try await store.commitmentEntries(accountIDs: [entry.record.accountID], includeClosed: false)
                 .first { $0.record.id == entry.record.id }
             guard isCurrent(epoch), visibleAccountIDs().contains(entry.record.accountID),
                   !removedAccounts.contains(entry.record.accountID),
+                  automatic == nil || canDeliverAutomaticReminders(),
+                  current?.record.deferredUntil.map({ $0 <= now() }) ?? true,
                   current?.reminders.contains(where: { $0.kind == reminder.kind && $0.revision == reminder.revision && $0.isPending }) == true
             else { return }
             try await scheduler.schedule(FollowUpNotification(id: identifier, accountID: entry.record.accountID,
                 commitmentID: entry.record.id, title: reminder.kind == .noReply ? "Follow up on an unanswered message" : "Follow-up reminder",
                 body: entry.record.title))
             guard isCurrent(epoch), visibleAccountIDs().contains(entry.record.accountID),
-                  !removedAccounts.contains(entry.record.accountID) else { await scheduler.remove(id: identifier); return }
+                  !removedAccounts.contains(entry.record.accountID),
+                  automatic == nil || canDeliverAutomaticReminders() else { await scheduler.remove(id: identifier); return }
             let saved = try await store.markCommitmentReminderDelivered(accountID: entry.record.accountID,
                 commitmentID: entry.record.id, kind: reminder.kind, expectedReminderRevision: reminder.revision,
                 notificationID: identifier, at: now())

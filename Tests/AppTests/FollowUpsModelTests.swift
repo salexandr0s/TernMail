@@ -176,6 +176,63 @@ import Testing
         model.beginTracking(source: FollowUpSource(record: fixture.source))
         #expect(model.pendingEditor?.source.accountID == "a")
     }
+
+    @Test func deferringWithoutReminderPreservesDeadlineAndCanBeCleared() async throws {
+        let fixture = try await FollowUpsFixture()
+        var entry = try await fixture.create(kinds: [])
+        entry.record.dueAt = fixture.time - 86_400
+        entry = try await fixture.store.saveCommitment(entry, expectedRevision: entry.record.revision)
+        let model = fixture.model()
+        defer { model.stop() }
+        await model.deferAttention(entry, until: fixture.time + 3_600)
+        let saved = try #require(model.entries.first)
+        #expect(saved.record.deferredUntil == fixture.time + 3_600)
+        #expect(saved.record.dueAt == entry.record.dueAt)
+        #expect(saved.record.status == .open)
+        #expect(saved.reminders.isEmpty)
+        await model.deferAttention(saved, until: nil)
+        #expect(model.entries.first?.record.deferredUntil == nil)
+    }
+
+    @Test func replyDuringDeferralSatisfiesOnlyNoReplyAndRemovesDeliveredAlert() async throws {
+        let fixture = try await FollowUpsFixture()
+        _ = try await fixture.create(kinds: [.noReply])
+        let model = fixture.model()
+        defer { model.stop() }
+        await model.refresh()
+        let entry = try #require(try await fixture.store.commitmentEntries(accountIDs: ["a"]).first)
+        let deliveredID = try #require(await fixture.scheduler.deliveries.first?.id)
+        await model.deferAttention(entry, until: fixture.time + 3_600)
+        #expect(await fixture.scheduler.removals.contains(deliveredID))
+        fixture.snapshot.messages.append(fixture.message("during-deferral", date: fixture.time - 1))
+        await model.refresh()
+        var saved = try #require(try await fixture.store.commitmentEntries(accountIDs: ["a"]).first)
+        #expect(saved.record.status == .open)
+        #expect(saved.reminders.first?.baselineMessageID == "source")
+        #expect(saved.reminders.first?.receivedReplyMessageID == "during-deferral")
+        await model.deferAttention(saved, until: nil)
+        await model.evaluateReminders()
+        saved = try #require(try await fixture.store.commitmentEntries(accountIDs: ["a"]).first)
+        #expect(saved.reminders.first?.receivedReplyMessageID == "during-deferral")
+        #expect(await fixture.scheduler.deliveries.count == 1)
+    }
+
+    @Test func deferralDuringDeliveryRejectsAndRemovesSubmittedNotification() async throws {
+        let fixture = try await FollowUpsFixture()
+        let entry = try await fixture.create(kinds: [.unresolved])
+        await fixture.scheduler.onSchedule { @MainActor in
+            _ = try? await fixture.store.setCommitmentDeferral(accountID: "a", id: entry.record.id,
+                until: fixture.time + 3_600, expectedRevision: entry.record.revision, now: fixture.time)
+        }
+        let model = fixture.model()
+        defer { model.stop() }
+        await model.refresh()
+        let saved = try #require(try await fixture.store.commitmentEntries(accountIDs: ["a"]).first)
+        #expect(saved.record.deferredUntil == fixture.time + 3_600)
+        #expect(saved.reminders.first?.deliveredAt == nil)
+        let deliveredID = try #require(await fixture.scheduler.deliveries.first?.id)
+        #expect(await fixture.scheduler.removals.contains(deliveredID))
+    }
 }
 
 @MainActor private final class FollowUpsFixture {

@@ -25,19 +25,19 @@ extension FollowUpsModel {
             }
             // This reads all thread metadata through the mail service. It uses
             // no model, message bodies, read-state mutations, or AI permissions.
-            try await owner.engine.assistantLoadSource(threadID)
+            let metadata = try await owner.engine.assistantLoadSource(threadID)
             try validate()
             let identities = try await mailbox.accountStore?.identities(accountID: accountID) ?? []
             try validate()
-            let snapshot = try await mailbox.cache.read { tx in
-                (try tx.messages(threadID: threadID, accountID: accountID),
-                 try tx.currentLabels(threadID: threadID, accountID: accountID))
-            }
+            guard !metadata.isEmpty else { throw FollowUpModelError.invalidSource }
+            let effective = try await mailbox.cache.read { try $0.currentLabels(threadID: threadID, accountID: accountID) }
             try validate()
-            guard !snapshot.0.isEmpty else { throw FollowUpModelError.invalidSource }
+            let excluded: Set<String> = [SystemLabel.draft, SystemLabel.trash, SystemLabel.spam]
             let own = Set(identities.filter(\.canSend).map { $0.address.lowercased() }).union([owner.account.email.lowercased()])
-            return FollowUpThreadSnapshot(accountID: accountID, threadID: threadID, messages: snapshot.0,
-                labels: snapshot.1, ownAddresses: own, checkedAt: .now)
+            return FollowUpThreadSnapshot(accountID: accountID, threadID: threadID, messages: metadata.map(\.record),
+                labels: Dictionary(uniqueKeysWithValues: metadata.map {
+                    ($0.record.id, Set($0.labelIDs).union((effective[$0.record.id] ?? []).intersection(excluded)))
+                }), ownAddresses: own, checkedAt: .now)
         }, prepareDraft: { [weak app] record in
             guard let app, let mailbox = app.mailbox, let owner = mailbox.account(id: record.accountID)
             else { throw FollowUpModelError.unavailable }
@@ -61,5 +61,6 @@ extension FollowUpsModel {
             app?.mailURLs.openConversation(MailLink(accountID: record.accountID, threadID: record.threadID,
                 messageID: record.sourceMessageID))
         }, scheduler: scheduler)
+        canDeliverAutomaticReminders = { [weak app] in app?.automaticFollowUps.settingsReady == true }
     }
 }

@@ -53,7 +53,7 @@ struct MainView: View {
 
     /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
     private var sidebarToggle: SidebarToggle? {
-        guard app.destination != .followUps else { return nil }
+        guard app.destination != .followUps, app.destination != .today else { return nil }
         guard isActive else { return isCalendarUtilityCompact ? nil : calendarSidebarState?.sidebarToggle }
         if showsLibrary { return libraryToolbar.sidebarToggle }
         return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
@@ -93,6 +93,7 @@ struct MainView: View {
     }
 
     private var section: WorkspaceSection {
+        if app.destination == .today { return .today }
         if app.destination == .followUps { return .followUps }
         guard isActive else { return .calendar }
         return showsLibrary ? .attachments : .mail
@@ -110,6 +111,8 @@ struct MainView: View {
             mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
         case .followUps:
             app.destination = .followUps
+        case .today:
+            app.destination = .today
         }
     }
 
@@ -199,6 +202,8 @@ struct MainView: View {
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
         .focusedSceneValue(\.followUpsModel,
             app.destination == .followUps && !isCalendarUtilityCompact ? app.followUps : nil)
+        .focusedSceneValue(\.todayModel,
+            app.destination == .today && !isCalendarUtilityCompact ? app.today : nil)
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
         .focusedValue(\.calendarWorkspaceHasFocus, app.destination == .calendar)
     }
@@ -247,7 +252,8 @@ struct MainView: View {
         workspaceLifecycle
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { workspaceWidth = $0 }
         .toolbar(id: toolbarIdentifier) {
-            WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar, followUps: app.followUps,
+            WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
+                followUps: app.followUps, today: app.today,
                 accounts: app.accountPreferences, section: section, width: workspaceWidth, sidebar: sidebarToggle,
                 onSelect: show, onNewMessage: newMessage, onReply: reply,
                 isAssistantPresented: section == .attachments ? false : (isActive ? utilityPanel : calendarPanel) == .assistant,
@@ -266,7 +272,7 @@ struct MainView: View {
     /// The retained Mail split owns the shared toolbar. Each visible destination
     /// supplies its sidebar geometry without changing Mail's saved layout.
     private var toolbarSidebarWidth: CGFloat? {
-        if app.destination == .followUps { return 0 }
+        if app.destination == .followUps || app.destination == .today { return 0 }
         if !isActive { return isCalendarUtilityCompact ? 0 : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 } }
         if showsLibrary { return libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0 }
         return nil

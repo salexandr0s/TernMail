@@ -170,6 +170,9 @@ struct SettingsView: View {
         case .reading: ReadingSettingsView()
         case .messageList: MessageListSettingsView(mailbox: app.mailbox)
         case .attachments: AttachmentPreferencesView()
+        case .followUps:
+            FollowUpsSettingsView(preferences: app.followUpPreferences, followUps: app.followUps,
+                automation: app.automaticFollowUps)
         case .writing, .templates, .suggestions: ComposeSettingsPane(destination: destination)
         case .signatures: SignaturesSettingsPane()
         case .organizeMail: MailOrganizationView()

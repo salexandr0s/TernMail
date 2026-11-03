@@ -29,6 +29,7 @@ final class FollowUpsModel {
     @ObservationIgnored let openMail: @MainActor (CommitmentRecord) -> Void
     @ObservationIgnored let scheduler: any FollowUpNotificationScheduling
     @ObservationIgnored let now: @MainActor () -> Date
+    @ObservationIgnored var canDeliverAutomaticReminders: @MainActor () -> Bool = { true }
     @ObservationIgnored var generation = 0
     @ObservationIgnored var stopped = false
     @ObservationIgnored var evaluating = false
@@ -206,7 +207,18 @@ final class FollowUpsModel {
             if let existing = request.existing {
                 saved = try await store.saveCommitment(CommitmentEntry(record: record, reminders: reminders),
                     expectedRevision: existing.record.revision, now: now())
-            } else { saved = try await store.createCommitment(record, reminders: reminders) }
+            } else {
+                let previous = try await store.commitmentEntries(accountIDs: [record.accountID])
+                    .filter { $0.record.threadID == record.threadID }
+                guard isCurrent(epoch), pendingEditor?.id == request.id else { return false }
+                saved = try await store.createCommitment(record, reminders: reminders)
+                let current = try await store.commitmentEntries(accountIDs: [record.accountID])
+                    .filter { $0.record.threadID == record.threadID }
+                let retainedIDs = Set(current.flatMap { $0.reminders.compactMap(\.notificationID) })
+                for identifier in Set(previous.flatMap { $0.reminders.compactMap(\.notificationID) }).subtracting(retainedIDs) {
+                    await scheduler.remove(id: identifier)
+                }
+            }
             guard isCurrent(epoch), !removedAccounts.contains(record.accountID) else { return false }
             for previous in request.existing?.reminders ?? [] {
                 let retained = saved.reminders.first { $0.kind == previous.kind }
@@ -258,7 +270,7 @@ final class FollowUpsModel {
         }
     }
 
-    private func mutate(_ entry: CommitmentEntry, operation: (AccountStore) async throws -> Void) async {
+    func mutate(_ entry: CommitmentEntry, checkReminders: Bool = true, operation: (AccountStore) async throws -> Void) async {
         guard !stopped, !busyIDs.contains(entry.id), !removedAccounts.contains(entry.record.accountID),
               let store = storeProvider() else { return }
         busyIDs.insert(entry.id); defer { busyIDs.remove(entry.id) }
@@ -267,7 +279,7 @@ final class FollowUpsModel {
             try await operation(store)
             guard isCurrent(epoch) else { return }
             for reminder in entry.reminders { await scheduler.remove(id: Self.notificationID(entry.record, reminder)) }
-            await refresh()
+            await refresh(checkReminders: checkReminders)
         } catch { if isCurrent(epoch) { errorMessage = Self.message(for: error) } }
     }
 
