@@ -96,6 +96,11 @@ struct RecipientField: NSViewRepresentable {
         if addresses != context.coordinator.shownAddresses || showsFullAddresses != context.coordinator.showsFullAddresses {
             context.coordinator.show(addresses)
         }
+        if field.currentEditor() != nil {
+            Task { @MainActor [weak field] in
+                if let field { Self.revealSelection(in: field) }
+            }
+        }
         if requestsFocus, isEditable {
             // Changing focus or the binding during a view update isn't allowed.
             Task { @MainActor in
@@ -112,6 +117,62 @@ struct RecipientField: NSViewRepresentable {
         guard field.currentEditor() == nil, field.window?.makeFirstResponder(field) == true,
               let editor = field.currentEditor() else { return }
         editor.selectedRange = NSRange(location: (editor.string as NSString).length, length: 0)
+        revealSelection(in: field)
+    }
+
+    /// Called after input/focus updates, never from sizeThatFits or a baseline query.
+    /// Scroll the actual caret through the header viewport without changing selection,
+    /// publishing recipients, or interrupting marked text.
+    static func revealSelection(in field: NSTokenField) {
+        guard let editor = field.currentEditor() as? NSTextView, let window = field.window,
+              editor.selectedRange().location != NSNotFound else { return }
+        // AppKit's screen rect is zero when this field editor is completely
+        // outside the header viewport, even when its glyph layout is complete.
+        if let layout = editor.layoutManager, let container = editor.textContainer {
+            layout.ensureLayout(for: container)
+        }
+        editor.scrollRangeToVisible(editor.selectedRange())
+        let screenRect = editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil)
+        let rect: NSRect
+        if screenRect.height > 0, screenRect.origin.x.isFinite, screenRect.origin.y.isFinite {
+            rect = field.convert(window.convertFromScreen(screenRect), from: nil)
+        } else if let insertion = insertionRect(in: editor) {
+            rect = field.convert(insertion, from: editor)
+        } else { return }
+        field.scrollToVisible(rect.insetBy(dx: -Tokens.Space.s1, dy: -Tokens.Space.s1))
+    }
+
+    /// Reads the existing field editor's laid-out insertion positions. This runs
+    /// after focus/input, never while SwiftUI measures RecipientField's copy.
+    /// Native positions keep token, ligature and bidirectional text advances.
+    private static func insertionRect(in editor: NSTextView) -> NSRect? {
+        guard let storage = editor.textStorage, let layout = editor.layoutManager,
+              let container = editor.textContainer else { return nil }
+        let selection = editor.selectedRange()
+        guard selection.location != NSNotFound, selection.location <= storage.length else { return nil }
+        layout.ensureLayout(for: container)
+        let origin = editor.textContainerOrigin
+        let extra = layout.extraLineFragmentRect
+        if selection.location == storage.length, layout.extraLineFragmentTextContainer === container,
+           extra.height > 0 {
+            return NSRect(x: origin.x + extra.minX, y: origin.y + extra.minY,
+                          width: Tokens.Border.hairline, height: extra.height)
+        }
+        guard storage.length > 0 else { return nil }
+        let character = min(selection.location, storage.length - 1)
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: character, length: 1), actualCharacterRange: nil)
+        guard glyphs.location < layout.numberOfGlyphs else { return nil }
+        let line = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+        let count = layout.getLineFragmentInsertionPoints(forCharacterAt: character,
+            alternatePositions: false, inDisplayOrder: false, positions: nil, characterIndexes: nil)
+        guard count > 0, line.height > 0 else { return nil }
+        var positions = [CGFloat](repeating: 0, count: count)
+        var characters = [Int](repeating: 0, count: count)
+        let written = layout.getLineFragmentInsertionPoints(forCharacterAt: character,
+            alternatePositions: false, inDisplayOrder: false, positions: &positions, characterIndexes: &characters)
+        guard let index = characters.prefix(written).firstIndex(of: selection.location) else { return nil }
+        return NSRect(x: origin.x + line.minX + positions[index], y: origin.y + line.minY,
+                      width: Tokens.Border.hairline, height: line.height)
     }
 
     static func dismantleNSView(_ field: NSTokenField, coordinator: Coordinator) {
@@ -202,6 +263,8 @@ struct RecipientField: NSViewRepresentable {
             self.parent = parent
             super.init()
             sizingField.delegate = self
+            NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
+                name: NSTextView.didChangeSelectionNotification, object: nil)
             avatars.afterAcceptance = { [weak self] in self?.publish() }
         }
 
@@ -226,6 +289,15 @@ struct RecipientField: NSViewRepresentable {
             avatars.stop()
         }
 
+        @objc private func selectionChanged(_ notification: Notification) {
+            guard let editor = notification.object as? NSTextView, editor === field?.currentEditor() else { return }
+            // Selection notifications also cover keyboard movement through a long row.
+            // Defer until AppKit has finished placing its field editor.
+            Task { @MainActor [weak self] in
+                if let field = self?.field { RecipientField.revealSelection(in: field) }
+            }
+        }
+
         /// AppKit can change focus during a SwiftUI update. Read the current
         /// responder after that update so queued notifications cannot restore stale focus.
         func reportFocus() {
@@ -239,6 +311,7 @@ struct RecipientField: NSViewRepresentable {
                 if !isFocused { avatars.hideSuggestions() }
                 (field as? RecipientTokenField)?.refreshAvatars()
                 parent.onFocusChange(isFocused)
+                if isFocused { RecipientField.revealSelection(in: field) }
             }
         }
 
