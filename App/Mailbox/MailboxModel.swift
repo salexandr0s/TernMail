@@ -119,8 +119,8 @@ final class MailboxModel {
     var listPresentationRevision: Int { Int(truncatingIfNeeded: listDataRevision) }
     private(set) var isListPresentationReady = false
     @ObservationIgnored let listProjection = MessageListProjection()
-    var listOwnAddresses: [String: Set<String>] = [:] { didSet { listContextRevision &+= 1 } }
-    var accountPresentation: [String: AccountMailPreferences] = [:] { didSet { listContextRevision &+= 1 } }
+    var listOwnAddresses: [String: Set<String>] = [:] { didSet { if listOwnAddresses != oldValue { listContextRevision &+= 1 } } }
+    var accountPresentation: [String: AccountMailPreferences] = [:] { didSet { if accountPresentation != oldValue { listContextRevision &+= 1 } } }
     var visibleAccountIDs: Set<String>?
     let listPreferences: MessageListPreferences
     private var unreadReadingRows = Set<MailListRowID>()
@@ -1036,14 +1036,14 @@ final class MailboxModel {
     private func applyMailboxPage(_ prepared: PreparedMailListPage, retained: Bool) {
         mailboxPage = prepared.page
         mailboxPageReady = true
-        threads = prepared.page.threads
+        if threads != prepared.page.threads { threads = prepared.page.threads }
         guard !search.isActive else { return }
         publishListPage(prepared)
         NavigationPerformance.shared.contentReady(.mailbox, cacheTier: retained ? .retained : .local)
     }
 
     private func publishListPage(_ prepared: PreparedMailListPage) {
-        listEntries = prepared.page.entries
+        if listEntries != prepared.page.entries { listEntries = prepared.page.entries }
         if prepared.configuration == listProjectionConfiguration(mailboxID: search.isActive ? nil : selectedLabelID) {
             listProjection.store(prepared.rows, for: listProjectionKey)
         }
@@ -1057,13 +1057,15 @@ final class MailboxModel {
     private func observeSnoozedPage(generation: UInt64) {
         let stream = cache.listPage(.snoozed(snoozedThreads()))
         threadsTask = Task { [weak self] in
+            var previous: PreparedMailListPage?
             do {
                 for try await page in stream {
                     guard let self, !Task.isCancelled, !isStopped, mailboxPageGeneration == generation else { return }
                     let prepared = try await MailListPreparation.shared.prepare(page,
                         input: listProjectionInput(threads: page.threads, entries: page.entries, mailboxID: Self.snoozedID),
-                        configuration: listProjectionConfiguration(mailboxID: Self.snoozedID))
+                        configuration: listProjectionConfiguration(mailboxID: Self.snoozedID), reusing: previous)
                     guard !Task.isCancelled, mailboxPageGeneration == generation else { return }
+                    previous = prepared
                     applyMailboxPage(prepared, retained: false)
                 }
             } catch {
@@ -1101,13 +1103,15 @@ final class MailboxModel {
         let stream = cache.listPage(.searchResults(search.results,
             matching: listPreferences.conversations ? nil : search.query, includingMessageIDs: search.matchingMessageIDs))
         searchPageTask = Task { [weak self] in
+            var previous: PreparedMailListPage?
             do {
                 for try await page in stream {
                     guard let self, !Task.isCancelled, !isStopped, searchPageGeneration == generation else { return }
                     let prepared = try await MailListPreparation.shared.prepare(page,
                         input: listProjectionInput(threads: page.threads, entries: page.entries, mailboxID: nil),
-                        configuration: listProjectionConfiguration(mailboxID: nil))
+                        configuration: listProjectionConfiguration(mailboxID: nil), reusing: previous)
                     guard !Task.isCancelled, searchPageGeneration == generation else { return }
+                    previous = prepared
                     searchPage = page
                     publishListPage(prepared)
                     NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .local)

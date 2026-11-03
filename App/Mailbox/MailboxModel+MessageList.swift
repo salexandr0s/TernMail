@@ -48,7 +48,7 @@ extension MailboxModel {
         return .init(threads: threads, entries: entries,
             conversations: listPreferences.conversations, filters: listPreferences.filters,
             mailboxID: mailboxID, categories: categories, addresses: addresses,
-            availableLabels: Dictionary(accounts.map { ($0.account.id, $0.labels) }, uniquingKeysWith: { first, _ in first }),
+            availableLabels: Dictionary(accounts.map { ($0.account.id, $0.listLabels) }, uniquingKeysWith: { first, _ in first }),
             retainedUnreadRows: retainedUnreadReadingRows)
     }
 
@@ -65,8 +65,10 @@ extension MailboxModel {
 
     func selectListRows(_ rows: Set<MailListRowID>) {
         let valid = rows.intersection(Set(listItems.map(\.id)))
-        selectedMessageRows = listPreferences.conversations ? [] : valid
-        selectedThreadIDs = Set(valid.map(\.threadKey))
+        let messages = listPreferences.conversations ? [] : valid
+        let threads = Set(valid.map(\.threadKey))
+        if selectedMessageRows != messages { selectedMessageRows = messages }
+        if selectedThreadIDs != threads { selectedThreadIDs = threads }
     }
 
     /// What a row stands for: its conversation, or its one message in message mode.

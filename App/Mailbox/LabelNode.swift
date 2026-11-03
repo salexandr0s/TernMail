@@ -13,6 +13,14 @@ struct LabelNode: Identifiable, Equatable {
 
     var id: String { label.id }
 
+    static func isVisibleInSidebar(_ label: LabelRecord) -> Bool {
+        switch label.labelListVisibility {
+        case "labelHide": false
+        case "labelShowIfUnread": (label.messagesUnread ?? label.threadsUnread ?? 0) > 0
+        default: true
+        }
+    }
+
     static func outline(_ labels: [LabelRecord]) -> [LabelNode] {
         let sorted = labels.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         let names = Set(sorted.map(\.name))

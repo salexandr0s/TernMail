@@ -7,7 +7,7 @@ extension MailCache {
     }
 
     public func observeAttachmentLibrary(query: AttachmentLibraryQuery) -> AsyncThrowingStream<AttachmentLibraryPage, any Error> {
-        observe { try CacheTransaction(db: $0).attachmentLibrary(query: query) }
+        observe(latestOnly: true) { try CacheTransaction(db: $0).attachmentLibrary(query: query) }
     }
 
     public func attachmentIndexStates(accountIDs: [String]) -> AsyncThrowingStream<[AttachmentIndexState], any Error> {

@@ -61,7 +61,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
         MailToolbar(mailbox: mailbox, reply: onReply, isCompact: compactActions,
             foldsReplies: width < Tokens.Layout.replyMenuFoldWidth, isVisible: section == .mail)
         // Mail's permanent spaces fall in the open area before other sections.
-        CalendarToolbar(model: calendar, isCompact: width < Tokens.Layout.replyMenuFoldWidth)
+        CalendarToolbar(model: calendar, isCompact: compactActions)
             .mailToolbarVisible(section == .calendar && !isCalendarUtilityCompact)
         AttachmentLibraryToolbar(state: library, isCompact: compactActions, isVisible: section == .attachments)
         WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar, libraryToolbar: library,

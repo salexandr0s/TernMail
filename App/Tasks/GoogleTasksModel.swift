@@ -123,7 +123,9 @@ final class GoogleTasksModel {
         selectedListID = id
         defaults.set(id, forKey: listKey(accountID))
         tasks = []; errorMessage = nil; notice = nil; lastSyncedAt = nil
-        Task { await refresh() }
+        // The picker already has this account's lists. Fetch the chosen list's
+        // tasks directly; explicit and periodic refresh still discover lists.
+        Task { await refresh(reloadLists: false) }
     }
 
     func refreshAccounts() async {
@@ -149,7 +151,7 @@ final class GoogleTasksModel {
         }
     }
 
-    func refresh(clearError: Bool = true) async {
+    func refresh(clearError: Bool = true, reloadLists: Bool = true) async {
         guard !stopped, !Task.isCancelled else { return }
         if clearError && pendingCreation == nil { errorMessage = nil }
         await refreshAccounts()
@@ -161,7 +163,11 @@ final class GoogleTasksModel {
         isLoading = true
         defer { if generation == readGeneration { isLoading = false } }
         do {
-            let fetchedLists = try await client.allTaskLists()
+            let fetchedLists = if reloadLists || lists.isEmpty {
+                try await client.allTaskLists()
+            } else {
+                lists
+            }
             guard currentRead(generation, lifecycle: revision, accountID: accountID, access: access) else { return }
             lists = fetchedLists
             let preferred = selectedListID ?? defaults.string(forKey: listKey(accountID))

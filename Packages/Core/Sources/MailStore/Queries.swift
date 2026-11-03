@@ -86,7 +86,7 @@ extension MailCache {
     /// The page `builder` describes, read again after each write that
     /// changes it. A write that leaves the page as it was sends nothing.
     public func listPage(_ builder: MailListPageBuilder) -> AsyncThrowingStream<MailListPage, any Error> {
-        observe { db in try builder.page(in: CacheTransaction(db: db)) }
+        observe(latestOnly: true) { db in try builder.page(in: CacheTransaction(db: db)) }
     }
 
     /// A conversation as the reader shows it. Its labels are the stored
@@ -175,10 +175,14 @@ extension MailCache {
     }
 
     func observe<T: Sendable & Equatable>(
+        latestOnly: Bool = false,
         _ fetch: @escaping @Sendable (Database) throws -> T
     ) -> AsyncThrowingStream<T, any Error> {
         let values = ValueObservation.tracking(fetch).removeDuplicates().values(in: writer)
-        return AsyncThrowingStream { continuation in
+        // Large UI snapshots replace previous state. A slow renderer should
+        // catch up to the newest page, not retain and prepare every sync step.
+        // Event-like consumers keep the default lossless delivery.
+        return AsyncThrowingStream(bufferingPolicy: latestOnly ? .bufferingNewest(1) : .unbounded) { continuation in
             let task = Task {
                 do {
                     for try await value in values {

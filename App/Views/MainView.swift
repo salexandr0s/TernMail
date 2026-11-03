@@ -215,6 +215,15 @@ struct MainView: View {
             if !showsPanel && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
         }
         .onChange(of: hidesReader) { _, _ in fitColumns(to: mailWidth) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { notification in
+            // A native resize can bypass SwiftUI's minimum frame. Keep the
+            // reader beside an open panel without starting another animation.
+            guard isActive, showsPanel, let window = notification.object as? NSWindow, window === hostWindow else { return }
+            widenForAssistant(animated: false)
+        }
+        .onChange(of: isActive) { _, active in
+            if active, showsPanel { widenForAssistant(animated: false) }
+        }
         .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
             if isActive, request != nil { presentPanel(.tasks); app.didShowTasks() }
         }
@@ -297,7 +306,7 @@ struct MainView: View {
     /// AppKit widens a window to show a sidebar that doesn't fit, so opening
     /// the assistant widens a window too narrow for the list and reader beside
     /// it, keeping the window's right edge on its screen.
-    private func widenForAssistant() {
+    private func widenForAssistant(animated: Bool = true) {
         guard !hidesReader, let hostWindow, !hostWindow.styleMask.contains(.fullScreen) else { return }
         let screen = hostWindow.screen?.visibleFrame
         let width = min(AssistantSidebarLayout.windowMinimum, screen?.width ?? .greatestFiniteMagnitude)
@@ -305,7 +314,8 @@ struct MainView: View {
         guard content.width < width else { return }
         var frame = hostWindow.frameRect(forContentRect: NSRect(origin: content.origin, size: NSSize(width: width, height: content.height)))
         if let screen, frame.maxX > screen.maxX { frame.origin.x = max(screen.minX, screen.maxX - frame.width) }
-        hostWindow.setFrame(frame, display: true, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        hostWindow.setFrame(frame, display: true,
+            animate: animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
     private func closePanel() {

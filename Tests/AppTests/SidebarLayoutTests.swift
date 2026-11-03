@@ -273,6 +273,15 @@ import Testing
             try await settle()
             try await expectColumnsBesideAssistant(in: controller.view, window: window, label: "\(Int(width)) points")
         }
+        // Retained Mail must not clamp Calendar's native window. Returning to
+        // Mail restores the space needed by its still-open utility panel.
+        app.destination = .calendar
+        try await settle()
+        window.setContentSize(NSSize(width: Tokens.Layout.windowMinWidth, height: 760))
+        try await settle()
+        #expect(abs(window.frame.width - Tokens.Layout.windowMinWidth) <= 1)
+        app.destination = .mail
+        try await expectColumnsBesideAssistant(in: controller.view, window: window, label: "returning from compact Calendar")
         window.setContentSize(NSSize(width: 1_280, height: 760))
         try await settle()
         try await toggleAssistant(in: window, rootView: controller.view, opens: false)

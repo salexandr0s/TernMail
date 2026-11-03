@@ -183,11 +183,7 @@ extension MailboxModel {
     }
 
     func isVisibleInSidebar(_ label: LabelRecord) -> Bool {
-        switch label.labelListVisibility {
-        case "labelHide": return false
-        case "labelShowIfUnread": return (label.messagesUnread ?? label.threadsUnread ?? 0) > 0
-        default: return true
-        }
+        LabelNode.isVisibleInSidebar(label)
     }
 
     func setLabelVisibility(_ label: LabelRecord, to visibility: LabelListVisibility) {

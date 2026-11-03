@@ -206,6 +206,25 @@ import Testing
         #expect(model.tasks.map(\.id) == ["b-task"])
     }
 
+    @Test func selectingAKnownListFetchesTasksWithoutReloadingAllLists() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService(lists: [.init(id: "list", title: "First"), .init(id: "second", title: "Second")])
+        await service.put(.init(id: "second-task", title: "Second list task"), listID: "second")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let initialReads = await service.reads
+        model.selectList("second")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while model.tasks.first?.id != "second-task", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.tasks.map(\.id) == ["second-task"])
+        #expect(await service.reads == initialReads + 1)
+        await model.refresh()
+        #expect(await service.reads == initialReads + 3)
+    }
+
     @Test func editorMutationsKeepTheirCapturedAccountAndList() async throws {
         let fixture = try TasksModelFixture()
         defer { fixture.clean() }

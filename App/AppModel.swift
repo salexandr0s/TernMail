@@ -555,11 +555,14 @@ final class AppModel {
             }
 #endif
             let directory = try Self.dataDirectory()
-            let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
-            // Off the main actor: the first open after an update can run a long
-            // migration, such as indexing every cached message for search.
-            let cacheURL = directory.appending(path: "cache.sqlite")
-            cache = try await Task.detached(priority: .userInitiated) { try MailCache.open(at: cacheURL) }.value
+            // Both stores can migrate on first launch after an update. Keep
+            // SQLite setup off the main actor so the launch UI stays responsive.
+            let (accounts, openedCache) = try await Task.detached(priority: .userInitiated) {
+                let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
+                let cache = try MailCache.open(at: directory.appending(path: "cache.sqlite"))
+                return (accounts, cache)
+            }.value
+            cache = openedCache
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
             if let cache { await startMailPreferences(store: accounts, cache: cache) }

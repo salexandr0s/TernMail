@@ -4,6 +4,33 @@ import Testing
 @testable import MailStore
 
 @Suite struct MessageListEntryTests {
+    @Test func slowSnapshotConsumerCatchesUpWithoutReplayingEveryWrite() async throws {
+        let cache = try MailCache.inMemory()
+        let fetches = AsyncStream<Void>.makeStream()
+        var fetched = fetches.stream.makeAsyncIterator()
+        var values = cache.observe(latestOnly: true) { db -> String? in
+            let value = try CacheTransaction(db: db).labels(accountID: "a").first?.name
+            fetches.continuation.yield()
+            return value
+        }.makeAsyncIterator()
+        defer { fetches.continuation.finish() }
+        let initial: String? = try #require(try await values.next())
+        #expect(initial == nil)
+        _ = await fetched.next()
+        for index in 0..<20 {
+            let label = LabelRecord(accountID: "a", id: "label", name: "Revision \(index)", isSystem: false)
+            try await cache.write { try $0.replaceLabels([label], accountID: "a") }
+            _ = await fetched.next()
+        }
+        // Fetch completion precedes delivery through GRDB's asynchronous bridge.
+        // Let that bridge drain while deliberately leaving our consumer paused.
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(try await values.next() == "Revision 19")
+        try await cache.write { try $0.replaceLabels([], accountID: "a") }
+        let deleted: String? = try #require(try await values.next())
+        #expect(deleted == nil)
+    }
+
     @Test func observationSkipsEqualSnapshotsAndRetainsInitialAndDeletedNil() async throws {
         let cache = try MailCache.inMemory()
         let fetches = AsyncStream<Void>.makeStream()

@@ -193,7 +193,7 @@ extension MailboxModel {
     }
 
     private func sidebarLabelOutline(for owner: AccountMailbox) -> [LabelNode] {
-        LabelNode.outline(owner.labels.filter { !$0.isSystem && isVisibleInSidebar($0) })
+        owner.sidebarLabelOutline
     }
 
     private func sidebarLabelPath(of box: MailboxID) -> [LabelNode]? {

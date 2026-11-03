@@ -394,6 +394,62 @@ import Testing
         #expect(mailbox.listItems.first?.sender?.address == "sender@example.com")
     }
 
+    @Test(arguments: [true, false])
+    func revalidatingAnUnchangedSelectionDoesNotNotifyReaders(conversations: Bool) async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = conversations
+        let row = try #require(mailbox.listItems.first)
+        mailbox.selectListRows([row.id])
+        let threadChanges = Mutex(0), messageChanges = Mutex(0)
+        withObservationTracking { _ = mailbox.selectedThreadIDs } onChange: { threadChanges.withLock { $0 += 1 } }
+        withObservationTracking { _ = mailbox.selectedMessageRows } onChange: { messageChanges.withLock { $0 += 1 } }
+        for _ in 0..<100 { mailbox.selectListRows(mailbox.selectedListRowIDs) }
+        #expect(threadChanges.withLock { $0 } == 0)
+        #expect(messageChanges.withLock { $0 } == 0)
+        mailbox.selectListRows([])
+        #expect(threadChanges.withLock { $0 } == 1)
+        #expect(messageChanges.withLock { $0 } == (conversations ? 0 : 1))
+    }
+
+    @Test func labelCountsUpdateSidebarWithoutRebuildingMailRows() async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        let label = LabelRecord(accountID: "a", id: SystemLabel.inbox, name: "Inbox", isSystem: true,
+                                threadsTotal: 2, threadsUnread: 1)
+        try await cache.write { try $0.replaceLabels([label], accountID: "a") }
+        try await awaitListState("initial label metadata", details: { "labels=\(mailbox.labels.count)" }) {
+            mailbox.defaultAccount.labels.first?.threadsTotal == 2
+        }
+        _ = mailbox.listItems
+        let context = mailbox.listContextRevision
+        let preparations = mailbox.listProjection.preparationCount
+        var counted = label
+        counted.threadsTotal = 20
+        counted.threadsUnread = 10
+        counted.messagesTotal = 30
+        counted.messagesUnread = 15
+        let countUpdate = counted
+        try await cache.write { try $0.replaceLabels([countUpdate], accountID: "a") }
+        try await awaitListState("new sidebar counts", details: { "context=\(mailbox.listContextRevision)" }) {
+            mailbox.defaultAccount.labels.first?.threadsUnread == 10
+        }
+        _ = mailbox.listItems
+        #expect(mailbox.listContextRevision == context)
+        #expect(mailbox.listProjection.preparationCount == preparations)
+
+        counted.name = "Renamed inbox"
+        counted.backgroundColor = "#ff0000"
+        let appearanceUpdate = counted
+        try await cache.write { try $0.replaceLabels([appearanceUpdate], accountID: "a") }
+        try await awaitListState("updated label appearance", details: { "context=\(mailbox.listContextRevision)" }) {
+            mailbox.listContextRevision != context
+        }
+        #expect(mailbox.defaultAccount.labels.first?.name == "Renamed inbox")
+        _ = mailbox.listItems
+        #expect(mailbox.listProjection.preparationCount > preparations)
+    }
+
     #if DEBUG || TERN_PERFORMANCE
     @Test func nativeSelectionUpdatesRealizedRowsWithoutRebuildingTheListContent() async throws {
         let (mailbox, cache) = try await fixture()

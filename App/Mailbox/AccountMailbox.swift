@@ -33,6 +33,11 @@ final class AccountMailbox {
     @ObservationIgnored let snoozeKeeper: SnoozeKeeper?
 
     private(set) var labels: [LabelRecord] = []
+    /// Row badges need label appearance, not the frequently changing counts.
+    /// Keeping this separately avoids invalidating every mail row on each read.
+    private(set) var listLabels: [LabelRecord] = []
+    /// Expansion and selection queries share one hierarchy per label snapshot.
+    private(set) var sidebarLabelOutline: [LabelNode] = []
     /// Drafts and sends that haven't reached Gmail, or that Gmail refused.
     private(set) var outbox: [DraftActivity] = []
     /// Snoozed conversations, the soonest to wake first.
@@ -43,7 +48,7 @@ final class AccountMailbox {
     private(set) var lastSyncedAt: Date?
     private(set) var hasSyncedOnce = false
 
-    /// Called after `labels` changes.
+    /// Called when label membership or appearance changes; counts are separate.
     @ObservationIgnored var onLabelsChange: (() -> Void)?
     /// Called after `snoozed` changes.
     @ObservationIgnored var onSnoozedChange: (() -> Void)?
@@ -97,7 +102,24 @@ final class AccountMailbox {
         let snoozedStream = cache.snoozedThreads(accountID: account.id)
         let wokenStream = cache.wokenThreadIDs(accountID: account.id)
         let events = engine.events
-        observe(labelStream) { $0.labels = $1; $0.onLabelsChange?(); $0.onUnreadCountChange?() }
+        observe(labelStream) { mailbox, labels in
+            mailbox.labels = labels
+            let outline = LabelNode.outline(labels.filter { !$0.isSystem && LabelNode.isVisibleInSidebar($0) })
+            if mailbox.sidebarLabelOutline != outline { mailbox.sidebarLabelOutline = outline }
+            let presentation = labels.map { label in
+                var value = label
+                value.threadsTotal = nil
+                value.threadsUnread = nil
+                value.messagesTotal = nil
+                value.messagesUnread = nil
+                return value
+            }
+            if mailbox.listLabels != presentation {
+                mailbox.listLabels = presentation
+                mailbox.onLabelsChange?()
+            }
+            mailbox.onUnreadCountChange?()
+        }
         observe(outboxStream) { mailbox, outbox in
             mailbox.outbox = outbox
             mailbox.activityGuard?.update(.send(accountID: mailbox.account.id), isActive: outbox.contains(where: \.isSending))

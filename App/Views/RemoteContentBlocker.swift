@@ -22,6 +22,15 @@ enum RemoteContentBlocker {
 
     private static func compile(allowsRemoteImages: Bool) async -> RuleListBox {
         guard let store = WKContentRuleListStore.default() else { return RuleListBox(list: nil) }
+        // WebKit persists compiled lists across launches. Version this identifier
+        // whenever the rules change so a warm launch can skip compilation safely.
+        let identifier = "TernReadingImages-\(allowsRemoteImages)-v2"
+        let existing = await withCheckedContinuation { (continuation: CheckedContinuation<RuleListBox, Never>) in
+            store.lookUpContentRuleList(forIdentifier: identifier) { list, _ in
+                continuation.resume(returning: RuleListBox(list: list))
+            }
+        }
+        if existing.list != nil { return existing }
         var rules: [[String: Any]] = [
             ["trigger": ["url-filter": ".*"], "action": ["type": "block"]],
             ["trigger": ["url-filter": "^about:"], "action": ["type": "ignore-previous-rules"]],
@@ -34,7 +43,7 @@ enum RemoteContentBlocker {
         }
         guard let data = try? JSONSerialization.data(withJSONObject: rules), let encoded = String(data: data, encoding: .utf8) else { return RuleListBox(list: nil) }
         return await withCheckedContinuation { (continuation: CheckedContinuation<RuleListBox, Never>) in
-            store.compileContentRuleList(forIdentifier: "TernReadingImages-\(allowsRemoteImages)-v2", encodedContentRuleList: encoded) { list, _ in
+            store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: encoded) { list, _ in
                 continuation.resume(returning: RuleListBox(list: list))
             }
         }

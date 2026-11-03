@@ -33,10 +33,15 @@ struct TernSidebarSplit<Sidebar: View, Detail: View>: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let width = min(max(sidebarWidth, minimumWidth), maximumWidth)
             HSplitView {
                 if isMounted {
                     sidebar()
-                        .frame(minWidth: minimumWidth, idealWidth: sidebarWidth, maxWidth: maximumWidth)
+                        // A fixed sidebar during motion lets NSSplitView lay out
+                        // the detail once per frame. Otherwise it redistributes
+                        // both columns and the probe has to undo that next turn.
+                        .frame(minWidth: isAnimating ? width : minimumWidth,
+                               idealWidth: width, maxWidth: isAnimating ? width : maximumWidth)
                         .background {
                             TernSidebarWidthProbe(width: sidebarWidth, recordsWidth: isPresented && !isAnimating, onReady: {
                                 guard let currentGeneration = pendingOpening, currentGeneration == generation,
@@ -120,7 +125,7 @@ struct TernSidebarSplit<Sidebar: View, Detail: View>: View {
 }
 
 /// Restores a dragged width before revealing a native column and while the
-/// split changes size, without changing the sidebar's frame constraints.
+/// window changes size. Already-correct layouts need no native divider update.
 private struct TernSidebarWidthProbe: NSViewRepresentable {
     let width: CGFloat
     let recordsWidth: Bool
@@ -164,9 +169,8 @@ private struct TernSidebarWidthProbe: NSViewRepresentable {
                 scheduled = false
                 guard let window, let divider = EnclosingSplitDivider(of: self),
                       divider.split.bounds.width > 0 else { return }
-                // SwiftUI proportionally resizes native split columns even
-                // during a reveal. Restore each interpolated layout without
-                // recording those temporary sizes as divider drags.
+                // Keep the dragged width through native split/window resizing
+                // without recording temporary sizes as divider drags.
                 if let previous = splitWidth, abs(previous - divider.split.bounds.width) > 0.5 {
                     widthToRestore = preferredWidth
                 }
@@ -180,7 +184,9 @@ private struct TernSidebarWidthProbe: NSViewRepresentable {
                     let lower = divider.split.minPossiblePositionOfDivider(at: divider.index)
                     let upper = divider.split.maxPossiblePositionOfDivider(at: divider.index)
                     guard width >= lower, width <= upper else { return }
-                    divider.split.setPosition(width, ofDividerAt: divider.index)
+                    if abs(divider.pane.frame.width - width) > 0.5 {
+                        divider.split.setPosition(width, ofDividerAt: divider.index)
+                    }
                     // A temporarily constrained column must not replace the
                     // dragged width while its window is becoming compact.
                     guard abs(divider.pane.frame.width - width) <= 0.5 else { return }
