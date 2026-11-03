@@ -45,6 +45,15 @@ struct AttachmentLibraryDestination: View {
         .onChange(of: toolbar.searchText) { _, text in if model.search != text { model.search = text } }
         .onChange(of: model.search, initial: true) { _, text in if toolbar.searchText != text { toolbar.searchText = text } }
         .onChange(of: toolbar.sort) { _, sort in if model.sort != sort { model.sort = sort } }
+        .onChange(of: toolbar.refreshRequest) { _, _ in
+            guard !toolbar.isRefreshing else { return }
+            toolbar.isRefreshing = true
+            Task {
+                defer { toolbar.isRefreshing = false }
+                await model.refresh()
+            }
+        }
+        .onChange(of: model.isWorking, initial: true) { _, working in toolbar.isWorking = working }
         .onChange(of: model.sort, initial: true) { _, sort in if toolbar.sort != sort { toolbar.sort = sort } }
         .onChange(of: app.accountsNeedingSignIn, initial: true) { _, ids in model.unavailableAccountIDs = ids }
         .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in model.previewURL = nil }

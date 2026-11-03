@@ -7,6 +7,29 @@ import Testing
 @testable import Tern
 
 @MainActor @Suite struct AttachmentLibraryModelTests {
+    @Test func refreshIndexesAttachmentsImmediatelyWithoutWaitingForBackgroundPolling() async throws {
+        let mailbox = try mailbox()
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        model.search = "Trail map"
+        let observing = Task { await model.reload() }
+        defer { observing.cancel() }
+        try await waitUntil { model.isPageReady }
+        #expect(model.items.isEmpty)
+        let query = model.query
+        let observation = model.observationKey
+
+        // No mailbox/background poller is started: Refresh must fetch the index itself.
+        await model.refresh()
+        try await waitUntil { model.items.count == 1 }
+
+        #expect(model.items.first?.filename == "Trail map.txt")
+        #expect(model.query == query)
+        #expect(model.observationKey != observation)
+        #expect(!model.isWorking)
+        #expect(model.errorMessage == nil)
+        await mailbox.stop()
+    }
+
     @Test func returningToAnUnchangedEmptyPageKeepsReadinessAndRevision() async throws {
         let mailbox = try mailbox()
         let model = AttachmentLibraryModel(mailbox: mailbox)

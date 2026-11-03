@@ -236,6 +236,13 @@ final class AttachmentLibraryModel {
     func loadMore() async { if hasMore { selection.removeAll(); pageOffset += 100 } }
     func previousPage() { selection.removeAll(); pageOffset = max(0, pageOffset - 100) }
 
+    /// Refresh mail and the attachment index immediately, and restart cached observations.
+    func refresh() async {
+        mailbox.syncNow()
+        reloadRevision += 1
+        await retryIndexing()
+    }
+
     func retryLastAction() async {
         guard !isWorking else { return }
         switch lastAction {

@@ -19,6 +19,9 @@ final class AttachmentLibraryToolbarState {
     private(set) var isCompact = false
     var isPopoverPresented = false
     var searchFocusRequest = 0
+    var refreshRequest = 0
+    var isRefreshing = false
+    var isWorking = false
     /// The window's search field while the library shows; the library mirrors it.
     var searchText = ""
     /// The toolbar's sort menu; the library mirrors it like the search text.

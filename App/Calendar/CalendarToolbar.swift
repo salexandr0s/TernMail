@@ -4,6 +4,7 @@ import SwiftUI
 /// the workspace's shared create button.
 struct CalendarToolbar: CustomizableToolbarContent {
     @Bindable var model: CalendarModel
+    var isCompact = false
 
     var body: some CustomizableToolbarContent {
         ToolbarItem(id: "calendar.navigation", placement: .primaryAction) {
@@ -19,8 +20,12 @@ struct CalendarToolbar: CustomizableToolbarContent {
             }
         }
         ToolbarItem(id: "calendar.today", placement: .primaryAction) {
-            Button("Today") { model.date = .now }
-                .help("Today (\(ShortcutCatalog.today.label))")
+            Button { model.date = .now } label: {
+                if isCompact { Image(systemName: "calendar.badge.clock") }
+                else { Text("Today") }
+            }
+            .help("Today (\(ShortcutCatalog.today.label))")
+            .accessibilityLabel("Today")
         }
         ToolbarItem(id: "calendar.mode", placement: .primaryAction) {
             // A bare menu picker shows no title in the toolbar, so the menu
@@ -33,12 +38,15 @@ struct CalendarToolbar: CustomizableToolbarContent {
                 }
                 .pickerStyle(.inline)
             } label: {
-                Text(model.mode.title)
+                if isCompact { Image(systemName: "calendar") }
+                else { Text(model.mode.title) }
             }
-            // Toolbars hide menu titles by default; the current mode is the whole point here.
+            // Keep the current mode named while the toolbar has room.
             .labelStyle(.titleOnly)
+            .menuIndicator(isCompact ? .hidden : .automatic)
             .fixedSize()
-            .help("Day, Week, Month, Year or Schedule")
+            .help(isCompact ? "\(model.mode.title) view. Choose Day, Week, Month, Year or Schedule"
+                : "Day, Week, Month, Year or Schedule")
             .accessibilityLabel("Calendar view")
             .accessibilityValue(model.mode.title)
         }

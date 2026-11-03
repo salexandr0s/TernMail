@@ -1,6 +1,8 @@
 import AppKit
 import MailStore
+import Observation
 import SwiftUI
+import Synchronization
 import Testing
 @testable import Tern
 
@@ -43,7 +45,7 @@ import Testing
                 try #require(split.arrangedSubviews.count == 2)
                 let sidebar = try #require(split.arrangedSubviews.first)
                 let frame = sidebar.convert(sidebar.bounds, to: nil)
-                for identifier in ["workspace.sidebar", "workspace.destination", "mail.compose"] {
+                for identifier in ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose"] {
                     let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
                     let view = try #require(item.view)
                     #expect(view.convert(view.bounds, to: nil).minX >= frame.maxX - 1,
@@ -111,7 +113,7 @@ import Testing
             let firstPane = try #require(split.arrangedSubviews.first)
             let frame = firstPane.convert(firstPane.bounds, to: nil)
             let sidebarEdge = showsSidebar ? frame.maxX : 0
-            for identifier in ["workspace.sidebar", "workspace.destination", "mail.compose"] {
+            for identifier in ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose"] {
                 let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
                 let view = try #require(item.view)
                 let control = view.convert(view.bounds, to: nil)
@@ -138,6 +140,11 @@ import Testing
         try await expectBoundary(split, showsSidebar: false)
         try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
         try await expectBoundary(split)
+        let sidebarRestorationDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) > 1,
+              ContinuousClock.now < sidebarRestorationDeadline {
+            try await settle()
+        }
         let reopenedSidebarWidth = try #require(split.arrangedSubviews.first).frame.width
         #expect(abs(reopenedSidebarWidth - Tokens.Layout.sidebarMaxWidth) <= 1,
             "Showing the Attachments sidebar must restore its dragged width, found \(reopenedSidebarWidth)")
@@ -191,6 +198,11 @@ import Testing
                 repeat { try await settle() } while sidebarPopover.isVisible && ContinuousClock.now < closeDeadline
                 #expect(!sidebarPopover.isVisible)
             }
+        }
+        let wideningDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) > 1,
+              ContinuousClock.now < wideningDeadline {
+            try await settle()
         }
         let widenedSidebarWidth = try #require(split.arrangedSubviews.first).frame.width
         #expect(abs(widenedSidebarWidth - Tokens.Layout.sidebarMaxWidth) <= 1,
@@ -725,7 +737,7 @@ import Testing
             try await settle()
             #expect(window.toolbar?.identifier == toolbarIdentifier, "Hosted toolbar state must stay separate from other windows")
             let width = Int(window.frame.width)
-            let identifiers = ["workspace.sidebar", "workspace.destination", "mail.compose", "workspace.search", "workspace.tasks", "workspace.assistant"]
+            let identifiers = ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose", "workspace.search", "workspace.tasks", "workspace.assistant"]
             var frames: [String: NSRect] = [:]
             for identifier in identifiers {
                 let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier },
@@ -733,7 +745,7 @@ import Testing
                 let view = try #require(item.view)
                 let frame = view.convert(view.bounds, to: nil)
                 frames[identifier] = frame
-                let followsSidebar = ["workspace.sidebar", "workspace.destination", "mail.compose"].contains(identifier)
+                let followsSidebar = ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose"].contains(identifier)
                 if let baseline = sharedFrames[width], let expected = baseline[identifier] {
                     let origin = followsSidebar ? try #require(frames["workspace.sidebar"]).minX : 0
                     let expectedOrigin = followsSidebar ? try #require(baseline["workspace.sidebar"]).minX : 0
@@ -747,13 +759,20 @@ import Testing
             let sidebarEdge = split.isSubviewCollapsed(sidebar) ? 0 : sidebar.convert(sidebar.bounds, to: nil).maxX
             #expect(try #require(frames["workspace.sidebar"]).minX >= sidebarEdge - 1,
                 "The leading toolbar controls must clear the current native sidebar")
+            #expect(try #require(frames["workspace.refresh"]).minX >= #require(frames["workspace.sidebar"]).maxX,
+                "Refresh must follow the sidebar button")
+            #expect(try #require(frames["workspace.refresh"]).maxX <= #require(frames["workspace.destination"]).minX,
+                "Refresh must precede the section switcher")
             if sharedFrames[width] == nil { sharedFrames[width] = frames }
         }
 
         try await expectToolbar(
-            in: window, width: 1_280, section: "library.", spacesAfter: ["library.sort"],
+            in: window, width: 1_440, section: "library.", spacesAfter: ["library.sort"],
             hiding: ["library.compactOptions"]
         )
+        try await expectSharedPositions()
+        try await expectToolbar(in: window, width: 1_280, section: "library.",
+            spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"])
         try await expectSharedPositions()
         try await expectToolbar(in: window, width: 960, section: "library.",
             spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"])
@@ -765,8 +784,22 @@ import Testing
         )
         try await expectSharedPositions()
         app.destination = .calendar
+        try await expectToolbar(in: window, width: 1_440, section: "calendar.", spacesAfter: ["calendar.mode"])
+        try await expectSharedPositions()
         try await expectToolbar(in: window, width: 1_280, section: "calendar.", spacesAfter: ["calendar.mode"])
         try await expectSharedPositions()
+        let calendarRefreshes = Mutex(0)
+        try #require(!app.calendar.isLoading)
+        withObservationTracking { _ = app.calendar.isLoading } onChange: {
+            calendarRefreshes.withLock { $0 += 1 }
+        }
+        try await pressToolbarButton(in: window, identifier: "workspace.refresh")
+        let refreshDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while calendarRefreshes.withLock({ $0 }) == 0, ContinuousClock.now < refreshDeadline {
+            try await settle()
+        }
+        #expect(calendarRefreshes.withLock { $0 } == 1,
+            "The rendered Calendar refresh button must start a calendar refresh")
         try await expectToolbar(in: window, width: 960, section: "calendar.", spacesAfter: ["calendar.mode"])
         try await expectSharedPositions()
         try await expectToolbar(in: window, width: Tokens.Layout.windowMinWidth,
@@ -775,8 +808,13 @@ import Testing
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         try await expectToolbar(
-            in: window, width: 1_280, section: "mail.", spacesAfter: ["mail.trash", "mail.more", "mail.forward"],
+            in: window, width: 1_440, section: "mail.", spacesAfter: ["mail.trash", "mail.more", "mail.forward"],
             hiding: ["mail.compactActions", "mail.compactReplies"]
+        )
+        try await expectSharedPositions()
+        try await expectToolbar(
+            in: window, width: 1_280, section: "mail.", spacesAfter: ["mail.trash", "mail.compactActions", "mail.compactReplies"],
+            hiding: ["mail.more"]
         )
         try await expectSharedPositions()
         try await expectToolbar(
