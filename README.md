@@ -4,7 +4,7 @@
 
 <h1 align="center">Tern</h1>
 
-<p align="center">Gmail, Calendar, and Tasks in a native Mac app.</p>
+<p align="center">Gmail, Calendar, Tasks, and an optional ChatGPT assistant in a native Mac app.</p>
 
 <p align="center">
   <a href="#build-from-source">Build from source</a> ·
