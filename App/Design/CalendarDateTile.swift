@@ -9,6 +9,7 @@ struct CalendarDateTile: View {
 
     private var isCompact: Bool { size <= Tokens.Space.s8 }
     private var radius: CGFloat { isCompact ? Tokens.Radius.sm : Tokens.Radius.md }
+    private var layoutSize: CGFloat { max(size, Tokens.Space.s8) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,13 +31,15 @@ struct CalendarDateTile: View {
                     .foregroundStyle(Tokens.CalendarDate.ink)
             }
         }
-        .frame(width: size, height: size)
+        .frame(width: layoutSize, height: layoutSize)
         .background(Tokens.CalendarDate.paper, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(Tokens.CalendarDate.ink.opacity(Tokens.Opacity.tint), lineWidth: Tokens.Border.hairline)
                 .allowsHitTesting(false)
         }
+        .scaleEffect(size / layoutSize)
+        .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
     }
 }

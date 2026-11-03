@@ -34,6 +34,7 @@ enum Tokens {
 
     /// Calendar icon faces keep their paper and ink colors in both appearances.
     enum CalendarDate {
+        static let taskSize: CGFloat = 25
         static let paper = Color.white
         static let ink = Color.black
         /// Keep the small red label above 4.5:1 on its fixed white face.
