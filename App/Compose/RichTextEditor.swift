@@ -132,6 +132,8 @@ struct RichTextEditor: NSViewRepresentable {
         /// Replacing the text moves the selection, which mustn't update the
         /// format during the view update that loads it.
         private var isLoading = false
+        private var projection = AttributedDocumentProjection()
+        private var hasUnpublishedChanges = false
 
         init(_ parent: RichTextEditor) {
             self.parent = parent
@@ -144,6 +146,8 @@ struct RichTextEditor: NSViewRepresentable {
             loadedImages = parent.inlineImages
             isLoading = true
             storage.setAttributedString(AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages))
+            projection.reset(from: storage)
+            hasUnpublishedChanges = projection.document != document
             textView.typingAttributes = AttributedDocument.baseAttributes(parent.font)
             isLoading = false
             textView.undoManager?.removeAllActions(withTarget: storage)
@@ -177,6 +181,26 @@ struct RichTextEditor: NSViewRepresentable {
             nonisolated(unsafe) let storage = textStorage
             MainActor.assumeIsolated {
                 AttributedDocument.normalize(storage, in: editedRange, font: parent.font)
+            }
+        }
+
+        nonisolated func textStorage(
+            _ textStorage: NSTextStorage,
+            didProcessEditing editedMask: NSTextStorageEditActions,
+            range editedRange: NSRange,
+            changeInLength delta: Int
+        ) {
+            // Like willProcessEditing, this runs on the main thread that owns
+            // the text view. The storage never crosses threads.
+            nonisolated(unsafe) let storage = textStorage
+            MainActor.assumeIsolated {
+                guard !isLoading else { return }
+                if projection.update(from: storage, editedRange: editedRange, changeInLength: delta) {
+                    hasUnpublishedChanges = true
+                }
+                // Marked text and automatic attribute changes can finish
+                // without textDidChange. Actions must read the visible body.
+                publish()
             }
         }
 
@@ -366,10 +390,11 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         private func publish() {
-            guard let storage = textView?.textStorage else { return }
-            let document = AttributedDocument.document(from: storage)
+            guard hasUnpublishedChanges else { return }
+            let document = projection.document
             lastDocument = document
-            if parent.document != document { parent.document = document }
+            hasUnpublishedChanges = false
+            parent.document = document
         }
 
         private func updateFormat() {

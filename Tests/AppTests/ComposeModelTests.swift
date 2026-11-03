@@ -1,10 +1,59 @@
+import AppKit
 import Foundation
 import MailStore
 import MessageContent
+import SwiftUI
 import Testing
 @testable import Tern
 
 @Suite @MainActor struct ComposeModelTests {
+    @Test(arguments: ["save", "send", "close"])
+    func nativeTypingReachesImmediateDraftActionsWithoutAConversionDelay(action: String) async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        model.content.to = [.init(address: "recipient@example.invalid")]
+        model.content.subject = "Synthetic large draft"
+        model.content.body = ComposeDocument(blocks: (0..<1_000).map { index in
+            .init(runs: [.init("Paragraph \(index).", bold: index.isMultiple(of: 2))])
+        })
+        let editor = RichTextEditor(
+            document: Binding(get: { model.content.body }, set: { model.content.body = $0 }),
+            format: Binding(get: { model.format }, set: { model.format = $0 }),
+            isEditable: true, onReady: { _ in }, onAttach: { _ in }, onFocusChange: { _ in }
+        )
+        let coordinator = editor.makeCoordinator()
+        let textView = ComposeTextView(usingTextLayoutManager: false)
+        textView.isEditable = true
+        textView.delegate = coordinator
+        textView.textStorage?.delegate = coordinator
+        coordinator.textView = textView
+        coordinator.load(model.content.body)
+        model.editor = coordinator
+        let storage = try #require(textView.textStorage)
+        textView.setSelectedRange(NSRange(location: storage.length, length: 0))
+        textView.insertText(" Latest edit.", replacementRange: textView.selectedRange())
+        let expected = AttributedDocument.document(from: storage)
+        #expect(model.content.body == expected)
+        #expect(model.content.body.blocks.last?.text.hasSuffix(" Latest edit.") == true)
+
+        switch action {
+        case "save":
+            model.save()
+            try await waitUntil { model.status?.text == "Saved to Drafts" }
+        case "send":
+            #expect(await model.send())
+        default:
+            await model.requestClose()
+        }
+        let stored = try #require(try await cache.read { try $0.localDraft(id: id) })
+        #expect(stored.body == expected)
+        if action == "save" { await model.requestClose() }
+        await mailbox.stop()
+    }
+
     @Test func editsAreStoredOnThisMacThenSavedAndSent() async throws {
         let (mailbox, cache) = try await makeMailbox()
         let id = try #require(await mailbox.startCompose(.newMessage))

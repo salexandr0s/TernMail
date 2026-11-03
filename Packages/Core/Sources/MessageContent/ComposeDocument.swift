@@ -58,6 +58,20 @@ public struct ComposeDocument: Sendable, Equatable, Codable {
         blocks.allSatisfy { $0.text.allSatisfy(\.isWhitespace) && $0.runs.allSatisfy { $0.image == nil } }
     }
 
+    /// Matches plainText().isEmpty without building the complete output for
+    /// placeholder visibility. Newlines, list markers and images are content.
+    public var isPlainTextEmpty: Bool {
+        guard blocks.count <= 1 else { return false }
+        guard let block = blocks.first else { return true }
+        guard case .paragraph = block.kind else { return false }
+        return block.runs.allSatisfy { run in
+            guard run.image == nil, run.text.isEmpty else { return false }
+            guard let link = Self.safeLink(run.link) else { return true }
+            return link.scheme?.lowercased() == "mailto"
+                && link.absoluteString.dropFirst("mailto:".count).isEmpty
+        }
+    }
+
     // MARK: Output
 
     /// Markup for the text/html part: a `div` per paragraph, as Gmail writes

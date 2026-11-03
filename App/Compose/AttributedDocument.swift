@@ -62,21 +62,34 @@ enum AttributedDocument {
     }
 
     static func document(from text: NSAttributedString) -> ComposeDocument {
+        ComposeDocument(blocks: paragraphs(from: text, in: NSRange(location: 0, length: text.length)).map(\.block))
+    }
+
+    struct Paragraph {
+        var range: NSRange
+        var block: ComposeDocument.Block
+    }
+
+    /// Converts complete paragraphs in a UTF-16 range whose ends are paragraph
+    /// boundaries. A range reaching the end includes its empty final paragraph.
+    static func paragraphs(from text: NSAttributedString, in range: NSRange) -> [Paragraph] {
         let string = text.string as NSString
-        var blocks: [ComposeDocument.Block] = []
-        var start = 0
+        var paragraphs: [Paragraph] = []
+        var start = range.location
         while true {
-            let range = string.paragraphRange(for: NSRange(location: start, length: 0))
-            let content = contentRange(of: range, in: string)
-            blocks.append(block(text, content: content))
-            if NSMaxRange(range) >= string.length {
+            let paragraph = string.paragraphRange(for: NSRange(location: start, length: 0))
+            let content = contentRange(of: paragraph, in: string)
+            paragraphs.append(Paragraph(range: paragraph, block: block(text, content: content)))
+            if NSMaxRange(paragraph) >= NSMaxRange(range) {
                 // Text ending in a line break has an empty paragraph after it.
-                if NSMaxRange(range) > NSMaxRange(content) { blocks.append(ComposeDocument.Block(runs: [])) }
+                if NSMaxRange(range) == string.length, NSMaxRange(paragraph) > NSMaxRange(content) {
+                    paragraphs.append(Paragraph(range: NSRange(location: string.length, length: 0), block: .init(runs: [])))
+                }
                 break
             }
-            start = NSMaxRange(range)
+            start = NSMaxRange(paragraph)
         }
-        return ComposeDocument(blocks: blocks)
+        return paragraphs
     }
 
     /// Lists pasted from other apps may use any marker, so anything that

@@ -6,6 +6,30 @@ import Testing
     private typealias Run = ComposeDocument.Run
     private typealias Block = ComposeDocument.Block
 
+    @Test func placeholderEmptinessMatchesPlainOutputIncludingNontextContent() throws {
+        let safe = try #require(URL(string: "https://example.invalid/"))
+        let emptyAddress = try #require(URL(string: "mailto:"))
+        let unsafe = try #require(URL(string: "javascript:ignored"))
+        let documents = [
+            ComposeDocument(),
+            ComposeDocument(blocks: [Block(runs: [])]),
+            ComposeDocument(blocks: [Block(runs: [Run("")])]),
+            ComposeDocument(blocks: [Block(runs: [Run(" ")])]),
+            ComposeDocument(blocks: [Block(runs: []), Block(runs: [])]),
+            ComposeDocument(blocks: [Block(.bulleted(level: 0), runs: [])]),
+            ComposeDocument(blocks: [Block(.numbered(level: 0), runs: [])]),
+            ComposeDocument(blocks: [Block(runs: [Run("", link: safe)])]),
+            ComposeDocument(blocks: [Block(runs: [Run("", link: emptyAddress)])]),
+            ComposeDocument(blocks: [Block(runs: [Run("", link: unsafe)])]),
+            ComposeDocument(blocks: [Block(runs: [Run("", image: .init(contentID: "image@tern"))])]),
+            ComposeDocument(blocks: [Block(runs: [Run("", image: .init(contentID: "invalid id", altText: "Image"))])]),
+            ComposeDocument(plainText: String(repeating: "A formatted draft.\n", count: 2_000))
+        ]
+        for document in documents {
+            #expect(document.isPlainTextEmpty == document.plainText().isEmpty)
+        }
+    }
+
     @Test func supportedFormattingSurvivesHTMLAndBack() throws {
         let link = try #require(URL(string: "https://example.com/a?b=1&c=2"))
         let document = ComposeDocument(blocks: [

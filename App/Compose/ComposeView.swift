@@ -272,7 +272,7 @@ struct ComposeView: View {
                 onFileDropTargetChange: { isBodyFileDropTargeted = $0 }
             ) { model.editor = $0 } onAttach: { model.attach($0, inlineImages: true) } onFocusChange: { model.isEditingMessage = $0 }
             .overlay(alignment: .topLeading) {
-                if model.content.body.plainText().isEmpty {
+                if model.content.body.isPlainTextEmpty {
                     Text("Write your message…")
                         .font(.body)
                         .foregroundStyle(.tertiary)
