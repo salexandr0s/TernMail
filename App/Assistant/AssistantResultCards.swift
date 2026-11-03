@@ -157,18 +157,8 @@ struct AssistantEventCard: View {
         let showsStatedTime = presentation.start == nil
         VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
             HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                VStack(spacing: Tokens.Space.s0_5) {
-                    if let month = presentation.month, let day = presentation.day {
-                        Text(month).font(Tokens.AssistantFormatting.metadataFont.weight(.medium))
-                        Text(day).font(.headline).monospacedDigit()
-                    } else {
-                        Image(systemName: "calendar").font(.headline)
-                    }
-                }
-                .foregroundStyle(Color.accentColor)
-                .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
-                .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                .accessibilityHidden(true)
+                CalendarDateTile(month: presentation.month, day: presentation.day)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(event.title).font(Tokens.AssistantFormatting.titleFont)
                     Text(presentation.dateLine).font(Tokens.AssistantFormatting.metadataFont).foregroundStyle(.secondary)

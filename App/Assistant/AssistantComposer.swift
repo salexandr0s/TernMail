@@ -43,9 +43,8 @@ struct AssistantComposer: View {
             }
         }
         .padding(Tokens.Space.s3)
-        .background(Tokens.Assistant.composerBackground,
-                    in: RoundedRectangle(cornerRadius: Tokens.Assistant.composerRadius))
-        .ternOutline(radius: Tokens.Assistant.composerRadius, style: .contrastOnly)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .ternOutline(radius: Tokens.Radius.lg, focus: isFocused ? Color.accentColor : nil)
         .ternAnimation(value: setup != nil && !model.messages.isEmpty)
     }
 
@@ -84,14 +83,21 @@ struct AssistantComposer: View {
             Divider()
             Button("Manage Mail & Calendar Access…", systemImage: "slider.horizontal.3", action: onSettings)
         } label: {
-            Label(model.usesPreviousMailScope ? "Previous mail scope" : model.selectedScope.title, systemImage: "envelope")
-                .lineLimit(1)
+            Group {
+                if model.conversationAccounts.count == 1, let account = model.conversationAccounts.first {
+                    SenderAccountLabel(account: account, address: scopeTitle)
+                } else {
+                    Label(scopeTitle, systemImage: "envelope")
+                }
+            }
+            .lineLimit(1)
             .padding(.horizontal, Tokens.Space.s1)
             .frame(minHeight: Tokens.Control.iconButton)
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .menuIndicator(.visible).menuStyle(.borderlessButton)
-        .font(.caption).foregroundStyle(.secondary)
+        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        .ternHover()
         .accessibilityLabel("Mail scope").accessibilityValue(model.conversationScopeDescription)
         .accessibilityIdentifier("assistant.scope")
         .help("Mail scope: \(model.conversationScopeDescription). Calendar access is managed separately in settings.")
@@ -115,10 +121,11 @@ struct AssistantComposer: View {
             Text(modelName).lineLimit(1).truncationMode(.middle)
             .padding(.horizontal, Tokens.Space.s1)
             .frame(minHeight: Tokens.Control.iconButton)
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .menuIndicator(.visible).menuStyle(.borderlessButton)
-        .font(.caption).foregroundStyle(.secondary)
+        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        .ternHover()
         .accessibilityLabel("Model").accessibilityValue(modelName)
         .accessibilityIdentifier("assistant.model")
         .help(modelName)
@@ -131,6 +138,7 @@ struct AssistantComposer: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain).foregroundStyle(.secondary)
+        .ternHover(radius: Tokens.Radius.md)
         .contentShape(.focusEffect, Circle())
         .help("Manage mail and calendar access")
         .accessibilityLabel("Manage assistant access. \(model.enabledAccountIDs.count) enabled mail accounts")
@@ -166,6 +174,10 @@ struct AssistantComposer: View {
 
     private var modelName: String {
         model.models.first(where: { $0.id == model.selectedModelID })?.displayName ?? "ChatGPT"
+    }
+
+    private var scopeTitle: String {
+        model.usesPreviousMailScope ? "Previous mail scope" : model.selectedScope.title
     }
 }
 

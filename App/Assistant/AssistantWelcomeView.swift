@@ -16,7 +16,7 @@ struct AssistantWelcomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s8) {
             VStack(spacing: Tokens.Space.s3) {
-                Text("How can I help?").font(.title.weight(.semibold))
+                Text("How can I help?").font(.title2.weight(.semibold))
                 Text("Find what needs a reply, keep track of commitments, or catch up on your mail.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -80,9 +80,9 @@ struct AssistantWelcomeView: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(alignment: .top, spacing: Tokens.Space.s3) {
                 Image(systemName: setup.systemImage)
-                    .font(.title3).foregroundStyle(.secondary)
+                    .font(.title3).foregroundStyle(Color.accentColor)
                     .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                    .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(setup.title).font(.callout.weight(.semibold))
@@ -100,7 +100,7 @@ struct AssistantWelcomeView: View {
         }
         .padding(Tokens.Space.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternOutline(radius: Tokens.Radius.lg)
     }
 
@@ -131,11 +131,13 @@ private struct AssistantSuggestionRow: View {
             HStack(spacing: Tokens.Space.s3) {
                 Image(systemName: systemImage)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(width: Tokens.Space.s5)
+                    .foregroundStyle(requirement == nil ? Color.accentColor : .secondary)
+                    .frame(width: Tokens.Space.s8, height: Tokens.Space.s8)
+                    .background(Color.accentColor.opacity(requirement == nil ? Tokens.Opacity.wash : 0),
+                                in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text(title).font(.callout.weight(.medium))
+                    Text(title).font(.callout.weight(.semibold))
                         .foregroundStyle(requirement == nil ? .primary : .secondary)
                     Text(detail).font(.caption).foregroundStyle(.secondary)
                 }
@@ -146,7 +148,7 @@ private struct AssistantSuggestionRow: View {
             .multilineTextAlignment(.leading)
             .padding(Tokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHovered && requirement == nil ? Tokens.Assistant.chatBubble : Tokens.Surface.muted,
+            .background(isHovered && requirement == nil ? Tokens.Assistant.chatBubble : Tokens.Surface.primary,
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         }

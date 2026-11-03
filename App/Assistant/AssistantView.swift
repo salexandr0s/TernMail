@@ -39,7 +39,7 @@ struct AssistantView: View {
                 .frame(maxWidth: Tokens.Assistant.contentWidth)
                 .frame(maxWidth: .infinity)
         }
-        .background(Tokens.Surface.primary)
+        .background(Tokens.Surface.muted)
         .onKeyPress(.escape) { closeOnEscape() }
         .task {
             guard !hasPlacedInitialFocus else { return }
@@ -76,6 +76,8 @@ struct AssistantView: View {
         HStack(spacing: Tokens.Space.s2) {
             ChatGPTBrand(size: Tokens.Space.s5)
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .ternOutline(radius: Tokens.Radius.md)
                 .accessibilityHidden(true)
             Text("ChatGPT").font(.headline).lineLimit(1)
             Spacer(minLength: 0)
@@ -93,12 +95,14 @@ struct AssistantView: View {
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
                 .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
+                .ternHover()
                 .help("Assistant Options").accessibilityLabel("Assistant Options")
                 if let onClose { iconButton("Close Assistant", symbol: "xmark", action: onClose) }
             }
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, Tokens.Space.s4).padding(.top, Tokens.Space.s3).padding(.bottom, Tokens.Space.s2)
+        .overlay(alignment: .bottom) { Divider().allowsHitTesting(false) }
     }
 
     private var setupPrompt: AssistantSetupPrompt? {

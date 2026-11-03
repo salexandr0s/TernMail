@@ -11,7 +11,6 @@ struct AssistantMessageView: View {
     let onOpenSourceInNewWindow: (AssistantSource) -> Void
     let onOpenDraft: (String) -> Void
     var model: AssistantModel? = nil
-    @Environment(\.colorSchemeContrast) private var contrast
     @State private var showsAllEmails = false
     @State private var showsSources = false
     @State private var copied = false
@@ -125,15 +124,14 @@ struct AssistantMessageView: View {
                     .ternOutline(radius: Tokens.Radius.md, style: .contrastOnly)
             }
         }
-        .padding(.horizontal, message.isUser ? Tokens.Space.s3 : 0)
-        .padding(.vertical, message.isUser ? Tokens.AssistantFormatting.inset : 0)
+        .padding(.horizontal, message.isUser ? Tokens.Space.s4 : 0)
+        .padding(.vertical, message.isUser ? Tokens.Space.s3 : 0)
         .foregroundStyle(.primary)
-        .background(message.isUser ? Tokens.Assistant.chatBubble : .clear,
-                    in: RoundedRectangle(cornerRadius: Tokens.Assistant.bubbleRadius))
+        .background(message.isUser ? Color.accentColor.opacity(Tokens.Opacity.wash) : .clear,
+                    in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .overlay {
-            if message.isUser, contrast == .increased {
-                RoundedRectangle(cornerRadius: Tokens.Assistant.bubbleRadius)
-                    .strokeBorder(Color.primary, lineWidth: Tokens.Border.hairline)
+            if message.isUser {
+                Color.clear.ternOutline(radius: Tokens.Radius.lg)
                     .allowsHitTesting(false)
             }
         }
@@ -147,10 +145,14 @@ struct AssistantMessageView: View {
                 Button { showsSources.toggle() } label: {
                     Label("\(sources.count) \(sources.count == 1 ? "source" : "sources")",
                           systemImage: showsSources ? "chevron.up" : "text.book.closed")
+                        .padding(.horizontal, Tokens.Space.s1_5)
                         .frame(minHeight: Tokens.Space.s6)
-                        .contentShape(Rectangle())
+                        .background(showsSources ? Color.accentColor.opacity(Tokens.Opacity.wash) : .clear,
+                                    in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
-                .buttonStyle(.borderless).controlSize(.small)
+                .buttonStyle(.plain).controlSize(.small)
+                .ternHover()
                 .accessibilityValue(showsSources ? "Expanded" : "Collapsed")
                 .help(showsSources ? "Hide sources" : "Show sources")
             }
@@ -160,7 +162,8 @@ struct AssistantMessageView: View {
                         .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .ternHover()
                 .help(copied ? "Copied" : (message.isUser ? "Copy message" : "Copy response"))
                 .accessibilityLabel(copied ? "Copied" : (message.isUser ? "Copy message" : "Copy response"))
                 .onChange(of: message.text) { copied = false }
@@ -171,11 +174,12 @@ struct AssistantMessageView: View {
                         .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .ternHover()
                 .help("Retry").accessibilityLabel("Retry")
             }
         }
-        .font(.caption2).foregroundStyle(.secondary)
+        .font(.caption).foregroundStyle(.secondary)
         .labelStyle(.titleAndIcon)
         .padding(.horizontal, message.isUser ? Tokens.Space.s2 : 0)
     }
@@ -197,8 +201,8 @@ struct AssistantMessageView: View {
         }
         .padding(Tokens.AssistantFormatting.inset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
-        .ternOutline(radius: Tokens.AssistantFormatting.cornerRadius, style: .contrastOnly)
+        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
+        .ternOutline(radius: Tokens.AssistantFormatting.cornerRadius)
     }
 
     @ViewBuilder private var messageMenu: some View {

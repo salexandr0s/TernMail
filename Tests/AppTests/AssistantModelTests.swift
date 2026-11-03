@@ -122,6 +122,7 @@ import TernAI
         fixture.context.currentAccounts = ["b"]
         fixture.model.refreshAccess()
         #expect(fixture.model.hasPendingScopeChange)
+        #expect(fixture.model.conversationAccounts.map(\.id) == ["a"])
         #expect(fixture.model.messages.count == 2)
         #expect(fixture.model.composerText == "Unfinished follow-up")
         fixture.model.send("Must wait for scope choice")
@@ -135,10 +136,12 @@ import TernAI
         #expect(!request.instructions.contains("b@example.invalid"))
         #expect(try AIJSON.array(request.input).jsonString().contains("Private account question"))
         #expect(fixture.model.usesPreviousMailScope)
+        #expect(fixture.model.conversationAccounts.map(\.id) == ["a"])
 
         fixture.model.setAccountEnabled("a", enabled: false)
         #expect(fixture.model.messages.isEmpty)
         #expect(fixture.model.composerText.isEmpty)
+        #expect(fixture.model.conversationAccounts.map(\.id) == ["b"])
     }
 
     @Test func choosingNewScopeKeepsThePromptAndDiscardsEarlierProviderHistory() async throws {
@@ -155,6 +158,7 @@ import TernAI
         #expect(fixture.model.messages.isEmpty)
         #expect(fixture.model.composerText == "Unfinished question")
         #expect(!fixture.model.hasPendingScopeChange)
+        #expect(fixture.model.conversationAccounts.map(\.id) == ["b"])
         fixture.model.send(fixture.model.composerText)
         await fixture.model.waitForCurrentTurn()
         let request = try #require(await provider.requests.last)

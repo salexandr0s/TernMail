@@ -32,6 +32,15 @@ enum Tokens {
         static let border = Color(nsColor: .separatorColor)
     }
 
+    /// Calendar icon faces keep their paper and ink colors in both appearances.
+    enum CalendarDate {
+        static let paper = Color.white
+        static let ink = Color.black
+        /// Keep the small red label above 4.5:1 on its fixed white face.
+        private static let monthInkBlend: CGFloat = 0.20
+        static let month = Color(nsColor: NSColor.systemRed.blended(withFraction: monthInkBlend, of: .black) ?? .black)
+    }
+
     enum MessageList {
         static let unreadWeight: Font.Weight = .bold
         static let readWeight: Font.Weight = .regular

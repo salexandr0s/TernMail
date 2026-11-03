@@ -209,33 +209,10 @@ private struct EmailCalendarSuggestionRow: View {
     }
 
     private var dateTileFace: some View {
-        VStack(spacing: 0) {
-            if let month = presentation.month, let day = presentation.day {
-                Text(month)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(item.isOutdated || item.kind == .cancelled ? Color.secondary : .accentColor)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: Tokens.Space.s3)
-                    .background(Color.accentColor.opacity(Tokens.Calendar.eventTint))
-                Text(day)
-                    .font(.callout.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(item.isOutdated ? .secondary : .primary)
-                    .frame(height: Tokens.Space.s5)
-            } else {
-                Image(systemName: "calendar")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(height: Tokens.ConversationHeader.dateTile)
-            }
-        }
-        .frame(width: Tokens.ConversationHeader.dateTile, height: Tokens.ConversationHeader.dateTile)
-        .background(Tokens.Surface.muted)
-        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .overlay {
-            RoundedRectangle(cornerRadius: Tokens.Radius.sm)
-                .strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline)
-        }
-        .accessibilityHidden(true)
+        CalendarDateTile(month: presentation.month, day: presentation.day,
+            size: Tokens.ConversationHeader.dateTile,
+            isMuted: item.isOutdated || item.kind == .cancelled)
+            .accessibilityHidden(true)
     }
 
     private var eventActions: some View {

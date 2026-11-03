@@ -26,7 +26,7 @@ struct GoogleTaskRow: View {
                     if isBusy { ProgressView().controlSize(.small) }
                     else {
                         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
+                            .font(.title2.weight(.light))
                             .foregroundStyle(task.isCompleted ? Color.accentColor : Color.secondary)
                     }
                 }
@@ -56,15 +56,10 @@ struct GoogleTaskRow: View {
                         .accessibilityIdentifier("google-task-edit-\(task.id)")
                 }
 
-                if (!task.isCompleted && task.dueDay != nil) || Self.emailURL(task.notes ?? "") != nil {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: Tokens.Space.s2) { metadata }
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1_5) { metadata }
-                    }
-                }
+                sourceLink
                 if let parentTitle, !task.isCompleted {
                     Label(parentTitle, systemImage: "arrow.turn.down.right")
-                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         .help("Subtask of \(parentTitle)")
                         .accessibilityLabel("Subtask of \(parentTitle)")
                 }
@@ -72,7 +67,10 @@ struct GoogleTaskRow: View {
             .padding(.vertical, Tokens.Space.s1_5)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            actions
+            VStack(alignment: .trailing, spacing: Tokens.Space.s0_5) {
+                dueTile
+                actions
+            }
         }
         .padding(.vertical, Tokens.Space.s1_5)
         .padding(.horizontal, Tokens.Space.s2)
@@ -87,7 +85,7 @@ struct GoogleTaskRow: View {
     private var taskText: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             Text(task.title.isEmpty ? "Untitled task" : task.title)
-                .font(.body.weight(task.isCompleted ? .regular : .medium))
+                .font(.body.weight(task.isCompleted ? .regular : .semibold))
                 .strikethrough(task.isCompleted)
                 .foregroundStyle(task.isCompleted ? .secondary : .primary)
                 .multilineTextAlignment(.leading)
@@ -95,31 +93,51 @@ struct GoogleTaskRow: View {
             let preview = Self.visibleNotes(task.notes ?? "")
             if !preview.isEmpty && !task.isCompleted {
                 Text(preview).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).multilineTextAlignment(.leading)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                    .help(preview)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder private var metadata: some View {
-        if let due = task.dueDay, !task.isCompleted {
-            Label {
-                Text(dueLabel(due)).foregroundStyle(.primary)
-            } icon: {
-                Image(systemName: isOverdue(due) ? "clock" : "calendar").foregroundStyle(dueColor(due))
-            }
-                .font(.caption2.weight(.medium))
-                .padding(.horizontal, Tokens.Space.s1_5)
-                .padding(.vertical, Tokens.Space.s0_5)
-                .background(dueColor(due).opacity(Tokens.Opacity.wash), in: Capsule())
-                .fixedSize()
-                .accessibilityLabel("Due \(dueLabel(due))")
+    @ViewBuilder private var dueTile: some View {
+        if let due = task.dueDay {
+            let date = GoogleTaskDateCoding.date(due)
+            let fullDate = date?.formatted(date: .complete, time: .omitted) ?? due
+            CalendarDateTile(
+                month: date?.formatted(.dateTime.month(.abbreviated)).uppercased(),
+                day: date?.formatted(.dateTime.day()),
+                size: Tokens.Space.s10,
+                isMuted: task.isCompleted
+            )
+                .overlay(alignment: .topTrailing) {
+                    if !task.isCompleted, isOverdue(due) {
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: Tokens.ConversationHeader.statusBadge))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(Tokens.Status.error, Tokens.Surface.primary)
+                            .background(Tokens.Surface.primary, in: Circle())
+                            .offset(x: Tokens.Space.s1, y: -Tokens.Space.s1)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .padding(.top, Tokens.Space.s1_5)
+                .help(task.isCompleted ? fullDate : "\(dueLabel(due)) · \(fullDate)")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(task.isCompleted ? "Due date" : "Due \(dueLabel(due))")
+                .accessibilityValue(fullDate)
+                .accessibilityIdentifier("google-task-due-\(task.id)")
         }
+    }
+
+    @ViewBuilder private var sourceLink: some View {
         if let source = Self.emailURL(task.notes ?? "") {
             Button { openURL(source) } label: {
                 Label(Self.emailSubject(task.notes ?? "") ?? "Source email", systemImage: "envelope")
-                    .font(.caption2).lineLimit(1)
+                    .font(.caption).lineLimit(1)
+                    .padding(.vertical, Tokens.Space.s0_5)
+                    .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -129,13 +147,14 @@ struct GoogleTaskRow: View {
             .help(Self.emailSubject(task.notes ?? "") ?? "Open source email")
             .accessibilityLabel("Open source email: \(Self.emailSubject(task.notes ?? "") ?? task.title)")
             .accessibilityIdentifier("google-task-email-\(task.id)")
+            .ternHover(isEnabled: !isBusy, pointer: .link)
         }
     }
 
     private var actions: some View {
         HStack(spacing: Tokens.Space.s0_5) {
             action("Edit task", symbol: "pencil", control: .edit, perform: onEdit)
-            action("Delete task", symbol: "xmark", control: .delete, perform: onDelete)
+            action("Delete task", symbol: "trash", control: .delete, perform: onDelete)
         }
         .disabled(isBusy)
         .accessibilityHidden(isPending)
@@ -167,12 +186,6 @@ struct GoogleTaskRow: View {
     }
 
     private func isOverdue(_ day: String) -> Bool { day < GoogleTaskDateCoding.string(.now) }
-
-    private func dueColor(_ day: String) -> Color {
-        if isOverdue(day) { return Tokens.Status.error }
-        if day == GoogleTaskDateCoding.string(.now) { return .accentColor }
-        return .secondary
-    }
 
     static func visibleNotes(_ notes: String) -> String {
         GoogleTaskNotes(notes).text.components(separatedBy: .newlines)

@@ -54,7 +54,7 @@ struct GoogleTasksSidebar: View {
             .scrollBounceBehavior(.basedOnSize)
             footer
         }
-        .background(Tokens.Surface.primary.overlay(Color.primary.opacity(Tokens.Opacity.hover)))
+        .background(Tokens.Surface.muted)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-tasks-sidebar")
         .task(id: isActive) {
@@ -107,8 +107,14 @@ struct GoogleTasksSidebar: View {
 
     private var header: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Label("Tasks", systemImage: "checklist")
-                .font(.headline).foregroundStyle(.secondary)
+            Image(systemName: "checklist")
+                .font(.body.weight(.medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .accessibilityHidden(true)
+            Text("Tasks").font(.headline)
             Spacer(minLength: 0)
             if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Syncing tasks") }
             taskIcon("Refresh Tasks", symbol: "arrow.clockwise") { Task { await model.refresh() } }
@@ -117,30 +123,38 @@ struct GoogleTasksSidebar: View {
                 taskIcon("Close Tasks", symbol: "xmark", action: onClose).disabled(inlineEditor != nil)
             }
         }
-        .padding(.leading, Tokens.Space.s5)
+        .padding(.leading, Tokens.Space.s4)
         .padding(.trailing, Tokens.Space.s3)
-        .padding(.top, Tokens.Space.s2)
-        .padding(.bottom, Tokens.Space.s1)
+        .padding(.top, Tokens.Space.s3)
+        .padding(.bottom, Tokens.Space.s2)
     }
 
     private var destinations: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(spacing: 0) {
                 Menu {
-                    ForEach(model.accounts) { account in
-                        Button { model.selectAccount(account.id) } label: {
-                            if account.id == model.selectedAccountID { Label(account.email, systemImage: "checkmark") }
-                            else { Text(account.email) }
+                    Picker("Account", selection: Binding(
+                        get: { model.selectedAccountID },
+                        set: { if let accountID = $0 { model.selectAccount(accountID) } }
+                    )) {
+                        ForEach(model.accounts) { account in
+                            SenderAccountLabel(account: account).tag(Optional(account.id))
                         }
                     }
+                    .pickerStyle(.inline)
                 } label: {
-                    Label(model.selectedAccount?.email ?? "Choose account", systemImage: "person.crop.circle")
-                        .lineLimit(1).truncationMode(.middle)
+                    Group {
+                        if let account = model.selectedAccount { SenderAccountLabel(account: account) }
+                        else { Label("Choose account", systemImage: "person.crop.circle") }
+                    }
+                    .lineLimit(1).truncationMode(.middle)
+                    .padding(.vertical, Tokens.Space.s1)
                 }
                 .menuStyle(.borderlessButton)
-                .controlSize(.mini)
+                .controlSize(.small)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
+                .ternHover(isEnabled: inlineEditor == nil, radius: Tokens.Radius.sm)
                 .accessibilityLabel("Tasks account")
                 .accessibilityIdentifier("google-tasks-account")
                 .disabled(inlineEditor != nil)
@@ -162,15 +176,16 @@ struct GoogleTasksSidebar: View {
                                 .lineLimit(1)
                         }
                         .menuStyle(.borderlessButton)
+                        .foregroundStyle(.primary)
                         .accessibilityLabel("Task list")
                         .accessibilityIdentifier("google-tasks-list")
                         .disabled(inlineEditor != nil)
                         .help(model.selectedList?.title ?? "Choose list")
                         HStack(spacing: Tokens.Space.s1_5) {
-                            Text("\(model.openTasks.count) to do")
+                            Text("\(model.openTasks.count) to do").monospacedDigit()
                             if !model.completedTasks.isEmpty {
                                 Text("·").accessibilityHidden(true)
-                                Text("\(model.completedTasks.count) completed")
+                                Text("\(model.completedTasks.count) completed").monospacedDigit()
                             }
                         }
                         .font(.caption).foregroundStyle(.secondary)
@@ -188,6 +203,7 @@ struct GoogleTasksSidebar: View {
         let complete = model.completedTasks.count
         let total = complete + model.openTasks.count
         return ZStack {
+            Circle().fill(Color.accentColor.opacity(Tokens.Opacity.wash))
             Circle().stroke(Color.secondary.opacity(Tokens.Opacity.tint), lineWidth: Tokens.Border.focus)
             Circle().trim(from: 0, to: total == 0 ? 0 : CGFloat(complete) / CGFloat(total))
                 .stroke(Color.accentColor, style: StrokeStyle(lineWidth: Tokens.Border.focus, lineCap: .round))
@@ -268,7 +284,7 @@ struct GoogleTasksSidebar: View {
                 }
             }
             .padding(Tokens.Space.s1)
-            .ternSurface(style: .grouped)
+            .ternSurface()
         }
         if !completed.isEmpty {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
@@ -296,7 +312,7 @@ struct GoogleTasksSidebar: View {
                 if showsCompleted {
                     LazyVStack(spacing: 0) { ForEach(completed) { row($0) } }
                         .padding(Tokens.Space.s1)
-                        .ternSurface(style: .grouped)
+                        .ternSurface()
                         .ternTransition(.disclosure)
                 }
             }
@@ -352,9 +368,12 @@ struct GoogleTasksSidebar: View {
 
     private var composer: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "plus.circle.fill").font(.title3).foregroundStyle(Color.accentColor).accessibilityHidden(true)
+            Image(systemName: "plus.circle.fill")
+                .font(.title3).foregroundStyle(Color.accentColor)
+                .frame(width: Tokens.Space.s6)
+                .accessibilityHidden(true)
             TextField("Add a task…", text: $newTitle)
-                .textFieldStyle(.plain).focused($entryFocused)
+                .font(.callout).textFieldStyle(.plain).focused($entryFocused)
                 .onSubmit(addQuickTask)
                 .accessibilityIdentifier("google-tasks-new-title")
                 .help(model.canAdd ? "Press Return to add a task" : "Finish the pending task before adding another")
@@ -370,6 +389,7 @@ struct GoogleTasksSidebar: View {
         .padding(.vertical, Tokens.Space.s2)
         .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .ternOutline(radius: Tokens.Radius.md, focus: entryFocused ? .accentColor : nil)
+        .ternAnimation(value: entryFocused)
         .padding(.horizontal, Tokens.Space.s3)
     }
 
@@ -378,7 +398,12 @@ struct GoogleTasksSidebar: View {
             if model.isCreating, model.pendingCreation != nil {
                 Text("Adding task…")
             } else if let notice = model.notice, model.issue == nil, model.errorMessage == nil {
-                Label(notice, systemImage: "checkmark.circle").lineLimit(1).help(notice)
+                Label {
+                    Text(notice).lineLimit(1)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Tokens.Status.success)
+                }
+                .help(notice)
             } else if let date = model.lastSyncedAt, model.issue == nil {
                 Image(systemName: "checkmark.circle").accessibilityHidden(true)
                 Text("Updated \(date.formatted(.relative(presentation: .named)))")
@@ -389,7 +414,9 @@ struct GoogleTasksSidebar: View {
         }
         .font(.caption2).foregroundStyle(.secondary)
         .padding(.horizontal, Tokens.Space.s5)
-        .padding(.vertical, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
+        .background(Tokens.Surface.muted)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private var openGoogleButton: some View {
@@ -400,17 +427,21 @@ struct GoogleTasksSidebar: View {
             openURL(url)
         }
         .buttonStyle(.plain).font(.caption2)
+        .lineLimit(1).fixedSize()
+        .padding(.vertical, Tokens.Space.s2)
+        .padding(.horizontal, Tokens.Space.s1)
+        .ternHover(pointer: .link)
         .help("Open Google Tasks in your browser")
     }
 
     private func emptyState(_ title: String, detail: String, symbol: String) -> some View {
         VStack(spacing: Tokens.Space.s3) {
-            Image(systemName: symbol).font(.largeTitle).foregroundStyle(Color.accentColor)
+            Image(systemName: symbol).font(.largeTitle.weight(.light)).foregroundStyle(Color.accentColor)
                 .frame(width: Tokens.Space.s16, height: Tokens.Space.s16)
                 .background(Color.accentColor.opacity(Tokens.Opacity.wash), in: Circle())
                 .accessibilityHidden(true)
             Text(title).font(.headline)
-            Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)

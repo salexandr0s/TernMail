@@ -108,6 +108,13 @@ final class AssistantModel {
 
     var availableAccounts: [AccountRecord] { context().accounts }
 
+    /// Account identity follows the retained conversation when mailbox selection changes.
+    var conversationAccounts: [AccountRecord] {
+        let current = context()
+        let snapshot = observedScope ?? scope(in: current)
+        return current.accounts.filter { snapshot.accountIDs.contains($0.id) }
+    }
+
     var isModelReady: Bool {
         let current = context()
         return current.canUsePlan && catalogueRevision == current.connectionRevision
