@@ -594,6 +594,7 @@ enum Schema {
         CommitmentSchema.register(in: &migrator)
         TodaySchema.register(in: &migrator)
         AutomaticFollowUpSchema.register(in: &migrator)
+        MeetingPreparationSchema.register(in: &migrator)
         return migrator
     }
 }
