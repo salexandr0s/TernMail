@@ -70,7 +70,7 @@ struct UnsubscribeView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s3) {
                 Image(systemName: "envelope.open")
                     .font(.title3.weight(.medium))
@@ -107,7 +107,7 @@ struct UnsubscribeView: View {
             filters
         }
         .padding(.horizontal, Tokens.Space.s6)
-        .padding(.vertical, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.muted)
     }
 
@@ -154,6 +154,7 @@ struct UnsubscribeView: View {
             .frame(maxWidth: Tokens.Layout.searchMinWidth, alignment: .leading)
             .help("Filter by receiving account")
             .accessibilityLabel("Receiving account")
+            .accessibilityValue(model.selectedAccountID.isEmpty ? "All accounts" : model.accountTitle(for: model.selectedAccountID))
             .accessibilityIdentifier("unsubscribe.account")
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s1_5) {
@@ -184,20 +185,24 @@ struct UnsubscribeView: View {
             UnsubscribeCheckbox(isOn: model.allVisibleSelected, isMixed: model.someVisibleSelected,
                 isEnabled: model.canSelectAll && !model.isWorking,
                 label: "Select all newsletters available for batch unsubscribe",
-                identifier: "unsubscribe.selectAll", action: model.toggleAll)
+                identifier: "unsubscribe.selectAll",
+                help: "Selects the visible newsletters that support direct unsubscribe.", action: model.toggleAll)
             if model.selectedCount > 0 {
                 Text("\(model.selectedCount) selected").fontWeight(.medium).monospacedDigit()
                 UnsubscribeIconButton(symbol: "xmark.circle", title: "Clear selection") { model.clearSelection() }
                     .accessibilityIdentifier("unsubscribe.clearSelection")
             } else {
-                Text(model.visibleSubscriptions.count == 1 ? "1 newsletter" : "\(model.visibleSubscriptions.count) newsletters")
+                Text("\(model.filter.title) · \(model.visibleSubscriptions.count == 1 ? "1 newsletter" : "\(model.visibleSubscriptions.count) newsletters")")
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: Tokens.Space.s3)
             if model.selectedCount > 0 {
-                Button("Unsubscribe from \(model.selectedCount)…", action: model.proposeSelection)
+                Button(action: model.proposeSelection) {
+                    Label("Unsubscribe (\(model.selectedCount))", systemImage: "minus.circle")
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isWorking)
+                    .help("Review the selected newsletters before sending unsubscribe requests")
                     .accessibilityIdentifier("unsubscribe.batch")
             } else {
                 Menu {
@@ -271,8 +276,8 @@ struct UnsubscribeView: View {
                 Text("Updating subscription…")
                 Spacer(minLength: 0)
             } else {
-                if model.isScanning { ProgressView().controlSize(.mini) }
-                else { Image(systemName: "checkmark.circle").accessibilityHidden(true) }
+                if model.isScanning || model.isLoading { ProgressView().controlSize(.mini) }
+                else { Image(systemName: model.hasMoreToScan ? "pause.circle" : "checkmark.circle").accessibilityHidden(true) }
                 Text(coverageTitle).lineLimit(1).monospacedDigit().help(model.scanSummary)
                 Spacer(minLength: Tokens.Space.s3)
                 if model.isScanning {
@@ -311,7 +316,7 @@ struct UnsubscribeView: View {
         if model.isScanning {
             return snapshots.contains(where: \.isRefreshing) ? "Refreshing · \(count) checked" : "Checking mail · \(count) checked"
         }
-        return model.hasMoreToScan ? "\(count) messages checked so far" : "\(count) messages checked"
+        return model.hasMoreToScan ? "Scan paused · \(count) messages checked" : "\(count) messages checked"
     }
 
     private func notice(_ message: String, isError: Bool, dismiss: @escaping () -> Void) -> some View {

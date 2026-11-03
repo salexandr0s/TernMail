@@ -24,14 +24,31 @@ struct UnsubscribeRow: View {
         subscription.unsubscribeURL != nil ? "Unsubscribe on website" : "Unsubscribe by email"
     }
     private var manualSymbol: String { subscription.unsubscribeURL != nil ? "arrow.up.right.square" : "envelope" }
+    private var selectionLabel: String {
+        "Select \(subscription.displayName), \(model.accountTitle(for: subscription.accountID))"
+            + (subscription.listID.map { ", list \($0)" } ?? "")
+    }
+    private var selectionHelp: String {
+        if unavailable { return "Sign in again in Settings to manage this newsletter." }
+        if model.isLoading { return "Wait for saved newsletters to finish loading." }
+        if model.isWorking { return "Wait for the current request to finish." }
+        switch subscription.status {
+        case .requested: return "An unsubscribe request has already been sent."
+        case .completed: return "This newsletter is marked completed."
+        case .requesting: return "An unsubscribe request is being sent."
+        case .opened: return "Finish unsubscribing on the website or by email."
+        case .active, .failed:
+            return subscription.oneClickURL == nil ? "Use the sender's website or email option to unsubscribe."
+                : "Select this newsletter for batch unsubscribe."
+        }
+    }
 
     var body: some View {
         HStack(spacing: Tokens.Space.s3) {
             UnsubscribeCheckbox(isOn: selected, isEnabled: model.isSelectable(subscription) && !model.isWorking,
-                label: "Select \(subscription.displayName)", identifier: "unsubscribe.select.\(subscription.id)") {
+                label: selectionLabel, identifier: "unsubscribe.select.\(subscription.id)", help: selectionHelp) {
                     model.toggleSelection(subscription)
                 }
-                .help(model.isSelectable(subscription) ? "Select newsletter" : "This newsletter needs an individual action")
             AddressAvatar(accountID: subscription.accountID, address: subscription.senderAddress,
                 name: subscription.displayName, size: Tokens.Control.avatarLarge)
             identity.frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
@@ -39,8 +56,8 @@ struct UnsubscribeRow: View {
             actions.frame(width: Tokens.Control.iconButton * 2 + Tokens.Space.s1, alignment: .trailing)
         }
         .padding(.horizontal, Tokens.Space.s6)
-        .padding(.vertical, Tokens.Space.s3)
-        .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4)
+        .padding(.vertical, isCompact ? Tokens.Space.s2 : Tokens.Space.s3)
+        .frame(minHeight: Tokens.Space.s16 + (isCompact ? Tokens.Space.s2 : Tokens.Space.s4))
         .background(selected ? Color.accentColor.opacity(Tokens.Opacity.wash)
             : isHovered ? Color.primary.opacity(Tokens.Opacity.hover) : .clear)
         .contentShape(Rectangle())
@@ -158,13 +175,13 @@ struct UnsubscribeRow: View {
                             model.openLatestMessage(subscription)
                         }
                         if subscription.oneClickURL != nil && subscription.status != .opened {
-                            UnsubscribeIconButton(symbol: "minus.circle", title: "Unsubscribe from \(subscription.displayName)", tint: .accentColor) {
+                            UnsubscribeIconButton(symbol: "minus.circle", title: "Unsubscribe from \(subscription.displayName)", tint: .accentColor, emphasized: true) {
                                 model.proposeUnsubscribe(subscription)
                             }
                             .disabled(model.isWorking)
                             .accessibilityIdentifier("unsubscribe.action.\(subscription.id)")
                         } else {
-                            UnsubscribeIconButton(symbol: manualSymbol, title: "\(manualTitle): \(subscription.displayName)", tint: .accentColor) {
+                            UnsubscribeIconButton(symbol: manualSymbol, title: "\(manualTitle): \(subscription.displayName)", tint: .accentColor, emphasized: true) {
                                 model.openSubscription(subscription)
                             }
                             .disabled(model.isWorking)
@@ -187,22 +204,29 @@ struct UnsubscribeIconButton: View {
     let symbol: String
     let title: String
     var tint: Color = .secondary
+    var emphasized = false
     let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: Tokens.Control.icon))
-                .foregroundStyle(tint)
+                .foregroundStyle(isEnabled ? tint : .secondary)
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .buttonStyle(.borderless)
-        .background(isHovered ? Color.primary.opacity(Tokens.Opacity.hover) : .clear,
-            in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        .background(fill, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         .onHover { isHovered = $0 }
         .help(title).accessibilityLabel(title)
+    }
+
+    private var fill: Color {
+        guard isEnabled else { return .clear }
+        if emphasized { return tint.opacity(isHovered ? Tokens.Opacity.tint : Tokens.Opacity.wash) }
+        return isHovered ? Color.primary.opacity(Tokens.Opacity.hover) : .clear
     }
 }
 
@@ -221,6 +245,7 @@ struct UnsubscribeCheckbox: NSViewRepresentable {
     var isEnabled = true
     let label: String
     let identifier: String
+    var help: String?
     let action: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(action: action) }
@@ -240,7 +265,8 @@ struct UnsubscribeCheckbox: NSViewRepresentable {
         button.isEnabled = isEnabled
         button.setAccessibilityLabel(label)
         button.setAccessibilityIdentifier(identifier)
-        button.toolTip = label
+        button.toolTip = help ?? label
+        button.setAccessibilityHelp(help)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? {

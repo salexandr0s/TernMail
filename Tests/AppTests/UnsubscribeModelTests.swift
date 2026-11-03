@@ -75,6 +75,7 @@ import Testing
         #expect(model.subscriptions.isEmpty)
         #expect(!model.isWorking)
         #expect(model.confirmation == nil)
+        #expect(model.notice == nil)
     }
 
     @Test func stopBatchDoesNotStartRemainingRequests() async throws {
@@ -89,6 +90,7 @@ import Testing
         try await unsubscribeEventually { !model.isWorking }
         #expect(store.requests.count == 1)
         #expect(model.requestedCount == 1)
+        #expect(model.notice == "Stopped. Requests already sent may still take effect.")
     }
 
     @Test func cancelledBatchReadsPersistedOutcomeOutsideCancelledTask() async throws {
@@ -104,6 +106,7 @@ import Testing
         #expect(store.requests.count == 1)
         #expect(model.requestedCount == 1)
         #expect(!model.selectedIDs.contains(store.rows[0].id))
+        #expect(model.notice == "Stopped. Requests already sent may still take effect.")
     }
 
     @Test func replacementScopeWaitsForCancelledRequestOutcome() async throws {
@@ -121,6 +124,7 @@ import Testing
         await loading.value
         #expect(model.requestedCount == 1)
         #expect(!model.isWorking)
+        #expect(model.notice == nil)
     }
 
     @Test func scanLoadsPagesAndRetainsProgressOnFailure() async throws {

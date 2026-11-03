@@ -153,7 +153,7 @@ struct UnsubscribeConfirmation: Identifiable {
         let kept = Set(accounts.map(\.id))
         snapshots = snapshots.filter { kept.contains($0.key) }
         if !selectedAccountID.isEmpty && !kept.contains(selectedAccountID) { selectedAccountID = "" }
-        clearSelection(); manualSubscription = nil
+        clearSelection(); manualSubscription = nil; notice = nil; errorMessage = nil
     }
 
     func load() async {
@@ -255,7 +255,12 @@ struct UnsubscribeConfirmation: Identifiable {
         batchTask = Task { [weak self] in
             guard let self else { return }
             var succeeded = 0, failed = 0
-            defer { if batchID == token { isWorking = false; isSendingRequests = false; batchTask = nil } }
+            defer {
+                if revision == current, batchID == token {
+                    isWorking = false; isSendingRequests = false; batchTask = nil
+                    if Task.isCancelled { notice = "Stopped. Requests already sent may still take effect." }
+                }
+            }
             for item in items {
                 guard !Task.isCancelled, revision == current, batchID == token else { return }
                 guard !isUnavailable(item), let service = client(item.accountID) else { failed += 1; continue }

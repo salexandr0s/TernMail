@@ -26,6 +26,10 @@ import Testing
         let root = controller.view
         let selectAll = try #require(button("unsubscribe.selectAll", in: root))
         #expect(selectAll.state == .off)
+        let manual = try #require(button("unsubscribe.select." + store.rows[2].id, in: root))
+        #expect(!manual.isEnabled)
+        #expect(manual.accessibilityHelp()?.contains("website or email") == true)
+        #expect(manual.accessibilityLabel()?.contains("Personal") == true)
         selectAll.performClick(nil)
         try await unsubscribeEventually { model.selectedCount == 3 && button("unsubscribe.selectAll", in: root)?.state == .on }
         print("UNSUBSCRIBE_NATIVE select-all passed")
@@ -90,6 +94,9 @@ import Testing
         window.setContentSize(NSSize(width: 1040, height: 760))
         try await Task.sleep(for: .milliseconds(100))
         try capture(root, name: "wide-light")
+        window.setContentSize(NSSize(width: 720, height: 480))
+        try await Task.sleep(for: .milliseconds(100))
+        try capture(root, name: "compact-light")
         store.rows[0] = NewsletterSubscription(accountID: "first", senderAddress: "editor@journal.example.invalid",
             senderName: "The Independent Journal of Design, Science, Cities and Everyday Life",
             listID: "a-very-long-monthly-publication.journal.example.invalid", latestMessageID: "long",
