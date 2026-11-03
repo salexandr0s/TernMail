@@ -364,10 +364,10 @@ struct RootView: View {
             if model.onboarding.isPresented {
                 OnboardingView()
             } else if let mailbox = model.mailbox {
-                WorkspaceView(mailbox: mailbox)
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        AccountReconnectionBanner(app: model)
-                    }
+                VStack(spacing: 0) {
+                    AccountReconnectionBanner(app: model)
+                    WorkspaceView(mailbox: mailbox)
+                }
             } else {
                 SignInView()
             }
