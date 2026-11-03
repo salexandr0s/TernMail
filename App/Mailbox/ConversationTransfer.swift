@@ -11,8 +11,14 @@ extension UTType {
 /// and the calendar grid accept it. Other apps receive the `tern://` link.
 struct ConversationDragItem: Codable, Hashable, Sendable, Transferable {
     let link: MailLink
+    /// The source is captured before navigation or selection can change.
+    /// Nil represents search results or a link dragged from outside the list.
+    let sourceLabelID: String?
 
-    init(_ link: MailLink) { self.link = link }
+    init(_ link: MailLink, sourceLabelID: String? = nil) {
+        self.link = link
+        self.sourceLabelID = sourceLabelID
+    }
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .ternConversation)

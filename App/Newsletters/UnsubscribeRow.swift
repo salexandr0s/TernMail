@@ -66,6 +66,13 @@ struct UnsubscribeRow: View {
             Button("Open latest message", systemImage: "envelope.open") { model.openLatestMessage(subscription) }
                 .disabled(unavailable)
             if let listID = subscription.listID { Text("List: \(listID)") }
+            if subscription.oneClickURL != nil, subscription.status == .active || subscription.status == .failed {
+                Button(subscription.status == .failed ? "Review unsubscribe request…" : "Unsubscribe…",
+                       systemImage: subscription.status == .failed ? "arrow.clockwise" : "minus.circle") {
+                    model.proposeUnsubscribe(subscription)
+                }
+                .disabled(unavailable || model.isWorking)
+            }
             if subscription.status == .active || subscription.status == .failed || subscription.status == .opened,
                subscription.unsubscribeURL != nil || subscription.mailtoURL != nil {
                 Button(manualTitle + "…", systemImage: manualSymbol) { model.openSubscription(subscription) }

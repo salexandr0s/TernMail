@@ -140,8 +140,24 @@ struct FavoritesView: View {
         .modifier(SidebarDisclosureAccessibility(isExpanded: canExpand ? isExpanded : nil,
             badgeDescription: canExpand && isExpanded ? "" : mailbox.sidebarBadgeDescription(box),
             toggle: { toggleExpansion(of: box) }))
+        .accessibilityIdentifier(box.sidebarAccessibilityIdentifier)
         .contextMenu {
-            MailboxContextMenu(mailbox: mailbox, box: box, isSystemMailbox: favorite.target.isSystemMailbox)
+            switch favorite.target {
+            case .mailbox:
+                MailboxContextMenu(mailbox: mailbox, box: box)
+            case .label(let accountID, let labelID):
+                if let label = mailbox.account(id: accountID)?.labels.first(where: { $0.id == labelID }) {
+                    if label.isSystem {
+                        MailboxContextMenu(mailbox: mailbox, box: box)
+                    } else {
+                        LabelContextMenu(mailbox: mailbox, label: label, showsFavoriteAction: false)
+                    }
+                }
+            case .savedSearch(let id):
+                if let search = mailbox.navigation.searches.first(where: { $0.id == id }) {
+                    SavedSearchContextMenu(mailbox: mailbox, search: search, showsFavoriteAction: false)
+                }
+            }
             Divider()
             Button("Move Up", systemImage: "arrow.up") { Task { await mailbox.navigation.moveFavorite(favorite.id, by: -1) } }
                 .disabled(mailbox.navigation.favorites.first?.id == favorite.id)
@@ -168,6 +184,17 @@ struct FavoritesView: View {
                     .tag(SidebarRowSelection(source: source, mailbox: accountBox))
                     .accessibilityLabel("\(title(favorite)), \(name)")
                     .accessibilityValue(mailbox.sidebarBadgeDescription(accountBox))
+                    .accessibilityIdentifier(accountBox.sidebarAccessibilityIdentifier)
+                    .contextMenu {
+                        if case .savedSearch(let id) = favorite.target {
+                            if let search = mailbox.navigation.searches.first(where: { $0.id == id }) {
+                                SavedSearchContextMenu(mailbox: mailbox, search: search)
+                            }
+                        } else {
+                            MailboxContextMenu(mailbox: mailbox, box: accountBox,
+                                favoriteTarget: .mailbox(labelID: box.id, scope: .accounts([owner.account.id])))
+                        }
+                    }
                 if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id, source: source) }
             }
         } else if box.id == SystemLabel.inbox, accounts(for: box).count == 1, let owner = accounts(for: box).first {
@@ -237,42 +264,6 @@ struct FavoritesView: View {
     }
 }
 
-/// Mark All as Read and, for Trash and Spam, emptying the mailbox. Rows in
-/// the Mailboxes section add Favorites membership.
-struct MailboxContextMenu: View {
-    let mailbox: MailboxModel
-    let box: MailboxID
-    var isSystemMailbox = true
-    var favoriteTarget: MailFavoriteTarget?
-
-    var body: some View {
-        if isSystemMailbox {
-            Button("Mark All as Read", systemImage: "envelope.open") { mailbox.triage.markAllRead(in: box) }
-                .disabled(!MailTriageModel.canMarkAllRead(box))
-            if box.id == SystemLabel.trash || box.id == SystemLabel.spam {
-                Button(box.id == SystemLabel.trash ? "Empty Trash…" : "Delete All Spam…", systemImage: "trash.slash", role: .destructive) {
-                    mailbox.selectedMailbox = box
-                    Task { await mailbox.triage.preparePermanentDeletion(entireMailbox: true) }
-                }
-            }
-        }
-        if let favoriteTarget {
-            if let favorite = mailbox.navigation.favorites.first(where: { $0.target == favoriteTarget }) {
-                Button("Remove from Favorites", systemImage: "star.slash") { Task { await mailbox.navigation.removeFavorite(favorite.id) } }
-            } else {
-                Button("Add to Favorites", systemImage: "star") { Task { await mailbox.navigation.addFavorite(favoriteTarget) } }
-            }
-        }
-    }
-}
-
-extension MailFavoriteTarget {
-    var isSystemMailbox: Bool {
-        if case .mailbox = self { return true }
-        return false
-    }
-}
-
 struct InboxCategoryRows: View {
     let mailbox: MailboxModel
     let accountID: String
@@ -280,13 +271,19 @@ struct InboxCategoryRows: View {
     var body: some View {
         ForEach(InboxCategory.allCases.filter { mailbox.accountPresentation[accountID]?.inboxCategories.contains($0) == true }, id: \.rawValue) { category in
             let box = SystemMailbox(labelID: category.labelID)
+            let boxID = MailboxID.account(accountID, category.labelID)
             Label(box.title, systemImage: box.systemImage)
                 .padding(.leading, Tokens.Space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .badge(mailbox.sidebarBadgeCount(.account(accountID, category.labelID)))
-                .accessibilityValue(mailbox.sidebarBadgeDescription(.account(accountID, category.labelID)))
-                .tag(SidebarRowSelection(source: source, mailbox: .account(accountID, category.labelID)))
+                .badge(mailbox.sidebarBadgeCount(boxID))
+                .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
+                .tag(SidebarRowSelection(source: source, mailbox: boxID))
+                .conversationDropTarget(boxID, mailbox: mailbox)
+                .contextMenu {
+                    MailboxContextMenu(mailbox: mailbox, box: boxID,
+                        favoriteTarget: .mailbox(labelID: category.labelID, scope: .accounts([accountID])))
+                }
         }
     }
 }

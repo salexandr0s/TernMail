@@ -165,6 +165,40 @@ import Testing
         }
     }
 
+    @Test func nestedLabelUsesTheClickedAccountsParentWithoutApplyingTheCurrentSelection() async throws {
+        try await withMailbox { mailbox in
+            mailbox.selectedMailbox = .account("a", SystemLabel.inbox)
+            mailbox.selectedThreadIDs = [ThreadKey(accountID: "a", threadID: "selected")]
+            let parent = try #require(mailbox.account(id: "b")?.labels.first { $0.id == "projects" })
+
+            mailbox.showNewNestedLabel(under: parent)
+
+            let request = try #require(mailbox.labelEditor)
+            #expect(request.accountID == "b")
+            #expect(request.draft.name.isEmpty)
+            #expect(request.draft.parent == "Projects")
+            if case .new(let applyingTo) = request.kind {
+                #expect(applyingTo.isEmpty)
+            } else {
+                Issue.record("A nested label must open the create editor")
+            }
+            var draft = request.draft
+            draft.name = "Invoices"
+            #expect(draft.fullName == "Projects/Invoices")
+            #expect(mailbox.parentChoices(for: nil).contains("Projects"))
+            #expect(mailbox.selectedMailbox == .account("a", SystemLabel.inbox))
+
+            mailbox.labelEditor = nil
+            let inbox = try #require(mailbox.account(id: "b")?.labels.first { $0.id == SystemLabel.inbox })
+            for unavailable in [inbox,
+                LabelRecord(accountID: "b", id: LabelRules.temporaryPrefix + "pending", name: "Pending", isSystem: false),
+                LabelRecord(accountID: "b", id: "deleted", name: "Deleted", isSystem: false)] {
+                mailbox.showNewNestedLabel(under: unavailable)
+                #expect(mailbox.labelEditor == nil)
+            }
+        }
+    }
+
     private func selection(_ mailbox: MailboxModel, preferred: SidebarRowSelection?) -> SidebarRowSelection? {
         mailbox.sidebarRowSelection(preferred: preferred, favoritesCollapsed: false, expandedMailboxIDs: [SystemLabel.inbox])
     }

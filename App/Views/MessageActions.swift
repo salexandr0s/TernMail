@@ -118,11 +118,39 @@ struct MessageMenuItems: View {
             }
         }
         Divider()
+        MailContextTriageItems(mailbox: mailbox, rows: [row], state: MailContextState(labels: [message.labels]),
+                               allowsPermanentDeletion: false,
+                               onMoveToInbox: { mailbox.moveMessage(message, to: SystemLabel.inbox) })
+        organizationItems
+        Divider()
         linkItems
         Divider()
         Button("Print Message…", systemImage: "printer") { printMessage() }.disabled(message.body == nil)
         Button("Export Message as PDF…") { printMessage(pdf: true) }.disabled(message.body == nil)
         Button("Show Original") { openWindow(id: OriginalMessageWindow.sceneID, value: link) }
+    }
+
+    @ViewBuilder private var organizationItems: some View {
+        let labels = mailbox.account(id: message.record.accountID)?.labels.filter { !$0.isSystem } ?? []
+        if !labels.isEmpty {
+            Menu("Labels", systemImage: "tag") {
+                ForEach(labels, id: \.id) { label in
+                    let applied = message.labels.contains(label.id)
+                    Button(label.name, systemImage: applied ? "checkmark" : "tag") {
+                        mailbox.setLabel(label.id, applied: !applied, on: message)
+                    }
+                }
+            }
+            Menu("Move to", systemImage: "folder") {
+                ForEach(labels, id: \.id) { label in
+                    Button(label.name) { mailbox.moveMessage(message, to: label.id) }
+                }
+            }
+        }
+    }
+
+    private var row: MailListRowID {
+        MailListRowID(accountID: message.record.accountID, threadID: message.record.threadID, messageID: message.id)
     }
 
     @ViewBuilder private var replyItems: some View {

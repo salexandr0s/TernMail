@@ -80,6 +80,23 @@ struct GoogleTaskRow: View {
         .ternAnimation(value: showsActions)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-task-row-\(task.id)")
+        .contentShape(Rectangle())
+        .contextMenu {
+            if !isPending {
+                Group {
+                    Button(task.isCompleted ? "Mark Incomplete" : "Mark Complete",
+                           systemImage: task.isCompleted ? "circle" : "checkmark.circle", action: onComplete)
+                    Button("Edit Task…", systemImage: "pencil", action: onEdit)
+                        .disabled(!allowsEditing)
+                    if let source = Self.emailURL(task.notes ?? "") {
+                        Button("Open Source Email", systemImage: "envelope") { openURL(source) }
+                    }
+                    Divider()
+                    Button("Delete Task…", systemImage: "trash", role: .destructive, action: onDelete)
+                }
+                .disabled(isBusy)
+            }
+        }
     }
 
     private var taskText: some View {

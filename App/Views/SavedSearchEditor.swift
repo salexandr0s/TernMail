@@ -1,8 +1,7 @@
 import MailStore
 import SwiftUI
 
-/// A sheet for a new saved search, or a popover from a saved search's Edit…
-/// item or the search results' Save button.
+/// A sheet for a saved search, also presented from the search results' Save button.
 struct SavedSearchEditor: View {
     let mailbox: MailboxModel
     let existing: SavedMailSearch?
@@ -97,13 +96,8 @@ struct SavedSearchRows: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .tag(SidebarRowSelection(source: .savedSearch, mailbox: target))
-                        .popover(isPresented: Bindable(mailbox.navigation).searchToEdit.equals(search), arrowEdge: .trailing) {
-                            SavedSearchEditor(mailbox: mailbox, existing: search)
-                        }
                         .contextMenu {
-                            Button("Add to Favorites") { Task { await mailbox.navigation.addFavorite(.savedSearch(id: search.id)) } }
-                            Button("Edit…") { mailbox.navigation.searchToEdit = search }
-                            Button("Delete", role: .destructive) { Task { await mailbox.navigation.deleteSearch(search.id) } }
+                            SavedSearchContextMenu(mailbox: mailbox, search: search)
                         }
                 }
             }

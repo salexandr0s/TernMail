@@ -184,8 +184,9 @@ struct ThreadListView: View {
         .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
         // Dragging a selected row carries the whole selection.
         .dragContainer(for: ConversationDragItem.self, itemID: \.rowID, in: dragNamespace) { ids in
-            ids.map { ConversationDragItem(mailbox.conversationLink(for: $0)) }
+            mailbox.dragItems(for: ids)
         }
+        .dragConfiguration(DragConfiguration(allowMove: true))
         .modifier(MessageListDragSelection(mailbox: mailbox, namespace: dragNamespace))
         .contextMenu(forSelectionType: MailListRowID.self) { ids in
             MessageListMenu(mailbox: mailbox, rows: ids)

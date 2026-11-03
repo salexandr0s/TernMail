@@ -427,47 +427,89 @@ private enum MessageListFontMetrics {
 struct MessageListMenu: View {
     let mailbox: MailboxModel
     let rows: Set<MailListRowID>
+    @Environment(\.openWindow) private var openWindow
+
+    private var items: [MessageListItem] { mailbox.listItems.filter { rows.contains($0.id) } }
+    private var state: MailContextState { MailContextState(items: items) }
+    private var singleAccount: Bool { Set(rows.map(\.accountID)).count == 1 }
+
     var body: some View {
         Group {
-            if mailbox.offersArchive { Button("Archive", systemImage: "archivebox") { mailbox.performListAction(.archive, rows: rows) } }
-            if mailbox.offersTrash { Button("Move to Trash", systemImage: "trash") { mailbox.performListAction(.trash, rows: rows) } }
-            let allRead = mailbox.allListRead(rows)
-            Button(allRead ? "Mark as Unread" : "Mark as Read", systemImage: allRead ? "envelope.badge" : "envelope.open") {
-                mailbox.toggleListRead(rows)
-            }
-            let allStarred = mailbox.allListStarred(rows)
-            Button(allStarred ? "Remove Star" : "Star", systemImage: allStarred ? "star.fill" : "star") { mailbox.toggleListStar(rows) }
-            Divider()
-            if rows.count == 1, let row = rows.first {
-                Button("Open in New Window", systemImage: "macwindow.badge.plus") { mailbox.requestConversationWindow(for: row) }
-                Button("Copy Link", systemImage: "link") {
-                    if let url = MailLink(accountID: row.accountID, threadID: row.threadID).ternURL {
-                        NSPasteboard.general.replaceContents(with: url.absoluteString)
+            if !rows.isEmpty {
+                composeItems
+                MailContextTriageItems(mailbox: mailbox, rows: rows, state: state, unsnoozes: mailbox.showsSnoozed)
+                Divider()
+                let allRead = mailbox.allListRead(rows)
+                Button(allRead ? "Mark as Unread" : "Mark as Read", systemImage: allRead ? "envelope.badge" : "envelope.open") {
+                    mailbox.toggleListRead(rows)
+                }
+                let allStarred = mailbox.allListStarred(rows)
+                Button(allStarred ? "Remove Star" : "Star", systemImage: allStarred ? "star.fill" : "star") { mailbox.toggleListStar(rows) }
+                Divider()
+                Button("Edit Labels…", systemImage: "tag") { mailbox.showEditLabels(forRows: rows) }
+                    .disabled(!singleAccount)
+                Button("Move to…", systemImage: "folder") { mailbox.showMoveTo(forRows: rows) }
+                    .disabled(!singleAccount)
+                if mailbox.snoozeKeeper != nil, !state.containsDrafts, state.permanentDeletionLabel == nil {
+                    Menu("Snooze", systemImage: "clock") {
+                        SnoozeMenuItems(onSnooze: { mailbox.snoozeRows(rows, until: $0) },
+                                        onChooseDate: { mailbox.showSnoozeDate(forRows: rows) })
                     }
                 }
-                Button("Open in Gmail", systemImage: "arrow.up.right.square") {
-                    if let email = mailbox.account(id: row.accountID)?.account.email,
-                       let url = MailLink(accountID: row.accountID, threadID: row.threadID).gmailURL(email: email) { NSWorkspace.shared.open(url) }
+                if mailbox.showsSnoozed {
+                    Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox.unsnoozeRows(rows) }
                 }
-                Button("Copy Gmail Link", systemImage: "link") {
-                    if let email = mailbox.account(id: row.accountID)?.account.email,
-                       let url = MailLink(accountID: row.accountID, threadID: row.threadID).gmailURL(email: email) {
-                        NSPasteboard.general.replaceContents(with: url.absoluteString)
-                    }
+                if rows.count == 1, let row = rows.first {
+                    Divider()
+                    linkItems(for: row)
                 }
-            }
-            Button("Edit Labels…", systemImage: "tag") { mailbox.showEditLabels(forRows: rows) }
-            Button("Move to…", systemImage: "folder") { mailbox.showMoveTo(forRows: rows) }
-            if mailbox.snoozeKeeper != nil, mailbox.offersArchive {
-                Menu("Snooze", systemImage: "clock") {
-                    SnoozeMenuItems(onSnooze: { mailbox.snoozeRows(rows, until: $0) },
-                                    onChooseDate: { mailbox.showSnoozeDate(forRows: rows) })
-                }
-            }
-            if mailbox.showsSnoozed {
-                Button("Unsnooze", systemImage: "clock.arrow.circlepath") { mailbox.unsnoozeRows(rows) }
             }
         }
         .labelStyle(.titleAndIcon)
+    }
+
+    @ViewBuilder private var composeItems: some View {
+        if rows.count == 1, let item = items.first {
+            let messages = item.messages.sorted { $0.message.date < $1.message.date }
+            if let draft = messages.last(where: { $0.labels.contains(SystemLabel.draft) }) {
+                Button("Edit Draft", systemImage: "pencil") {
+                    Task {
+                        guard let id = await mailbox.startCompose(.editDraft(messageID: draft.message.id, accountID: item.id.accountID)) else { return }
+                        openWindow(id: ComposeWindow.sceneID, value: id)
+                    }
+                }
+            }
+            if let entry = messages.last(where: { !$0.labels.contains(SystemLabel.draft) }) {
+                Button("Reply", systemImage: "arrowshape.turn.up.left") { reply(.reply, to: entry.message) }
+                Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { reply(.replyAll, to: entry.message) }
+                Button("Forward", systemImage: "arrowshape.turn.up.right") { reply(.forward, to: entry.message) }
+                Button("Forward as Attachment", systemImage: "paperclip") {
+                    Task {
+                        guard let id = await mailbox.startForwardingAttachment(messageID: entry.message.id, accountID: entry.message.accountID) else { return }
+                        openWindow(id: ComposeWindow.sceneID, value: id)
+                    }
+                }
+            }
+            if !messages.isEmpty { Divider() }
+        }
+    }
+
+    @ViewBuilder private func linkItems(for row: MailListRowID) -> some View {
+        let link = mailbox.conversationLink(for: row)
+        Button("Open in New Window", systemImage: "macwindow.badge.plus") { mailbox.requestConversationWindow(for: row) }
+        if let url = link.ternURL {
+            Button("Copy Link", systemImage: "link") { NSPasteboard.general.replaceContents(with: url.absoluteString) }
+        }
+        if let email = mailbox.account(id: row.accountID)?.account.email, let url = link.gmailURL(email: email) {
+            Button("Open in Gmail", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }
+            Button("Copy Gmail Link", systemImage: "link") { NSPasteboard.general.replaceContents(with: url.absoluteString) }
+        }
+    }
+
+    private func reply(_ kind: ReplyKind, to message: MessageRecord) {
+        Task {
+            guard let id = await mailbox.requestReply(kind, messageID: message.id, accountID: message.accountID, selectedText: nil) else { return }
+            openWindow(id: ComposeWindow.sceneID, value: id)
+        }
     }
 }

@@ -43,7 +43,7 @@ import Testing
             model.sidebarSnapshot = CalendarRangeSnapshot(presentation: CalendarPresentationSnapshot(events: hidden ? [] : events,
                 interval: request.range.interval, calendar: model.calendar, buildsTimeAxis: false), checkedAt: .now, stale: false, byteCost: 0)
             model.lastCheckedAt = .now
-            let controller = NSHostingController(rootView: CalendarSidebar(model: model, manage: {}, connect: { _ in })
+            let controller = NSHostingController(rootView: CalendarSidebar(model: model, manage: {}, connect: { _ in }, delete: { _ in })
                 .frame(width: width, height: 850).environment(\.colorScheme, scheme))
             controller.sizingOptions = []
             let window = NSWindow(contentViewController: controller)

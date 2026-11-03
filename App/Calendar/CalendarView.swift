@@ -245,7 +245,7 @@ struct CalendarView: View {
     }
 
     private var sidebar: some View {
-        CalendarSidebar(model: model, manage: manageCalendars, connect: connect)
+        CalendarSidebar(model: model, manage: manageCalendars, connect: connect, delete: requestDelete)
     }
 
     @ViewBuilder private var calendarContent: some View {

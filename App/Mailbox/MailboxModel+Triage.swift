@@ -75,17 +75,23 @@ final class MailTriageModel {
     /// The Outbox and Snoozed are not Gmail labels, so Gmail cannot mark them.
     static func canMarkAllRead(_ box: MailboxID) -> Bool {
         box.id != MailboxModel.outboxID && box.id != MailboxModel.snoozedID
+            && !box.id.hasPrefix(MailNavigationModel.searchPrefix) && !LabelRules.isTemporary(box.id)
     }
 
-    func preparePermanentDeletion(entireMailbox: Bool = false) async {
-        guard !isPreparing, !isDeleting, let mailbox, !mailbox.search.isActive,
-              let labelID = mailbox.selectedLabelID, [SystemLabel.spam, SystemLabel.trash].contains(labelID) else { return }
+    func preparePermanentDeletion(entireMailbox: Bool = false, in box: MailboxID? = nil,
+                                  forRows rows: Set<MailListRowID>? = nil) async {
+        guard !isPreparing, !isDeleting, let mailbox, box != nil || !mailbox.search.isActive,
+              let scope = box ?? mailbox.selectedMailbox,
+              [SystemLabel.spam, SystemLabel.trash].contains(scope.id) else { return }
+        let labelID = scope.id
+        let owners = Set(mailbox.owners(of: scope).map { $0.account.id })
         isPreparing = true
         error = nil
         defer { isPreparing = false }
         let targets: [(accountID: String, target: MailActionTarget?)] = entireMailbox
-            ? mailbox.selectedAccounts.map { ($0.account.id, nil) }
-            : mailbox.selectedActionTargets.map { ($0.accountID, $0.target) }
+            ? owners.sorted().map { ($0, nil) }
+            : mailbox.actionTargets(forRows: rows ?? mailbox.selectedListRowIDs)
+                .filter { owners.contains($0.accountID) }.map { ($0.accountID, $0.target) }
         do {
             var approvals: [PermanentDeletionApproval] = []
             for (accountID, target) in targets {
@@ -140,6 +146,18 @@ final class MailTriageModel {
 }
 
 extension MailboxModel {
+    @discardableResult
+    func moveRowsToInbox(_ rows: Set<MailListRowID>, unsnooze: Bool = false) -> Task<Void, Never>? {
+        if unsnooze { return unsnoozeRows(rows) }
+        let targets = actionTargets(forRows: rows)
+        guard !targets.isEmpty else { return nil }
+        return queueUndoable("Move to Inbox", for: Set(rows.map(\.threadKey))) { owner, _ in
+            guard let target = targets.first(where: { $0.accountID == owner.account.id })?.target else { return nil }
+            return try await owner.engine.editLabels(target: target, add: [SystemLabel.inbox],
+                                                     remove: [SystemLabel.trash, SystemLabel.spam])
+        }
+    }
+
     /// Mark Unread from Here: one message and the ones that follow it.
     @discardableResult
     func markUnread(messageIDs: [String], accountID: String) -> Task<Void, Never>? {

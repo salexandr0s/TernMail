@@ -63,6 +63,11 @@ struct SidebarView: View {
                                 .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
                                 .conversationDropTarget(boxID, mailbox: mailbox)
                                 .tag(SidebarRowSelection(mailbox: boxID))
+                                .accessibilityIdentifier(boxID.sidebarAccessibilityIdentifier)
+                                .contextMenu {
+                                    MailboxContextMenu(mailbox: mailbox, box: boxID,
+                                        favoriteTarget: .mailbox(labelID: box.id, scope: .accounts([owner.account.id])))
+                                }
                             if box.id == SystemLabel.inbox { InboxCategoryRows(mailbox: mailbox, accountID: owner.account.id) }
                         }
                     }
@@ -101,6 +106,9 @@ struct SidebarView: View {
         // open this. Search results pop the same editor over their Save button.
         .sheet(isPresented: Bindable(mailbox.navigation).isCreatingSearch) {
             SavedSearchEditor(mailbox: mailbox, existing: nil)
+        }
+        .sheet(item: Bindable(mailbox.navigation).searchToEdit) { search in
+            SavedSearchEditor(mailbox: mailbox, existing: search)
         }
         .onChange(of: mailbox.navigation.searches) { _, _ in mailbox.refreshSavedSearch() }
         // Rows scroll under the status line; the bar's hard edge effect keeps
@@ -242,12 +250,18 @@ struct SidebarView: View {
         if mailbox.listPreferences.showsMore {
             DisclosureGroup("More", isExpanded: $expandedMore.contains(owner.account.id)) {
                 ForEach(moreBoxes(owner), id: \.id) { box in
+                    let boxID = MailboxID.account(owner.account.id, box.id)
                     Label(box.title, systemImage: box.systemImage)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .tag(SidebarRowSelection(mailbox: .account(owner.account.id, box.id)))
-                        .badge(mailbox.sidebarBadgeCount(.account(owner.account.id, box.id)))
-                        .accessibilityValue(mailbox.sidebarBadgeDescription(.account(owner.account.id, box.id)))
+                        .tag(SidebarRowSelection(mailbox: boxID))
+                        .badge(mailbox.sidebarBadgeCount(boxID))
+                        .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
+                        .conversationDropTarget(boxID, mailbox: mailbox)
+                        .contextMenu {
+                            MailboxContextMenu(mailbox: mailbox, box: boxID,
+                                favoriteTarget: .mailbox(labelID: box.id, scope: .accounts([owner.account.id])))
+                        }
                 }
                 ForEach(owner.labels.filter { !$0.isSystem && !mailbox.isVisibleInSidebar($0) }, id: \.id) { label in
                     LabelRow(mailbox: mailbox, node: LabelNode(label: label, title: label.name))
@@ -458,6 +472,7 @@ private struct CombinedMailboxRows: View {
         .accessibilityLabel(box.title)
         .modifier(SidebarDisclosureAccessibility(isExpanded: isExpanded,
             badgeDescription: isExpanded ? "" : mailbox.sidebarBadgeDescription(combinedID), toggle: { isExpanded.toggle() }))
+        .accessibilityIdentifier(combinedID.sidebarAccessibilityIdentifier)
         .contextMenu {
             MailboxContextMenu(mailbox: mailbox, box: combinedID, favoriteTarget: .mailbox(labelID: box.id, scope: .allAccounts))
         }
@@ -476,6 +491,7 @@ private struct CombinedMailboxRows: View {
                     .accessibilityValue(mailbox.sidebarBadgeDescription(boxID))
                     .conversationDropTarget(boxID, mailbox: mailbox)
                     .tag(SidebarRowSelection(mailbox: boxID))
+                    .accessibilityIdentifier(boxID.sidebarAccessibilityIdentifier)
                     .contextMenu {
                         MailboxContextMenu(mailbox: mailbox, box: boxID,
                             favoriteTarget: .mailbox(labelID: box.id, scope: .accounts([owner.account.id])))
@@ -601,19 +617,9 @@ private struct LabelRow: View {
         .modifier(SidebarDisclosureAccessibility(isExpanded: isExpanded, childrenTitle: "Labels",
             badgeDescription: (label.threadsUnread ?? 0) > 0 ? "\(label.threadsUnread ?? 0) unread" : "",
             toggle: { onToggleExpansion?() }))
+        .accessibilityIdentifier(MailboxID.account(label.accountID, label.id).sidebarAccessibilityIdentifier)
         .contextMenu {
-            Button("Add to Favorites", systemImage: "star") {
-                Task { await mailbox.navigation.addFavorite(.label(accountID: label.accountID, labelID: label.id)) }
-            }
-            Menu("Show in Sidebar") {
-                ForEach(LabelListVisibility.allCases, id: \.rawValue) { visibility in
-                    Button(visibility.sidebarTitle) { mailbox.setLabelVisibility(label, to: visibility) }
-                }
-            }
-            Button("Edit Label…", systemImage: "pencil") { mailbox.showEditLabel(label) }
-                .labelStyle(.titleAndIcon)
-            Button("Delete Label…", systemImage: "trash") { mailbox.labelToDelete = label }
-                .labelStyle(.titleAndIcon)
+            LabelContextMenu(mailbox: mailbox, label: label)
         }
     }
 }

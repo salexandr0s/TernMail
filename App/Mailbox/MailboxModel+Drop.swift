@@ -3,9 +3,9 @@ import MailStore
 import MessageContent
 import SyncEngine
 
-/// What dropping conversations on a sidebar mailbox does to them.
 enum ConversationDropAction: Equatable {
     case addLabel(String)
+    case moveToLabel(String)
     case moveToInbox
     case archive
     case trash
@@ -13,90 +13,162 @@ enum ConversationDropAction: Equatable {
 }
 
 extension ConversationDragItem {
-    /// The list row the item came from, for drag containers keyed by row.
     var rowID: MailListRowID {
         MailListRowID(accountID: link.accountID, threadID: link.threadID, messageID: link.messageID)
     }
 }
 
 extension MailboxModel {
-    /// Nil when a drop would change nothing: the mailbox already shown, or one
-    /// mail can't be put into by hand (Starred, Sent, Drafts, Snoozed, Outbox).
-    static func dropAction(onto labelID: String, isUserLabel: Bool, shown currentLabelID: String?) -> ConversationDropAction? {
-        guard labelID != currentLabelID else { return nil }
-        if isUserLabel { return .addLabel(labelID) }
+    func dragItems(for rows: [MailListRowID]) -> [ConversationDragItem] {
+        rows.map {
+            ConversationDragItem(MailLink(accountID: $0.accountID, threadID: $0.threadID, messageID: $0.messageID),
+                                 sourceLabelID: search.isActive ? nil : selectedLabelID)
+        }
+    }
+
+    /// A regular drag moves mail. Option-drag applies a user label without moving it.
+    static func dropAction(onto labelID: String, isUserLabel: Bool, copy: Bool = false) -> ConversationDropAction? {
+        if isUserLabel { return copy ? .addLabel(labelID) : .moveToLabel(labelID) }
         switch labelID {
         case SystemLabel.inbox: return .moveToInbox
         case SystemLabel.allMail: return .archive
         case SystemLabel.trash: return .trash
         case SystemLabel.spam: return .spam
+        case SystemLabel.starred, SystemLabel.unread, SystemLabel.important,
+             "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS":
+            return .addLabel(labelID)
         default: return nil
         }
     }
 
-    /// Rows register as drop targets only while they take conversations.
-    func acceptsDrop(on box: MailboxID) -> Bool {
-        dropAction(for: box) != nil
-    }
-
-    /// Changes the dropped conversations the way `box` asks, through the action
-    /// queue with Undo. Returns false when nothing queues, so the drag snaps back.
-    @discardableResult
-    func drop(_ items: [ConversationDragItem], on box: MailboxID) -> Bool {
-        guard let action = dropAction(for: box) else { return false }
-        // A row scoped to some accounts takes their mail only.
-        let rows = Set(items.map(\.rowID)).filter { row in
-            switch box {
-            case .combined: true
-            case .account(let accountID, _): row.accountID == accountID
-            case .scoped(_, let accountIDs): accountIDs.contains(row.accountID)
-            }
-        }
-        let targets = actionTargets(forRows: rows)
-        guard !targets.isEmpty else { return false }
-        let keys = Set(rows.map(\.threadKey))
-        let subject = keys.count == 1 ? "Conversation" : "\(keys.count) conversations"
-        let target = { (owner: AccountMailbox) in targets.first { $0.accountID == owner.account.id }?.target }
-        switch action {
-        case .addLabel(let labelID):
-            let name = owners(of: box).first?.labels.first { $0.id == labelID }?.name ?? "the label"
-            return queueUndoable("Add Label", confirmation: "\(subject) added to “\(name)”", for: keys) { owner, _ in
-                guard let target = target(owner) else { return nil }
-                return try await owner.engine.editLabels(target: target, add: [labelID], remove: [])
-            } != nil
-        case .moveToInbox:
-            if showsSnoozed { return unsnoozeRows(rows) != nil }
-            let shown = search.isActive ? nil : selectedLabelID
-            if shown == SystemLabel.spam {
-                triage.perform(.notSpam, targets: targets)
-                selectRow(after: rows)
-                return true
-            }
-            // Mail leaves Trash or a user label; elsewhere it is only added to the Inbox.
-            let leaves = shown.map { label in
-                label == SystemLabel.trash || accounts.contains { $0.labels.contains { $0.id == label && !$0.isSystem } }
-            } ?? false
-            if leaves { selectRow(after: rows) }
-            return queueUndoable("Move to Inbox", confirmation: "\(subject) moved to the Inbox", for: keys) { owner, _ in
-                guard let target = target(owner) else { return nil }
-                return try await owner.engine.move(target: target, to: SystemLabel.inbox, from: shown ?? SystemLabel.inbox)
-            } != nil
-        case .archive:
-            return performListAction(.archive, rows: rows) != nil
-        case .trash:
-            return performListAction(.trash, rows: rows) != nil
-        case .spam:
-            triage.perform(.spam, targets: targets)
-            if !search.isActive { selectRow(after: rows) }
-            return true
-        }
-    }
-
-    private func dropAction(for box: MailboxID) -> ConversationDropAction? {
-        var isUserLabel = false
+    func dropAction(for box: MailboxID, copy: Bool = false) -> ConversationDropAction? {
+        guard !owners(of: box).isEmpty else { return nil }
+        let isUserLabel: Bool
         if case .account(let accountID, let labelID) = box {
             isUserLabel = account(id: accountID)?.labels.contains { $0.id == labelID && !$0.isSystem } == true
+        } else {
+            isUserLabel = false
         }
-        return Self.dropAction(onto: box.id, isUserLabel: isUserLabel, shown: search.isActive ? nil : selectedLabelID)
+        return Self.dropAction(onto: box.id, isUserLabel: isUserLabel, copy: copy)
+    }
+
+    func acceptsDrop(on box: MailboxID, rows: Set<MailListRowID>? = nil) -> Bool {
+        guard dropAction(for: box) != nil else { return false }
+        guard let rows else { return true }
+        let allowedAccounts = Set(owners(of: box).map(\.account.id))
+        guard !rows.isEmpty, rows.allSatisfy({ allowedAccounts.contains($0.accountID) }) else { return false }
+        // Reject the whole drop if any account mixes messages and conversations.
+        return actionTargets(forRows: rows).count == Set(rows.map(\.accountID)).count
+    }
+
+    @discardableResult
+    func drop(_ items: [ConversationDragItem], on box: MailboxID, copy: Bool = false) -> Bool {
+        queueDrop(items, on: box, copy: copy) != nil
+    }
+
+    /// Uses the drag's identities and source, never the current list selection.
+    @discardableResult
+    func queueDrop(_ items: [ConversationDragItem], on box: MailboxID, copy: Bool = false) -> Task<Void, Never>? {
+        let rows = Set(items.map(\.rowID))
+        guard acceptsDrop(on: box, rows: rows), Set(items.map(\.sourceLabelID)).count == 1,
+              let action = dropAction(for: box, copy: copy) else { return nil }
+        let source = items.first?.sourceLabelID
+        guard source != box.id else { return nil }
+        if source == Self.snoozedID {
+            switch action {
+            case .archive, .moveToLabel:
+                notice = Notice(message: "Move this mail to Inbox to end its snooze before moving or archiving it. Hold Option to add a label while keeping the snooze.")
+                return nil
+            default: break
+            }
+        }
+        let cache = cache
+        let targets = actionTargets(forRows: rows)
+        let keys = Set(rows.map(\.threadKey))
+        let title = owners(of: box).first?.labels.first { $0.id == box.id && !$0.isSystem }?.name
+            ?? SystemMailbox(labelID: box.id).title
+        let subject = rows.count == 1 ? "Mail" : "\(rows.count) items"
+
+        if action == .moveToInbox, source == Self.snoozedID {
+            return unsnoozeRows(rows)
+        }
+
+        let name: String
+        let confirmation: String
+        switch action {
+        case .addLabel:
+            name = "Add Label"
+            confirmation = "\(subject) added to “\(title)”"
+        case .moveToInbox, .moveToLabel:
+            name = "Move"
+            confirmation = "\(subject) moved to “\(title)”"
+        case .archive:
+            name = "Archive"
+            confirmation = "\(subject) archived"
+        case .trash:
+            name = "Move to Trash"
+            confirmation = "\(subject) moved to Trash"
+        case .spam:
+            name = "Mark as Spam"
+            confirmation = "\(subject) moved to Spam"
+        }
+
+        let task = queueUndoable(name, confirmation: confirmation, for: keys) { owner, _ in
+            guard let target = targets.first(where: { $0.accountID == owner.account.id })?.target else { return nil }
+            // Validate the entire batch before changing any account. Search
+            // results can contain snoozed mail without naming Snoozed as source.
+            let validation = try await cache.read { tx in
+                let valid = try rows.allSatisfy { row in
+                    if let id = row.messageID {
+                        return try tx.message(id: id, accountID: row.accountID)?.threadID == row.threadID
+                    }
+                    return try !tx.currentLabels(threadID: row.threadID, accountID: row.accountID).isEmpty
+                }
+                let hasSnoozes = try targets.contains {
+                    try Self.hasSnooze($0.target, accountID: $0.accountID, in: tx)
+                }
+                return (valid: valid, hasSnoozes: hasSnoozes)
+            }
+            guard validation.valid else { return nil }
+            if validation.hasSnoozes {
+                switch action {
+                case .moveToLabel, .archive:
+                    self.notice = Notice(message: "Move this mail to Inbox to end its snooze before moving or archiving it. Hold Option to add a label while keeping the snooze.")
+                    return nil
+                default: break
+                }
+            }
+            switch action {
+            case .addLabel(let label):
+                return try await owner.engine.editLabels(target: target, add: [label], remove: [])
+            case .moveToLabel(let label):
+                let customSource = source.flatMap { id in owner.labels.first { $0.id == id && !$0.isSystem }?.id }
+                let remove = [SystemLabel.inbox, SystemLabel.trash, SystemLabel.spam] + (customSource.map { [$0] } ?? [])
+                return try await owner.engine.editLabels(target: target, add: [label], remove: remove)
+            case .moveToInbox:
+                let customSource = source.flatMap { id in owner.labels.first { $0.id == id && !$0.isSystem }?.id }
+                return try await owner.engine.editLabels(target: target, add: [SystemLabel.inbox],
+                    remove: [SystemLabel.trash, SystemLabel.spam] + (customSource.map { [$0] } ?? []))
+            case .archive:
+                return try await owner.engine.editLabels(target: target, add: [],
+                    remove: [SystemLabel.inbox, SystemLabel.trash, SystemLabel.spam])
+            case .trash:
+                return try await owner.engine.perform(.trash, target: target)
+            case .spam:
+                return try await owner.engine.editLabels(target: target, add: [SystemLabel.spam],
+                    remove: [SystemLabel.inbox, SystemLabel.trash])
+            }
+        }
+        if task != nil, !search.isActive {
+            switch action {
+            case .trash, .spam: selectRow(after: rows)
+            case .archive where selectedLabelID == SystemLabel.inbox || selectedLabelID == SystemLabel.trash || selectedLabelID == SystemLabel.spam:
+                selectRow(after: rows)
+            case .moveToLabel, .moveToInbox:
+                if selectedLabelID == source { selectRow(after: rows) }
+            default: break
+            }
+        }
+        return task
     }
 }

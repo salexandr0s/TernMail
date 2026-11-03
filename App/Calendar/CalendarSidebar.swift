@@ -11,6 +11,7 @@ struct CalendarSidebar: View {
     @Bindable var model: CalendarModel
     let manage: () -> Void
     let connect: (String) -> Void
+    let delete: (CalendarDisplayEvent) -> Void
     @State private var selection: CalendarSidebarItem?
 
     /// Room for the compact popover: the mini month, a row per calendar and
@@ -87,8 +88,16 @@ struct CalendarSidebar: View {
         .listStyle(.sidebar)
         .accessibilityLabel("Calendars and daily agenda")
         .contextMenu(forSelectionType: CalendarSidebarItem.self) { items in
-            if items.contains(where: { if case .event = $0 { true } else { false } }) {
-                Button("Open Event") { open(items) }
+            if items.count == 1, case .event(let id) = items.first, let event = event(withID: id) {
+                CalendarEventMenuItems(event: event, edit: { _ in open(items) },
+                    duplicate: model.duplicate, delete: delete)
+                Divider()
+            } else if items.count == 1, case .calendar(let id) = items.first,
+                      let calendar = model.calendars.first(where: { $0.id == id }) {
+                Button(calendar.isVisible ? "Hide Calendar" : "Show Calendar") {
+                    model.setVisible(id: calendar.id, visible: !calendar.isVisible)
+                }
+                Divider()
             }
             Button("Calendar Settings…", action: manage)
         } primaryAction: { items in

@@ -170,8 +170,9 @@ final class MailboxModel {
     /// Edit Labels, open from its toolbar button while set.
     var labelEdit: LabelEdit?
     /// Move to, open from its toolbar button for these conversations while set.
-    var moveTargets: Set<ThreadKey>? { didSet { if moveTargets == nil { moveMessageTargets = nil } } }
+    var moveTargets: Set<ThreadKey>? { didSet { if moveTargets == nil { moveMessageTargets = nil; moveSourceLabelID = nil } } }
     var moveMessageTargets: [String]?
+    var moveSourceLabelID: String?
     /// The New Label or Edit Label sheet.
     var labelEditor: LabelEditorRequest?
     /// The label whose deletion waits for confirmation.

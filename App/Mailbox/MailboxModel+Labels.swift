@@ -56,7 +56,7 @@ extension MailboxModel {
     /// Move to offers the Inbox and the user labels, less the mailbox shown.
     var moveChoices: [LabelChoice] {
         let inbox = LabelChoice(id: SystemLabel.inbox, name: "Inbox", systemImage: "tray")
-        return ([inbox] + labelChoices).filter { search.isActive || $0.id != selectedLabelID }
+        return ([inbox] + labelChoices).filter { $0.id != moveSourceLabelID }
     }
 
     /// Full names of the labels `label` may be nested under: any other user
@@ -107,6 +107,7 @@ extension MailboxModel {
         guard oneAccount(of: ids, or: "Choose conversations from one account to move them.") != nil else { return }
         moveTargets = ids
         moveMessageTargets = nil
+        moveSourceLabelID = search.isActive ? nil : selectedLabelID ?? SystemLabel.inbox
     }
 
     func showEditLabels(forRows rows: Set<MailListRowID>) {
@@ -130,6 +131,7 @@ extension MailboxModel {
         guard messages.isEmpty || messages.count == rows.count else { return }
         moveTargets = keys
         moveMessageTargets = messages.isEmpty ? nil : messages
+        moveSourceLabelID = search.isActive ? nil : selectedLabelID ?? SystemLabel.inbox
     }
 
     /// New Label, from the sidebar, the menu or Edit Labels' Create Label.
@@ -247,22 +249,119 @@ extension MailboxModel {
         }
     }
 
+    /// Reader menus keep their message target even when the main list changes.
+    @discardableResult
+    func setLabel(_ labelID: String, applied: Bool, on message: MessageDetail) -> Task<Void, Never>? {
+        guard let owner = account(id: message.record.accountID),
+              owner.labels.contains(where: { $0.id == labelID && !$0.isSystem }) else { return nil }
+        return queueUndoable(applied ? "Add Label" : "Remove Label", in: owner) { engine in
+            try await engine.editLabels(target: .messages([message.id]), add: applied ? [labelID] : [],
+                                        remove: applied ? [] : [labelID])
+        }
+    }
+
+    @discardableResult
+    func moveMessage(_ message: MessageDetail, to labelID: String) -> Task<Void, Never>? {
+        guard let owner = account(id: message.record.accountID),
+              labelID == SystemLabel.inbox || owner.labels.contains(where: { $0.id == labelID && !$0.isSystem }) else { return nil }
+        return Task {
+            do {
+                let snoozed = try await cache.read { tx -> Bool? in
+                    let accountID = message.record.accountID
+                    guard try tx.message(id: message.id, accountID: accountID)?.threadID == message.record.threadID else { return nil }
+                    return try Self.hasSnooze(.messages([message.id]), accountID: accountID, in: tx)
+                }
+                guard account(id: message.record.accountID) === owner, !Task.isCancelled else { return }
+                guard let snoozed else {
+                    notice = Notice(message: "This message is no longer available.", isError: true)
+                    return
+                }
+                if snoozed {
+                    guard labelID == SystemLabel.inbox else {
+                        notice = Notice(message: "Move this mail to Inbox to end its snooze before moving it to a folder. Use Labels to add a label while keeping the snooze.")
+                        return
+                    }
+                    guard let keeper = owner.snoozeKeeper else {
+                        notice = Notice(message: "Couldn't return this mail to the Inbox. Try again.", isError: true)
+                        return
+                    }
+                    try await keeper.unsnooze(target: .messages([message.id]))
+                    notice = Notice(message: "Message moved to the Inbox")
+                    return
+                }
+                await queueUndoable("Move Message", in: owner) { engine in
+                    try await engine.editLabels(target: .messages([message.id]), add: [labelID],
+                                                remove: [SystemLabel.inbox, SystemLabel.trash, SystemLabel.spam])
+                }?.value
+            } catch {
+                guard account(id: message.record.accountID) === owner, !(error is CancellationError) else { return }
+                notice = Notice(message: "Couldn't move this message. Try again.", isError: true)
+            }
+        }
+    }
+
     /// Moves the conversations Move to opened for, out of the mailbox shown.
     @discardableResult
     func move(to labelID: String) -> Task<Void, Never>? {
         guard let targets = moveTargets else { return nil }
         let labelName = labelAccount.labels.first { $0.id == labelID }?.name
         let messageIDs = moveMessageTargets
+        let from = moveSourceLabelID ?? SystemLabel.inbox
         moveTargets = nil
         moveMessageTargets = nil
+        if from == Self.snoozedID, labelID != SystemLabel.inbox {
+            notice = Notice(message: "Move this mail to Inbox to end its snooze before moving it to a folder. Use Edit Labels to add a label while keeping the snooze.")
+            return nil
+        }
         let title = labelID == SystemLabel.inbox ? "Inbox" : labelName ?? "the label"
         let subject = targets.count == 1 ? "Conversation" : "\(targets.count) conversations"
-        // Search results come from any mailbox, so they leave the Inbox.
-        let from = search.isActive ? SystemLabel.inbox : selectedLabelID ?? SystemLabel.inbox
-        if !search.isActive { selectThread(after: targets) }
+        if !search.isActive, selectedLabelID == from {
+            if let messageIDs {
+                selectRow(after: selectedMessageRows.filter { targets.contains($0.threadKey) && messageIDs.contains($0.messageID ?? "") })
+            } else { selectThread(after: targets) }
+        }
+        if from == Self.snoozedID {
+            guard let accountID = targets.first?.accountID, let keeper = account(id: accountID)?.snoozeKeeper else { return nil }
+            let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(Self.threadIDs(targets))
+            return Task {
+                do {
+                    try await keeper.unsnooze(target: target)
+                    notice = Notice(message: "\(subject) moved to the Inbox")
+                } catch { notice = Notice(message: "Couldn't return this mail to the Inbox. Try again.", isError: true) }
+            }
+        }
         return queueUndoable("Move", confirmation: "\(subject) moved to “\(title)”", for: targets) { owner, ids in
             let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(ids)
-            return try await owner.engine.move(target: target, to: labelID, from: from)
+            if labelID != SystemLabel.inbox {
+                let accountID = owner.account.id
+                let snoozed = try await self.cache.read { tx in
+                    try Self.hasSnooze(target, accountID: accountID, in: tx)
+                }
+                if snoozed {
+                    self.notice = Notice(message: "Move this mail to Inbox to end its snooze before moving it to a folder. Use Edit Labels to add a label while keeping the snooze.")
+                    return nil
+                }
+            }
+            let sourceLabel = owner.labels.first { $0.id == from && !$0.isSystem }?.id
+            let remove = [SystemLabel.inbox, SystemLabel.trash, SystemLabel.spam] + (sourceLabel.map { [$0] } ?? [])
+            return try await owner.engine.editLabels(target: target, add: [labelID], remove: remove)
+        }
+    }
+
+    nonisolated static func hasSnooze(_ target: MailActionTarget, accountID: String, in tx: CacheTransaction) throws -> Bool {
+        let threads = try tx.snoozeHolds(accountID: accountID)
+        let messages = try tx.messageSnoozeHolds(accountID: accountID)
+        switch target {
+        case .threads(let ids):
+            let chosen = Set(ids)
+            return ids.contains { threads[$0] != nil } || messages.contains { chosen.contains($0.threadID) }
+        case .messages(let ids):
+            let chosen = Set(ids)
+            if messages.contains(where: { chosen.contains($0.messageID) }) { return true }
+            return try ids.contains { id in
+                guard let message = try tx.message(id: id, accountID: accountID) else { return false }
+                return threads[message.threadID] != nil
+            }
         }
     }
 
