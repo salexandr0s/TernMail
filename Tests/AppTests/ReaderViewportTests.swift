@@ -26,7 +26,7 @@ import WebKit
         settings.set(2.0, forKey: ReadingPreferences.readDelayKey)
         let state = ReaderViewportState(key: first)
         let root = ReaderViewportHarness(state: state, mailbox: mailbox).environment(app).defaultAppStorage(settings)
-        let window = makeWindow(root)
+        let window = try await makeWindow(root)
         defer { window.close(); settings.removePersistentDomain(forName: suite) }
         try await waitUntil { !self.messageViews(in: window.contentView).isEmpty }
         try await waitUntilAsync {
@@ -88,7 +88,7 @@ import WebKit
             performance.cancel(.reader, generation: bodyGeneration)
             performance.cancel(.readerHeader, generation: headerGeneration)
         }
-        let hiddenWindow = makeWindow(ConversationWindow(link: MailLink(accountID: hidden.accountID, threadID: hidden.threadID))
+        let hiddenWindow = try await makeWindow(ConversationWindow(link: MailLink(accountID: hidden.accountID, threadID: hidden.threadID))
             .environment(app).defaultAppStorage(settings))
         try await waitUntil { self.messageViews(in: hiddenWindow.contentView).contains { !$0.isLoading && $0.frame.height > 40 } }
         // Opening a standalone conversation cannot claim a main-window
@@ -107,7 +107,7 @@ import WebKit
         hiddenWindow.orderOut(nil)
         // Create the control after hiding A: it cannot occlude A before A's
         // delayed-read timer has had time to start while visible.
-        let controlWindow = makeWindow(ReaderViewportHarness(state: ReaderViewportState(key: visible), mailbox: mailbox)
+        let controlWindow = try await makeWindow(ReaderViewportHarness(state: ReaderViewportState(key: visible), mailbox: mailbox)
             .environment(app).defaultAppStorage(settings))
         defer { hiddenWindow.close(); controlWindow.close(); settings.removePersistentDomain(forName: suite) }
         try await waitUntil { !self.messageViews(in: controlWindow.contentView).isEmpty }
@@ -134,7 +134,7 @@ import WebKit
         let suite = "ReaderViewportTests.\(UUID().uuidString)"
         let settings = try #require(UserDefaults(suiteName: suite))
         settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
-        let window = makeWindow(ThreadView(key: key, mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        let window = try await makeWindow(ThreadView(key: key, mailbox: mailbox).environment(app).defaultAppStorage(settings))
         defer { window.close(); settings.removePersistentDomain(forName: suite) }
         try await waitUntil { self.messageViews(in: window.contentView).contains { $0.frame.height > 200 } }
         let scroll = try #require(descendants(in: window.contentView).compactMap { $0 as? NSScrollView }.first {
@@ -179,7 +179,7 @@ import WebKit
             blocker: await RemoteContentBlocker.ruleList(), height: Binding(get: { state.height }, set: { state.height = $0 }),
             onReadable: { _ in finder.didBecomeReadable("message-90") },
             onCreate: { finder.register($0, for: "message-90") }, onDismantle: { finder.unregister($0) })
-        let window = makeWindow(reader)
+        let window = try await makeWindow(reader)
         defer { finder.hide(); window.close() }
         try await waitUntilAsync {
             guard let view = self.messageViews(in: window.contentView).first else { return false }
@@ -238,12 +238,25 @@ import WebKit
         }
     }
 
-    private func makeWindow(_ root: some View) -> NSWindow {
+    private func makeWindow(_ root: some View) async throws -> NSWindow {
+        let controller = NSHostingController(rootView: root)
+        controller.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.level = .floating
-        window.contentView = NSHostingView(rootView: root)
-        window.orderFront(nil)
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: 760, height: 520))
+        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        window.makeKeyAndOrderFront(nil)
+        do {
+            try await waitUntil {
+                NSApp.isActive && window.isKeyWindow && window.occlusionState.contains(.visible)
+            }
+        } catch {
+            window.close()
+            throw error
+        }
+        #expect(window.contentView?.bounds.size == NSSize(width: 760, height: 520))
         return window
     }
     private func messageViews(in view: NSView?) -> [ContentSizedWebView] {

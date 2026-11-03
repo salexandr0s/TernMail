@@ -12,9 +12,6 @@ struct EmailCalendarSuggestionsView: View {
     let onRespond: (EmailCalendarItem, InvitationReply.Answer) -> Void
     var onDismiss: (String) -> Void = { _ in }
     var onRetry: (() -> Void)? = nil
-    var tasks: GoogleTasksModel? = nil
-    var taskRequest: (EmailCalendarItem) -> TaskCreationRequest? = { _ in nil }
-    var onAddTask: (TaskCreationRequest) -> Void = { _ in }
     @State private var showsAll = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -39,7 +36,8 @@ struct EmailCalendarSuggestionsView: View {
                         onRespond: { onRespond(item, $0) }, onDismiss: {
                             model.dismiss(item.id)
                             onDismiss(item.id)
-                        }, tasks: tasks, taskRequest: taskRequest(item), onAddTask: onAddTask)
+                        })
+                        .ternTransition(.disclosure)
                 }
                 if model.isInterpreting {
                     HStack(spacing: Tokens.Space.s2) {
@@ -56,7 +54,8 @@ struct EmailCalendarSuggestionsView: View {
                     } label: {
                         HStack(spacing: Tokens.Space.s1) {
                             Text(showsAll ? "Show fewer" : "Show all \(orderedItems.count) events")
-                            Image(systemName: showsAll ? "chevron.up" : "chevron.down")
+                            Image(systemName: "chevron.down")
+                                .rotationEffect(.degrees(showsAll ? 180 : 0))
                             Spacer(minLength: 0)
                             if !showsAll, hiddenChanges > 0 {
                                 Text(hiddenChanges == 1 ? "1 more update" : "\(hiddenChanges) more updates")
@@ -68,6 +67,7 @@ struct EmailCalendarSuggestionsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .ternHover(radius: Tokens.Radius.md)
                     .accessibilityValue(showsAll ? "Expanded" : "Collapsed")
                 }
                 if let error = model.interpretationError {
@@ -97,6 +97,7 @@ struct EmailCalendarSuggestionsView: View {
                     .allowsHitTesting(false)
             }
             .accessibilityElement(children: .contain)
+            .ternAnimation(value: showsAll, duration: Tokens.Motion.slow)
             .onChange(of: model.messages.map(\.id)) { _, _ in showsAll = false }
         }
     }
@@ -115,10 +116,8 @@ private struct EmailCalendarSuggestionRow: View {
     let onOpenExisting: () -> Void
     let onRespond: (InvitationReply.Answer) -> Void
     let onDismiss: () -> Void
-    let tasks: GoogleTasksModel?
-    let taskRequest: TaskCreationRequest?
-    let onAddTask: (TaskCreationRequest) -> Void
     @State private var showsDetails = false
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var presentation: EmailCalendarPresentation { .init(item: item, calendar: calendar) }
 
@@ -126,8 +125,7 @@ private struct EmailCalendarSuggestionRow: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                    dateTile
-                    summary.frame(minWidth: Tokens.Space.s16 * 2)
+                    disclosure.frame(minWidth: Tokens.Space.s16 * 3)
                     HStack(spacing: Tokens.Space.s2) {
                         eventActions
                         moreMenu
@@ -137,8 +135,7 @@ private struct EmailCalendarSuggestionRow: View {
                 }
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                        dateTile
-                        summary
+                        disclosure
                         moreMenu.controlSize(.small).fixedSize()
                     }
                     eventActions
@@ -147,13 +144,38 @@ private struct EmailCalendarSuggestionRow: View {
                         .padding(.leading, Tokens.ConversationHeader.dateTile + Tokens.Space.s3)
                 }
             }
-            if showsDetails { details }
+            if showsDetails {
+                details.ternTransition(.disclosure)
+            }
         }
         .padding(.horizontal, Tokens.Space.s4)
         .padding(.vertical, Tokens.Space.s3)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.title)
         .accessibilityValue(presentation.badge.text)
+        .ternAnimation(value: showsDetails, duration: Tokens.Motion.slow)
+    }
+
+    private var disclosure: some View {
+        Button { showsDetails.toggle() } label: {
+            HStack(spacing: Tokens.Space.s3) {
+                dateTile
+                summary
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(showsDetails ? 90 : 0))
+                    .frame(width: Tokens.Space.s4)
+            }
+            .padding(.vertical, Tokens.Space.s1)
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        }
+        .buttonStyle(.plain)
+        .ternHover()
+        .help(showsDetails ? "Hide event details" : "Show event details")
+        .accessibilityLabel("\(showsDetails ? "Hide" : "Show") details for \(presentation.title)")
+        .accessibilityValue("\(showsDetails ? "Expanded" : "Collapsed"), \(presentation.dateLine), \(presentation.badge.text)")
+        .accessibilityIdentifier("calendar-details-\(item.id)")
     }
 
     private var summary: some View {
@@ -163,7 +185,6 @@ private struct EmailCalendarSuggestionRow: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .help(presentation.title)
-                .textSelection(.enabled)
             Text(presentation.dateLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -179,24 +200,18 @@ private struct EmailCalendarSuggestionRow: View {
     }
 
     private var dateTile: some View {
-        Button { showsDetails.toggle() } label: {
-            dateTileFace
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: presentation.badge.symbol)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(badgeColor)
-                        .frame(width: Tokens.ConversationHeader.statusBadge, height: Tokens.ConversationHeader.statusBadge)
-                        .background(Tokens.Surface.muted, in: Circle())
-                        .overlay { Circle().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
-                        .offset(x: Tokens.Space.s1_5, y: -Tokens.Space.s1_5)
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-        .help(presentation.badge.text)
-        .accessibilityLabel("\(showsDetails ? "Hide" : "Show") event details: \(presentation.badge.text)")
-        .accessibilityValue(showsDetails ? "Expanded" : "Collapsed")
+        dateTileFace
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: presentation.badge.symbol)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(badgeColor)
+                    .frame(width: Tokens.ConversationHeader.statusBadge, height: Tokens.ConversationHeader.statusBadge)
+                    .background(Tokens.Surface.muted, in: Circle())
+                    .overlay { Circle().strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+                    .offset(x: Tokens.Space.s1_5, y: -Tokens.Space.s1_5)
+            }
+            .fixedSize()
+            .accessibilityHidden(true)
     }
 
     private var badgeColor: Color {
@@ -216,50 +231,60 @@ private struct EmailCalendarSuggestionRow: View {
     }
 
     private var eventActions: some View {
-        HStack(spacing: Tokens.Space.s1_5) {
-            primaryAction
-            if let tasks, let taskRequest {
-                EmailTaskAddButton(request: taskRequest, model: tasks, onAdd: onAddTask)
-                    .accessibilityIdentifier("calendar-task-add-\(item.id)")
+        HStack(spacing: Tokens.Space.s2) {
+            if canRespond {
+                Menu("Respond") { responseActions }
+                    .menuStyle(.borderedButton)
+                    .help("Reply to this invitation")
+            }
+            if item.canReview && (item.kind == .updated || item.kind == .cancelled) {
+                calendarButton
+            } else if item.existingEventID != nil {
+                Button("Open", systemImage: "calendar", action: onOpenExisting)
+                    .help("Open this event in Calendar")
+                    .accessibilityLabel("Open in Calendar: \(presentation.title)")
+                    .accessibilityIdentifier("calendar-open-\(item.id)")
+            } else if item.canReview {
+                calendarButton
             }
         }
     }
 
-    @ViewBuilder private var primaryAction: some View {
-        if item.canReview && (item.kind == .updated || item.kind == .cancelled) {
-            reviewButton
-        } else if canRespond {
-            Menu("Respond") { responseActions }
-                .menuStyle(.borderedButton)
-                .help("Reply to this invitation")
-        } else if item.existingEventID != nil {
-            Button("Open", action: onOpenExisting)
-                .help("Open this event in Calendar")
-        } else if item.canReview {
-            reviewButton
-        }
-    }
-
-    private var reviewButton: some View {
+    private var calendarButton: some View {
         Button(action: onReview) {
-            Text("Review")
-                .font(.callout.weight(.medium))
-                .padding(.horizontal, Tokens.Space.s3)
-                .frame(height: Tokens.Control.iconButton)
-                .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            HStack(spacing: Tokens.Space.s1_5) {
+                Image(systemName: calendarActionSymbol)
+                    .font(.callout.weight(.semibold))
+                if item.kind == .cancelled { Text("Remove").font(.callout.weight(.medium)) }
+                else if item.kind == .updated, item.existingEventID != nil { Text("Update").font(.callout.weight(.medium)) }
+            }
+            .foregroundStyle(calendarActionColor)
+            .padding(.horizontal, isAdding ? 0 : Tokens.Space.s2)
+            .frame(minWidth: Tokens.Control.iconButton, minHeight: Tokens.Control.iconButton)
+            .background(calendarActionColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .overlay {
+                RoundedRectangle(cornerRadius: Tokens.Radius.sm)
+                    .strokeBorder(calendarActionColor.opacity(contrast == .increased ? Tokens.Opacity.outline : Tokens.Opacity.tint),
+                        lineWidth: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .buttonStyle(.plain)
         .ternHover()
-        .help(reviewTitle)
-        .accessibilityLabel("\(reviewTitle): \(presentation.title)")
-        .accessibilityIdentifier("calendar-review-\(item.id)")
+        .help(calendarActionTitle)
+        .accessibilityLabel("\(calendarActionTitle): \(presentation.title)")
+        .accessibilityIdentifier("calendar-\(isAdding ? "add" : item.kind == .cancelled ? "remove" : "update")-\(item.id)")
     }
 
-    private var reviewTitle: String {
-        if item.kind == .cancelled { return "Review Cancellation" }
-        if item.kind == .updated, item.existingEventID != nil { return "Review Update" }
-        return item.invitation == nil ? "Review Event" : "Add Personal Copy"
+    private var isAdding: Bool { item.kind != .cancelled && !(item.kind == .updated && item.existingEventID != nil) }
+    private var calendarActionColor: Color { item.kind == .cancelled ? Tokens.Status.error : .accentColor }
+    private var calendarActionSymbol: String { isAdding ? "plus" : item.kind == .cancelled ? "trash" : "arrow.triangle.2.circlepath" }
+
+    private var calendarActionTitle: String {
+        if item.kind == .cancelled { return "Remove cancelled event" }
+        if item.kind == .updated, item.existingEventID != nil { return "Update in Calendar" }
+        return item.invitation == nil ? "Add to Calendar" : "Add personal copy to Calendar"
     }
 
     private var moreMenu: some View {
@@ -267,7 +292,7 @@ private struct EmailCalendarSuggestionRow: View {
             Button(showsDetails ? "Hide Details" : "Show Details") { showsDetails.toggle() }
             if item.existingEventID != nil { Button("Open in Calendar", action: onOpenExisting) }
             if item.canReview, item.existingEventID == nil || item.kind == .updated || item.kind == .cancelled {
-                Button(reviewTitle, action: onReview)
+                Button(calendarActionTitle, systemImage: calendarActionSymbol, action: onReview)
             }
             if canRespond { Menu("Reply to Invitation") { responseActions } }
             Divider()
@@ -275,11 +300,12 @@ private struct EmailCalendarSuggestionRow: View {
         } label: {
             Label("Event details and actions", systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .ternHover()
         .help("Event details and actions")
         .accessibilityLabel("Details and actions for \(presentation.title)")
     }
@@ -293,8 +319,8 @@ private struct EmailCalendarSuggestionRow: View {
     private var details: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Divider()
-            Text(presentation.title).foregroundStyle(.primary).textSelection(.enabled)
-            Label(presentation.badge.text, systemImage: presentation.badge.symbol)
+            Text(presentation.title).font(.callout.weight(.medium)).foregroundStyle(.primary).textSelection(.enabled)
+            Label(presentation.badge.text, systemImage: presentation.badge.symbol).foregroundStyle(badgeColor)
             if let location = presentation.location {
                 Label(location, systemImage: "mappin.and.ellipse")
                     .textSelection(.enabled)
@@ -326,8 +352,11 @@ private struct EmailCalendarSuggestionRow: View {
             if item.invitation == nil, !item.evidence.isEmpty {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text("In the email").font(.caption.weight(.medium))
-                    Text(item.evidence).textSelection(.enabled)
+                    Text(item.evidence).font(.callout).textSelection(.enabled)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Tokens.Space.s3)
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
             if item.isOutdated {
                 Text("A newer invitation or cancellation is saved in this account.")
@@ -335,11 +364,10 @@ private struct EmailCalendarSuggestionRow: View {
             ForEach(Array(item.uncertainties.enumerated()), id: \.offset) { _, uncertainty in
                 Label(uncertainty, systemImage: "info.circle")
             }
-            Button("Hide Details") { showsDetails = false }
-                .buttonStyle(.borderless)
         }
-        .font(.callout)
+        .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("calendar-detail-content-\(item.id)")
     }
 }

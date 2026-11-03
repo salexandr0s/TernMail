@@ -155,6 +155,7 @@ struct ThreadSummaryContent: View {
             header
             if isExpanded {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    Divider()
                     overview
                     if report.hasPartialCoverage {
                         Label("Based on partial message content", systemImage: "info.circle")
@@ -195,10 +196,11 @@ struct ThreadSummaryContent: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: Tokens.Space.s6, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .ternHover(radius: Tokens.Radius.sm)
             .accessibilityLabel(isExpanded ? "Minimise AI summary" : "Expand AI summary")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("summary-disclosure")
@@ -227,7 +229,7 @@ struct ThreadSummaryContent: View {
                     Label(isFullyExpanded ? "Collapse all sections" : "Expand all sections",
                           systemImage: isFullyExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                         .labelStyle(.iconOnly)
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -241,11 +243,12 @@ struct ThreadSummaryContent: View {
                 Button("Assistant Settings…", systemImage: "gearshape", action: onSettings)
             } label: {
                 Label("Summary options", systemImage: "ellipsis").labelStyle(.iconOnly)
-                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6).contentShape(Rectangle())
+                    .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton).contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel("Summary options").accessibilityIdentifier("summary-options")
             .help("Summary options")
+            .ternHover(radius: Tokens.Radius.sm)
         }
     }
 
@@ -281,6 +284,7 @@ struct ThreadSummaryContent: View {
                 .accessibilityLabel(isOverviewExpanded ? "Collapse summary overview" : "Read full summary overview")
                 .accessibilityValue(isOverviewExpanded ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("summary-details")
+                .ternHover(radius: Tokens.Radius.sm)
             }
         }
     }
@@ -343,7 +347,7 @@ struct ThreadSummaryContent: View {
                         .font(.caption)
                         .frame(width: Tokens.Space.s4)
                         .accessibilityHidden(true)
-                    Text(title).font(.caption.weight(.medium))
+                    Text(title).font(.callout.weight(.medium))
                     Text("\(count)").font(.caption2.monospacedDigit())
                         .padding(.horizontal, Tokens.Space.s1_5)
                         .padding(.vertical, Tokens.Space.s0_5)
@@ -354,10 +358,10 @@ struct ThreadSummaryContent: View {
                         .rotationEffect(.degrees(isOpen ? 90 : 0))
                         .frame(width: Tokens.Space.s6)
                 }
-                .frame(maxWidth: .infinity, minHeight: Tokens.Space.s6, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: Tokens.Control.iconButton, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .buttonStyle(.plain).foregroundStyle(isOpen ? Color.primary : .secondary)
             .accessibilityLabel("\(isOpen ? "Collapse" : "Expand") \(title), \(count)")
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("summary-\(section.rawValue)-toggle")
@@ -478,7 +482,7 @@ private struct SummaryHeading: View {
                 .background(Color.accentColor.opacity(Tokens.Opacity.wash),
                     in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .accessibilityHidden(true)
-            Text("AI summary").font(.caption.weight(.semibold))
+            Text("AI summary").font(.callout.weight(.semibold))
         }
     }
 }

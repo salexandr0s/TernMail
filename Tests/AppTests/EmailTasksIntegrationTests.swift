@@ -183,54 +183,8 @@ import WebKit
         #expect(EmailTaskRequest.suggestion(otherOwner, report: report, detail: detail, accountEmail: nil).reference != request.reference)
     }
 
-    @Test func calendarTaskRequestsKeepTheDisplayedDaySourceAndSuggestionIdentity() async throws {
-        let detail = try await detail()
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Vienna"))
-        var event = GoogleCalendarEvent(summary: "Planning call")
-        event.start = CalendarDateTime(dateTime: "2031-07-15T23:30:00Z")
-        event.location = "Studio"
-        var item = EmailCalendarItem(id: "interpreted:planning", messageID: "message", title: "Planning call",
-            evidence: "Let's meet to plan the launch.", kind: .proposed, event: event)
-        func request(_ item: EmailCalendarItem) -> TaskCreationRequest? {
-            EmailTaskRequest.calendarSuggestion(item, detail: detail, calendar: calendar, accountEmail: "owner@example.invalid")
-        }
-        let task = try #require(request(item))
-        #expect(task.title == "Planning call")
-        #expect(task.dueDate == "2031-07-16")
-        #expect(task.source?.accountID == "source-account")
-        #expect(task.source?.messageID == "message")
-        #expect(task.notes.contains(EmailCalendarPresentation(item: item, calendar: calendar).dateLine))
-        #expect(task.notes.contains("Studio"))
-        #expect(task.notes.contains(item.evidence))
-        #expect(try task.draft(email: "owner@example.invalid").notes?.contains("authuser=owner@example.invalid") == true)
-        #expect(try #require(request(item)).reference == task.reference)
-        let other = EmailCalendarItem(id: "interpreted:another", messageID: "message", title: item.title,
-            evidence: item.evidence, kind: .proposed, event: event)
-        #expect(try #require(request(other)).reference != task.reference)
-
-        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
-        item.event?.start = CalendarDateTime(date: "2031-07-15", timeZone: "Europe/Vienna")
-        #expect(request(item)?.dueDate == "2031-07-15")
-        #expect(request(item)?.reference == task.reference)
-        item.isOutdated = true
-        #expect(request(item) == nil)
-        item.isOutdated = false
-        item.kind = .cancelled
-        item.existingEventID = "saved-event"
-        #expect(request(item) == nil)
-        let foreign = EmailCalendarItem(id: "foreign", messageID: "other-thread-message", title: item.title,
-            evidence: item.evidence, kind: .proposed, event: event)
-        #expect(request(foreign) == nil)
-    }
-
-    @Test(arguments: [560, 280])
-    func calendarSuggestionPlusAddsATaskAndKeepsReviewAvailable(width: Int) async throws {
-        let detail = try await detail()
-        let suite = "tern.tasks.calendar." + UUID().uuidString
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let tasks = GoogleTasksModel(defaults: defaults, loadAccounts: { [] }, service: { _ in nil }, enable: { _ in })
+    @Test(arguments: [560, 280], [false, true])
+    func calendarSuggestionPlusUsesCalendarAndKeepsDetailsSeparate(width: Int, dark: Bool) async throws {
         let calendar = Calendar(identifier: .gregorian)
         let suggestions = EmailCalendarModel()
         let item = EmailCalendarItem(id: "interpreted:planning", messageID: "message", title: "Planning call",
@@ -239,33 +193,100 @@ import WebKit
         suggestions.update(messages: [EmailCalendarMessage(id: "message", subject: item.title, date: .now, text: item.evidence)],
             addresses: [], now: Date(timeIntervalSince1970: 1_800_000_000))
         try #require(suggestions.restoreInterpretation([item], for: suggestions.revision))
-        var additions: [TaskCreationRequest] = []
-        var reviews: [String] = []
+        var calendarActions: [EmailCalendarItem] = []
+        var openedEvents: [String] = []
         let root = EmailCalendarSuggestionsView(model: suggestions, calendar: calendar,
-            onReview: { reviews.append($0.id) }, onOpenExisting: { _ in }, onRespond: { _, _ in }, tasks: tasks,
-            taskRequest: { EmailTaskRequest.calendarSuggestion($0, detail: detail, calendar: calendar, accountEmail: nil) },
-            onAddTask: { additions.append($0) })
+            onReview: { calendarActions.append($0) }, onOpenExisting: { openedEvents.append($0.id) }, onRespond: { _, _ in })
+            .environment(\.colorScheme, dark ? .dark : .light)
         let controller = NSHostingController(rootView: root)
         controller.sizingOptions = []
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 240),
-            styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 400),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentViewController = controller
+        window.setContentSize(NSSize(width: width, height: 400))
         window.orderBack(nil)
         defer { window.close() }
-        let addID = "calendar-task-add-" + item.id
-        let reviewID = "calendar-review-" + item.id
-        try await waitFor { self.element(addID, in: controller.view) != nil && self.element(reviewID, in: controller.view) != nil }
+        let addID = "calendar-add-" + item.id
+        let detailsID = "calendar-details-" + item.id
+        try await waitFor {
+            controller.view.layoutSubtreeIfNeeded()
+            return controller.view.bounds.width == CGFloat(width) && controller.view.bounds.height == 400
+                && self.element(addID, in: controller.view) != nil && self.element(detailsID, in: controller.view) != nil
+        }
+        #expect(element("calendar-task-add-" + item.id, in: controller.view) == nil)
+        #expect(element("calendar-review-" + item.id, in: controller.view) == nil)
+        let addFrame = try visibleControlFrame(addID, in: window)
+        let detailsFrame = try visibleControlFrame(detailsID, in: window)
+        #expect(addFrame.width >= Tokens.Control.iconButton - Tokens.Border.hairline)
+        #expect(addFrame.height >= Tokens.Control.iconButton - Tokens.Border.hairline)
+        #expect(!addFrame.intersects(detailsFrame))
+        let appearance = dark ? "dark" : "light"
+        try capture(window, name: "mail-event-\(width)-\(appearance)-collapsed.png")
+        try #require(press(try #require(element(detailsID, in: controller.view))))
+        try await waitFor {
+            (self.element(detailsID, in: controller.view)?.value(forKey: "accessibilityValue") as? String)?.hasPrefix("Expanded") == true
+        }
+        try await Task.sleep(for: .seconds(Tokens.Motion.slow))
+        _ = try visibleControlFrame(addID, in: window)
+        try capture(window, name: "mail-event-\(width)-\(appearance)-expanded.png")
+        #expect(calendarActions.isEmpty)
         try #require(press(try #require(element(addID, in: controller.view))))
-        try await waitFor { additions.count == 1 }
-        #expect(additions[0].title == item.title)
-        #expect(additions[0].dueDate == "2031-07-15")
-        #expect(reviews.isEmpty)
-        tasks.creationStates[additions[0].reference] = .added
-        try await waitFor { self.element(addID, in: controller.view)?.value(forKey: "accessibilityEnabled") as? Bool == false }
-        try #require(press(try #require(element(reviewID, in: controller.view))))
-        try await waitFor { reviews == [item.id] }
-        #expect(additions.count == 1)
+        try await waitFor { calendarActions.count == 1 }
+        #expect(calendarActions[0] == item)
+        #expect(openedEvents.isEmpty)
+        #expect((element(detailsID, in: controller.view)?.value(forKey: "accessibilityValue") as? String)?.hasPrefix("Expanded") == true)
+
+        suggestions.markExisting(itemID: item.id, calendarID: "calendar", eventID: "saved-event")
+        let openID = "calendar-open-" + item.id
+        try await waitFor { self.element(openID, in: controller.view) != nil && self.element(addID, in: controller.view) == nil }
+        _ = try visibleControlFrame(openID, in: window)
+        try #require(press(try #require(element(openID, in: controller.view))))
+        try await waitFor { openedEvents == [item.id] }
+        #expect(calendarActions.count == 1)
+
+        suggestions.markExisting(itemID: item.id, calendarID: "calendar", eventID: "saved-event", hasNewerInvitation: true)
+        let updateID = "calendar-update-" + item.id
+        try await waitFor { self.element(updateID, in: controller.view) != nil }
+        _ = try visibleControlFrame(updateID, in: window)
+        try #require(press(try #require(element(updateID, in: controller.view))))
+        try await waitFor { calendarActions.count == 2 }
+        #expect(calendarActions[1].kind == .updated)
+        #expect(calendarActions[1].existingEventID == "saved-event")
+
+        var cancellation = item
+        cancellation.kind = .cancelled
+        cancellation.existingCalendarID = "calendar"
+        cancellation.existingEventID = "saved-event"
+        try #require(suggestions.restoreInterpretation([cancellation], for: suggestions.revision))
+        let removeID = "calendar-remove-" + item.id
+        try await waitFor { self.element(removeID, in: controller.view) != nil }
+        _ = try visibleControlFrame(removeID, in: window)
+        try #require(press(try #require(element(removeID, in: controller.view))))
+        try await waitFor { calendarActions.count == 3 }
+        #expect(calendarActions[2] == cancellation)
+        #expect(element(addID, in: controller.view) == nil)
+    }
+
+    private func visibleControlFrame(_ id: String, in window: NSWindow) throws -> NSRect {
+        let view = try #require(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let control = try #require(element(id, in: view))
+        let frame = try #require(control.value(forKey: "accessibilityFrame") as? NSValue).rectValue
+        let contentFrame = window.convertToScreen(view.convert(view.bounds, to: nil))
+        #expect(frame.width > 0 && frame.height > 0)
+        #expect(contentFrame.insetBy(dx: -Tokens.Border.hairline, dy: -Tokens.Border.hairline).contains(frame))
+        return frame
+    }
+
+    private func capture(_ window: NSWindow, name: String) throws {
+        let view = try #require(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        Attachment.record(Array(data), named: name)
     }
 
     private func detail() async throws -> ThreadDetail {

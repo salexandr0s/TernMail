@@ -92,14 +92,21 @@ import WebKit
             try await eventually { state.expanded }
         }
         let transitionsBeforeDetails = state.transitions
+        try await focus(window)
         let details = try #require(element(id: "message-details-\(message.id)", in: window))
         try assertControlHitIsNotHeader(details, in: window)
         try #require(details.press())
-        try await settle()
+        try await eventually {
+            NSApp.windows.contains { $0.isVisible && element(id: "message-details-content-\(message.id)", in: $0) != nil }
+        }
         #expect(state.expanded)
         #expect(state.transitions == transitionsBeforeDetails, "Opening recipient details must not toggle the header")
-        try closePopover(in: window)
+        #expect(element(id: "message-details-\(message.id)", in: window)?.value == "Expanded")
+        try await closePopover(in: window)
+        #expect(element(id: "message-details-\(message.id)", in: window)?.value == "Collapsed")
+        #expect(state.transitions == transitionsBeforeDetails)
 
+        try await focus(window)
         let profile = try #require(element(id: "sender-profile-\(message.id)", in: window))
         try assertControlHitIsNotHeader(profile, in: window)
         try #require(profile.press())
@@ -108,7 +115,7 @@ import WebKit
         }
         #expect(state.expanded)
         #expect(state.transitions == transitionsBeforeDetails, "Opening the sender card must not toggle the header")
-        try closePopover(in: window)
+        try await closePopover(in: window)
 
         for id in ["message-star-\(message.id)", "message-reply-\(message.id)"] {
             try assertControlHitIsNotHeader(try #require(element(id: id, in: window)), in: window)
@@ -169,6 +176,7 @@ import WebKit
                 .contains { !$0.isLoading && $0.bounds.height > 40 }
         }
         for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            try await focus(window)
             window.appearance = NSAppearance(named: appearance)
             window.setContentSize(NSSize(width: 900, height: 760))
             try await settle()
@@ -181,6 +189,20 @@ import WebKit
             let frame = content.convert(window.convertFromScreen(more.frame), from: nil)
             #expect(frame.minX >= content.bounds.minX && frame.maxX <= content.bounds.maxX,
                 "The message menu must remain inside a narrow reader")
+            let details = try #require(element(id: "message-details-\(latest.id)", in: window))
+            try #require(details.press())
+            try await eventually {
+                NSApp.windows.contains { $0.isVisible && element(id: "message-details-content-\(latest.id)", in: $0) != nil }
+            }
+            try await settle()
+            let detailsWindow = try #require(NSApp.windows.first {
+                $0.isVisible && element(id: "message-details-content-\(latest.id)", in: $0) != nil
+            })
+            let expandedDetails = try #require(element(id: "message-details-content-\(latest.id)", in: detailsWindow))
+            #expect(expandedDetails.frame.width <= Tokens.Popover.width,
+                "Message details must wrap within the popover")
+            try capture(detailsWindow, name: "reader-\(name)-details.png")
+            try await closePopover(in: window)
         }
         window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
         try await settle()
@@ -493,15 +515,27 @@ import WebKit
         #expect(!(hit is MessageHeaderClickView), "A control must receive its own clicks above the header surface")
     }
 
-    private func closePopover(in window: NSWindow) throws {
+    private func focus(_ window: NSWindow) async throws {
+        // Native popup presentation and Escape handling require real focus,
+        // even when accessibility actions are invoked directly by the test.
+        if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps]) }
+        window.makeKeyAndOrderFront(nil)
+        try await eventually {
+            NSApp.isActive && window.isKeyWindow
+        }
+    }
+
+    private func closePopover(in window: NSWindow) async throws {
         if let popover = NSApp.windows.first(where: { $0 !== window && $0.isVisible && $0.className.contains("Popover") }) {
+            try await focus(popover)
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popover.windowNumber, context: nil,
                 characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
-            popover.sendEvent(event)
-        } else {
-            window.makeKeyAndOrderFront(nil)
+            NSApp.sendEvent(event)
+            try await eventually { !popover.isVisible }
         }
+        try await focus(window)
+        try await settle()
     }
 
     private func menuTitles(open: () throws -> Void, selectingFirst: Bool = false) async throws -> [String] {
@@ -563,10 +597,10 @@ import WebKit
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
         Attachment.record(Array(data), named: name)
     }
-    private func eventually(_ condition: () -> Bool) async throws {
+    private func eventually(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while !condition(), ContinuousClock.now < deadline { try await settle() }
-        try #require(condition(), "The hosted reader must reach its expected state")
+        try #require(condition(), "The hosted reader must reach its expected state", sourceLocation: sourceLocation)
     }
     private func eventuallyAsync(_ condition: () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))

@@ -155,84 +155,83 @@ extension CalendarModel {
         }
     }
 
-    func reviewEmailSuggestion(_ item: EmailCalendarItem, key: ThreadKey) async {
+    func reviewEmailSuggestion(_ item: EmailCalendarItem, key: ThreadKey) async throws {
         let revision = lifecycleRevision
-        do {
-            guard item.canReview, let store else { throw CalendarModelError.unavailable }
-            if item.invitation == nil, let match = try await relatedEmailEvent(item, key: key) {
-                guard let owner = calendars.first(where: { $0.accountID == key.accountID && $0.calendarID == match.calendarID }) else { throw CalendarModelError.unavailable }
-                var edited = match.event
-                for field in ["summary", "start", "end", "location", "description"] {
-                    if let value = item.event?.rawValue[field] { edited.rawValue[field] = value }
-                }
-                try validateEmailLifetime(revision, accountID: key.accountID)
-                var draft = CalendarEditorDraft(event: edited, calendarKey: owner.id,
-                    source: CalendarDisplayEvent(event: match.event, accountID: key.accountID, calendarID: match.calendarID,
-                        colorHex: owner.colorHex, canEdit: owner.canWrite))
-                draft.sourceID = key.accountID + ":" + item.id
-                draft.sourceTitle = "A later email proposes changes to this linked event. Review before saving."
-                editor = draft
-                app?.showCalendar()
-                return
+        try Task.checkCancellation()
+        guard item.canReview, let store else { throw CalendarModelError.unavailable }
+        if item.invitation == nil, let match = try await relatedEmailEvent(item, key: key) {
+            guard let owner = calendars.first(where: { $0.accountID == key.accountID && $0.calendarID == match.calendarID }) else { throw CalendarModelError.unavailable }
+            var edited = match.event
+            for field in ["summary", "start", "end", "location", "description"] {
+                if let value = item.event?.rawValue[field] { edited.rawValue[field] = value }
             }
-            if let invitation = item.invitation, let match = try await emailInvitationMatch(invitation, accountID: key.accountID),
-               Self.isNewer(invitation, than: match.event), !invitation.isCancelled {
-                try validateEmailLifetime(revision, accountID: key.accountID)
-                guard let owner = calendars.first(where: { $0.accountID == key.accountID && $0.calendarID == match.calendarID }) else { throw CalendarModelError.unavailable }
-                let changes = invitation.recurrenceKey.isEmpty
-                    ? try CalendarInterchange.googleEvent(from: invitation, fallbackTimeZone: calendar.timeZone)
-                    : try CalendarInterchange.googleException(from: invitation, parentEventID: match.event.recurringEventId ?? match.event.id, fallbackTimeZone: calendar.timeZone)
-                var edited = match.event
-                // Copy invitation fields only. Preserve conference data, unknown fields and every attendee's Google response.
-                for field in ["summary", "description", "location", "start", "end", "recurrence", "status", "sequence", "source"] {
-                    if let value = changes.rawValue[field] { edited.rawValue[field] = value }
-                }
-                var draft = CalendarEditorDraft(event: edited, calendarKey: owner.id,
-                    source: CalendarDisplayEvent(event: match.event, accountID: key.accountID, calendarID: match.calendarID,
-                        colorHex: owner.colorHex, canEdit: owner.canWrite))
-                draft.sourceID = key.accountID + ":" + item.id
-                draft.sourceTitle = "Newer invitation from email. Review these proposed changes before saving."
-                editor = draft
-                app?.showCalendar()
-                return
-            }
-            if let saved = try await store.suggestion(id: key.accountID + ":" + item.id), let id = saved.operationID,
-               let operation = try await store.operation(id: id), operation.status != .cancelled {
-                try validateEmailLifetime(revision, accountID: key.accountID)
-                if let eventID = operation.resultEvent?.id ?? operation.mutation.eventID, operation.status == .completed {
-                    await openEvent(accountID: operation.accountID, calendarID: operation.calendarID, eventID: eventID)
-                } else { reviewOperation(operation) }
-                return
-            }
-            if let invitation = item.invitation, let match = try await emailInvitationMatch(invitation, accountID: key.accountID) {
-                try validateEmailLifetime(revision, accountID: key.accountID)
-                await openEvent(accountID: key.accountID, calendarID: match.calendarID, eventID: match.event.id)
-                return
-            }
-            guard let owner = calendars.first(where: { $0.accountID == key.accountID && $0.canWrite && $0.isVisible })
-                    ?? calendars.first(where: { $0.accountID == key.accountID && $0.canWrite }) else {
-                throw CalendarModelError.unsupported("Connect a writable calendar for this Google account before adding an event.")
-            }
-            var event: GoogleCalendarEvent
-            if let invitation = item.invitation {
-                // A personal copy is intentionally private: it neither accepts nor invites anyone.
-                event = try CalendarInterchange.googleEvent(from: invitation, fallbackTimeZone: calendar.timeZone)
-                event.attendees = nil
-                event.organizer = nil
-                event.rawValue["guestsCanInviteOthers"] = .bool(false)
-            } else { event = item.event ?? GoogleCalendarEvent(summary: item.title) }
-            if event.start == nil { event.start = CalendarDateTime(date: date, timeZone: calendar.timeZone) }
-            if event.end == nil, let start = event.startDate {
-                let end = event.isAllDay ? calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400) : start.addingTimeInterval(1800)
-                event.end = CalendarDateTime(date: end, timeZone: calendar.timeZone, allDay: event.isAllDay)
-            }
-            var draft = CalendarEditorDraft(event: event, calendarKey: owner.id, isImport: item.invitation != nil)
-            draft.sourceID = key.accountID + ":" + item.id
-            draft.sourceTitle = item.invitation == nil ? "From email. Review the date, time zone and duration (30 minutes when unspecified)." : "Personal copy. This does not send an invitation response."
             try validateEmailLifetime(revision, accountID: key.accountID)
+            var draft = CalendarEditorDraft(event: edited, calendarKey: owner.id,
+                source: CalendarDisplayEvent(event: match.event, accountID: key.accountID, calendarID: match.calendarID,
+                    colorHex: owner.colorHex, canEdit: owner.canWrite))
+            draft.sourceID = key.accountID + ":" + item.id
+            draft.sourceTitle = "A later email proposes changes to this linked event. Review before saving."
             editor = draft
             app?.showCalendar()
-        } catch { errorMessage = error.localizedDescription }
+            return
+        }
+        if let invitation = item.invitation, let match = try await emailInvitationMatch(invitation, accountID: key.accountID),
+           Self.isNewer(invitation, than: match.event), !invitation.isCancelled {
+            try validateEmailLifetime(revision, accountID: key.accountID)
+            guard let owner = calendars.first(where: { $0.accountID == key.accountID && $0.calendarID == match.calendarID }) else { throw CalendarModelError.unavailable }
+            let changes = invitation.recurrenceKey.isEmpty
+                ? try CalendarInterchange.googleEvent(from: invitation, fallbackTimeZone: calendar.timeZone)
+                : try CalendarInterchange.googleException(from: invitation, parentEventID: match.event.recurringEventId ?? match.event.id, fallbackTimeZone: calendar.timeZone)
+            var edited = match.event
+            // Copy invitation fields only. Preserve conference data, unknown fields and every attendee's Google response.
+            for field in ["summary", "description", "location", "start", "end", "recurrence", "status", "sequence", "source"] {
+                if let value = changes.rawValue[field] { edited.rawValue[field] = value }
+            }
+            var draft = CalendarEditorDraft(event: edited, calendarKey: owner.id,
+                source: CalendarDisplayEvent(event: match.event, accountID: key.accountID, calendarID: match.calendarID,
+                    colorHex: owner.colorHex, canEdit: owner.canWrite))
+            draft.sourceID = key.accountID + ":" + item.id
+            draft.sourceTitle = "Newer invitation from email. Review these proposed changes before saving."
+            editor = draft
+            app?.showCalendar()
+            return
+        }
+        if let saved = try await store.suggestion(id: key.accountID + ":" + item.id), let id = saved.operationID,
+           let operation = try await store.operation(id: id), operation.status != .cancelled {
+            try validateEmailLifetime(revision, accountID: key.accountID)
+            if let eventID = operation.resultEvent?.id ?? operation.mutation.eventID, operation.status == .completed {
+                try await openEventEditor(accountID: operation.accountID, calendarID: operation.calendarID, eventID: eventID)
+            } else { reviewOperation(operation) }
+            return
+        }
+        if let invitation = item.invitation, let match = try await emailInvitationMatch(invitation, accountID: key.accountID) {
+            try validateEmailLifetime(revision, accountID: key.accountID)
+            try await openEventEditor(accountID: key.accountID, calendarID: match.calendarID, eventID: match.event.id)
+            return
+        }
+        guard let owner = calendars.first(where: { $0.accountID == key.accountID && $0.canWrite && $0.isVisible })
+                ?? calendars.first(where: { $0.accountID == key.accountID && $0.canWrite }) else {
+            throw CalendarModelError.unsupported("Connect a writable calendar for this Google account before adding an event.")
+        }
+        var event: GoogleCalendarEvent
+        if let invitation = item.invitation {
+            // A personal copy is intentionally private: it neither accepts nor invites anyone.
+            event = try CalendarInterchange.googleEvent(from: invitation, fallbackTimeZone: calendar.timeZone)
+            event.attendees = nil
+            event.organizer = nil
+            event.rawValue["guestsCanInviteOthers"] = .bool(false)
+        } else { event = item.event ?? GoogleCalendarEvent(summary: item.title) }
+        if event.start == nil { event.start = CalendarDateTime(date: date, timeZone: calendar.timeZone) }
+        if event.end == nil, let start = event.startDate {
+            let end = event.isAllDay ? calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400) : start.addingTimeInterval(1800)
+            event.end = CalendarDateTime(date: end, timeZone: calendar.timeZone, allDay: event.isAllDay)
+        }
+        var draft = CalendarEditorDraft(event: event, calendarKey: owner.id, isImport: item.invitation != nil)
+        draft.sourceID = key.accountID + ":" + item.id
+        draft.sourceTitle = item.invitation == nil ? "From email. Review the date, time zone and duration (30 minutes when unspecified)." : "Personal copy. This does not send an invitation response."
+        try validateEmailLifetime(revision, accountID: key.accountID)
+        editor = draft
+        app?.showCalendar()
     }
 
     func recordAcceptedSuggestion(sourceID: String, event: GoogleCalendarEvent, operation: CalendarOperation) async throws {

@@ -77,6 +77,7 @@ struct MessageView: View {
             if isExpanded {
                 Divider()
                     .padding(.horizontal, Tokens.Space.s3)
+                    .ternTransition(.fade)
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     // A cited file is visible immediately, above a potentially
                     // long body. Normal reading keeps files below the message.
@@ -91,7 +92,7 @@ struct MessageView: View {
                 }
                 .padding(.horizontal, Tokens.Space.s4)
                 .padding(.vertical, Tokens.Space.s3)
-                .ternTransition(.fade)
+                .ternTransition(.disclosure)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

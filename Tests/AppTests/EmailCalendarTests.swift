@@ -1,11 +1,40 @@
 import Foundation
 import GmailAPI
+import MailStore
 import MessageContent
 import Testing
 import TernAI
 @testable import Tern
 
 @Suite @MainActor struct EmailCalendarTests {
+    @Test func calendarActionsReturnTheirOwnFailuresWithoutReplacingAnotherNotice() async throws {
+        let suite = "tern.email-calendar.failures." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CalendarModel(app: nil, defaults: defaults)
+        model.store = try CalendarStore.inMemory()
+        model.errorMessage = "An earlier calendar notice"
+        let item = EmailCalendarItem(id: "interpreted:planning", messageID: "message", title: "Planning call",
+            evidence: "Meet to plan the launch.", kind: .proposed,
+            event: GoogleCalendarEvent(summary: "Planning call", start: CalendarDateTime(date: "2031-07-15")))
+        let key = ThreadKey(accountID: "account", threadID: "thread")
+
+        await #expect(throws: CalendarModelError.self) { try await model.reviewEmailSuggestion(item, key: key) }
+        await #expect(throws: CalendarModelError.self) {
+            try await model.openEventEditor(accountID: "account", calendarID: "calendar", eventID: "event")
+        }
+        #expect(model.errorMessage == "An earlier calendar notice")
+        #expect(model.editor == nil)
+
+        let cancelled = Task { try await model.reviewEmailSuggestion(item, key: key) }
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        await #expect(throws: CancellationError.self) {
+            try await model.openEventEditor(accountID: "account", calendarID: "calendar", eventID: "event", isAuthorized: { false })
+        }
+        #expect(model.errorMessage == "An earlier calendar notice")
+    }
+
     @Test func simultaneousInterpretationsShareInferenceWhenOneReaderCancels() async throws {
         let provider = SharedEmailCalendarProvider()
         let requests = AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>()

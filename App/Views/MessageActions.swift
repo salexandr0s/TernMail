@@ -209,6 +209,20 @@ struct MessageAddressMenu: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        if showsFullAddress {
+            HStack(alignment: .top, spacing: Tokens.Space.s1) {
+                Text(address.displayString)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                addressMenu.fixedSize()
+            }
+        } else {
+            addressMenu
+        }
+    }
+
+    private var addressMenu: some View {
         Menu {
             Text(address.address)
             Divider()
@@ -224,12 +238,20 @@ struct MessageAddressMenu: View {
             Button("Search Messages To") { mailbox.searchToAddress(address.address, accountID: accountID) }
             Button("Create Filter…") { mailbox.requestFilter(sender: address.address, recipients: nil, subject: nil, accountID: accountID) }
         } label: {
-            Text(displayName ?? (showsFullAddress ? address.displayString : address.name ?? address.address))
-                .lineLimit(showsFullAddress ? nil : 1)
-                .fixedSize(horizontal: false, vertical: showsFullAddress)
+            if showsFullAddress {
+                Label("Address actions", systemImage: "ellipsis")
+                    .labelStyle(.iconOnly)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(Rectangle())
+            } else {
+                Text(displayName ?? address.name ?? address.address)
+                    .lineLimit(1)
+                    .frame(minHeight: Tokens.Space.s6, alignment: .leading)
+            }
         }
         .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .menuIndicator(showsFullAddress ? .hidden : .visible)
+        .ternHover()
         .help(address.displayString)
         .accessibilityLabel("Address actions for \(address.displayString)")
     }

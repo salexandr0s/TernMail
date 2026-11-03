@@ -112,17 +112,31 @@ extension CalendarModel {
                    isAuthorized: @escaping @MainActor () -> Bool = { true }) async {
         guard !Task.isCancelled, isAuthorized() else { return }
         do {
-            let event = try await readEvent(accountID: accountID, calendarID: calendarID, eventID: eventID)
-            guard !Task.isCancelled, isAuthorized(), let owner = calendars.first(where: { $0.accountID == accountID && $0.calendarID == calendarID }) else { return }
-            date = event.start?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? date
-            app?.showCalendar()
-            edit(CalendarDisplayEvent(event: event, accountID: accountID, calendarID: calendarID,
-                colorHex: owner.colorHex, canEdit: owner.canWrite, fallbackTimeZoneID: calendar.timeZone.identifier),
-                proposedEvent: nil, isAuthorized: isAuthorized)
+            try await openEventEditor(accountID: accountID, calendarID: calendarID, eventID: eventID,
+                isAuthorized: isAuthorized)
+        } catch is CancellationError {
         } catch {
             guard !Task.isCancelled, isAuthorized() else { return }
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Mail presents failures beside the event card; Calendar uses its own notice.
+    func openEventEditor(accountID: String, calendarID: String, eventID: String,
+                         isAuthorized: @escaping @MainActor () -> Bool = { true }) async throws {
+        try Task.checkCancellation()
+        guard isAuthorized() else { throw CancellationError() }
+        let event = try await readEvent(accountID: accountID, calendarID: calendarID, eventID: eventID)
+        try Task.checkCancellation()
+        guard isAuthorized() else { throw CancellationError() }
+        guard let owner = calendars.first(where: { $0.accountID == accountID && $0.calendarID == calendarID }) else {
+            throw CalendarModelError.unavailable
+        }
+        date = event.start?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? date
+        app?.showCalendar()
+        edit(CalendarDisplayEvent(event: event, accountID: accountID, calendarID: calendarID,
+            colorHex: owner.colorHex, canEdit: owner.canWrite, fallbackTimeZoneID: calendar.timeZone.identifier),
+            proposedEvent: nil, isAuthorized: isAuthorized)
     }
 
     func exportCalendar(_ owner: CalendarDisplayCalendar) async throws -> [GoogleCalendarEvent] {

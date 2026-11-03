@@ -31,23 +31,6 @@ enum EmailTaskRequest {
             dueDate: task.dueDate, source: source, deduplicationKey: "suggestion\u{0}\(detail.thread.id)\u{0}\(identity)\u{0}\(owner)")
     }
 
-    static func calendarSuggestion(_ item: EmailCalendarItem, detail: ThreadDetail, calendar: Calendar,
-                                   accountEmail: String?) -> TaskCreationRequest? {
-        guard item.canReview, item.kind != .cancelled,
-              detail.messages.contains(where: { $0.id == item.messageID }) else { return nil }
-        let presentation = EmailCalendarPresentation(item: item, calendar: calendar)
-        let source = source(accountID: detail.thread.accountID, threadID: detail.thread.id,
-            messageID: item.messageID, subject: detail.thread.subject, accountEmail: accountEmail)
-        // Tasks stores a day only. Match the day displayed on the suggestion and
-        // keep the event's time and context in its notes.
-        let dueDate = presentation.start.map { GoogleTaskDateCoding.string($0, timeZone: calendar.timeZone) }
-        let notes = [presentation.dateLine, presentation.location, presentation.originalTimeZoneLine,
-                     item.evidence.isEmpty ? nil : item.evidence]
-            .compactMap { $0 }.joined(separator: "\n\n")
-        return TaskCreationRequest(title: presentation.title, notes: notes, dueDate: dueDate, source: source,
-            deduplicationKey: "calendar-suggestion\u{0}\(detail.thread.id)\u{0}\(item.id)")
-    }
-
     private static func source(accountID: String, threadID: String, messageID: String?, subject: String,
                                accountEmail: String?) -> TaskEmailSource {
         let link = MailLink(accountID: accountID, threadID: threadID, messageID: messageID)

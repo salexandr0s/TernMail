@@ -72,7 +72,12 @@ struct MessageHeader<SenderItems: View>: View {
             senderItems
         }
         .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
-            MessageDetailsView(message: message, mailbox: mailbox, blockedTrackers: blockedTrackers, showsSize: showsSize)
+            ScrollView {
+                MessageDetailsView(message: message, mailbox: mailbox, blockedTrackers: blockedTrackers, showsSize: showsSize)
+            }
+            .frame(width: Tokens.Popover.width)
+            .frame(maxHeight: Tokens.Popover.maxListHeight)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: isExpanded) { _, expanded in if !expanded { showsDetails = false } }
     }
@@ -109,13 +114,28 @@ struct MessageHeader<SenderItems: View>: View {
                 HStack(spacing: Tokens.Space.s2) {
                     Text(recipientSummary).lineLimit(1).truncationMode(.middle)
                         .allowsHitTesting(false)
-                    Button("Show details") { showsDetails = true }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Show sender, recipients and message details")
-                        .accessibilityIdentifier("message-details-\(message.id)")
-                        .fixedSize()
-                        .messageHeaderControl()
+                    Button { showsDetails = true } label: {
+                        HStack(spacing: Tokens.Space.s1) {
+                            Text("Details")
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .rotationEffect(.degrees(showsDetails ? 90 : 0))
+                        }
+                        .padding(.horizontal, Tokens.Space.s1_5)
+                        .frame(minHeight: Tokens.Space.s6)
+                        .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(showsDetails ? Color.accentColor : .secondary)
+                    .background(showsDetails ? Color.accentColor.opacity(Tokens.Opacity.wash) : .clear,
+                        in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .ternHover()
+                    .help("Show sender, recipients and message details")
+                    .accessibilityLabel("Show message details")
+                    .accessibilityValue(showsDetails ? "Expanded" : "Collapsed")
+                    .accessibilityIdentifier("message-details-\(message.id)")
+                    .fixedSize()
+                    .messageHeaderControl()
                     Spacer(minLength: 0)
                 }
                 .font(.caption).foregroundStyle(.secondary)
@@ -150,58 +170,65 @@ struct MessageDetailsView: View {
     let showsSize: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                Text("Message details").font(.headline)
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            Text("Message details").font(.headline)
+            Grid(alignment: .topLeading, horizontalSpacing: Tokens.Space.s3, verticalSpacing: Tokens.Space.s2) {
                 addresses("From", message.record.sender)
                 addresses("To", message.record.recipients)
                 if let cc = message.record.cc, !cc.isEmpty { addresses("Cc", cc) }
                 if let bcc = message.record.bcc, !bcc.isEmpty { addresses("Bcc", bcc) }
                 if let replyTo = message.record.replyTo, !replyTo.isEmpty { addresses("Reply to", replyTo) }
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                GridRow {
                     caption("Date")
                     Text(message.record.date.formatted(date: .complete, time: .shortened))
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
                 if showsSize {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        caption("Message size")
+                    GridRow {
+                        caption("Size")
                         Text(ByteCountFormatter.string(fromByteCount: Int64(message.record.sizeEstimate), countStyle: .file))
                     }
                 }
-                if blockedTrackers > 0 {
-                    Divider()
+            }
+            if blockedTrackers > 0 {
+                Divider()
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Label("^[\(blockedTrackers) tracking image](inflect: true) blocked", systemImage: "hand.raised")
                         .font(.callout)
                     Text("Tracking images stay blocked when you load other images.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .font(.callout)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Tokens.Space.s4)
         }
-        .frame(width: Tokens.Popover.width)
-        .frame(maxHeight: Tokens.Popover.maxListHeight)
-        .fixedSize(horizontal: false, vertical: true)
+        .font(.callout)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Tokens.Space.s4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("message-details-content-\(message.id)")
     }
 
     private func caption(_ text: String) -> some View {
         Text(text).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            .frame(width: Tokens.Space.s12, alignment: .leading)
+            .padding(.top, Tokens.Space.s0_5)
     }
 
     private func addresses(_ title: String, _ raw: String) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+        GridRow {
             caption(title)
-            let addresses = EmailAddress.parseList(raw)
-            if addresses.isEmpty {
-                Text(raw.isEmpty ? "Not specified" : raw).textSelection(.enabled)
-            } else {
-                ForEach(Array(addresses.enumerated()), id: \.offset) { _, address in
-                    MessageAddressMenu(address: address, accountID: message.record.accountID,
-                                       mailbox: mailbox, showsFullAddress: true)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                let addresses = EmailAddress.parseList(raw)
+                if addresses.isEmpty {
+                    Text(raw.isEmpty ? "Not specified" : raw).textSelection(.enabled)
+                } else {
+                    ForEach(Array(addresses.enumerated()), id: \.offset) { _, address in
+                        MessageAddressMenu(address: address, accountID: message.record.accountID,
+                                           mailbox: mailbox, showsFullAddress: true)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

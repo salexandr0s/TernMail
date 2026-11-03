@@ -208,12 +208,30 @@ struct ThreadView: View {
                                           messageID: selectedMessageID, actions: readerActions)
                             EmailCalendarSuggestionsView(model: calendarSuggestions, calendar: app.calendar.calendar, accountID: key.accountID,
                                 onReview: { item in
+                                    guard !calendarReplyBusy else { return }
+                                    calendarNotice = nil
                                     if item.kind == .cancelled { cancellationReview = item }
-                                    else { Task { await app.calendar.reviewEmailSuggestion(item, key: key) } }
+                                    else {
+                                        calendarReplyBusy = true
+                                        Task {
+                                            defer { calendarReplyBusy = false }
+                                            do { try await app.calendar.reviewEmailSuggestion(item, key: key) }
+                                            catch is CancellationError {}
+                                            catch { if !Task.isCancelled { calendarNotice = error.localizedDescription } }
+                                        }
+                                    }
                                 },
                                 onOpenExisting: { item in
-                                    guard let calendarID = item.existingCalendarID, let eventID = item.existingEventID else { return }
-                                    Task { await app.calendar.openEvent(accountID: key.accountID, calendarID: calendarID, eventID: eventID) }
+                                    guard !calendarReplyBusy, let calendarID = item.existingCalendarID,
+                                          let eventID = item.existingEventID else { return }
+                                    calendarNotice = nil
+                                    calendarReplyBusy = true
+                                    Task {
+                                        defer { calendarReplyBusy = false }
+                                        do { try await app.calendar.openEventEditor(accountID: key.accountID, calendarID: calendarID, eventID: eventID) }
+                                        catch is CancellationError {}
+                                        catch { if !Task.isCancelled { calendarNotice = error.localizedDescription } }
+                                    }
                                 }, onRespond: { item, answer in
                                     guard !calendarReplyBusy else { return }
                                     calendarReplyBusy = true
@@ -223,15 +241,7 @@ struct ThreadView: View {
                                         catch { calendarNotice = error.localizedDescription }
                                     }
                                 }, onDismiss: { id in Task { await app.calendar.dismissEmailSuggestion(id, key: key) } },
-                                onRetry: { calendarInterpretationAttempt += 1 },
-                                tasks: app.tasks,
-                                taskRequest: { item in
-                                    EmailTaskRequest.calendarSuggestion(item, detail: detail, calendar: app.calendar.calendar,
-                                        accountEmail: mailbox.account(id: key.accountID)?.account.email)
-                                }, onAddTask: { request in
-                                    app.showTasks()
-                                    Task { await app.tasks.add(request) }
-                                })
+                                onRetry: { calendarInterpretationAttempt += 1 })
                                 .disabled(calendarReplyBusy)
                             if let calendarNotice {
                                 Text(calendarNotice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
