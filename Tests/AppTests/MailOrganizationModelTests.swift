@@ -1,10 +1,94 @@
 import Foundation
+import Observation
 import Testing
 import TernAI
 @testable import SyncEngine
 @testable import Tern
 
 @Suite @MainActor struct MailOrganizationModelTests {
+    @Test func cachedSessionsKeepAnalysisAndReviewEditsUntilExplicitlyCleared() async throws {
+        let harness = OrganizationModelHarness()
+        let reading = OrganizationSamplingGate(samples: harness.samples)
+        var reads = 0
+        let sessions = MailOrganizationSessions(accountIDs: { ["a", "b"] }, makeSession: { accountID in
+            let model = accountID == "a" ? harness.makeModel(readSamples: { _, _, progress in
+                reads += 1
+                await progress(.init(stage: .reading, processedCount: 1, selectedCount: 3))
+                return await reading.result()
+            }) : OrganizationModelHarness().makeModel()
+            return .init(connection: SettingsAccountState(accountID: accountID, store: nil), model: model)
+        })
+        var presented = try #require(sessions.session(for: "a"))
+        presented.model.startAnalysis()
+        await reading.waitUntilStarted()
+        let startedAt = presented.model.analysisStartedAt
+        sessions.selectedAccountID = "b"
+        presented = try #require(sessions.session(for: "b"))
+        #expect(presented.model.phase == .idle)
+        sessions.selectedAccountID = "a"
+        presented = try #require(sessions.session(for: sessions.selectedAccountID))
+        #expect(presented.model.phase == .reading)
+        #expect(presented.model.samplingProgress?.processedCount == 1)
+        #expect(presented.model.analysisStartedAt == startedAt)
+        presented.model.startAnalysis()
+        #expect(reads == 1)
+        await reading.release()
+        await presented.model.waitForOperation()
+        presented.model.categories[0].name = "Reading/News"
+        presented.model.categories[0].selectedMessageIDs.remove("m2")
+        presented.model.categories[1].isSelected = false
+
+        let reopened = try #require(sessions.session(for: "a"))
+        #expect(reopened === presented)
+        #expect(sessions.selectedAccountID == "a")
+        #expect(reopened.model.phase == .review)
+        #expect(reopened.model.categories[0].name == "Reading/News")
+        #expect(reopened.model.categories[0].selectedMessageIDs == ["m1"])
+        #expect(!reopened.model.categories[1].isSelected)
+        reopened.model.clear()
+        let restarted = try #require(sessions.session(for: "a"))
+        #expect(restarted.model.phase == .idle)
+        #expect(restarted.model.samples == nil && restarted.model.categories.isEmpty)
+    }
+
+    @Test func hiddenReviewIsClearedWhenAccessChangesWithoutAView() async throws {
+        let harness = OrganizationModelHarness()
+        let model = harness.makeModel()
+        model.startAnalysis()
+        await model.waitForOperation()
+        #expect(model.phase == .review)
+        harness.access = harness.accessWithRevision(2)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while model.phase != .idle, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(model.phase == .idle)
+        #expect(model.samples == nil && model.categories.isEmpty)
+        #expect(!model.canApply)
+    }
+
+    @Test func removingAnAccountCancelsItsHiddenSessionAndRejectsLateResults() async throws {
+        let harness = OrganizationModelHarness()
+        let reading = OrganizationSamplingGate(samples: harness.samples)
+        let accounts = OrganizationAccountIDs()
+        let sessions = MailOrganizationSessions(accountIDs: { accounts.ids }, makeSession: { accountID in
+            .init(connection: SettingsAccountState(accountID: accountID, store: nil),
+                model: harness.makeModel(readSamples: { _, _, _ in await reading.result() }))
+        })
+        let session = try #require(sessions.session(for: "a"))
+        session.model.startAnalysis()
+        await reading.waitUntilStarted()
+        let completion = Task { await session.model.waitForOperation() }
+        await Task.yield()
+        accounts.ids = []
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while session.model.phase != .idle, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(session.model.phase == .idle)
+        #expect(sessions.selectedAccountID.isEmpty)
+        #expect(sessions.session(for: "a") == nil)
+        await reading.release()
+        await completion.value
+        #expect(session.model.samples == nil && session.model.categories.isEmpty)
+    }
+
     @Test func reviewAppliesOnlySelectedEditedCategoriesAndWaitsForDelivery() async throws {
         let harness = OrganizationModelHarness()
         let model = harness.makeModel()
@@ -223,7 +307,11 @@ import TernAI
     }
 }
 
-@MainActor private final class OrganizationModelHarness {
+@MainActor @Observable private final class OrganizationAccountIDs {
+    var ids = ["a"]
+}
+
+@MainActor @Observable private final class OrganizationModelHarness {
     var access: MailOrganizationAccess
     let samples: MailOrganizationSamples
     var applied: [[OrganizationApplicationCategory]] = []

@@ -3,24 +3,26 @@ import SwiftUI
 
 struct MailOrganizationView: View {
     @Environment(AppModel.self) private var app
-    @State private var selectedAccount = ""
 
     var body: some View {
+        @Bindable var sessions = app.organizationSessions
         VStack(spacing: 0) {
             if let accounts = app.mailbox?.accounts, let first = accounts.first {
-                let owner = accounts.first(where: { $0.account.id == selectedAccount }) ?? first
-                MailOrganizationAccountView(app: app, accountID: owner.account.id,
-                    accounts: accounts.map(\.account), selectedAccount: $selectedAccount)
-                    .id(owner.account.id)
+                let owner = accounts.first(where: { $0.account.id == sessions.selectedAccountID }) ?? first
+                if let session = sessions.session(for: owner.account.id) {
+                    MailOrganizationAccountView(app: app, accountID: owner.account.id,
+                        accounts: accounts.map(\.account), selectedAccount: $sessions.selectedAccountID, session: session)
+                        .id(owner.account.id)
+                }
             } else {
                 ContentUnavailableView("No Accounts", systemImage: "person.crop.circle.badge.plus",
                     description: Text("Add a Google account in Connections to organize its mail."))
             }
         }
-        .onChange(of: app.mailbox?.accounts.map(\.account.id) ?? [], initial: true) { _, ids in
-            if !ids.contains(selectedAccount) { selectedAccount = ids.first ?? "" }
+        .task {
+            guard !app.assistant.composeAccessRevision.modelReady else { return }
+            await app.assistant.refreshConnection()
         }
-        .task { await app.assistant.refreshConnection() }
     }
 }
 
@@ -29,16 +31,15 @@ private struct MailOrganizationAccountView: View {
     let accountID: String
     let accounts: [AccountRecord]
     @Binding var selectedAccount: String
-    @State private var model: MailOrganizationModel
-    @State private var connection: SettingsAccountState
+    let model: MailOrganizationModel
+    let connection: SettingsAccountState
 
-    init(app: AppModel, accountID: String, accounts: [AccountRecord], selectedAccount: Binding<String>) {
+    init(app: AppModel, accountID: String, accounts: [AccountRecord], selectedAccount: Binding<String>,
+         session: MailOrganizationSessions.Session) {
         self.app = app; self.accountID = accountID; self.accounts = accounts
         _selectedAccount = selectedAccount
-        let connection = SettingsAccountState(accountID: accountID, store: app.settingsAccountStore,
-            initial: accounts.first { $0.id == accountID })
-        _connection = State(initialValue: connection)
-        _model = State(initialValue: MailOrganizationBindings.make(app: app, accountID: accountID, connection: connection))
+        connection = session.connection
+        model = session.model
     }
 
     private var access: MailOrganizationAccess {
@@ -69,15 +70,12 @@ private struct MailOrganizationAccountView: View {
                 })
         }
         .task {
-            try? await connection.refresh()
-            await connection.observe()
+            await model.refreshDelivery()
+            await model.watchDelivery()
         }
-        .task { await model.watchDelivery() }
-        .onChange(of: access, initial: true) { model.refreshAccess() }
         .onChange(of: app.assistant.connection.connectionRevision) {
             Task { await app.assistant.refreshConnection() }
         }
-        .onDisappear { model.clear() }
     }
 
     private var requirement: MailOrganizationRequirement? {

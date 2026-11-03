@@ -28,6 +28,7 @@ final class AppModel {
     /// compose windows keep working and queued changes wait for sign-in.
     private(set) var mailbox: MailboxModel?
     @ObservationIgnored private var assistantModel: AssistantModel?
+    @ObservationIgnored private var organizationSessionsModel: MailOrganizationSessions?
     @ObservationIgnored private var calendarModel: CalendarModel?
     @ObservationIgnored private var tasksModel: GoogleTasksModel?
     /// A task created from a detached reader can reveal the main window's sidebar.
@@ -310,6 +311,13 @@ final class AppModel {
         if let assistantModel { return assistantModel }
         let value = AssistantModel(app: self)
         assistantModel = value
+        return value
+    }
+
+    var organizationSessions: MailOrganizationSessions {
+        if let organizationSessionsModel { return organizationSessionsModel }
+        let value = MailOrganizationSessions(app: self)
+        organizationSessionsModel = value
         return value
     }
 
@@ -1126,6 +1134,7 @@ final class AppModel {
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        organizationSessionsModel?.clear()
         MailNotificationRouter.shared.unbind()
         mailURLRouter?.stop()
         await stopInboxUpdates()

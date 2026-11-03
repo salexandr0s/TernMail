@@ -67,6 +67,7 @@ final class MailOrganizationModel {
          status: @escaping @MainActor (OrganizationApplicationReceipt) async throws -> OrganizationApplicationStatus) {
         self.access = access; self.readSamples = readSamples; self.analyze = analyze
         self.apply = apply; self.status = status
+        observeAccess()
     }
 
     var isAnalyzing: Bool { phase == .reading || phase == .analyzing }
@@ -218,7 +219,19 @@ final class MailOrganizationModel {
         errorMessage = "Access or the selected model changed. Analyze again to prepare a new review."
     }
 
-    /// Samples and proposals exist only while this pane owns the review.
+    private func observeAccess() {
+        _ = withObservationTracking {
+            access()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                refreshAccess()
+                observeAccess()
+            }
+        }
+    }
+
+    /// Canceling or finishing a session releases its samples and proposals.
     func clear() {
         generation = UUID(); operation?.cancel(); operation = nil
         samples = nil; categories = []; receipt = nil; delivery = nil
