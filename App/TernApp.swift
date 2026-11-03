@@ -45,6 +45,7 @@ struct TernApp: App {
                 .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Analytics.contentWidth, height: Tokens.Layout.windowHeight)
+        .defaultPosition(.center)
         .windowResizability(.contentMinSize)
 
         WindowGroup("Analytics", id: MailAnalyticsWindow.sceneID, for: MailAnalyticsRoute.self) { $route in

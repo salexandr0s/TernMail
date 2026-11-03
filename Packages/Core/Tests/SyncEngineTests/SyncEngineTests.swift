@@ -1463,6 +1463,7 @@ actor FakeGmail: GmailService {
     private var heldHistoryCalls = Set<Int>()
     private var heldHistory: CheckedContinuation<Void, Never>?
     private var recentPages: [MessageListPage] = []
+    private(set) var listMessagePageSizes: [Int] = []
     private var historyExpired = false
     private let profileHistoryID = "200"
     private var threadsByID: [String: GmailThread] = [:]
@@ -1578,6 +1579,7 @@ actor FakeGmail: GmailService {
     func listMessages(
         query: String?, labelIDs: [String], includeSpamTrash: Bool, pageToken: String?, maxResults: Int
     ) async throws -> MessageListPage {
+        listMessagePageSizes.append(maxResults)
         if query != nil, !recentPages.isEmpty { return recentPages.removeFirst() }
         let ids = labelIDs.contains(SystemLabel.inbox) ? inboxIDs : []
         let refs = ids.compactMap { messagesByID[$0] }.map { #"{"id": "\#($0.id)", "threadId": "\#($0.threadId)"}"# }

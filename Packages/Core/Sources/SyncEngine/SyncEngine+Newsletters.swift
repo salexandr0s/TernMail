@@ -23,14 +23,15 @@ extension SyncEngine {
     public func loadNewsletterPage(restart: Bool = false) async throws -> NewsletterSnapshot {
         try checkNewsletterAccess()
         let accountID = accountID
+        let pageSize = 500
         let state = try await write { try $0.beginNewsletterScan(accountID: accountID, restart: restart) }
         if state.isComplete { return try await newsletterSnapshot() }
         do {
             let page = try await gmail.listMessages(query: "-in:sent -in:drafts -in:spam -in:trash -in:chats",
-                labelIDs: [], includeSpamTrash: false, pageToken: state.nextPageToken, maxResults: 100)
+                labelIDs: [], includeSpamTrash: false, pageToken: state.nextPageToken, maxResults: pageSize)
             try checkNewsletterAccess()
             let references = page.messages ?? []
-            guard references.count <= 100 else { throw GmailError.decoding("Newsletter page size") }
+            guard references.count <= pageSize else { throw GmailError.decoding("Newsletter page size") }
             if let token = page.nextPageToken {
                 guard !token.isEmpty, token.utf8.count <= 4_096, token != state.nextPageToken else {
                     throw NewsletterStoreError.repeatedPageToken

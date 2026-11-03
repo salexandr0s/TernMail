@@ -65,14 +65,33 @@ import Testing
         #expect(try await engine.loadNewsletterPage().subscriptions.first?.messageCount == 2)
     }
 
-    @Test func metadataBatchesAreBounded() async throws {
+    @Test func scansFiveHundredMessagesInBoundedBatchesAndContinuesToOlderMail() async throws {
         let (engine, _, gmail, _) = try await makeEngine()
-        let ids = (0..<100).map { "m\($0)" }
+        let ids = (0..<500).map { "m\($0)" }
         for id in ids { await gmail.add(try newsletterMessage(id)) }
-        await gmail.setRecentPages([try newsletterPage(ids, next: nil)])
+        await gmail.add(try newsletterMessage("older"))
+        await gmail.setRecentPages([try newsletterPage(ids, next: "older-page"),
+                                   try newsletterPage(["older"], next: nil)])
         let snapshot = try await engine.loadNewsletterPage()
-        #expect(snapshot.subscriptions.first?.messageCount == 100)
-        #expect(await gmail.metadataRequests.map(\.count) == [25, 25, 25, 25])
+        #expect(snapshot.scannedMessageCount == 500)
+        #expect(snapshot.subscriptions.first?.messageCount == 500)
+        #expect(!snapshot.isComplete)
+        #expect(await gmail.metadataRequests.map(\.count) == Array(repeating: 25, count: 20))
+        let complete = try await engine.loadNewsletterPage()
+        #expect(complete.scannedMessageCount == 501)
+        #expect(complete.subscriptions.first?.messageCount == 501)
+        #expect(complete.isComplete)
+        #expect(await gmail.metadataRequests.last == ["older"])
+        #expect(await gmail.listMessagePageSizes == [500, 500])
+    }
+
+    @Test func oversizedPageCannotAdvanceScan() async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        await gmail.setRecentPages([try newsletterPage((0..<501).map { "m\($0)" }, next: nil)])
+        await #expect(throws: GmailError.self) { try await engine.loadNewsletterPage() }
+        #expect(try await engine.newsletterSnapshot().scannedMessageCount == 0)
+        #expect(try await engine.newsletterSnapshot().isComplete == false)
+        #expect(await gmail.metadataRequests.isEmpty)
     }
 
     @Test func stopAndAccountDeletionPreventLateScanWrites() async throws {

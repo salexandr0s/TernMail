@@ -14,6 +14,14 @@ struct UnsubscribeView: View {
         }
     }
 
+    private var canContinueScan: Bool {
+        model.accounts.contains {
+            (model.selectedAccountID.isEmpty || $0.id == model.selectedAccountID)
+                && !model.unavailableAccountIDs.contains($0.id)
+                && model.snapshots[$0.id]?.isComplete != true
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -33,7 +41,12 @@ struct UnsubscribeView: View {
             listHeader
             Divider()
             GeometryReader { geometry in
-                if model.visibleSubscriptions.isEmpty { emptyState }
+                if model.visibleSubscriptions.isEmpty {
+                    emptyState
+                        .multilineTextAlignment(.center)
+                        .padding(Tokens.Space.s6)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
                 else {
                     ScrollView {
                         LazyVStack(spacing: 0) {
@@ -130,15 +143,13 @@ struct UnsubscribeView: View {
         HStack(spacing: Tokens.Space.s3) {
             Picker("Newsletter status", selection: $model.filter) {
                 ForEach(UnsubscribeFilter.allCases, id: \.self) { filter in
-                    Image(systemName: filter.newsletterSymbol)
-                        .accessibilityLabel(filter.title)
-                        .help(filter.title)
+                    Text(filter.title)
                         .tag(filter)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: Tokens.Space.s10 * 3)
+            .frame(width: Tokens.Space.s16 * 3)
             .accessibilityLabel("Newsletter status")
             .accessibilityIdentifier("unsubscribe.filter")
             Menu {
@@ -239,7 +250,10 @@ struct UnsubscribeView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if !model.search.isEmpty {
+        } else if model.accounts.isEmpty {
+            ContentUnavailableView("No mail accounts", systemImage: "person.crop.circle.badge.plus",
+                description: Text("Connect a mail account to find its newsletters."))
+        } else if !model.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             ContentUnavailableView {
                 Label("No matching newsletters", systemImage: "magnifyingglass")
             } description: {
@@ -250,17 +264,26 @@ struct UnsubscribeView: View {
         } else if model.filter == .history {
             ContentUnavailableView("No unsubscribe history", systemImage: "checkmark.circle",
                 description: Text("Your requests and completed unsubscribes will appear here."))
-        } else if model.accounts.isEmpty {
-            ContentUnavailableView("No mail accounts", systemImage: "person.crop.circle.badge.plus",
-                description: Text("Connect a mail account to find its newsletters."))
+        } else if model.filter == .active && !model.subscriptions.isEmpty {
+            ContentUnavailableView {
+                Label("No active newsletters", systemImage: "checkmark.circle")
+            } description: {
+                Text("Your previous unsubscribe requests are in History.")
+            } actions: {
+                Button("View history") { model.filter = .history }
+            }
         } else {
             ContentUnavailableView {
-                Label("No newsletters to unsubscribe from", systemImage: "tray")
+                Label("No newsletters found", systemImage: "tray")
             } description: {
-                Text("Tern looks for unsubscribe options provided by the sender. Check again after new mail arrives.")
+                Text(model.hasMoreToScan
+                    ? "Continue checking your received mail for unsubscribe options provided by the sender."
+                    : "Tern looks for unsubscribe options provided by the sender. Check again after new mail arrives.")
             } actions: {
-                Button("Check for newsletters") { model.startScan(restart: true) }
-                    .disabled(model.isScanning || !canScan)
+                Button(model.hasMoreToScan ? "Continue scan" : "Check for newsletters") {
+                    model.startScan(restart: !model.hasMoreToScan)
+                }
+                .disabled(model.isScanning || model.isWorking || !(model.hasMoreToScan ? canContinueScan : canScan))
             }
         }
     }
@@ -283,11 +306,12 @@ struct UnsubscribeView: View {
                 Text(coverageTitle).lineLimit(1).monospacedDigit().help(model.scanSummary)
                 Spacer(minLength: Tokens.Space.s3)
                 if model.isScanning {
-                    UnsubscribeIconButton(symbol: "pause.circle", title: "Pause newsletter scan", action: model.stopScan)
+                    Button("Pause scan", systemImage: "pause.fill", action: model.stopScan)
+                        .help("Pause scanning and keep saved progress")
                         .accessibilityIdentifier("unsubscribe.pauseScan")
                 } else if model.hasMoreToScan {
-                    UnsubscribeIconButton(symbol: "play.circle", title: "Continue newsletter scan") { model.startScan() }
-                        .disabled(!canScan)
+                    Button("Continue scan", systemImage: "play.fill") { model.startScan() }
+                        .disabled(!canContinueScan)
                         .accessibilityIdentifier("unsubscribe.continueScan")
                 }
             }
@@ -296,6 +320,7 @@ struct UnsubscribeView: View {
                     VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                         Text("Newsletter coverage").font(.headline)
                         Text(model.scanSummary)
+                        Text("Tern checks received mail in batches of up to 500 messages per account. You can pause and continue the scan at any time.")
                         Text("Counts include received newsletter emails found so far. Checkboxes select subscriptions that support direct unsubscribe. Other senders have a website or email option.")
                             .foregroundStyle(.secondary)
                     }
@@ -335,11 +360,5 @@ struct UnsubscribeView: View {
         .padding(.horizontal, Tokens.Space.s6)
         .padding(.vertical, Tokens.Space.s3)
         .background((isError ? Tokens.Status.warning : Tokens.Status.success).opacity(Tokens.Opacity.wash))
-    }
-}
-
-private extension UnsubscribeFilter {
-    var newsletterSymbol: String {
-        switch self { case .active: "tray"; case .history: "checkmark.circle"; case .all: "square.stack" }
     }
 }

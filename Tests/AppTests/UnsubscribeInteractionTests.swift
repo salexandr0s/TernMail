@@ -110,6 +110,29 @@ import Testing
         try await Task.sleep(for: .milliseconds(100))
         try capture(root, name: "search-empty")
         #expect(model.visibleSubscriptions.isEmpty)
+        model.search = ""
+        model.filter = .history
+        try await Task.sleep(for: .milliseconds(100))
+        try capture(root, name: "history-empty")
+        for row in store.rows { store.update(row.id, status: .requested) }
+        await model.load()
+        model.filter = .active
+        for (name, width, height, appearance) in [
+            ("active-empty-wide-dark", 1040.0, 760.0, NSAppearance.Name.darkAqua),
+            ("active-empty-compact-light", 720.0, 480.0, NSAppearance.Name.aqua),
+        ] {
+            window.appearance = NSAppearance(named: appearance)
+            window.setContentSize(NSSize(width: width, height: height))
+            try await Task.sleep(for: .milliseconds(100))
+            try capture(root, name: name)
+        }
+        store.rows = []
+        await model.load()
+        try await Task.sleep(for: .milliseconds(100))
+        try capture(root, name: "no-newsletters")
+        model.configure(accounts: [], unavailable: [])
+        try await Task.sleep(for: .milliseconds(100))
+        try capture(root, name: "no-accounts")
     }
 
     @Test func reviewAndManualSheetsRenderAndKeepOutcomesDistinct() async throws {
