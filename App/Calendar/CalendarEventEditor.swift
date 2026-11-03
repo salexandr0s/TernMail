@@ -27,6 +27,8 @@ struct CalendarEventEditor: View {
     @State private var isSaving = false
     @State private var error: String?
     @State private var confirmedNotifications = false
+    @State private var showsOptions: Bool
+    @State private var showsDetails: Bool
 
     init(draft: CalendarEditorDraft, calendars: [CalendarDisplayCalendar], calendar: Calendar,
          knownExceptionCount: Int? = nil, saveTitle: String? = nil, additionalRecipients: [String] = [], save: @escaping (CalendarEditorDraft) async throws -> Void) {
@@ -49,6 +51,8 @@ struct CalendarEventEditor: View {
         _attendees = State(initialValue: event.attendees ?? [])
         _useDefaultAlerts = State(initialValue: event.reminders?.useDefault ?? true)
         _reminders = State(initialValue: (event.reminders?.overrides ?? []).map { EditableReminder(reminder: $0) })
+        _showsOptions = State(initialValue: !(event.recurrence ?? []).isEmpty || event.reminders?.useDefault == false || !draft.importedExceptions.isEmpty)
+        _showsDetails = State(initialValue: !(event.description ?? "").isEmpty || event.rawValue["source"]?.objectValue?["url"]?.stringValue != nil)
     }
 
     private var editable: Bool { draft.source?.canEdit ?? true }
@@ -60,195 +64,289 @@ struct CalendarEventEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CalendarSheetHeading(
-                title: editable ? draft.isDeletion ? "Delete Event" : draft.isNew ? "New Event" : "Edit Event" : "Event Details",
-                subtitle: draft.isImport ? "Review your personal copy before adding it." : selectedCalendar.map { "\($0.accountName) · \($0.title)" } ?? "",
-                systemImage: draft.isDeletion ? "calendar.badge.minus" : "calendar",
-                color: selectedCalendar?.color ?? .accentColor
-            )
+            heading
             Divider()
-            Form {
-                Section("Event") {
-                    TextField("Title", text: $title, prompt: Text("Add a title"))
-                        .font(.title3.weight(.medium))
-                    Picker("Calendar", selection: $draft.calendarKey) {
-                        ForEach(calendars.filter { $0.canWrite || $0.id == draft.calendarKey }) { calendar in
-                            Text("\(calendar.accountName) · \(calendar.title)").tag(calendar.id)
-                        }
-                    }
-                    TextField("Location", text: $location, prompt: Text("Add a place or address"))
-                }.disabled(!editable || draft.isDeletion)
-                Section("Date & Time") {
-                    Toggle("All-day", isOn: $allDay)
-                        .onChange(of: allDay) { _, value in
-                            if value { start = eventCalendar.startOfDay(for: start); end = max(start, eventCalendar.startOfDay(for: end)) }
-                            else { start = CalendarLayout.date(at: 9 * 60, on: start, calendar: eventCalendar); end = start.addingTimeInterval(1800) }
-                        }
-                        .disabled(preservesImportedDates)
-                    DatePicker("Starts", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
-                        .disabled(preservesImportedDates)
-                    DatePicker(allDay ? "Last day" : "Ends", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
-                        .disabled(preservesImportedDates)
-                    if !allDay {
-                        CalendarTimeZonePicker(title: "Time Zone", identifier: $zoneID)
-                            .disabled(preservesImportedDates)
-                            .ternTransition(.disclosure)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    scheduleSection
+                    placeSection
+                    guestsSection
+                    if isRecurring { scopeSection }
+                    optionsSection
+                    detailsSection
                 }
-                .disabled(!editable || draft.isDeletion)
-                .ternAnimation(value: allDay)
-                if isRecurring {
-                    Section("Apply Changes To") {
-                        Picker("Events", selection: $draft.editScope) {
-                            ForEach(CalendarEditScope.allCases) { scope in
-                                Text(scope.title).tag(scope).disabled(scope != .occurrence && draft.seriesMaster == nil)
-                            }
-                        }
-                        .disabled(draft.recovery != nil)
-                        if draft.seriesMaster == nil {
-                            Text("Series details are unavailable. Refresh before editing all or following events.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        if draft.editScope == .following {
-                            Text(draft.isDeletion ? "This event and all following occurrences will be deleted." : (knownExceptionCount ?? draft.followingExceptionsCount).map { "This splits the series. \($0) later exceptions may be reset." }
-                                 ?? "This splits the series. Later exceptions may be reset; Tern checks the series before saving.")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .ternTransition(.disclosure)
-                            Toggle("I have reviewed the change to following events", isOn: $draft.acknowledgesFollowingReset)
-                                .ternTransition(.disclosure)
-                        }
-                    }
-                    .disabled(!editable)
-                    .ternAnimation(value: draft.editScope)
-                }
-                Section("Repeat") {
-                    CalendarRecurrenceControl(rules: $recurrence, allDay: allDay, timeZone: eventZone)
-                        .disabled(preservesImportedDates || (isRecurring && draft.editScope == .occurrence))
-                    if !draft.importedExceptions.isEmpty {
-                        Text("This import includes ^[\(draft.importedExceptions.count) changed or cancelled occurrence](inflect: true).")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("Dates and repeat rules are preserved with those occurrences. You can edit them after import.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }.disabled(!editable || draft.isDeletion)
-                Section("Guests") {
-                    if attendees.isEmpty {
-                        Label("No guests added", systemImage: "person.2")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach($attendees, id: \.email) { $attendee in
-                        HStack {
-                            AddressAvatar(accountID: selectedCalendar?.accountID ?? draft.source?.accountID,
-                                          address: attendee.email, name: attendee.displayName ?? "",
-                                          size: Tokens.Space.s6)
-                            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                                Text(attendee.displayName ?? attendee.email).lineLimit(1).help(attendee.email)
-                                if attendee.displayName != nil { Text(attendee.email).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                                Text(Self.responseTitle(attendee.responseStatus)).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: Tokens.Space.s2)
-                            Toggle("Optional", isOn: $attendee.optional.or(false)).toggleStyle(.checkbox).disabled(draft.isDeletion)
-                            Button { attendees.removeAll { $0.email == attendee.email } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).help("Remove guest").accessibilityLabel("Remove \(attendee.displayName ?? attendee.email)").disabled(draft.isDeletion)
-                        }
-                    }
-                    HStack {
-                        TextField("Guest email address", text: $newAttendee).onSubmit(addAttendee)
-                        Button("Add", action: addAttendee).disabled(newAttendee.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }.disabled(draft.isDeletion)
-                    if !notificationRecipients.isEmpty, !draft.isImport {
-                        Text("\(draft.isDeletion ? "Deleting sends cancellations" : "Saving sends invitations or updates") to: \(notificationRecipients.joined(separator: ", ")).")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle(draft.isDeletion ? "Send cancellations to these guests" : "Send invitations or updates to these guests", isOn: $confirmedNotifications)
-                    }
-                }.disabled(!editable)
-                Section("Video Call") {
-                    if let link = draft.event.hangoutLink ?? draft.event.conferenceData?.entryPoints?.first(where: { $0.entryPointType == "video" })?.uri,
-                       let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                        Link(destination: url) { Label("Join Meeting", systemImage: "video") }
-                            .buttonStyle(.bordered)
-                    } else {
-                        Toggle("Add Google Meet", isOn: $draft.createMeet)
-                            .disabled(!editable || draft.isDeletion || selectedCalendar?.entry.supportsGoogleMeet != true)
-                        if selectedCalendar?.entry.supportsGoogleMeet != true {
-                            Text("This calendar does not support Google Meet.").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Section("Alerts") {
-                    Toggle("Use Calendar Defaults", isOn: $useDefaultAlerts)
-                    if !useDefaultAlerts {
-                        ForEach($reminders) { $row in
-                            HStack {
-                                Picker("Method", selection: $row.reminder.method) {
-                                    Text("Notification").tag("popup"); Text("Email").tag("email")
-                                }
-                                TextField("Minutes before", value: $row.reminder.minutes, format: .number).frame(width: Tokens.Space.s16)
-                                Text("minutes before").font(.caption).foregroundStyle(.secondary).fixedSize()
-                                Button { reminders.removeAll { $0.id == row.id } } label: { Image(systemName: "minus.circle") }
-                                    .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
-                            }
-                            .ternTransition(.disclosure)
-                        }
-                        Button("Add Alert") { reminders.append(EditableReminder(reminder: CalendarReminder(minutes: 10))) }
-                            .disabled(reminders.count >= 5)
-                            .ternTransition(.disclosure)
-                    }
-                }
-                .disabled(!editable || draft.isDeletion)
-                .ternAnimation(value: useDefaultAlerts)
-                .ternAnimation(value: reminders.map(\.id))
-                Section {
-                    Group {
-                        Picker("Show as", selection: $draft.event.transparency.or("opaque")) {
-                            Text("Busy").tag("opaque"); Text("Free").tag("transparent")
-                        }
-                        Picker("Visibility", selection: $draft.event.visibility.or("default")) {
-                            Text("Calendar Default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
-                        }
-                        TextField("URL", text: $eventURL)
-                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            Text("Notes").font(.callout).foregroundStyle(.secondary)
-                            TextEditor(text: $notes)
-                                .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4)
-                                .accessibilityLabel("Event notes")
-                        }
-                    }.disabled(!editable || draft.isDeletion)
-                    ForEach(draft.event.attachments ?? []) { attachment in
-                        if let url = URL(string: attachment.fileUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                            Link(attachment.title ?? "Attachment", destination: url)
-                        }
-                    }
-                } header: { Text("Details") }
+                .padding(Tokens.Space.s5)
             }
-            .formStyle(.grouped).disabled(isSaving)
+            .disabled(isSaving)
             .environment(\.timeZone, eventZone)
             Divider()
-            VStack(spacing: Tokens.Space.s3) {
-                if let error {
-                    CalendarInlineError(message: error)
-                        .ternTransition(.disclosure)
-                }
-                HStack(spacing: Tokens.Space.s3) {
-                    if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving event") }
-                    if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
-                        Link("Open in Google Calendar", destination: url)
-                    }
-                    Spacer()
-                    Button(editable ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
-                    if editable {
-                        Button(saveTitle ?? (draft.isDeletion ? "Delete Event" : draft.isImport ? "Add to Calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
-                            .keyboardShortcut(.defaultAction).disabled(isSaving || !canSave)
-                    }
-                }
-            }.padding(Tokens.Space.s4)
-                .background(Tokens.Surface.muted)
-                .ternAnimation(value: error != nil)
+            footer
         }
+        .background(Tokens.Surface.muted)
         .frame(minWidth: Tokens.Calendar.editorWidth, idealWidth: Tokens.Calendar.editorWidth, maxWidth: .infinity,
                minHeight: Tokens.Calendar.sheetMinHeight, idealHeight: CalendarSheetLayout.height(Tokens.Calendar.editorHeight), maxHeight: .infinity)
         .interactiveDismissDisabled(isSaving)
         .onChange(of: notificationRecipients) { _, _ in confirmedNotifications = false }
         .onChange(of: draft.editScope) { _, _ in confirmedNotifications = false }
+    }
+
+    private var heading: some View {
+        HStack(alignment: .top, spacing: Tokens.Space.s4) {
+            CalendarDateTile(month: CalendarLayout.format(start, style: .dateTime.month(.abbreviated), calendar: eventCalendar).uppercased(),
+                             day: "\(eventCalendar.component(.day, from: start))", size: Tokens.Space.s12)
+            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
+                HStack(spacing: Tokens.Space.s3) {
+                    Text(editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary).fixedSize()
+                    Spacer(minLength: 0)
+                    CalendarEditorCalendarPicker(selection: $draft.calendarKey, calendars: calendars)
+                        .disabled(!editable || draft.isDeletion || isSaving)
+                }
+                TextField("Event title", text: $title, prompt: Text("Add a title"), axis: .vertical)
+                    .font(.title2.weight(.semibold)).textFieldStyle(.plain).lineLimit(1...3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Event title").help(title)
+                    .disabled(!editable || draft.isDeletion || isSaving)
+                if draft.isImport {
+                    Text("Review your personal copy before adding it.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Tokens.Space.s5)
+    }
+
+    private var scheduleSection: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            HStack {
+                Label("Date & time", systemImage: "clock").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Toggle("All-day", isOn: $allDay).toggleStyle(.switch).controlSize(.mini).fixedSize()
+                    .disabled(preservesImportedDates)
+                    .onChange(of: allDay) { _, value in
+                        if value { start = eventCalendar.startOfDay(for: start); end = max(start, eventCalendar.startOfDay(for: end)) }
+                        else { start = CalendarLayout.date(at: 9 * 60, on: start, calendar: eventCalendar); end = start.addingTimeInterval(1800) }
+                    }
+            }
+            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                CalendarEventDatePicker(title: "Starts", selection: $start, allDay: allDay, calendar: eventCalendar)
+                CalendarEventDatePicker(title: allDay ? "Last day" : "Ends", selection: $end, allDay: allDay, calendar: eventCalendar)
+            }
+            .disabled(preservesImportedDates)
+            HStack(spacing: Tokens.Space.s2) {
+                if !allDay {
+                    CalendarTimeZonePicker(title: "Time zone", identifier: $zoneID).font(.caption)
+                        .disabled(preservesImportedDates)
+                }
+            }
+        }
+        .disabled(!editable || draft.isDeletion)
+        .ternAnimation(value: allDay)
+    }
+
+    private var placeSection: some View {
+        CalendarEditorCard {
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "mappin.and.ellipse").foregroundStyle(.secondary).frame(width: Tokens.Control.icon)
+                TextField("Location", text: $location, prompt: Text("Add a place or address"))
+                    .textFieldStyle(.plain).disabled(!editable || draft.isDeletion)
+            }
+            Divider()
+            HStack(spacing: Tokens.Space.s3) {
+                Image(systemName: "video").foregroundStyle(.secondary).frame(width: Tokens.Control.icon)
+                if let link = draft.event.hangoutLink ?? draft.event.conferenceData?.entryPoints?.first(where: { $0.entryPointType == "video" })?.uri,
+                   let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                    Link("Join meeting", destination: url)
+                    Spacer()
+                    Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Toggle("Add Google Meet", isOn: $draft.createMeet).toggleStyle(.switch).controlSize(.mini)
+                        .disabled(!editable || draft.isDeletion || selectedCalendar?.entry.supportsGoogleMeet != true)
+                        .help(selectedCalendar?.entry.supportsGoogleMeet == true ? "Add a video call to this event" : "This calendar does not support Google Meet")
+                }
+            }
+        }
+    }
+
+    private var guestsSection: some View {
+        CalendarEditorSection(title: attendees.isEmpty ? "Guests" : "Guests · \(attendees.count)", systemImage: "person.2") {
+            CalendarEditorCard {
+                ForEach($attendees, id: \.email) { $attendee in
+                    HStack(spacing: Tokens.Space.s3) {
+                        AddressAvatar(accountID: selectedCalendar?.accountID ?? draft.source?.accountID,
+                                      address: attendee.email, name: attendee.displayName ?? "")
+                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                            Text(attendee.displayName ?? attendee.email).font(.callout.weight(.medium)).lineLimit(1).help(attendee.email)
+                            if attendee.displayName != nil {
+                                Text(attendee.email).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(attendee.email)
+                            }
+                            Label(Self.responseTitle(attendee.responseStatus), systemImage: Self.responseSymbol(attendee.responseStatus))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: Tokens.Space.s2)
+                        Toggle("Optional", isOn: $attendee.optional.or(false)).toggleStyle(.checkbox).font(.caption).fixedSize()
+                        Button { attendees.removeAll { $0.email == attendee.email } } label: {
+                            Image(systemName: "xmark").font(.caption).frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        }
+                        .buttonStyle(.plain).ternHover().help("Remove guest")
+                        .accessibilityLabel("Remove \(attendee.displayName ?? attendee.email)")
+                    }
+                    .disabled(draft.isDeletion)
+                    Divider()
+                }
+                if attendees.isEmpty {
+                    HStack(spacing: Tokens.Space.s3) {
+                        Image(systemName: "person.crop.circle.badge.plus").font(.title2).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                            Text("Invite someone").font(.callout.weight(.medium))
+                            Text("Add guests by email.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                HStack(spacing: Tokens.Space.s2) {
+                    TextField("Guest email address", text: $newAttendee).textFieldStyle(.roundedBorder).onSubmit(addAttendee)
+                    Button("Add", systemImage: "plus", action: addAttendee)
+                        .disabled(newAttendee.trimmingCharacters(in: .whitespaces).isEmpty)
+                }.disabled(draft.isDeletion)
+                if !notificationRecipients.isEmpty, !draft.isImport {
+                    Divider()
+                    Toggle(draft.isDeletion ? "Send cancellations to guests" : "Send invitations or updates to guests", isOn: $confirmedNotifications)
+                        .toggleStyle(.checkbox).font(.callout)
+                    Text("To: \(notificationRecipients.joined(separator: ", "))")
+                        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.disabled(!editable)
+    }
+
+    private var scopeSection: some View {
+        CalendarEditorSection(title: "Apply changes to", systemImage: "arrow.triangle.branch") {
+            CalendarEditorCard {
+                Picker("Events", selection: $draft.editScope) {
+                    ForEach(CalendarEditScope.allCases) { scope in
+                        Text(scope.title).tag(scope).disabled(scope != .occurrence && draft.seriesMaster == nil)
+                    }
+                }.disabled(draft.recovery != nil)
+                if draft.seriesMaster == nil {
+                    Text("Series details are unavailable. Refresh before editing all or following events.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if draft.editScope == .following {
+                    Text(draft.isDeletion ? "This event and all following occurrences will be deleted." : (knownExceptionCount ?? draft.followingExceptionsCount).map { "This splits the series. \($0) later exceptions may be reset." }
+                         ?? "This splits the series. Later exceptions may be reset; Tern checks the series before saving.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("I have reviewed the change to following events", isOn: $draft.acknowledgesFollowingReset).toggleStyle(.checkbox)
+                }
+            }
+        }.disabled(!editable).ternAnimation(value: draft.editScope)
+    }
+
+    private var optionsSection: some View {
+        CalendarEditorCard {
+            DisclosureGroup(isExpanded: $showsOptions) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    CalendarRecurrenceControl(rules: $recurrence, allDay: allDay, timeZone: eventZone)
+                        .disabled(preservesImportedDates || (isRecurring && draft.editScope == .occurrence))
+                    if !draft.importedExceptions.isEmpty {
+                        Text("This import includes ^[\(draft.importedExceptions.count) changed or cancelled occurrence](inflect: true). Dates and repeat rules are preserved. You can edit them after import.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Toggle("Use calendar alerts", isOn: $useDefaultAlerts).toggleStyle(.switch).controlSize(.mini)
+                    if !useDefaultAlerts {
+                        ForEach($reminders) { $row in
+                            HStack {
+                                Picker("Method", selection: $row.reminder.method) {
+                                    Text("Notification").tag("popup"); Text("Email").tag("email")
+                                }.labelsHidden().accessibilityLabel("Alert method")
+                                TextField("Minutes before", value: $row.reminder.minutes, format: .number)
+                                    .textFieldStyle(.roundedBorder).frame(width: Tokens.Space.s16)
+                                Text("minutes before").font(.caption).foregroundStyle(.secondary).fixedSize()
+                                Spacer(minLength: 0)
+                                Button { reminders.removeAll { $0.id == row.id } } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
+                            }
+                        }
+                        Button("Add alert", systemImage: "plus") { reminders.append(EditableReminder(reminder: CalendarReminder(minutes: 10))) }
+                            .disabled(reminders.count >= 5)
+                    }
+                }.padding(.top, Tokens.Space.s3)
+                    .disabled(!editable || draft.isDeletion)
+            } label: {
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Label("Repeat & alerts", systemImage: "repeat").font(.callout.weight(.medium))
+                    if !showsOptions {
+                        Text("\(recurrence.isEmpty ? "Does not repeat" : "Repeating event") · \(useDefaultAlerts ? "Calendar alerts" : reminders.isEmpty ? "No alerts" : "Custom alerts")")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }.padding(.vertical, Tokens.Space.s1)
+            }
+        }
+        .ternAnimation(value: useDefaultAlerts).ternAnimation(value: reminders.map(\.id))
+    }
+
+    private var detailsSection: some View {
+        CalendarEditorCard {
+            DisclosureGroup(isExpanded: $showsDetails) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    Picker("Show as", selection: $draft.event.transparency.or("opaque")) {
+                        Text("Busy").tag("opaque"); Text("Free").tag("transparent")
+                    }
+                    Picker("Visibility", selection: $draft.event.visibility.or("default")) {
+                        Text("Calendar default").tag("default"); Text("Private").tag("private"); Text("Public").tag("public")
+                    }
+                    TextField("URL", text: $eventURL, prompt: Text("Add a link")).textFieldStyle(.roundedBorder)
+                    Text("Notes").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $notes).scrollContentBackground(.hidden)
+                        .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s4).accessibilityLabel("Event notes")
+                        .padding(Tokens.Space.s2).ternSurface(radius: Tokens.Radius.md)
+                }.disabled(!editable || draft.isDeletion).padding(.top, Tokens.Space.s3)
+            } label: {
+                Label("Notes & details", systemImage: "text.alignleft").font(.callout.weight(.medium))
+                    .padding(.vertical, Tokens.Space.s1)
+            }
+            ForEach(draft.event.attachments ?? []) { attachment in
+                if let url = URL(string: attachment.fileUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                    Link(destination: url) { Label(attachment.title ?? "Attachment", systemImage: "paperclip") }
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        VStack(spacing: Tokens.Space.s3) {
+            if let error { CalendarInlineError(message: error).ternTransition(.disclosure) }
+            HStack(spacing: Tokens.Space.s3) {
+                if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving event") }
+                if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
+                    Link("Open in Google Calendar", destination: url).font(.caption)
+                } else {
+                    Label(scheduleSummary, systemImage: allDay ? "sun.max" : "clock").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                Button(editable ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
+                if editable {
+                    Button(saveTitle ?? (draft.isDeletion ? "Delete event" : draft.isImport ? "Add to calendar" : "Save"), role: draft.isDeletion ? .destructive : nil) { commit() }
+                        .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(isSaving || !canSave)
+                }
+            }.controlSize(.large)
+        }
+        .padding(.horizontal, Tokens.Space.s6).padding(.vertical, Tokens.Space.s4)
+        .ternAnimation(value: error != nil)
+    }
+
+    private var scheduleSummary: String {
+        if allDay {
+            let days = max(1, (eventCalendar.dateComponents([.day], from: eventCalendar.startOfDay(for: start), to: eventCalendar.startOfDay(for: end)).day ?? 0) + 1)
+            return days == 1 ? "All-day event" : "\(days) days · All-day"
+        }
+        guard end > start else { return "Check event times" }
+        return Duration.seconds(end.timeIntervalSince(start)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated))
+    }
+
+    private static func responseSymbol(_ status: String?) -> String {
+        switch status { case "accepted": "checkmark.circle"; case "declined": "xmark.circle"; case "tentative": "questionmark.circle"; default: "clock" }
     }
 
     private var notificationRecipients: [String] {

@@ -60,7 +60,7 @@ struct CalendarRecurrenceControl: View {
                         .ternTransition(.disclosure)
                 }
                 if selection.endMode == "until" {
-                    DatePicker("Last Date", selection: $selection.until, displayedComponents: .date)
+                    CalendarEventDatePicker(title: "Last date", selection: $selection.until, allDay: true, calendar: recurrenceCalendar)
                         .ternTransition(.disclosure)
                 }
             }
@@ -70,6 +70,12 @@ struct CalendarRecurrenceControl: View {
         .onChange(of: selection) { _, _ in publish() }
         .onChange(of: allDay) { _, _ in if selection.endMode == "until" { publish() } }
         .onChange(of: timeZone) { _, _ in if selection.endMode == "until" { publish() } }
+    }
+
+    private var recurrenceCalendar: Calendar {
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.timeZone = timeZone
+        return calendar
     }
 
     private var unit: String {
