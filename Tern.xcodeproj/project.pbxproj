@@ -107,6 +107,7 @@
 		2AA0F120879BA0BF57F64528 /* SidebarFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA0A515E71103D6C870FCB49 /* SidebarFooter.swift */; };
 		2C5D3D7718C073EF6FC3B4EB /* TernAI in Frameworks */ = {isa = PBXBuildFile; productRef = A98EAE975A66BB4128C1753A /* TernAI */; };
 		2C89D8CC4D0AA8E180253506 /* MessagePrefetchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 211CCB052F53DE7A1CC9E260 /* MessagePrefetchTests.swift */; };
+		2C8F9418C53BBCB26915C072 /* TokenRoles.swift in Sources */ = {isa = PBXBuildFile; fileRef = D639DBC7BC94B970DE3CFDE6 /* TokenRoles.swift */; };
 		2CCBFB7751D4C61BD7DA3CB2 /* CalendarPresentationBenchmarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88DB0B89EA7BF0AF314BFD6 /* CalendarPresentationBenchmarks.swift */; };
 		2D2B4D505F78857DA9E10C7A /* AttachmentLibraryFilters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDFDBB329E0F39EBCDA9FE2 /* AttachmentLibraryFilters.swift */; };
 		2E41BE8DEC34702C71C79DCC /* ChatGPTConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58168BBE9F19A18A62CE8E1 /* ChatGPTConnectionTests.swift */; };
@@ -972,6 +973,7 @@
 		D424972BD8B6208837B7BFB5 /* ManagedAttachmentFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAttachmentFiles.swift; sourceTree = "<group>"; };
 		D46A270C4CB511BE859A0054 /* LocalSignaturesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSignaturesPane.swift; sourceTree = "<group>"; };
 		D4CEE39609A5EF3263B4CFB8 /* MessageListRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListRow.swift; sourceTree = "<group>"; };
+		D639DBC7BC94B970DE3CFDE6 /* TokenRoles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenRoles.swift; sourceTree = "<group>"; };
 		D6A85371ECD408294E818F8C /* AssistantEmailResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEmailResult.swift; sourceTree = "<group>"; };
 		D6E2C9CE97C58E721FBD7006 /* RecipientField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientField.swift; sourceTree = "<group>"; };
 		D86D381868CDB8BA57846DB9 /* ComposeFileDropTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFileDropTests.swift; sourceTree = "<group>"; };
@@ -1569,6 +1571,7 @@
 				2F641499B08E6A3FC034961A /* PublicSuffixList.dat */,
 				601194EC6B7FE6424CAEEE5C /* TernSidebarSplit.swift */,
 				28649E726D1B35A1020647FB /* TernTransition.swift */,
+				D639DBC7BC94B970DE3CFDE6 /* TokenRoles.swift */,
 				4463F25A316147E854AB475E /* Tokens.swift */,
 			);
 			path = Design;
@@ -2436,6 +2439,7 @@
 				DAA1D6266007769134379E27 /* ThreadSummaryModel.swift in Sources */,
 				249BBF2CE5BC834FA0BEF0AA /* ThreadSummaryView.swift in Sources */,
 				8A7FEC940FEFE0241F30C670 /* ThreadView.swift in Sources */,
+				2C8F9418C53BBCB26915C072 /* TokenRoles.swift in Sources */,
 				6911FECB519CC4E96F7F4911 /* Tokens.swift in Sources */,
 				1D9533B01C204A2EBC8AF535 /* TriageControls.swift in Sources */,
 				1D2A9CE2D4D11582E7493E4A /* UnsubscribeDialogs.swift in Sources */,

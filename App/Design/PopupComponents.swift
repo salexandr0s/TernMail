@@ -5,7 +5,7 @@ struct PopupHeader: View {
     let title: String
     let systemImage: String
     var subtitle: String? = nil
-    var iconForeground: Color = .accentColor
+    var iconForeground: Color = Tokens.Action.accent
     var iconBackground: Color = Tokens.Surface.muted
     var iconAction: (() -> Void)? = nil
     /// Help and VoiceOver text for the icon button.
@@ -28,11 +28,11 @@ struct PopupHeader: View {
             }
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(title)
-                    .font(.headline)
+                    .font(Tokens.Typography.sectionTitle)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Tokens.Typography.metadata)
+                        .foregroundStyle(Tokens.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -44,14 +44,14 @@ struct PopupHeader: View {
 
     private var icon: some View {
         Image(systemName: systemImage)
-            .font(.title3)
+            .font(Tokens.Typography.controlSymbol)
             .foregroundStyle(iconForeground)
             .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
             .background(iconBackground, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .overlay(alignment: .bottomTrailing) {
                 if iconAction != nil {
                     Image(systemName: "chevron.down.circle.fill")
-                        .font(.caption2)
+                        .font(Tokens.Typography.finePrint)
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(Color.primary, Tokens.Surface.primary)
                         .accessibilityHidden(true)

@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>TernMail · Design inventory</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f4f5f6, #141719);
+  --panel: light-dark(#fff, #1c2023);
+  --ink: light-dark(#19242b, #eef2f4);
+  --sub: light-dark(#53626d, #b0bdc6);
+  --line: light-dark(#d8e0e5, #38444c);
+  --accent: light-dark(#09685f, #79d9c6);
+  --wash: light-dark(#e6f4f0, #183b35);
+  --radius: 14px;
+  --gap: 16px;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    14px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+button,
+select,
+input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+header,
+main,
+footer {
+  max-width: 1280px;
+  margin: auto;
+  padding: 32px;
+}
+header {
+  padding-bottom: 20px;
+}
+.eyebrow {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+h1 {
+  font-size: clamp(28px, 4vw, 44px);
+  letter-spacing: -0.035em;
+  margin: 9px 0;
+}
+h2 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+p {
+  max-width: 850px;
+  margin: 8px 0;
+  color: var(--sub);
+}
+.top {
+  display: flex;
+  gap: var(--gap);
+  align-items: start;
+  justify-content: space-between;
+}
+.meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap);
+  margin: 24px 0 0;
+}
+.stat,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.stat strong {
+  font-size: 30px;
+  display: block;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.stat span {
+  color: var(--sub);
+}
+main {
+  padding-top: 0;
+}
+.foundation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  margin-bottom: 24px;
+}
+.scale {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 12px 0 4px;
+}
+.measure {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--sub);
+}
+.measure i {
+  display: block;
+  background: var(--accent);
+  width: 18px;
+  min-height: 2px;
+}
+.radii {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+}
+.radius-sample {
+  height: 54px;
+  width: 70px;
+  border: 1px solid var(--accent);
+  background: var(--wash);
+  display: grid;
+  place-items: center;
+}
+.note {
+  font-size: 12px;
+}
+.controls {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+nav button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--panel);
+  border-color: var(--ink);
+}
+.filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+input[type="search"] {
+  flex: 1;
+  min-width: 220px;
+}
+select {
+  max-width: 100%;
+}
+.result-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin: 18px 0;
+  color: var(--sub);
+}
+.entries {
+  display: grid;
+  gap: 10px;
+}
+.entry {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pill {
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  color: var(--sub);
+}
+pre {
+  font:
+    12px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 10px 0;
+  background: var(--bg);
+  padding: 12px;
+  border-radius: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+.source {
+  font:
+    11px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+  color: var(--sub);
+}
+details {
+  margin-top: 10px;
+}
+summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+}
+details ul {
+  padding-left: 20px;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 12px;
+}
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.tag {
+  background: var(--wash);
+  color: var(--accent);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 6px;
+  overflow-wrap: anywhere;
+}
+.pager {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 24px;
+  align-items: center;
+}
+.empty {
+  text-align: center;
+  padding: 40px;
+}
+.limits {
+  margin-top: 28px;
+}
+footer {
+  padding-top: 0;
+  font-size: 12px;
+  color: var(--sub);
+}
+@media (max-width: 700px) {
+  header,
+  main,
+  footer {
+    padding: 20px;
+  }
+  .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .foundation {
+    grid-template-columns: 1fr;
+  }
+  .top {
+    flex-direction: column;
+  }
+  .entry-head {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .filters input {
+    width: 100%;
+  }
+  .controls {
+    position: static;
+  }
+}
+</style>
+</head>
+<body>
+<header>
+<div class="top"><div><div class="eyebrow">TernMail / Design reference</div><h1>Design tokens and components</h1><p>Explore the tokens and components in the app today. Source expressions remain intact so the next design pass can change a role with its uses in view.</p></div><label>Catalog appearance<br><select id="appearance"><option value="light dark">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+<div class="meta"><a href="README.md">Usage and refinement guide</a><a href="design-token-inventory.json">Complete JSON inventory</a><span>SwiftUI · AppKit · Email HTML</span></div>
+<div class="stats" id="stats"></div>
+</header>
+<main>
+<div class="foundation"><section class="panel"><h2>Spacing and shape</h2><div id="spacing" class="scale"></div><div id="radii" class="radii"></div><p class="note">Numeric labels are native points. These browser diagrams illustrate the scale.</p></section><section class="panel"><h2>Appearance belongs to macOS</h2><p>Text hierarchy, accent, surfaces and status colors resolve in the app's current environment. The registry preserves those native expressions instead of substituting fixed color swatches.</p><p>Native controls own their focus, selection and disabled appearance. User palettes, provider colors and email content have separate owners.</p><p class="note">This page is a source reference, not a screenshot or a native component preview. Its appearance selector changes this catalog only.</p></section></div>
+<section aria-label="Inventory browser">
+<div class="controls"><nav id="tabs" aria-label="Inventory categories"></nav><div class="filters"><input id="search" type="search" aria-label="Search inventory" placeholder="Search a token, component, value or source file…"><select id="group" aria-label="Filter by namespace or area"><option value="">All groups</option></select></div></div>
+<div class="result-meta"><span id="result-count" role="status" aria-live="polite"></span><span id="category-note" class="note"></span></div><div id="entries" class="entries"></div><div class="pager"><button id="previous">Previous</button><span id="page-count"></span><button id="next">Next</button></div>
+</section>
+<details class="panel limits"><summary>Coverage and scanner limits</summary><div id="coverage"></div></details>
+<noscript><p>This catalog needs JavaScript for search. The complete inventory is also available in the linked JSON file.</p></noscript>
+</main>
+<footer>Generated from repository source. Refresh with <code>python3 scripts/design-token-inventory.py</code>. Edit token definitions in Swift; regenerate this page afterward.</footer>
+<script type="application/json" id="inventory">__TERN_DESIGN_INVENTORY__</script>
+<script>
+"use strict";
+const data = JSON.parse(document.getElementById("inventory").textContent);
+const $ = (id) => document.getElementById(id);
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char],
+  );
+const categories = [
+  ["tokens", "Tokens", "Declared shared values and policies"],
+  ["components", "Components", "View, layout, style and native wrapper definitions"],
+  [
+    "local_visual_constants",
+    "Local values",
+    "Candidates for component roles; review their meaning",
+  ],
+  ["visual_expressions", "Visual uses", "Includes native styles and calculated layout"],
+  ["embedded_styles", "Email / HTML", "Content rendering and print styles"],
+  ["native_controls", "Native controls", "Platform controls and their source locations"],
+];
+let active = "tokens",
+  page = 0;
+const pageSize = 60;
+const records = (key) => (Array.isArray(data[key]) ? data[key] : []);
+const sourceOf = (row) =>
+  typeof row.source === "string"
+    ? row.source
+    : row.source?.path || row.source?.file || row.file || "";
+const lineOf = (row) => row.line || row.source?.line || "";
+const groupOf = (row) =>
+  row.namespace ||
+  sourceOf(row).split("/").slice(0, 2).join("/") ||
+  row.category ||
+  row.kind ||
+  "Other";
+const labelOf = (row) =>
+  row.name ||
+  row.component ||
+  row.property ||
+  row.control ||
+  row.api ||
+  row.kind ||
+  row.category ||
+  "Expression";
+const stringify = (value) => (typeof value === "string" ? value : JSON.stringify(value, null, 2));
+const sourceLink = (row) => {
+  const path = sourceOf(row);
+  return path
+    ? `<a class="source" href="../../${path.split("/").map(encodeURIComponent).join("/")}">${esc(path)}${lineOf(row) ? ":" + esc(lineOf(row)) : ""}</a>`
+    : "";
+};
+const searchable = new Map(
+  categories.map(([key]) => [
+    key,
+    records(key).map((row) => ({
+      row,
+      text: JSON.stringify(row).toLowerCase(),
+      group: groupOf(row),
+    })),
+  ]),
+);
+function references(values, title) {
+  if (!values?.length) return "";
+  return `<details><summary>${esc(title)} (${values.length})</summary><ul>${values.map((item) => `<li>${typeof item === "string" ? esc(item) : sourceLink(item) + " " + esc(item.expression || item.name || item.context || item.kind || "")}</li>`).join("")}</ul></details>`;
+}
+function renderRow(row) {
+  const deps = row.references || row.token_references || row.tokens || row.token_dependencies || [];
+  const content =
+    row.expression || row.signature || row.declaration || row.value || row.text || row.snippet;
+  return `<article class="entry"><div class="entry-head"><span class="name">${esc(labelOf(row))}</span><span class="pill">${esc([row.kind || row.category, row.type, row.visibility].filter(Boolean).join(" · ") || groupOf(row))}</span></div>${row.documentation ? `<p>${esc(Array.isArray(row.documentation) ? row.documentation.join(" ") : row.documentation)}</p>` : ""}${row.signature && row.signature !== content ? `<pre>${esc(row.signature)}</pre>` : ""}${content ? `<pre>${esc(stringify(content))}</pre>` : ""}${row.truncated ? '<p class="note">Expression shortened in this inventory. Open the source for the full value.</p>' : ""}${row.review ? `<p class="note">${esc(row.review)}</p>` : ""}${sourceLink(row)}${deps.length ? `<div class="tags">${deps.map((item) => `<span class="tag">${esc(typeof item === "string" ? item : item.name || item.token || stringify(item))}</span>`).join("")}</div>` : ""}${references(row.usages, "Source uses")}${references(row.locations, "Locations")}${references(row.members, "Members")}</article>`;
+}
+function render() {
+  const query = $("search").value.trim().toLowerCase(),
+    group = $("group").value;
+  const matched = searchable
+    .get(active)
+    .filter((item) => (!query || item.text.includes(query)) && (!group || item.group === group));
+  const pages = Math.max(1, Math.ceil(matched.length / pageSize));
+  page = Math.min(page, pages - 1);
+  $("entries").innerHTML =
+    matched
+      .slice(page * pageSize, (page + 1) * pageSize)
+      .map((item) => renderRow(item.row))
+      .join("") ||
+    '<p class="empty">No matching entries. Try a shorter name or another category.</p>';
+  $("result-count").textContent =
+    `${matched.length.toLocaleString()} of ${records(active).length.toLocaleString()} entries`;
+  $("category-note").textContent = categories.find((item) => item[0] === active)[2];
+  $("page-count").textContent = `${page + 1} / ${pages}`;
+  $("previous").disabled = page === 0;
+  $("next").disabled = page >= pages - 1;
+  document
+    .querySelectorAll("#tabs button")
+    .forEach((button) =>
+      button.setAttribute("aria-pressed", String(button.dataset.key === active)),
+    );
+}
+function selectCategory(key) {
+  active = key;
+  page = 0;
+  const groups = [...new Set(searchable.get(active).map((item) => item.group))].sort();
+  $("group").innerHTML =
+    '<option value="">All groups</option>' +
+    groups.map((group) => `<option value="${esc(group)}">${esc(group)}</option>`).join("");
+  render();
+}
+$("tabs").innerHTML = categories
+  .map(
+    ([key, label]) =>
+      `<button data-key="${key}" aria-pressed="${key === active}">${label} <span class="note">${records(key).length.toLocaleString()}</span></button>`,
+  )
+  .join("");
+$("tabs").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-key]");
+  if (button) selectCategory(button.dataset.key);
+});
+$("search").addEventListener("input", () => {
+  page = 0;
+  render();
+});
+$("group").addEventListener("change", () => {
+  page = 0;
+  render();
+});
+$("previous").addEventListener("click", () => {
+  page--;
+  render();
+  document.querySelector(".controls").scrollIntoView({ block: "start", behavior: "auto" });
+});
+$("next").addEventListener("click", () => {
+  page++;
+  render();
+  document.querySelector(".controls").scrollIntoView({ block: "start", behavior: "auto" });
+});
+$("appearance").addEventListener(
+  "change",
+  (event) => (document.documentElement.style.colorScheme = event.target.value),
+);
+$("stats").innerHTML = [
+  ["tokens", "Shared tokens and policies"],
+  ["components", "UI component definitions"],
+  ["local_visual_constants", "Local value candidates"],
+  ["files", "Source files scanned"],
+]
+  .map(
+    ([key, label]) =>
+      `<div class="stat"><strong>${records(key).length.toLocaleString()}</strong><span>${label}</span></div>`,
+  )
+  .join("");
+const numeric = (namespace) =>
+  records("tokens")
+    .filter(
+      (row) =>
+        row.name?.startsWith(`Tokens.${namespace}.`) &&
+        /^\d+(?:\.\d+)?$/.test(row.expression?.trim()),
+    )
+    .sort((a, b) => Number(a.expression) - Number(b.expression));
+$("spacing").innerHTML = numeric("Space")
+  .map(
+    (row) =>
+      `<div class="measure" title="${esc(row.name)}"><i style="height:${Number(row.expression)}px"></i><span>${esc(row.expression)}</span></div>`,
+  )
+  .join("");
+$("radii").innerHTML = numeric("Radius")
+  .map(
+    (row) =>
+      `<div class="radius-sample" style="border-radius:${Number(row.expression)}px" title="${esc(row.name)}">${esc(row.expression)} pt</div>`,
+  )
+  .join("");
+$("coverage").innerHTML =
+  `<pre>${esc(stringify(data.scope))}</pre><ul>${(data.limitations || []).map((item) => `<li>${esc(stringify(item))}</li>`).join("")}</ul>`;
+selectCategory("tokens");
+</script>
+</body>
+</html>

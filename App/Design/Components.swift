@@ -15,16 +15,16 @@ struct TernBadge: View {
                     .accessibilityHidden(true)
             }
             Text(text)
-                .foregroundStyle(Color(nsColor: .labelColor))
+                .foregroundStyle(Tokens.Text.label)
                 .lineLimit(1)
         }
-        .font(.caption.weight(.medium))
+        .font(Tokens.Typography.badge)
         .padding(.horizontal, Tokens.Space.s2)
         .padding(.vertical, Tokens.Space.s1)
         .background(Tokens.Surface.muted, in: Capsule())
         .overlay {
             Capsule()
-                .strokeBorder(contrast == .increased ? Color(nsColor: .labelColor) : Tokens.Surface.border,
+                .strokeBorder(contrast == .increased ? Tokens.Text.label : Tokens.Surface.border,
                               lineWidth: Tokens.Border.hairline)
                 .allowsHitTesting(false)
         }
@@ -71,9 +71,9 @@ struct TernAvatar: View {
                 Text(initials)
             }
         }
-        .font(size > Tokens.Control.avatar ? .headline : .caption.weight(.semibold))
+        .font(size > Tokens.Control.avatar ? Tokens.Typography.avatarLarge : Tokens.Typography.avatar)
         // Keep initials legible on the neutral disc when a native list selects its row.
-        .foregroundStyle(Color(nsColor: .labelColor))
+        .foregroundStyle(Tokens.Text.label)
         .frame(width: size, height: size)
         .background(Tokens.Surface.muted, in: Circle())
         .overlay {
@@ -95,20 +95,20 @@ struct TernEmptyState: View {
     var body: some View {
         VStack(spacing: Tokens.Space.s4) {
             Image(systemName: systemImage)
-                .font(.largeTitle.weight(.light))
+                .font(Tokens.Typography.emptyStateSymbol)
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Tokens.Text.secondary)
                 .frame(width: Tokens.Space.s16, height: Tokens.Space.s16)
                 .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
                 .accessibilityHidden(true)
             VStack(spacing: Tokens.Space.s2) {
                 Text(title)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .font(Tokens.Typography.emptyStateTitle)
+                    .foregroundStyle(Tokens.Text.primary)
                 if let message {
                     Text(message)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(Tokens.Typography.supporting)
+                        .foregroundStyle(Tokens.Text.secondary)
                 }
             }
         }

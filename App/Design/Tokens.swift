@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Spacing, radius and motion values mirrored from the workspace design contract
-/// (`~/.claude/uiux-contract/design_tokens.json`). Colors and type use macOS
-/// semantic colors and text styles instead, so system appearance settings apply.
+/// Shared scales and component values. Colors and type use macOS semantics.
+/// See `TokenRoles.swift` for text roles and `docs/design/README.md` for the
+/// generated inventory, component recipes, and refinement guidance.
 enum Tokens {
     enum Space {
         static let s0_5: CGFloat = 2
