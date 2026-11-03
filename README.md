@@ -6,7 +6,7 @@ Tern is a native macOS mail and calendar app with Gmail integration, a ChatGPT a
 
 The [design-token guide](docs/design/README.md) documents the app's components, shared values, native appearance rules, and refinement backlog. Open the [searchable design catalog](docs/design/catalog.html) locally to inspect token definitions and their source uses.
 
-The canonical source is `/Users/developer/GitHub/REA_Mime` on `main`, with [TernMail on GitHub](https://github.com/salexandr0s/TernMail) as `origin`. Development branches and validation snapshots are retained in main's history. The old branches and worktrees were removed on 2026-11-02.
+The canonical source is `/Users/developer/GitHub/TernMail` on `main`, with [TernMail on GitHub](https://github.com/salexandr0s/TernMail) as `origin`. Development branches and validation snapshots are retained in main's history. The old branches and worktrees were removed on 2026-11-02.
 
 The installed app is `/Users/developer/Applications/Tern.app`. The universal Release build includes the performance and Contacts work alongside the current interface, onboarding, assistant, and concurrency fixes. `build/Tern-build-info.json` records its source revision, executable hash, and signing verification.
 
