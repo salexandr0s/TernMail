@@ -91,27 +91,24 @@ struct CalendarEventEditor: View {
     }
 
     private var heading: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s4) {
-            CalendarDateTile(month: CalendarLayout.format(start, style: .dateTime.month(.abbreviated), calendar: eventCalendar).uppercased(),
-                             day: "\(eventCalendar.component(.day, from: start))", size: Tokens.Space.s12)
-            VStack(alignment: .leading, spacing: Tokens.Space.s1_5) {
-                HStack(spacing: Tokens.Space.s3) {
-                    Text(editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary).fixedSize()
-                    Spacer(minLength: 0)
-                    CalendarEditorCalendarPicker(selection: $draft.calendarKey, calendars: calendars)
-                        .disabled(!editable || draft.isDeletion || isSaving)
-                }
-                TextField("Event title", text: $title, prompt: Text("Add a title"), axis: .vertical)
-                    .font(.title2.weight(.semibold)).textFieldStyle(.plain).lineLimit(1...3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("Event title").help(title)
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            Text(editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: Tokens.Space.s4) {
+                CalendarDateTile(month: CalendarLayout.format(start, style: .dateTime.month(.abbreviated), calendar: eventCalendar).uppercased(),
+                                 day: "\(eventCalendar.component(.day, from: start))", size: Tokens.Space.s12)
+                Spacer(minLength: 0)
+                CalendarEditorCalendarPicker(selection: $draft.calendarKey, calendars: calendars)
                     .disabled(!editable || draft.isDeletion || isSaving)
-                if draft.isImport {
-                    Text("Review your personal copy before adding it.").font(.caption).foregroundStyle(.secondary)
-                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            TextField("Event title", text: $title, prompt: Text("Add a title"), axis: .vertical)
+                .font(.title2.weight(.semibold)).textFieldStyle(.plain).lineLimit(1...3)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Event title").help(title)
+                .disabled(!editable || draft.isDeletion || isSaving)
+            if draft.isImport {
+                Text("Review your personal copy before adding it.").font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding(Tokens.Space.s5)
     }
