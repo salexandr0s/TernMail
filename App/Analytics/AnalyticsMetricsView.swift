@@ -1,4 +1,3 @@
-import Charts
 import MailStore
 import SwiftUI
 
@@ -7,86 +6,53 @@ struct AnalyticsMetricsView: View {
     let period: MailAnalyticsPeriod
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline) { summary; Spacer(); coverage }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) { summary; coverage }
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) { summary; coverage }
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s3), count: 3),
-                      spacing: Tokens.Space.s3) {
+            HStack(spacing: Tokens.Space.s3) {
                 metric("Received", value: snapshot.receivedCount, symbol: "arrow.down.left",
-                       color: Tokens.Analytics.received, series: \.receivedCount)
+                       color: Tokens.Analytics.received)
+                Divider().frame(height: Tokens.Space.s10)
                 metric("Sent", value: snapshot.sentCount, symbol: "arrow.up.right",
-                       color: Tokens.Analytics.sent, series: \.sentCount)
+                       color: Tokens.Analytics.sent)
+                Divider().frame(height: Tokens.Space.s10)
                 metric("Conversations", value: snapshot.threadCount, symbol: "bubble.left.and.bubble.right",
                        color: .secondary)
             }
         }
+        .padding(Tokens.Space.s3)
+        .analyticsPanel()
     }
 
     private var summary: some View {
         HStack(spacing: Tokens.Space.s2) {
-            Text("Activity").font(.headline)
-            Text("· \(period.title)").font(.callout).foregroundStyle(.secondary)
+            Text("Activity").fontWeight(.semibold)
+            Text("· \(period.title) · \(snapshot.totalCount.formatted()) emails").foregroundStyle(.secondary)
         }
+        .font(.caption)
         .fixedSize()
     }
 
     private var coverage: some View { AnalyticsCoverageLabel(coverage: snapshot.coverage) }
 
-    private func metric(_ title: String, value: Int, symbol: String, color: Color,
-                        series: KeyPath<MailAnalyticsBucket, Int>? = nil) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack(spacing: Tokens.Space.s2) {
+    private func metric(_ title: String, value: Int, symbol: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            HStack(spacing: Tokens.Space.s1) {
                 Image(systemName: symbol).foregroundStyle(color)
                 Text(title).foregroundStyle(.secondary).lineLimit(1)
                     .minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
             }
-            .font(.callout.weight(.medium))
-            Text(value, format: .number).font(.largeTitle.weight(.semibold)).monospacedDigit()
+            .font(.caption)
+            Text(value, format: .number).font(.title2.weight(.semibold)).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(value.formatted())
-            Group {
-                if let series {
-                    miniChart(series: series, color: color)
-                } else {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text("\(snapshot.totalCount.formatted()) emails")
-                            .font(.callout.weight(.medium)).lineLimit(1)
-                            .minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
-                        Text("in this period").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                }
-            }
-            .frame(height: Tokens.Analytics.sparklineHeight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Tokens.Space.s4)
-        .background(alignment: .top) {
-            LinearGradient(colors: [color.opacity(Tokens.Opacity.wash), .clear],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-        }
-        .analyticsPanel()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title): \(value.formatted()), \(period.title)\(series == nil ? ", \(snapshot.totalCount.formatted()) emails" : "")")
-    }
-
-    private func miniChart(series: KeyPath<MailAnalyticsBucket, Int>, color: Color) -> some View {
-        Chart(snapshot.buckets, id: \.date) { bucket in
-            AreaMark(x: .value("Date", bucket.date), y: .value("Emails", bucket[keyPath: series]))
-                .foregroundStyle(LinearGradient(colors: [color.opacity(Tokens.Opacity.tint), .clear], startPoint: .top, endPoint: .bottom))
-                .interpolationMethod(.linear)
-            LineMark(x: .value("Date", bucket.date), y: .value("Emails", bucket[keyPath: series]))
-                .foregroundStyle(color)
-                .lineStyle(StrokeStyle(lineWidth: Tokens.Border.focus, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.linear)
-        }
-        .chartYScale(domain: 0...max(1, snapshot.buckets.map { max($0.receivedCount, $0.sentCount) }.max() ?? 0))
-        .chartXAxis(.hidden).chartYAxis(.hidden).chartLegend(.hidden)
-        .accessibilityHidden(true)
+        .accessibilityLabel("\(title): \(value.formatted()), \(period.title)")
     }
 }
 
@@ -94,7 +60,7 @@ struct AnalyticsMilestonesView: View {
     let snapshot: MailAnalyticsSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: "clock").foregroundStyle(.secondary)
                 Text("Mail history").fontWeight(.semibold)
@@ -103,15 +69,15 @@ struct AnalyticsMilestonesView: View {
             }
             .font(.caption)
             if snapshot.firstReceivedAt == nil, snapshot.firstSentAt == nil, snapshot.lastContactAt == nil {
-                Text("No indexed email yet").font(.callout).foregroundStyle(.secondary)
+                Text("No indexed email yet").font(.caption).foregroundStyle(.secondary)
             } else {
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: Tokens.Space.s6) { milestones }
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) { milestones }
+                    HStack(alignment: .top, spacing: Tokens.Space.s3) { milestones }
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) { milestones }
                 }
             }
         }
-        .padding(Tokens.Space.s5)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
@@ -123,13 +89,18 @@ struct AnalyticsMilestonesView: View {
     }
 
     private func milestone(_ title: String, date: Date?) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(date?.formatted(date: .abbreviated, time: .omitted) ?? "No indexed email")
-                .font(.callout.weight(.medium)).fixedSize()
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s1) { milestoneText(title, date: date) }
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) { milestoneText(title, date: date) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private func milestoneText(_ title: String, date: Date?) -> some View {
+        Text(title).font(.caption).foregroundStyle(.secondary).fixedSize()
+        Text(date?.formatted(date: .abbreviated, time: .omitted) ?? "No indexed email")
+            .font(.caption.weight(.medium)).fixedSize()
     }
 }
 

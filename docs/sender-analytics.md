@@ -2,9 +2,9 @@
 
 Click a sender's profile picture in the message list or message reader to open their card. It shows received and sent totals, history coverage, first and latest email dates, and links found in available email signatures. The copy button confirms when the email address is copied. The identity and **View analytics** action stay visible while links scroll. **Go > Analytics** opens account-wide analytics.
 
-Analytics keeps account and date filters above the activity totals and chart. Frequent contacts show relative email volume, with received and sent portions, followed by recent emails and read receipts. Narrow windows arrange these sections in one column. The separate **Mail history** date panel uses all indexed history; count cards, contacts, recent emails and the chart use the selected period. Open a recent email to view it in a conversation window. Tern downloads its metadata first if the reading cache no longer has it.
+Analytics opens in a 720 × 640 window. The heading and account/date filters share a compact bar, with received, sent and conversation totals in one strip below. Frequent contacts and read receipts sit beside recent emails at widths of 640 points and above; narrower windows stack the sections. Contacts show relative email volume, with received and sent portions. The **Mail history** dates use all indexed history; totals, contacts, recent emails and the chart use the selected period. Open a recent email to view it in a conversation window. Tern downloads its metadata first if the reading cache no longer has it.
 
-Select a bar to see that period's sent and received counts. The × button clears the selection. Select the table icon to see values and the bar-chart icon to return to the chart. The small charts in the Received and Sent cards share a scale and show the same activity by period. Partial history remains visible beside the totals; history-loading controls and account details are at the bottom of the page.
+Select a bar to see that period's sent and received counts. The × button clears the selection. Select the table icon to see values and the bar-chart icon to return to the chart. Partial history remains visible beside the totals; history-loading controls and account details are at the bottom of the page.
 
 ## History coverage
 

@@ -41,6 +41,19 @@ import Testing
                 size: NSSize(width: width, height: 950), scheme: scheme, waitFor: "Emails over time",
                 name: "analytics-\(name)", captureBottom: true)
         }
+        for scheme in [ColorScheme.light, .dark] {
+            try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox),
+                size: NSSize(width: Tokens.Analytics.windowWidth, height: Tokens.Analytics.windowHeight),
+                scheme: scheme, waitFor: "Emails over time",
+                name: "analytics-default-\(scheme == .light ? "light" : "dark")", captureBottom: true)
+        }
+        try await capture(MailAnalyticsWorkspace(route: .init(), mailbox: mailbox),
+            size: NSSize(width: Tokens.Analytics.twoColumnWidth, height: Tokens.Analytics.windowHeight),
+            scheme: .light, waitFor: "Emails over time", name: "analytics-two-column-minimum", captureBottom: true)
+        try await capture(MailAnalyticsWorkspace(route: .init(accountID: account.id,
+                address: "alex@example.invalid", name: "Alex Morgan with a longer display name"), mailbox: mailbox),
+            size: NSSize(width: Tokens.Analytics.minWidth, height: Tokens.Analytics.minHeight),
+            scheme: .dark, waitFor: "Emails over time", name: "sender-analytics-minimum", captureBottom: true)
         let previousYear = try #require(Calendar.current.date(byAdding: .year, value: -1, to: now))
         let olderMessage = MailAnalyticsMessage(accountID: account.id, messageID: "older", threadID: "t0",
             date: previousYear, subject: "Planning the next project phase",

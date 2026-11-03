@@ -15,17 +15,17 @@ struct AnalyticsHistoryView: View {
     private var canLoadHistory: Bool { owners.contains(where: \.syncEnabled) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s4) {
+                HStack(spacing: Tokens.Space.s3) {
                     summary
                     Spacer(minLength: Tokens.Space.s3)
                     action.fixedSize()
                 }
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) { summary; action }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) { summary; action }
             }
             if !model.isLoadingHistory, !canLoadHistory {
-                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                     Text("Mail sync is paused. Enable Sync Mail to load older email.")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
@@ -39,7 +39,7 @@ struct AnalyticsHistoryView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             DisclosureGroup(isExpanded: $showsDetails) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                     ForEach(snapshot.coverage, id: \.accountID) { coverage in
                         accountCoverage(coverage)
                     }
@@ -47,30 +47,28 @@ struct AnalyticsHistoryView: View {
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.top, Tokens.Space.s3)
+                .padding(.top, Tokens.Space.s2)
             } label: {
                 Text("History details").font(.caption).foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("analytics-history-details")
         }
-        .padding(Tokens.Space.s5)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
 
     private var summary: some View {
-        HStack(alignment: .center, spacing: Tokens.Space.s3) {
+        HStack(alignment: .center, spacing: Tokens.Space.s2) {
             Group {
                 if model.isLoadingHistory {
                     ProgressView().controlSize(.small)
                 } else {
                     Image(systemName: hasScannedHistory ? "checkmark.circle" : "clock.arrow.circlepath")
-                        .font(.title3).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(.secondary)
                 }
             }
-            .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
-            .background(Color.primary.opacity(Tokens.Opacity.wash),
-                        in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            .frame(width: Tokens.Space.s4, height: Tokens.Space.s4)
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(model.isLoadingHistory ? "Loading mail history" : "Mail history")

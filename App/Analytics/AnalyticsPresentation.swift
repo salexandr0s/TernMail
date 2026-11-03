@@ -6,9 +6,9 @@ private struct AnalyticsPanel: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .overlay {
-                RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                RoundedRectangle(cornerRadius: Tokens.Radius.md)
                     .strokeBorder(Tokens.Surface.border.opacity(contrast == .increased ? 1 : Tokens.Opacity.outline),
                                   lineWidth: Tokens.Border.hairline)
                     .allowsHitTesting(false)

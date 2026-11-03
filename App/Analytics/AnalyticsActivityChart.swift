@@ -20,10 +20,17 @@ struct AnalyticsActivityChart: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .center, spacing: Tokens.Space.s3) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Emails over time").font(.title3.weight(.semibold))
+                    HStack(spacing: Tokens.Space.s3) {
+                        Text("Emails over time").font(.headline)
+                        Spacer(minLength: 0)
+                        if snapshot.totalCount > 0 {
+                            legend("Received", symbol: "arrow.down.left", color: Tokens.Analytics.received)
+                            legend("Sent", symbol: "arrow.up.right", color: Tokens.Analytics.sent)
+                        }
+                    }
                     Text(periodDescription).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -34,8 +41,8 @@ struct AnalyticsActivityChart: View {
                         Image(systemName: "tablecells").tag(true)
                             .accessibilityLabel("Show activity values").help("Show activity values")
                     }
-                    .labelsHidden().pickerStyle(.segmented)
-                    .frame(width: Tokens.Space.s10 * 2)
+                    .labelsHidden().pickerStyle(.segmented).controlSize(.small)
+                    .frame(width: Tokens.Space.s16)
                     .accessibilityIdentifier("analytics-chart-display")
                 }
             }
@@ -44,24 +51,16 @@ struct AnalyticsActivityChart: View {
                     description: Text("Choose another date range or load more history."))
                     .frame(height: Tokens.Analytics.chartHeight - Tokens.Space.s16)
             } else {
-                HStack(spacing: Tokens.Space.s6) {
-                    legend("Received", value: snapshot.receivedCount, symbol: "tray.and.arrow.down", color: Tokens.Analytics.received)
-                    legend("Sent", value: snapshot.sentCount, symbol: "paperplane", color: Tokens.Analytics.sent)
-                    Spacer(minLength: 0)
-                }
                 Group {
                     if showsTable { valuesTable } else { plot }
                 }
                 .frame(height: Tokens.Analytics.chartHeight)
+                Divider()
                 selectionSummary
-                    .frame(minHeight: Tokens.Space.s8, alignment: .center)
-                    .padding(.horizontal, Tokens.Space.s3)
-                    .padding(.vertical, Tokens.Space.s1)
-                    .background(Tokens.Surface.muted.opacity(Tokens.Opacity.disabled),
-                                in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .frame(minHeight: Tokens.Space.s6, alignment: .center)
             }
         }
-        .padding(Tokens.Space.s6)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
@@ -116,16 +115,12 @@ struct AnalyticsActivityChart: View {
             .accessibilityValue(count.formatted())
     }
 
-    private func legend(_ title: String, value: Int, symbol: String, color: Color) -> some View {
-        HStack(spacing: Tokens.Space.s2) {
+    private func legend(_ title: String, symbol: String, color: Color) -> some View {
+        HStack(spacing: Tokens.Space.s1) {
             Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                .background(color.opacity(Tokens.Opacity.wash), in: Circle())
             Text(title).foregroundStyle(.secondary)
-            Text(value, format: .number).fontWeight(.semibold).monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(Tokens.Analytics.metricMinimumScale)
         }
-        .font(.callout)
+        .font(.caption).fixedSize()
         .accessibilityElement(children: .combine)
     }
 
@@ -138,7 +133,7 @@ struct AnalyticsActivityChart: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption.weight(.semibold))
-                        .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -181,7 +176,7 @@ struct AnalyticsActivityChart: View {
         VStack(spacing: 0) {
             tableRow(date: bucketHeading, received: "Received", sent: "Sent")
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                .padding(.vertical, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
             Divider()
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -189,7 +184,7 @@ struct AnalyticsActivityChart: View {
                         tableRow(date: bucketLabel(bucket.date), received: bucket.receivedCount.formatted(),
                                  sent: bucket.sentCount.formatted())
                             .font(.callout).monospacedDigit()
-                            .padding(.vertical, Tokens.Space.s3)
+                            .padding(.vertical, Tokens.Space.s2)
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("\(bucketLabel(bucket.date)): \(bucket.receivedCount) received, \(bucket.sentCount) sent")
                         Divider().opacity(Tokens.Opacity.outline)

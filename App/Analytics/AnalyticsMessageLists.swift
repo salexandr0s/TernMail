@@ -10,13 +10,13 @@ struct AnalyticsCorrespondentsView: View {
     private var maximumCount: Int { max(1, correspondents.map(\.totalCount).max() ?? 0) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             AnalyticsListHeading(title: "Frequent contacts", subtitle: "By email volume", count: min(correspondents.count, 10))
             if correspondents.isEmpty {
                 AnalyticsListEmptyState(symbol: "person.2", title: "No contacts in this period",
                     detail: "Choose another date range or load more history.")
             } else {
-                VStack(spacing: Tokens.Space.s1) {
+                VStack(spacing: 0) {
                     ForEach(correspondents.prefix(10)) { contact in
                         Button {
                             openWindow(id: MailAnalyticsWindow.sceneID,
@@ -33,18 +33,18 @@ struct AnalyticsCorrespondentsView: View {
                 }
             }
         }
-        .padding(Tokens.Space.s5)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
 
     private func contactRow(_ contact: MailAnalyticsCorrespondent) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
             Text(ContactAvatar.initials(name: contact.name ?? "", address: contact.address))
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
+                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 .background(Color.primary.opacity(Tokens.Opacity.wash), in: Circle())
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 HStack(alignment: .top, spacing: Tokens.Space.s2) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                         Text(contact.name ?? contact.address).font(.callout.weight(.medium))
@@ -79,7 +79,7 @@ struct AnalyticsCorrespondentsView: View {
                 .accessibilityHidden(true)
             }
         }
-        .padding(Tokens.Space.s2)
+        .padding(Tokens.Space.s1)
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
     }
 
@@ -97,7 +97,7 @@ struct AnalyticsRecentMessagesView: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             AnalyticsListHeading(title: "Recent emails", subtitle: "Latest in this period", count: min(messages.count, 10))
             if messages.isEmpty {
                 AnalyticsListEmptyState(symbol: "tray", title: "No email in this period",
@@ -114,13 +114,13 @@ struct AnalyticsRecentMessagesView: View {
                         .help("\(message.subject.isEmpty ? "No subject" : message.subject)\n\(message.sender)\n\(message.date.formatted(date: .complete, time: .shortened))")
                         if message.id != messages.prefix(10).last?.id {
                             Divider().opacity(Tokens.Opacity.outline)
-                                .padding(.leading, Tokens.Analytics.symbolSize + Tokens.Space.s3 + Tokens.Space.s2)
+                                .padding(.leading, Tokens.Space.s4 + Tokens.Space.s2 + Tokens.Space.s1)
                         }
                     }
                 }
             }
         }
-        .padding(Tokens.Space.s5)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
@@ -133,11 +133,10 @@ struct AnalyticsRecentMessagesView: View {
         let displayName = name.isEmpty ? (sender?.address ?? message.sender) : name
         let dateFormat: Date.FormatStyle = Calendar.current.isDate(message.date, equalTo: .now, toGranularity: .year)
             ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year()
-        return HStack(alignment: .top, spacing: Tokens.Space.s3) {
+        return HStack(alignment: .top, spacing: Tokens.Space.s2) {
             Image(systemName: sent ? "arrow.up.right" : "arrow.down.left")
                 .font(.callout.weight(.medium)).foregroundStyle(color)
-                .frame(width: Tokens.Analytics.symbolSize, height: Tokens.Analytics.symbolSize)
-                .background(color.opacity(Tokens.Opacity.wash), in: Circle())
+                .frame(width: Tokens.Space.s4, height: Tokens.Space.s4)
                 .accessibilityLabel(sent ? "Sent" : "Received")
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
@@ -151,11 +150,11 @@ struct AnalyticsRecentMessagesView: View {
                 }
                 Text(message.subject.isEmpty ? "No subject" : message.subject)
                     .font(.callout.weight(.medium)).foregroundStyle(.primary)
-                    .lineLimit(2).multilineTextAlignment(.leading)
+                    .lineLimit(1).multilineTextAlignment(.leading)
             }
         }
-        .padding(.vertical, Tokens.Space.s3)
-        .padding(.horizontal, Tokens.Space.s2)
+        .padding(.vertical, Tokens.Space.s1_5)
+        .padding(.horizontal, Tokens.Space.s1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -169,7 +168,7 @@ struct AnalyticsReceiptsView: View {
     @State private var showsExplanation = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             AnalyticsListHeading(title: "Read receipts", subtitle: "Across all history", count: min(receipts.count, 10))
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
@@ -196,7 +195,7 @@ struct AnalyticsReceiptsView: View {
                 Text("About read receipts").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(Tokens.Space.s5)
+        .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()
     }
@@ -215,14 +214,12 @@ private struct AnalyticsListHeading: View {
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(title).font(.headline)
+                Text(title).font(.callout.weight(.semibold))
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             if count > 0 {
                 Text("\(count) shown").font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                    .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
-                    .background(Color.primary.opacity(Tokens.Opacity.wash), in: Capsule())
                     .fixedSize()
             }
         }
@@ -235,16 +232,16 @@ private struct AnalyticsListEmptyState: View {
     let detail: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
-            Image(systemName: symbol).font(.title3).foregroundStyle(.tertiary)
-                .frame(width: Tokens.Analytics.symbolSize)
+        HStack(alignment: .top, spacing: Tokens.Space.s2) {
+            Image(systemName: symbol).font(.callout).foregroundStyle(.secondary)
+                .frame(width: Tokens.Space.s4)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(title).font(.callout).foregroundStyle(.secondary)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.vertical, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s1)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -255,7 +252,7 @@ private struct AnalyticsReceiptRow: View {
     let mailbox: MailboxModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             HStack(alignment: .firstTextBaseline) {
                 if let threadID = receipt.threadID {
                     AnalyticsConversationButton(link: .init(accountID: receipt.accountID,
@@ -276,7 +273,7 @@ private struct AnalyticsReceiptRow: View {
             .font(.callout.weight(.medium))
             if recipients.count > 1 {
                 DisclosureGroup {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         ForEach(recipients) { ReadReceiptRecipientRow(recipient: $0) }
                     }
                     .padding(.top, Tokens.Space.s2)
@@ -288,6 +285,6 @@ private struct AnalyticsReceiptRow: View {
                 ForEach(recipients) { ReadReceiptRecipientRow(recipient: $0) }
             }
         }
-        .padding(.vertical, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
     }
 }

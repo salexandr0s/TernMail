@@ -46,23 +46,20 @@ struct MailAnalyticsWorkspace: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-                heading
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: Tokens.Space.s6) {
-                        accountPicker
-                        Spacer(minLength: Tokens.Space.s4)
-                        periodPicker
-                    }
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        accountPicker
-                        periodPicker
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s3) {
+                    heading.frame(minWidth: Tokens.Analytics.headingMinWidth)
+                    filters
                 }
-                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    heading
+                    filters
+                }
             }
             .fixedSize(horizontal: false, vertical: true)
-            .padding(Tokens.Space.s6)
+            .controlSize(.small)
+            .padding(.horizontal, Tokens.Space.s4)
+            .padding(.vertical, Tokens.Space.s3)
             .frame(maxWidth: Tokens.Analytics.contentWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
             .background(Tokens.Surface.primary)
@@ -94,35 +91,37 @@ struct MailAnalyticsWorkspace: View {
     }
 
     private var heading: some View {
-        HStack(spacing: Tokens.Space.s4) {
+        HStack(spacing: Tokens.Space.s2) {
             if let address = route.address, let owner = owners.first {
                 ContactAvatar(accountID: owner.account.id, address: address, name: route.name ?? address,
-                    cache: mailbox.cache, accounts: mailbox.accountStore, size: Tokens.Space.s12)
+                    cache: mailbox.cache, accounts: mailbox.accountStore, size: Tokens.Space.s6)
                     .clipShape(Circle())
             } else {
                 Image(systemName: "chart.xyaxis.line")
-                    .font(.title2.weight(.medium)).foregroundStyle(Color.accentColor)
-                    .frame(width: Tokens.Space.s12, height: Tokens.Space.s12)
-                    .background(Color.accentColor.opacity(Tokens.Opacity.wash),
-                                in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+                    .font(.headline).foregroundStyle(Color.accentColor)
                     .accessibilityHidden(true)
             }
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(title).font(.title.weight(.bold)).foregroundStyle(.primary).textSelection(.enabled)
-                    .lineLimit(2).help(title)
+            VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
+                Text(title).font(.headline).foregroundStyle(.primary).textSelection(.enabled)
+                    .lineLimit(1).truncationMode(.middle).help(title)
                 if let address = route.address {
                     if title.caseInsensitiveCompare(address) != .orderedSame {
                         Text(address).textSelection(.enabled).lineLimit(1).truncationMode(.middle).help(address)
-                    } else {
-                        Text("Correspondence activity")
                     }
-                } else {
-                    Text("Sent, received and conversation history.")
                 }
             }
-            .font(.callout).foregroundStyle(.secondary)
+            .font(.caption).foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
+    }
+
+    private var filters: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            accountPicker
+            Spacer(minLength: 0)
+            periodPicker
+        }
+        .fixedSize(horizontal: true, vertical: true)
     }
 
     private var title: String {
@@ -134,20 +133,16 @@ struct MailAnalyticsWorkspace: View {
     }
 
     private var accountPicker: some View {
-        HStack(spacing: Tokens.Space.s2) {
-            Image(systemName: "tray.2").foregroundStyle(.secondary).accessibilityHidden(true)
-            Picker("Account", selection: $accountID) {
-                Text("All accounts").tag("")
-                ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
-                    Text(mailbox.accountTitle(owner.account)).tag(owner.account.id)
-                }
+        Picker("Account", selection: $accountID) {
+            Text("All accounts").tag("")
+            ForEach(mailbox.presentedAccounts, id: \.account.id) { owner in
+                Text(mailbox.accountTitle(owner.account)).tag(owner.account.id)
             }
-            .labelsHidden()
-            .frame(maxWidth: Tokens.Settings.pickerWidth)
-            .accessibilityLabel("Analytics account")
-            .accessibilityIdentifier("analytics-account-filter")
         }
-        .frame(height: Tokens.Control.iconButton)
+        .labelsHidden()
+        .frame(width: Tokens.Analytics.accountPickerWidth, height: Tokens.Space.s6)
+        .accessibilityLabel("Analytics account")
+        .accessibilityIdentifier("analytics-account-filter")
     }
 
     private var periodPicker: some View {
@@ -157,7 +152,7 @@ struct MailAnalyticsWorkspace: View {
             }
         }
         .pickerStyle(.segmented)
-        .frame(width: Tokens.Analytics.filterWidth, height: Tokens.Control.iconButton)
+        .frame(width: Tokens.Analytics.filterWidth, height: Tokens.Space.s6)
         .accessibilityLabel("Analytics date range")
         .accessibilityIdentifier("analytics-period-filter")
     }
@@ -181,7 +176,7 @@ private struct MailAnalyticsDashboard: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     if model.isLoading {
                         ProgressView("Loading mail analytics…")
                             .frame(maxWidth: .infinity, minHeight: Tokens.Layout.editorMinHeight)
@@ -196,8 +191,8 @@ private struct MailAnalyticsDashboard: View {
                         AnalyticsActivityChart(snapshot: snapshot)
                         AnalyticsMilestonesView(snapshot: snapshot)
                         if geometry.size.width >= Tokens.Analytics.twoColumnWidth {
-                            HStack(alignment: .top, spacing: Tokens.Space.s5) {
-                                VStack(spacing: Tokens.Space.s5) {
+                            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                                VStack(spacing: Tokens.Space.s3) {
                                     people(snapshot: snapshot)
                                     receipts
                                 }
@@ -216,7 +211,7 @@ private struct MailAnalyticsDashboard: View {
                             .padding(.horizontal, Tokens.Space.s1)
                     }
                 }
-                .padding(Tokens.Space.s6)
+                .padding(Tokens.Space.s4)
                 .frame(maxWidth: Tokens.Analytics.contentWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
@@ -232,7 +227,7 @@ private struct MailAnalyticsDashboard: View {
     @ViewBuilder private func people(snapshot: MailAnalyticsSnapshot) -> some View {
         if route.address != nil {
             SenderProfileLinksView(links: model.profileLinks)
-                .padding(Tokens.Space.s5)
+                .padding(Tokens.Space.s3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .analyticsPanel()
         } else {
