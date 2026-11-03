@@ -89,7 +89,7 @@ struct MailOrganizationLoadingView: View {
     }
 
     private var progressCaption: String {
-        if isAnalyzing { return "Analyzing with ChatGPT…" }
+        if isAnalyzing { return "Analyzing mail…" }
         guard let progress else { return "Starting…" }
         switch progress.stage {
         case .labels: return "Loading existing labels…"

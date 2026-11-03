@@ -240,9 +240,9 @@ public enum WritingStyleError: Error, Equatable, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidModel: "Choose a ChatGPT model before learning your writing style."
+        case .invalidModel: "Choose an available model before learning your writing style."
         case .invalidProfile: "The saved writing style could not be used. Learn it again from sent mail."
-        case .invalidResponse: "ChatGPT could not produce a usable writing style. Try again."
+        case .invalidResponse: "The assistant could not produce a usable writing style. Try again."
         case .responseLimit: "The writing-style response exceeded Tern's size limit. Try again."
         case .interrupted: "Writing-style analysis stopped before it finished. Try again."
         }

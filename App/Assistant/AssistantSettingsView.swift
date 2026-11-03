@@ -1,5 +1,6 @@
 import MailStore
 import SwiftUI
+import TernAI
 
 struct AssistantSettingsView: View {
     @Bindable var model: AssistantModel
@@ -32,10 +33,11 @@ struct AssistantSettingsView: View {
             }
         }
         .task { await model.refreshConnection() }
-        .onChange(of: model.connection.connectionRevision) {
+        .onChange(of: model.connectionRevision) {
             model.refreshAccess()
             Task { await model.refreshConnection() }
         }
+        .onChange(of: model.selectedService) { confirmsDisconnect = false }
         .ternConfirm("Disconnect from ChatGPT?", isPresented: $confirmsDisconnect, actionTitle: "Disconnect",
                      message: "Tern signs out of ChatGPT and clears the current chat.", action: disconnect)
         .ternConfirm("Clear this chat?", isPresented: $confirmsClearChat, actionTitle: "Clear Chat",
@@ -64,8 +66,14 @@ struct AssistantSettingsView: View {
                 }
             }
         }
-        connectionSection
-        if model.connection.canUsePlan { modelSection }
+        providerSection
+        if model.selectedService == .chatGPT {
+            connectionSection
+        } else {
+            AssistantAPIConnectionSection(model: model)
+                .id(model.selectedService)
+        }
+        if model.canUseAssistant { modelSection }
         accountsSection
         AssistantWritingStyleSettingsSection(model: model.writingStyle) { turningOffStyle = $0 }
         privacySection
@@ -73,6 +81,25 @@ struct AssistantSettingsView: View {
 
     /// Clearing the chat or changing access only needs a confirmation when there is something to lose.
     private var hasChat: Bool { !model.messages.isEmpty || !model.composerText.isEmpty }
+
+    private var providerSection: some View {
+        Section {
+            SettingsControlRow("Use") {
+                Picker("Assistant provider", selection: Binding(
+                    get: { model.selectedService }, set: { model.selectService($0) })) {
+                    ForEach(AIService.allCases) { service in
+                        Text(service.displayName).tag(service)
+                    }
+                }
+                .frame(maxWidth: Tokens.Settings.pickerWidth)
+                .disabled(model.providerConnection.isConnecting || model.providerConnection.isDisconnecting)
+            }
+        } header: {
+            Text("Provider")
+        } footer: {
+            Text("Changing providers clears the current chat and stops active requests. Your mail and calendar access choices apply to the selected provider.")
+        }
+    }
 
     private var connectionSection: some View {
         Section("Connection") {
@@ -189,14 +216,14 @@ struct AssistantSettingsView: View {
 
     private var modelSection: some View {
         Section("Model") {
-            SettingsControlRow("ChatGPT model") {
+            SettingsControlRow("Model") {
                 HStack(spacing: Tokens.Space.s2) {
                     if model.isLoadingModels {
                         ProgressView().controlSize(.small)
-                            .accessibilityLabel("Loading ChatGPT models")
+                            .accessibilityLabel("Loading \(model.providerDisplayName) models")
                     }
                     if !model.models.isEmpty {
-                        Picker("ChatGPT model", selection: $model.selectedModelID) {
+                        Picker("Assistant model", selection: $model.selectedModelID) {
                             if model.selectedModelID.isEmpty { Text("Choose a model").tag("") }
                             ForEach(model.models) { choice in
                                 Text(choice.displayName).tag(choice.id)
@@ -221,7 +248,11 @@ struct AssistantSettingsView: View {
                     .accessibilityLabel("Refresh available models")
                 }
             }
-            SettingsNote("Using ChatGPT plan", systemImage: "checkmark.circle")
+            SettingsNote(model.selectedService == .chatGPT ? "Using ChatGPT plan" : "API usage is billed to your provider account.",
+                         systemImage: "checkmark.circle")
+            if let selected = model.models.first(where: { $0.id == model.selectedModelID }), !selected.supportsImages {
+                SettingsNote("This model accepts text only. Remove image context files before sending.")
+            }
             if let error = model.modelErrorMessage {
                 SettingsErrorLabel(error)
             }
@@ -292,12 +323,21 @@ struct AssistantSettingsView: View {
         } header: {
             Text("Privacy")
         } footer: {
-            SettingsNote("Relevant content from enabled accounts is sent to OpenAI for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.", systemImage: "lock")
+            SettingsNote("Relevant content from enabled accounts is sent to \(dataRecipient) for your requests and automatic summaries and event suggestions in open conversations. When writing-style learning is on, sent-mail excerpts are also sent during setup. The assistant prepares drafts; you review and send them in Tern.", systemImage: "lock")
+        }
+    }
+
+    private var dataRecipient: String {
+        switch model.selectedService {
+        case .chatGPT, .openAI: "OpenAI"
+        case .anthropic: "Anthropic"
+        case .deepSeek: "DeepSeek"
         }
     }
 
     private func connect() {
         Task {
+            guard model.selectedService == .chatGPT else { return }
             await model.connection.connect()
             model.refreshAccess()
             await model.refreshConnection()
@@ -305,8 +345,10 @@ struct AssistantSettingsView: View {
     }
 
     private func disconnect() {
+        guard model.selectedService == .chatGPT else { return }
         model.stop()
         Task {
+            guard model.selectedService == .chatGPT else { return }
             await model.connection.disconnect()
             model.refreshAccess()
         }

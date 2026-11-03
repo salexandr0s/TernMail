@@ -20,7 +20,7 @@ enum MailOrganizationBindings {
     }
 
     static func make(app: AppModel, accountID: String, connection: SettingsAccountState) -> MailOrganizationModel {
-        let chatGPT = app.assistant.connection
+        let connections = app.assistant.providerConnection
         return MailOrganizationModel(access: { [weak app] in
             guard let app else {
                 return .init(accountID: accountID, instanceID: nil, permissionRevision: 0,
@@ -32,12 +32,11 @@ enum MailOrganizationBindings {
                   String(describing: ObjectIdentifier(owner)) == expected.instanceID,
                   await isAuthorized() else { throw AssistantMailError.accessChanged }
             return try await owner.engine.organizationSamples(isAuthorized: isAuthorized, progress: progress)
-        }, analyze: { [weak chatGPT] samples, modelID, isAuthorized in
+        }, analyze: { [weak connections] samples, modelID, isAuthorized in
             guard await isAuthorized() else { throw AssistantMailError.accessChanged }
-            let provider = scopedProvider(accessToken: { [weak chatGPT] in
-                guard let chatGPT else { throw AIProviderError.signInRequired }
-                return try await chatGPT.accessToken()
-            }, isAuthorized: isAuthorized)
+            guard let connections else { throw AIProviderError.signInRequired }
+            let provider = await connections.routedProvider(
+                transport: scopedTransport(isAuthorized: isAuthorized), isAuthorized: isAuthorized)
             let labels = samples.existingLabels.filter { !$0.isSystem }
             let names = Dictionary(labels.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
             let messages = samples.messages.map {
@@ -68,20 +67,12 @@ enum MailOrganizationBindings {
 
     /// Authorization belongs to this review, including across an asynchronous
     /// credential refresh. UI observation is not the network permission gate.
-    nonisolated static func scopedProvider(accessToken: @escaping @Sendable () async throws -> String,
-        isAuthorized: @escaping MailOrganizationModel.Authorized,
-        transport: AIHTTPTransport = .live) -> ChatGPTProvider {
-        ChatGPTProvider(accessToken: {
-            try Task.checkCancellation()
-            guard await isAuthorized() else { throw AssistantMailError.accessChanged }
-            let token = try await accessToken()
-            try Task.checkCancellation()
-            guard await isAuthorized() else { throw AssistantMailError.accessChanged }
-            return token
-        }, transport: AIHTTPTransport { request in
+    nonisolated static func scopedTransport(isAuthorized: @escaping MailOrganizationModel.Authorized,
+        transport: AIHTTPTransport = .live) -> AIHTTPTransport {
+        AIHTTPTransport { request in
             try Task.checkCancellation()
             guard await isAuthorized() else { throw AssistantMailError.accessChanged }
             return try await transport.send(request)
-        })
+        }
     }
 }

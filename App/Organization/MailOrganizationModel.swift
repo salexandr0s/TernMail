@@ -152,7 +152,8 @@ final class MailOrganizationModel {
                 samples = nil; categories = []; phase = .idle
                 samplingProgress = nil; analysisStartedAt = nil
                 errorMessage = (error as? MailOrganizationError)?.localizedDescription
-                    ?? "Couldn't analyze these messages. Check the Google and ChatGPT connections, then try again."
+                    ?? (error as? AIProviderError)?.localizedDescription
+                    ?? "Couldn't analyze these messages. Check the Google and assistant connections, then try again."
             }
         }
     }

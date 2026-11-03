@@ -4,7 +4,7 @@
 
 <h1 align="center">Tern</h1>
 
-<p align="center">Gmail, Calendar, Tasks, and an optional ChatGPT assistant in a native Mac app.</p>
+<p align="center">Gmail, Calendar, Tasks, and an optional AI assistant in a native Mac app.</p>
 
 <p align="center">
   <a href="#build-from-source">Build from source</a> ·
@@ -16,7 +16,7 @@
 
 ![Tern in light mode, with a populated inbox, colored labels, and an open conversation](docs/screenshots/mail-light.png)
 
-Tern brings your Gmail accounts into a SwiftUI app with a conversation reader, Google Calendar, Google Tasks, and an attachment library. An optional ChatGPT assistant helps you find mail, summarize conversations, and prepare replies.
+Tern brings your Gmail accounts into a SwiftUI app with a conversation reader, Google Calendar, Google Tasks, and an attachment library. An optional assistant uses ChatGPT, OpenAI API, Claude, or DeepSeek to help you find mail, summarize conversations, and prepare replies.
 
 All screenshots show fictional demo accounts, messages, labels, events, and tasks. Assistant responses are scripted locally for the demo. [Reproduce the screenshots](docs/development.md#screenshots) from the native app.
 
@@ -88,13 +88,13 @@ open Tern.xcodeproj
 
 Set `GOOGLE_CLIENT_ID_PREFIX` in `Config/Secrets.xcconfig`, select the **Tern** scheme in Xcode, and run. The app builds without an OAuth client, but Google sign-in stays unavailable until it is configured. Local settings in `Secrets.xcconfig` are ignored by Git.
 
-ChatGPT is optional and connects separately in **Settings → Assistant**. Available models and plan usage depend on the connected ChatGPT account. See the [assistant guide](docs/chatgpt-assistant.md) for access controls and setup.
+AI is optional and connects separately in **Settings → Assistant**. Choose ChatGPT sign-in or supply your own OpenAI, Anthropic, or DeepSeek API key. Models come from the selected connection; API usage is billed through that provider's API account. Claude and DeepSeek use API keys because neither provides a documented OAuth flow suitable for Tern. See the [assistant guide](docs/chatgpt-assistant.md) for setup, access controls, and the OAuth findings.
 
 ## Privacy
 
-Google and ChatGPT credentials are stored in macOS Keychain. Account data, cached mail, and downloaded attachments are stored locally. Remote message images are blocked by default, and company-logo requests require an explicit choice.
+Google and AI credentials are stored in macOS Keychain, with separate records for each API provider. Account data, cached mail, and downloaded attachments are stored locally. Remote message images are blocked by default, and company-logo requests require an explicit choice.
 
-Assistant mail access starts disabled. Once you enable it, relevant content is sent to OpenAI for requests, automatic conversation summaries and event interpretation, and writing-style learning when enabled. Calendar access is controlled separately. Review the [assistant's data behavior](docs/chatgpt-assistant.md#chat-controls-and-data) before connecting it.
+Assistant mail access starts disabled. Once you enable it, relevant content is sent to the selected provider for requests, automatic conversation summaries and event interpretation, and writing-style learning when enabled. Changing providers cancels active work and clears retained assistant context. Calendar access is controlled separately. Review the [assistant's data behavior](docs/chatgpt-assistant.md#chat-controls-and-data) before connecting it.
 
 ## Development
 

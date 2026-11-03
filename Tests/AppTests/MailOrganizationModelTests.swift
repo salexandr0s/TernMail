@@ -285,12 +285,12 @@ import TernAI
     @Test func revokedAccessDuringTokenRefreshStopsMetadataBeforeTransport() async throws {
         let harness = OrganizationModelHarness()
         let gate = OrganizationTokenGate()
-        let provider = MailOrganizationBindings.scopedProvider(accessToken: { await gate.token() },
+        let provider = ChatGPTProvider(accessToken: { await gate.token() }, transport: MailOrganizationBindings.scopedTransport(
             isAuthorized: { await MainActor.run { harness.access.permissionRevision == 1 } },
             transport: AIHTTPTransport { _ in
                 await gate.recordSend()
                 throw AIProviderError.network
-            })
+            }))
         let request = AIRequest(model: "test", input: [.object(["role": .string("user"), "content": .string("private sample")])],
                                 instructions: "Test request", tools: [])
         let pending = Task {

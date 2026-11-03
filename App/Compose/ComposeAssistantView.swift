@@ -81,7 +81,8 @@ struct ComposeAssistantView: View {
             await assistant.refreshConnection()
             model.refreshAccess()
         }
-        .onChange(of: assistant.connection.connectionRevision) {
+        .onChange(of: assistant.connectionRevision) {
+            model.refreshAccess()
             Task { await assistant.refreshConnection(); model.refreshAccess() }
         }
         .onChange(of: model.isRunning) { wasRunning, isRunning in
@@ -127,7 +128,7 @@ struct ComposeAssistantView: View {
     }
 
     private var loadingCaption: String? {
-        if assistant.connection.isRestoring { return "Loading ChatGPT…" }
+        if assistant.isRestoringConnection { return "Loading \(assistant.providerDisplayName)…" }
         if assistant.isLoadingModels, model.availabilityMessage == AssistantError.noModel.errorDescription {
             return "Loading models…"
         }

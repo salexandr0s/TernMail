@@ -54,7 +54,7 @@ struct AssistantView: View {
         // Setup finished in the settings sheet hands focus to the composer.
         .onChange(of: showsSettings) { if !showsSettings { placeInitialFocus() } }
         .task { await model.refreshConnection() }
-        .onChange(of: model.connection.connectionRevision) {
+        .onChange(of: model.connectionRevision) {
             model.refreshAccess()
             Task { await model.refreshConnection() }
         }
@@ -68,18 +68,13 @@ struct AssistantView: View {
         } message: {
             Text("This clears the current conversation and stops any response. Your unfinished message will be kept.")
         }
-        .modifier(AssistantWindowToolbar(isEnabled: isDetached, subtitle: "ChatGPT",
+        .modifier(AssistantWindowToolbar(isEnabled: isDetached, model: model,
                                          onNewChat: startNewChat, onSettings: { showsSettings = true }))
     }
 
     private var header: some View {
         HStack(spacing: Tokens.Space.s2) {
-            ChatGPTBrand(size: Tokens.Space.s5)
-                .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
-                .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                .ternOutline(radius: Tokens.Radius.md)
-                .accessibilityHidden(true)
-            Text("ChatGPT").font(.headline).lineLimit(1)
+            AssistantProviderMenu(model: model, onSettings: { showsSettings = true })
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Space.s0_5) {
                 iconButton("New Chat", symbol: "plus", action: startNewChat)
@@ -106,15 +101,15 @@ struct AssistantView: View {
     }
 
     private var setupPrompt: AssistantSetupPrompt? {
-        if !model.connection.canUsePlan {
-            return .init(title: "Connect ChatGPT", detail: "Use your ChatGPT account, then choose the mail and calendars the assistant can read.", action: "Set up assistant", systemImage: "person.crop.circle.badge.plus")
+        if !model.canUseAssistant {
+            return .init(title: "Connect an assistant", detail: "Choose ChatGPT, OpenAI, Claude, or DeepSeek, then choose the mail and calendars the assistant can read.", action: "Set up assistant", systemImage: "person.crop.circle.badge.plus")
         }
         if !model.hasAssistantDataAccess {
             return .init(title: "Choose what to share", detail: "Enable a mail account or calendar in assistant settings.", action: "Manage access", systemImage: "slider.horizontal.3")
         }
         if !model.isModelReady {
             return .init(title: model.isLoadingModels ? "Loading models" : "Models unavailable",
-                         detail: model.modelErrorMessage ?? "Tern needs an available ChatGPT model to start a conversation.",
+                         detail: model.modelErrorMessage ?? "Tern needs an available model to start a conversation.",
                          action: model.isLoadingModels ? "Loading models…" : "Retry loading models", systemImage: "sparkle")
         }
         return nil
@@ -169,7 +164,7 @@ struct AssistantView: View {
     }
 
     private func performSetupAction() {
-        if model.connection.canUsePlan, model.hasAssistantDataAccess, !model.isModelReady {
+        if model.canUseAssistant, model.hasAssistantDataAccess, !model.isModelReady {
             guard !model.isLoadingModels else { return }
             Task { await model.refreshConnection() }
         } else { showsSettings = true }
@@ -217,15 +212,17 @@ private struct AssistantToolbarButtonStyle: ButtonStyle {
 /// sidebar sits in the main window, whose customizable toolbar it must not join.
 private struct AssistantWindowToolbar: ViewModifier {
     let isEnabled: Bool
-    let subtitle: String
+    let model: AssistantModel
     let onNewChat: () -> Void
     let onSettings: () -> Void
 
     func body(content: Content) -> some View {
         if isEnabled {
             content
-                .navigationSubtitle(subtitle)
                 .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        AssistantProviderMenu(model: model, onSettings: onSettings)
+                    }
                     ToolbarItemGroup(placement: .primaryAction) {
                         Button("New Chat", systemImage: "plus.bubble", action: onNewChat)
                             .help("New Chat")

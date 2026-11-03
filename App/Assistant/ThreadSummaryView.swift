@@ -39,7 +39,7 @@ struct ThreadSummaryView: View {
         // Keep task and disclosure ownership stable across loading, source
         // revisions, and availability changes within this conversation.
         VStack(alignment: .leading, spacing: 0) {
-            if Self.isOffered(availability, isRestoring: assistant.connection.isRestoring) {
+            if Self.isOffered(availability, isRestoring: assistant.isRestoringConnection) {
                 if availability == .ready, isActive, let report = displayed?.report(for: identity.source) {
                     ThreadSummaryContent(report: report, detail: detail,
                         isExpanded: $summaryIsExpanded,

@@ -35,11 +35,12 @@ struct OnboardingChatGPTStep: View {
                 }
                 .disabled(isBusy)
             }
-            if connection.canUsePlan { mailAccess }
+            if connection.canUsePlan, model.selectedService == .chatGPT { mailAccess }
             if !OnboardingPreview.allowsChatGPTSignIn {
                 OnboardingNote(text: "ChatGPT sign-in is disabled in this preview.", symbol: "info.circle")
             }
             OnboardingNote(text: "ChatGPT is optional. Eligible requests use your ChatGPT plan or credits. You can connect later in Settings.", symbol: "info.circle")
+            OnboardingNote(text: "OpenAI, Claude, and DeepSeek API-key connections are also available in Settings → Assistant.", symbol: "key")
         }
         .task { await model.refreshConnection() }
     }
@@ -77,6 +78,7 @@ struct OnboardingChatGPTStep: View {
             }
             ChatGPTSignInButton {
                 guard OnboardingPreview.allowsChatGPTSignIn else { return }
+                model.selectService(.chatGPT)
                 Task {
                     await connection.connect()
                     model.refreshAccess()

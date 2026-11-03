@@ -9,13 +9,14 @@ import TernAI
 @Observable
 final class AssistantModel {
     let connection: ChatGPTConnection
+    let providerConnection: AssistantProviderConnection
     let writingStyle: AssistantWritingStyleModel
     private(set) var models: [AIModel] = []
     private(set) var isLoadingModels = false
     private(set) var modelErrorMessage: String?
     var selectedModelID: String {
         didSet {
-            defaults?.set(selectedModelID, forKey: Self.modelKey)
+            defaults?.set(selectedModelID, forKey: Self.modelKey(for: selectedService))
             if selectedModelID != oldValue {
                 calendarExtractionRevision += 1
                 composePermissionRevision += 1
@@ -76,6 +77,9 @@ final class AssistantModel {
     @ObservationIgnored private var catalogueTaskID: UUID?
 
     private static let modelKey = "assistant.selectedModel"
+    private static func modelKey(for service: AIService) -> String {
+        service == .chatGPT ? modelKey : "assistant.selectedModel.\(service.rawValue)"
+    }
     private static let accountsKey = "assistant.enabledAccounts"
     static let maximumHistoryBytes = 180_000
     static let maximumToolCalls = 24
@@ -83,6 +87,7 @@ final class AssistantModel {
 
     init(app: AppModel, connection: ChatGPTConnection = ChatGPTConnection(),
          provider: (any AIProvider)? = nil, defaults: UserDefaults? = nil,
+         providerConnection: AssistantProviderConnection? = nil,
          context: (@MainActor () -> AssistantContext)? = nil,
          makeTools: (@MainActor (AssistantScopeSnapshot) -> AssistantToolSession)? = nil,
          writingStyle: AssistantWritingStyleModel? = nil) {
@@ -94,20 +99,55 @@ final class AssistantModel {
         else { persistence = .standard }
         // Hosted tests and audit previews with synthetic accounts must never read
         // or prune the user's preferences. These values stay in memory instead.
-        self.app = app; self.connection = connection; self.defaults = persistence
+        let connections = providerConnection ?? AssistantProviderConnection(chatGPT: connection, defaults: persistence)
+        self.app = app; self.connection = connections.chatGPT; self.defaults = persistence
+        self.providerConnection = connections
         self.contextOverride = context; self.toolFactory = makeTools
-        let activeProvider = provider ?? ChatGPTProvider(accessToken: { [weak connection] in
-            guard let connection else { throw AIProviderError.signInRequired }
-            return try await connection.accessToken()
-        })
+        let activeProvider = provider ?? connections.routedProvider()
         self.provider = activeProvider
         self.writingStyle = writingStyle ?? AssistantWritingStyleBindings.make(app: app, provider: activeProvider)
         hasWritingStyleOverride = writingStyle != nil
-        selectedModelID = persistence?.string(forKey: Self.modelKey) ?? ""
+        selectedModelID = persistence?.string(forKey: Self.modelKey(for: connections.selectedService)) ?? ""
         enabledAccountIDs = Set(persistence?.stringArray(forKey: Self.accountsKey) ?? [])
     }
 
     var availableAccounts: [AccountRecord] { context().accounts }
+
+    var selectedService: AIService { providerConnection.selectedService }
+    var canUseAssistant: Bool { providerConnection.canUseAssistant }
+    var connectionRevision: Int { providerConnection.connectionRevision }
+    var isRestoringConnection: Bool { providerConnection.isRestoring }
+    var providerDisplayName: String { selectedService.displayName }
+    var selectedModelSupportsImages: Bool {
+        models.first(where: { $0.id == selectedModelID })?.supportsImages == true
+    }
+
+    /// A destination change invalidates retained content before another task can run.
+    func selectService(_ service: AIService) {
+        guard service != selectedService else { return }
+        providerConnection.selectService(service)
+        clearConversation()
+        catalogueTask?.cancel(); catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil
+        catalogueRevision = nil; models = []; isLoadingModels = false; modelErrorMessage = nil
+        calendarExtractionRevision += 1
+        composePermissionRevision += 1
+        readerSummaryCache.removeAll()
+        readerSummaryRequests.cancelAll()
+        selectedModelID = defaults?.string(forKey: Self.modelKey(for: service)) ?? ""
+        refreshAccess()
+    }
+
+    func connectAPIKey(_ key: String) async {
+        await providerConnection.connectAPIKey(key)
+        refreshAccess()
+        await refreshConnection()
+    }
+
+    func disconnectSelectedProvider() async {
+        if selectedService == .chatGPT { await connection.disconnect() }
+        else { await providerConnection.disconnectAPIKey() }
+        refreshAccess()
+    }
 
     /// Account identity follows the retained conversation when mailbox selection changes.
     var conversationAccounts: [AccountRecord] {
@@ -294,7 +334,7 @@ final class AssistantModel {
     }
 
     func refreshConnection() async {
-        await connection.recoverPendingConnection()
+        await providerConnection.restore()
         refreshAccess()
         let current = context()
         guard current.canUsePlan else { models = []; modelErrorMessage = nil; isLoadingModels = false; return }
@@ -328,7 +368,7 @@ final class AssistantModel {
             if !choices.contains(where: { $0.id == selectedModelID }) { selectedModelID = choices.first?.id ?? "" }
             calendarExtractionRevision += 1
             readerSummaryRequests.cancelAll()
-            modelErrorMessage = choices.isEmpty ? "No models are available for this ChatGPT connection." : nil
+            modelErrorMessage = choices.isEmpty ? "No compatible models are available for this connection." : nil
         } catch {
             guard context().connectionRevision == revision else { refreshAccess(); return }
             models = []
@@ -515,7 +555,8 @@ final class AssistantModel {
     }
 
     private var summaryModelID: String {
-        ["gpt-6-luna", "gpt-5.4-mini", selectedModelID]
+        let preferred = selectedService == .chatGPT ? ["gpt-6-luna", "gpt-5.4-mini", selectedModelID] : [selectedModelID]
+        return preferred
             .first { candidate in models.contains(where: { $0.id == candidate }) } ?? ""
     }
 
@@ -524,7 +565,7 @@ final class AssistantModel {
     }
 
     func summaryAvailability(for thread: ThreadKey) -> ThreadSummaryAvailability {
-        if connection.isRestoring { return .loading }
+        if isRestoringConnection { return .loading }
         let current = context()
         guard current.canUsePlan, current.accountInstances[thread.accountID] != nil,
               enabledAccountIDs.contains(thread.accountID) else { return .unavailable }
@@ -606,7 +647,7 @@ final class AssistantModel {
             currentAccountIDs: Set(mailbox?.selectedAccounts.map(\.account.id) ?? []),
             selectedThreads: mailbox?.selectedThreadIDs ?? [],
             accountInstances: Dictionary(uniqueKeysWithValues: eligible.map { ($0.account.id, String(describing: ObjectIdentifier($0))) }),
-            connectionRevision: connection.connectionRevision, canUsePlan: connection.canUsePlan,
+            connectionRevision: connectionRevision, canUsePlan: canUseAssistant,
             calendarScope: app?.calendar.assistantScope ?? AssistantCalendarScope())
     }
 
@@ -1007,7 +1048,7 @@ extension AssistantModel {
     }
 
     func composeAvailabilityMessage(accountID: String) -> String? {
-        if connection.isRestoring { return "Loading your ChatGPT connection…" }
+        if isRestoringConnection { return "Loading your assistant connection…" }
         do {
             try validateComposeAccess(composeAccess(accountID: accountID), accountID: accountID)
             return nil

@@ -87,7 +87,8 @@ struct AssistantComposer: View {
     private var modelMenu: some View {
         Menu {
             if model.models.isEmpty {
-                Button(model.isLoadingModels ? "Loading models…" : "Choose a Model…", action: onSettings)
+                Button(model.isLoadingModels ? "Loading models…"
+                    : model.canUseAssistant ? "Choose a Model…" : "Connect \(model.providerDisplayName)…", action: onSettings)
                     .disabled(model.isLoadingModels)
             } else {
                 Picker("Model", selection: $model.selectedModelID) {
@@ -140,7 +141,9 @@ struct AssistantComposer: View {
     }
 
     private var modelName: String {
-        model.models.first(where: { $0.id == model.selectedModelID })?.displayName ?? "ChatGPT"
+        if model.isLoadingModels { return "Loading models…" }
+        if let selected = model.models.first(where: { $0.id == model.selectedModelID }) { return selected.displayName }
+        return model.canUseAssistant && model.models.isEmpty ? "Models unavailable" : "Choose model"
     }
 
     private var scopeTitle: String {

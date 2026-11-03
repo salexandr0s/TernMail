@@ -447,7 +447,7 @@ private struct AssistantAccessRefresh: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task { await app.assistant.refreshConnection() }
-            .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
+            .onChange(of: app.assistant.connectionRevision) { _, _ in app.assistant.refreshAccess() }
             .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
             .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }
             .onChange(of: mailbox.selectedMailbox) { _, _ in app.assistant.refreshAccess() }
