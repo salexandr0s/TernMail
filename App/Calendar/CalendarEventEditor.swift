@@ -160,7 +160,10 @@ struct CalendarEventEditor: View {
                     Spacer()
                     Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
                 } else {
+                    Text("Add Google Meet")
+                    Spacer(minLength: Tokens.Space.s3)
                     Toggle("Add Google Meet", isOn: $draft.createMeet).toggleStyle(.switch).controlSize(.mini)
+                        .labelsHidden()
                         .disabled(!editable || draft.isDeletion || selectedCalendar?.entry.supportsGoogleMeet != true)
                         .help(selectedCalendar?.entry.supportsGoogleMeet == true ? "Add a video call to this event" : "This calendar does not support Google Meet")
                 }
