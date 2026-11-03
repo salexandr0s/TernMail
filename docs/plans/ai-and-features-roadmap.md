@@ -1,6 +1,6 @@
 # Tern feature roadmap
 
-Updated: 2026-10-30.
+Updated: 2026-11-03.
 
 This document collects the features requested in the October 30 discussion and the additions the owner accepted. The first build priority is the shared AI integration. Later features should use that same integration for reading, reasoning, drafting, and taking actions.
 
@@ -22,12 +22,17 @@ The feature list and AI-first priority reflect the owner's request. The owner su
 | F08 | Project spaces | Collect related threads, files, decisions, and tasks across a project. |
 | F09 | What changed? | Catch up on developments since the user last read a conversation. |
 | F10 | Contact context | See a person's conversation history, files, commitments, and private notes. |
-| F11 | Reply completeness check | Notice unanswered questions and missing information before sending. |
+| F11 | Reply completeness check | Notice unanswered questions, missing information, and unusual sender or recipient choices before sending. |
 | F12 | Attachment versions and comparisons | Group duplicate files and compare revisions while keeping their source emails. |
 | F13 | Plain-language automations | Describe a rule, inspect its proposed behavior, and track what it does. |
 | F14 | Newsletter digests and preferences | Keep, mute, unsubscribe, or collect newsletters into a digest. |
+| F16 | Meeting preparation | Open an event with relevant discussions, decisions, unresolved questions, and the latest relevant attachments. |
+| F17 | Time blocking for tasks | Schedule work on an email request or Google Task while keeping its deadline and source links. |
+| F18 | Inline translation | Read translated messages alongside originals and review translated replies before sending. |
+| F19 | Command palette | Find and execute contextual actions from one keyboard shortcut, with existing shortcuts shown alongside results. |
+| F20 | Send later | Schedule outgoing mail, review and change its timing, and see delivery or missed-time status. |
 
-F01 through F04 are the owner's original feature requests. F05 through F14 are the accepted additions. F15 is the subsequently approved calendar integration; its placement does not renumber existing features. Existing mail-client work remains covered by the milestone plans linked at the end.
+F01 through F04 are the owner's original feature requests. F05 through F14 are the accepted additions. F15 is the subsequently approved calendar integration; its placement does not renumber existing features. On November 3, the owner accepted F16 through F20 and the sender and recipient checks added to F11. These additions are planned scope, not an implementation status claim. Existing mail-client work remains covered by the milestone plans linked at the end.
 
 ## First build: shared AI integration
 
@@ -187,8 +192,9 @@ Newsletter delivery preferences and digests are in F14. A successful request sub
 
 - Detect questions or requests in the conversation that the current draft has not addressed.
 - Notice a promised attachment that is missing and dates or facts that conflict with the thread.
+- Flag an unusual From account, a newly added recipient in a sensitive conversation, or internal quoted text being forwarded outside the user's organization. Use configured organization domains and available conversation context; explain the specific signal rather than treating every unfamiliar address as a problem.
 - Show specific suggestions beside the draft, with the original request linked.
-- Let the user accept, dismiss, or edit suggestions. Preserve the user's wording unless an edit is requested.
+- Let the user accept, dismiss, or edit suggestions. Sender and recipient checks must also be dismissible and must not silently change addresses. Preserve the user's wording unless an edit is requested.
 
 ### F12. Attachment versions and comparisons
 
@@ -213,7 +219,46 @@ Newsletter delivery preferences and digests are in F14. A successful request sub
 - Summarize selected newsletters with links to the original emails and distinguish unread originals from digest reading state.
 - Coordinate with F04 so subscription identity and unsubscribe outcomes are consistent.
 
+### F16. Meeting preparation
+
+- Open a calendar event and see a concise preparation view with relevant email discussions, previous decisions, unresolved questions, and the latest relevant attachments.
+- Link each point to its supporting message or document and let the user correct which conversations belong to the meeting. Shared attendees alone do not establish that a conversation is relevant.
+- Respect existing mail and calendar access controls. Indicate unavailable sources and refresh the preparation when the event or supporting mail changes.
+- Reuse F15 calendar events, F03 summaries, and the shared retrieval services. Add F09 changes and F10 contact context as those become available; a full project or contact workspace is not required for the first version.
+
+### F17. Time blocking for tasks
+
+- Drag a Google Task or an email request onto the calendar, choose a duration, and review the proposed work session before saving.
+- Keep the calendar session linked to its task and source email. Store the scheduled work time separately from the task's due date.
+- Allow moving, resizing, and cancelling the work session without deleting the task or changing its deadline. A session ending does not automatically complete the task.
+- Reuse the existing Google Tasks integration and F15 calendar operations. Show conflicts and actual save outcomes, and prevent duplicate events when an operation is retried.
+
+### F18. Inline translation
+
+- Translate a message in the reader while keeping the original accessible alongside it. Clearly identify translated text.
+- Let the user write a reply in one language, review an editable translation, and choose the version to send through the existing composer.
+- Preserve names, amounts, dates, links, and formatting where possible. Make it easy to compare uncertain wording with the original.
+- Let users save and change language preferences per contact. Apply the existing AI account permissions when using the assistant provider; translation must not overwrite the source message or send a reply automatically.
+
+### F19. Command palette
+
+- Open a searchable action list from one keyboard shortcut. Include labeling, snoozing, inserting templates, switching accounts, creating tasks, and opening settings.
+- Scope actions to the active window, selected messages, account, or composer. Show the target and explain when an action is unavailable.
+- Display existing keyboard shortcuts beside results so users can learn them while using the palette.
+- Reuse existing commands, confirmations, and action queues. Ordinary command lookup and execution must work without an AI provider.
+
+### F20. Send later
+
+- Choose a date, time, and explicit time zone for an outgoing message. Provide a dedicated view to review scheduled mail, edit it, reschedule it, cancel it, or send it now.
+- Treat scheduling as an explicit user action on a reviewed draft. Preserve its sender, recipients, body, and attachments until the user edits them.
+- Show scheduled, sending, sent, failed, and missed-time states based on actual outcomes. Coordinate cancellation, retries, and edits through the existing send queue to prevent duplicate delivery.
+- Define execution while Tern is closed or the Mac is asleep before release. A local scheduler must disclose its limits and make missed times visible; reliable delivery while the Mac is off requires a separate execution design.
+
+This brings scheduled sending, previously deferred in [Milestone 2](milestone-2.md), into the accepted roadmap.
+
 ## Recommended delivery order
+
+On November 3, 2026, the owner approved the next three implementations in this order: **F06 Waiting for and follow-ups**, **F05 Today**, then **F16 Meeting preparation**. Today will reuse F06's accepted commitments and corrections. The broader dependency order below remains background for later work.
 
 The owner fixed the F00/F01 foundation first and F15 immediately after it. The rest is a proposed order based on shared dependencies, with no delivery dates assigned.
 
@@ -229,6 +274,8 @@ The owner fixed the F00/F01 foundation first and F15 immediately after it. The r
 | 8 | F13 | Build repeatable background rules on the established retrieval and action services. |
 
 Features within later stages can move earlier once their dependencies are ready. The attachment library's metadata browser and subscription detection can be developed independently of AI reasoning.
+
+The November 3 additions do not change the owner's original foundation order. F16 can follow the calendar and thread-summary foundation; F17 uses the existing Google Tasks integration and F15. F18 can use the shared AI integration, while F19 can be developed independently of AI. F20 needs a delivery-execution decision before release. These are dependency recommendations, not delivery dates or an approved ordering among the new features.
 
 ## Existing plans and integration points
 
