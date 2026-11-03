@@ -268,16 +268,23 @@ import Testing
         }
 
         func assertCaretVisible(in field: NSTokenField) throws {
+            root.layoutSubtreeIfNeeded()
             try #require(NSApp.isActive && window.isKeyWindow && window.occlusionState.contains(.visible),
                 "Recipient caret assertions require the activated native compose window")
             let editor = try #require(field.currentEditor() as? NSTextView)
             let screen = editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil)
             var caret = field.convert(window.convertFromScreen(screen), from: nil)
+            let header = try #require(element(id: "compose-header-viewport"))
+            let viewport = Self.accessibilityFrame(header)
+            var screenCaret = screen
             // A native insertion point may have zero geometric width; its
             // painted hairline still has to lie inside the clipped viewport.
             caret.size.width = max(caret.width, Tokens.Border.hairline)
-            if screen.height <= 0 || !field.visibleRect.intersects(caret) {
+            screenCaret.size.width = max(screenCaret.width, Tokens.Border.hairline)
+            if screen.height <= 0 || !field.visibleRect.intersects(caret)
+                || viewport.intersection(screenCaret).height < screenCaret.height - Tokens.Border.hairline {
                 let message = recipientGeometryDiagnostic(field, editor: editor)
+                    + " headerViewport=\(viewport) screenCaret=\(screenCaret)"
                 Attachment.record(Array(message.utf8), named: "compose-recipient-native-geometry.txt")
                 print(message)
             }
@@ -285,6 +292,8 @@ import Testing
                 "The actual native caret API and field editor must become visible after recipient reveal")
             #expect(field.visibleRect.intersection(caret).height >= caret.height - Tokens.Border.hairline,
                 "The active recipient insertion point must be inside the bounded header; active=\(NSApp.isActive) key=\(window.isKeyWindow) screenCaret=\(screen)")
+            #expect(!viewport.isEmpty && viewport.intersection(screenCaret).height >= screenCaret.height - Tokens.Border.hairline,
+                "The native caret must fit the SwiftUI header viewport, including its clip; headerViewport=\(viewport) screenCaret=\(screenCaret)")
         }
 
         private func recipientGeometryDiagnostic(_ field: NSTokenField, editor: NSTextView) -> String {
@@ -487,6 +496,14 @@ import Testing
 
         func capture(directory: String, name: String) throws {
             root.layoutSubtreeIfNeeded()
+            if name.hasSuffix("-bcc-focus") {
+                let field = try recipient("Bcc")
+                try assertCaretVisible(in: field)
+                let editor = try #require(field.currentEditor() as? NSTextView)
+                let message = recipientGeometryDiagnostic(field, editor: editor)
+                    + " screenCaret=\(editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil))"
+                Attachment.record(Array(message.utf8), named: "compose-" + name + "-geometry.txt")
+            }
             let bitmap = try #require(root.bitmapImageRepForCachingDisplay(in: root.bounds))
             window.effectiveAppearance.performAsCurrentDrawingAppearance { root.cacheDisplay(in: root.bounds, to: bitmap) }
             let data = try #require(bitmap.representation(using: .png, properties: [:]))
