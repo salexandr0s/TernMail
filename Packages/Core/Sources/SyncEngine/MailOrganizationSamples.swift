@@ -5,7 +5,7 @@ import MailOrganization
 /// Progress counts attempted metadata reads, including unavailable messages.
 /// The selected total becomes final when reading begins.
 public struct MailOrganizationSamplingProgress: Sendable, Equatable {
-    public enum Stage: Sendable, Equatable { case labels, listing, reading }
+    public enum Stage: Sendable, Equatable { case labels, rules, listing, reading }
     public let stage: Stage
     public let processedCount: Int
     public let selectedCount: Int
@@ -22,31 +22,40 @@ public struct MailOrganizationSamples: Sendable, Equatable {
     public let accountID: String
     public let messages: [MailOrganizationSample]
     public let existingLabels: [GmailLabel]
+    public let existingFilters: [GmailFilter]
+    public let filterContextAvailable: Bool
+    /// More matching messages were available beyond the selected scan window.
+    public let hasMore: Bool
     public let selectedCount: Int
     public let unavailableCount: Int
     /// A listing, message, or input bound prevented complete inspection of the window.
     public let isPartial: Bool
+    private let ruleEvidence: OrganizationEvidence
 
     public init(accountID: String, messages: [MailOrganizationSample], existingLabels: [GmailLabel],
-                selectedCount: Int, unavailableCount: Int, isPartial: Bool) {
+                selectedCount: Int, unavailableCount: Int, isPartial: Bool,
+                existingFilters: [GmailFilter] = [], filterContextAvailable: Bool = false, hasMore: Bool = false) {
         self.accountID = accountID
         self.messages = messages
         self.existingLabels = existingLabels
+        self.existingFilters = existingFilters
+        self.filterContextAvailable = filterContextAvailable
+        self.hasMore = hasMore
         self.selectedCount = selectedCount
         self.unavailableCount = unavailableCount
         self.isPartial = isPartial
+        ruleEvidence = OrganizationEvidence(messages: isPartial ? [] : messages.map {
+            .init(id: $0.messageID, threadID: $0.threadID, sender: $0.sender, recipients: $0.recipients,
+                  date: $0.date, isSent: $0.isSent, hasMailingListHeaders: $0.hasMailingListHeaders,
+                  isAutomated: $0.isAutomated)
+        })
     }
 
     /// Excluding one of a sender's examples must also exclude its broad future
     /// rule. Use the same complete-sample evidence as the action queue.
     public func eligibleRuleSenders(_ candidates: [String], selectedMessageIDs: Set<String>) -> [String] {
-        guard !isPartial else { return [] }
-        let evidence = OrganizationEvidence(messages: messages.map {
-            .init(id: $0.messageID, threadID: $0.threadID, sender: $0.sender, recipients: $0.recipients,
-                  date: $0.date, isSent: $0.isSent, hasMailingListHeaders: $0.hasMailingListHeaders,
-                  isAutomated: $0.isAutomated)
-        })
-        return candidates.filter { evidence.supportsRule(sender: $0, classifiedMessageIDs: selectedMessageIDs) }
+        guard !isPartial, !candidates.isEmpty else { return [] }
+        return candidates.filter { ruleEvidence.supportsRule(sender: $0, classifiedMessageIDs: selectedMessageIDs) }
     }
 }
 
@@ -87,4 +96,23 @@ public enum MailOrganizationSampleLimits {
     public static let batchSize = 25
     public static let subjectBytes = 512
     public static let snippetBytes = 1_024
+    public static let totalSampleBytes = 256 * 1_024 * 1_024
+}
+
+struct OrganizationSampleBudget {
+    private(set) var remainingBytes: Int
+
+    init(maximumBytes: Int = MailOrganizationSampleLimits.totalSampleBytes) {
+        remainingBytes = maximumBytes
+    }
+
+    mutating func retain(_ sample: MailOrganizationSample) -> Bool {
+        let fields = [sample.messageID, sample.threadID, sample.sender, sample.subject, sample.snippet]
+        let cost = fields.reduce(0) { $0 + $1.utf8.count }
+            + sample.recipients.reduce(0) { $0 + $1.utf8.count }
+            + sample.labelIDs.reduce(0) { $0 + $1.utf8.count }
+        guard cost <= remainingBytes else { return false }
+        remainingBytes -= cost
+        return true
+    }
 }

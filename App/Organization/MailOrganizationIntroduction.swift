@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MailOrganizationIntroduction: View {
+    @Binding var maximumMessages: Int
     let canAnalyze: Bool
     let requirement: MailOrganizationRequirement?
     let onAnalyze: () -> Void
@@ -17,18 +18,29 @@ struct MailOrganizationIntroduction: View {
                                     in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        Text("Labels that fit your mail")
+                        Text("Build on your labels and rules")
                             .font(.title2.weight(.semibold))
-                        Text("Find useful labels from your recent mail, then review them before applying.")
+                        Text("Analyze your mail in batches, combine related themes, and review a plan for new labels and rules.")
                             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                    step("envelope", title: "Read your recent mail", detail: "Up to 250 received and sent messages combined.")
-                    step("tag", title: "Review the suggestions", detail: "See examples, rename labels, and choose what to keep.")
-                    step("checkmark.icloud", title: "Apply to Gmail", detail: "Save your labels and any sender rules you choose.")
+                    step("envelope", title: "Read mail and your existing setup", detail: "Received and sent messages, existing labels, and Gmail rules.")
+                    step("arrow.triangle.merge", title: "Compare and recheck", detail: "Combine batch findings, then check the mail against the shared plan.")
+                    step("checkmark.icloud", title: "Review and apply", detail: "Choose future-mail rules and whether to back-tag matching mail.")
                 }
                 Divider()
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Picker("Mail to analyze", selection: $maximumMessages) {
+                        ForEach([1_000, 5_000, 20_000, 100_000], id: \.self) { count in
+                            Text("Up to \(count.formatted()) messages").tag(count)
+                        }
+                    }
+                    .accessibilityIdentifier("organization.scanLimit")
+                    Text("Larger scans take longer. You can leave Settings while the job runs; interrupted analysis can resume from its last completed batch.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let requirement {
                     Label(requirement.message, systemImage: "lock")
                         .font(.callout).fixedSize(horizontal: false, vertical: true)
@@ -37,7 +49,7 @@ struct MailOrganizationIntroduction: View {
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                 } else {
-                    Button("Analyze recent mail", systemImage: "sparkles", action: onAnalyze)
+                    Button("Analyze mail", systemImage: "sparkles", action: onAnalyze)
                         .buttonStyle(.borderedProminent).controlSize(.large)
                         .disabled(!canAnalyze)
                         .accessibilityIdentifier("organization.analyze")
@@ -48,7 +60,7 @@ struct MailOrganizationIntroduction: View {
             .ternSurface()
 
             Label {
-                Text("Analysis shares message headers, short previews, and existing label names with your connected ChatGPT account. You choose what gets applied to Gmail.")
+                Text("Analysis shares message headers, short previews, labels, and rule settings with your connected ChatGPT account. Nothing changes in Gmail until you review and apply the plan.")
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "hand.raised")

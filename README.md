@@ -29,9 +29,11 @@ All screenshots show fictional demo accounts, messages, labels, events, and task
 | Calendar & Tasks | Browse Google calendars, edit events and recurring meetings, and keep Google Tasks beside your mail. |
 | Attachments | Find files across accounts and archived mail, filter by type or label, preview with Quick Look, and open the source conversation. |
 | Assistant | Search permitted mail, summarize threads, prepare editable replies, and review suggested tasks and events before saving. |
-| Organize Mail | Review suggested labels from recent mail, then apply selected labels and optional sender filters to Gmail. |
+| Organize Mail | Review suggested labels and sender rules, with separate choices for future mail and tagging matching messages from the scan. |
 
 Native menus, keyboard shortcuts, light and dark appearances, and macOS sharing keep everyday actions close at hand.
+
+[Organize Mail](docs/mail-organization.md) analyzes mail in batches, compares the findings with existing labels and rules, and rechecks the combined plan. Review each rule and its reason in Settings, with optional back-tagging of matching mail. Scans default to a limit of 5,000 messages and can include up to 100,000; smaller mailboxes use the messages available.
 
 ## A closer look
 

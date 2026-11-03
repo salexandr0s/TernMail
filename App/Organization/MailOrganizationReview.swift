@@ -1,70 +1,78 @@
 import SwiftUI
 import SyncEngine
 
-/// Review content is independent of account connections and can render a
-/// prepared plan without reading mail or starting an assistant request.
 struct MailOrganizationReviewSections: View {
     @Bindable var model: MailOrganizationModel
     let canCreateFilters: Bool
-    var onOpenMessage: ((MailOrganizationSample) -> Void)? = nil
 
     private var isReviewing: Bool { model.phase == .review }
-    private var allSelected: Bool { model.selectedCount == model.categories.count }
-    private var title: String {
-        switch model.phase {
-        case .review: "Suggested labels"
-        case .complete: "Applied labels"
-        default: "Selected labels"
-        }
-    }
+    private var ruleCount: Int { model.categories.filter { !$0.proposal.ruleSenders.isEmpty }.count }
 
     var body: some View {
         if let samples = model.samples {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s5) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
-                        Text(title)
-                            .font(.title3.weight(.semibold))
-                            .accessibilityAddTraits(.isHeader)
-                        Spacer(minLength: 0)
-                        if isReviewing && !model.categories.isEmpty {
-                            Button(allSelected ? "Deselect All" : "Select All") {
-                                let selected = !allSelected
-                                for index in model.categories.indices { model.categories[index].isSelected = selected }
-                            }
-                            .buttonStyle(.borderless)
-                            .font(.callout)
-                            .accessibilityIdentifier("organization.selectAll")
-                        }
-                    }
-                    Text("\(samples.messages.count) analyzed · \(samples.messages.filter { !$0.isSent }.count) received · \(samples.messages.filter(\.isSent).count) sent")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(isReviewing ? "Choose your labels and rules" : "Your selected changes")
+                        .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    Text(isReviewing
+                         ? "Choose what should happen to future mail, and whether to back-tag matching mail already here."
+                         : "Your rule and back-tagging choices are shown below.")
+                        .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if !model.categories.isEmpty {
-                        Text("Expand a label to review example messages.")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
+                    Text("Based on \(samples.messages.count.formatted()) \(samples.messages.count == 1 ? "message" : "messages") · \(samples.filterContextAvailable ? "existing labels and rules considered" : "existing labels considered")")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                if samples.isPartial {
-                    SettingsNote("Some messages were unavailable. You can label this sample; future filters need a complete sample.",
-                                 systemImage: "exclamationmark.triangle")
+
+                if samples.hasMore || samples.isPartial || !samples.filterContextAvailable {
+                    coverageNotes(samples)
                 }
-                if model.categories.isEmpty {
-                    TernEmptyState(title: "No labels suggested", systemImage: "tag",
-                        message: "These messages didn't suggest consistent categories. Try again as new mail arrives.",
-                        fillsSpace: false)
-                        .ternSurface()
-                } else {
-                    ForEach($model.categories) { $category in
-                        if isReviewing || category.isSelected {
-                            MailOrganizationCategoryRow(category: $category, samples: samples,
-                                canCreateFilters: canCreateFilters && !samples.isPartial,
-                                isEditable: isReviewing, isApplied: model.phase == .complete, onOpenMessage: onOpenMessage)
-                        }
+                if isReviewing {
+                    HStack(spacing: Tokens.Space.s4) {
+                        Button("Select all") { model.setAllSuggestionsSelected(true) }
+                            .accessibilityIdentifier("organization.selectAll")
+                        Button("Clear selection") { model.setAllSuggestionsSelected(false) }
+                            .accessibilityIdentifier("organization.clearSelection")
+                        Spacer(minLength: 0)
                     }
+                    .buttonStyle(.borderless).font(.callout)
+                }
+                if ruleCount > 0 {
+                    suggestions(title: "Rules for future mail", hasRule: true, samples: samples)
+                }
+                if ruleCount < model.categories.count {
+                    suggestions(title: ruleCount > 0 ? "Other label suggestions" : "Labels for existing mail",
+                                hasRule: false, samples: samples)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func suggestions(title: String, hasRule: Bool, samples: MailOrganizationSamples) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+            ForEach($model.categories) { $category in
+                if (!category.proposal.ruleSenders.isEmpty) == hasRule && (isReviewing || category.isSelected) {
+                    MailOrganizationCategoryRow(category: $category, samples: samples,
+                        canCreateFilters: canCreateFilters && !samples.isPartial,
+                        isEditable: isReviewing, isApplied: model.phase == .complete)
+                }
+            }
+        }
+    }
+
+    private func coverageNotes(_ samples: MailOrganizationSamples) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            if samples.isPartial {
+                SettingsNote("Some mail could not be checked. Back-tagging is available; new future-mail rules need a complete scan.",
+                             systemImage: "exclamationmark.triangle")
+            } else if samples.hasMore {
+                SettingsNote("The scan reached its limit. Back-tagging covers matching mail from this scan.",
+                             systemImage: "tray.full")
+            }
+            if !samples.filterContextAvailable {
+                SettingsNote("Enable Gmail Settings access in Connections to include future-mail rules.", systemImage: "lock")
+            }
         }
     }
 }
@@ -78,31 +86,53 @@ struct MailOrganizationReviewFooter: View {
                 if model.selectedCount > 0, let message = model.validationMessage {
                     SettingsNote(message, systemImage: "exclamationmark.circle")
                 }
-                HStack(spacing: Tokens.Space.s3) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
-                        Text("\(model.selectedCount) \(model.selectedCount == 1 ? "label" : "labels") selected")
-                            .font(.callout.weight(.medium))
-                        Text(messageSummary)
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Tokens.Space.s4) {
+                        selectionSummary.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        actions
                     }
-                    Spacer(minLength: 0)
-                    Button("Start Over") { model.clear() }
-                        .buttonStyle(.borderless)
-                        .accessibilityIdentifier("organization.startOver")
-                    Button("Apply to Gmail") { model.applySelection() }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(!model.canApply)
-                        .accessibilityIdentifier("organization.apply")
+                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                        selectionSummary
+                        HStack {
+                            Spacer(minLength: 0)
+                            actions
+                        }
+                    }
                 }
             }
         }
     }
 
-    private var messageSummary: String {
-        let messages = "\(model.selectedMessageCount) \(model.selectedMessageCount == 1 ? "message" : "messages")"
-        guard model.selectedFilterCount > 0 else { return messages }
-        return messages + " · \(model.selectedFilterCount) \(model.selectedFilterCount == 1 ? "filter" : "filters")"
+    private var selectionSummary: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+            Text(model.selectedCount == 0 ? "No changes selected" : actionSummary)
+                .font(.callout.weight(.medium))
+            Text(model.selectedCount == 0
+                 ? "Choose a rule or back-tagging above."
+                 : "Labels: \(model.selectedExistingLabelCount) existing · \(model.selectedNewLabelCount) new")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var actionSummary: String {
+        let rules = "\(model.selectedFilterCount.formatted()) new \(model.selectedFilterCount == 1 ? "rule" : "rules")"
+        let mail = model.selectedMessageCount == 0
+            ? "no back-tagging"
+            : "\(model.selectedMessageCount.formatted()) \(model.selectedMessageCount == 1 ? "message" : "messages") to back-tag"
+        return rules + " · " + mail
+    }
+
+    private var actions: some View {
+        HStack(spacing: Tokens.Space.s3) {
+            Button("Start Over") { model.clear() }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("organization.startOver")
+            Button("Apply to Gmail") { model.applySelection() }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!model.canApply)
+                .accessibilityIdentifier("organization.apply")
+        }
     }
 }

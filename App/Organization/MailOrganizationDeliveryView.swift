@@ -54,7 +54,7 @@ struct MailOrganizationDeliveryView: View {
                 }
             }
             if let receipt {
-                Label("\(receipt.categoryCount) \(receipt.categoryCount == 1 ? "label" : "labels") · \(receipt.messageCount) \(receipt.messageCount == 1 ? "message" : "messages")",
+                Label("\(receipt.categoryCount) \(receipt.categoryCount == 1 ? "label" : "labels") · \(receipt.messageCount) \(receipt.messageCount == 1 ? "message" : "messages") \(isComplete ? "back-tagged" : "to back-tag")",
                       systemImage: "tag")
                     .font(.callout.weight(.medium))
                 if receipt.filterCount > 0 {
@@ -86,13 +86,17 @@ struct MailOrganizationDeliveryView: View {
     }
 
     private var title: String {
-        if isComplete { return "Your labels are in Gmail" }
+        if isComplete { return "Your changes are saved in Gmail" }
         if needsAttention { return "Some changes need attention" }
         return phase == .applying ? "Preparing your changes" : "Saving to Gmail"
     }
 
     private var detail: String {
-        if isComplete { return "Your selected messages are organized. You can inspect the labels and examples below." }
+        if isComplete {
+            if receipt?.messageCount == 0 { return "Your rules are ready for future mail." }
+            if receipt?.filterCount == 0 { return "Matching mail has been back-tagged with your chosen labels." }
+            return "Your selected rules and back-tagging are complete."
+        }
         if phase == .applying { return "Checking your selection and preparing the labels and rules." }
         if let delivery, delivery.pendingCount == 0 {
             if delivery.unconfirmedCount > 0 {

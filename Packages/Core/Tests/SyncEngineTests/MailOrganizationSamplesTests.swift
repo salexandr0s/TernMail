@@ -1,10 +1,30 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MessageContent
 import Testing
 @testable import SyncEngine
 
 @Suite struct MailOrganizationSamplesTests {
+    @Test(arguments: [0, 1, 37])
+    func mailboxesSmallerThanTheRequestedScanFinishAtTheirActualSize(messageCount: Int) async throws {
+        let (engine, _, gmail, _) = try await makeEngine()
+        let ids = (0..<messageCount).map { "small\($0)" }
+        for id in ids { await gmail.add(try organizationMessage(id)) }
+        await gmail.setRecentPages([try organizationPage(ids)])
+        let progress = OrganizationProgressRecorder()
+        let samples = try await engine.organizationSamples(maximumMessages: 5_000, progress: { await progress.append($0) })
+        #expect(samples.messages.count == messageCount && samples.selectedCount == messageCount)
+        #expect(samples.unavailableCount == 0 && !samples.hasMore && !samples.isPartial)
+        #expect(await gmail.metadataRequests.count == (messageCount + 24) / 25)
+        let updates = await progress.values
+        #expect(updates.filter { $0.stage == .listing }.map(\.selectedCount) == [0, messageCount])
+        #expect(updates.last?.processedCount == messageCount)
+        #expect(updates.last?.selectedCount == messageCount)
+        #expect(await gmail.changes.isEmpty)
+        await engine.stop()
+    }
+
     @Test func samples250CombinedMessagesAndKeepsExactMessageMetadataWithoutWritingGmail() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("older", "shared", [SystemLabel.inbox, SystemLabel.unread])], cursor: 90)
@@ -28,6 +48,7 @@ import Testing
         #expect(samples.messages.first?.recipients == ["me@example.com"])
         #expect(samples.messages.first?.snippet == "News & updates")
         #expect(!samples.isPartial)
+        #expect(samples.hasMore)
         #expect(samples.unavailableCount == 0)
         #expect(await gmail.metadataRequests.count == 10)
         #expect(await gmail.attachmentRequests.isEmpty)
@@ -41,6 +62,97 @@ import Testing
         #expect(updates.filter { $0.stage == .listing }.map(\.selectedCount) == [0, 150, 250])
         #expect(updates.filter { $0.stage == .reading }.map(\.processedCount) == Array(stride(from: 0, through: 250, by: 25)))
         #expect(updates.filter { $0.stage == .reading }.allSatisfy { $0.selectedCount == 250 })
+    }
+
+    @Test func broaderScansReadMultiplePagesAndReportMoreMailWithoutCallingTheSamplePartial() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        for index in 0..<680 {
+            await gmail.add(try organizationMessage("m\(index)", date: 1_000_000 - index))
+        }
+        await gmail.setRecentPages([
+            try organizationPage((0..<500).map { "m\($0)" }, next: "older"),
+            try organizationPage((500..<680).map { "m\($0)" })
+        ])
+        let samples = try await engine.organizationSamples(maximumMessages: 600)
+        #expect(samples.messages.count == 600)
+        #expect(samples.selectedCount == 600 && samples.unavailableCount == 0)
+        #expect(samples.hasMore && !samples.isPartial)
+        #expect(samples.messages.last?.messageID == "m599")
+        #expect(await gmail.metadataRequests.count == 24)
+        #expect(try await cache.read { try $0.messages(threadID: "shared", accountID: account) }.count == 600)
+        #expect(await gmail.changes.isEmpty)
+    }
+
+    @Test func cancellationAfterACompletedChunkKeepsItsMetadataAndStopsTheNextChunk() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let ids = (0..<50).map { "m\($0)" }
+        for id in ids { await gmail.add(try organizationMessage(id)) }
+        await gmail.setRecentPages([try organizationPage(ids)])
+        let access = OrganizationSampleAccess()
+        await #expect(throws: AssistantMailError.accessChanged) {
+            try await engine.organizationSamples(isAuthorized: { await access.allowed }, progress: { update in
+                if update.stage == .reading && update.processedCount == 25 { await access.revoke() }
+            })
+        }
+        #expect(await gmail.metadataRequests.count == 1)
+        #expect(try await cache.read { try $0.messages(threadID: "shared", accountID: account) }.count == 25)
+        #expect(await gmail.changes.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func existingRuleContextRequiresEnabledSettingsPermission(enabled: Bool) async throws {
+        let accounts = try AccountStore.inMemory()
+        try await accounts.save(AccountRecord(id: account, email: "me@example.com", displayName: nil,
+            grantedScopes: GoogleScopes.base + [GoogleScopes.gmailSettings], addedAt: .now,
+            enabledFeatures: enabled ? [AccountFeature.gmailSettings.rawValue] : []))
+        let existing = GmailFilter(id: "existing", criteria: .init(from: "news@example.com", subject: "Weekly"),
+            action: .init(addLabelIds: ["Label_news"], removeLabelIds: ["INBOX"], forward: "archive@example.com"))
+        let (engine, settings) = try await organizationContextEngine(filters: [existing], accounts: accounts)
+        let samples = try await engine.organizationSamples()
+        #expect(samples.filterContextAvailable == enabled)
+        #expect(samples.existingFilters == (enabled ? [existing] : []))
+        #expect(await settings.calls == (enabled ? ["list"] : []))
+        await engine.stop()
+    }
+
+    @Test func anUnavailableFilterListCannotMasqueradeAsAnEmptyCatalogue() async throws {
+        let (engine, settings) = try await organizationContextEngine()
+        await settings.fail("list", with: .transport(.timedOut))
+        await #expect(throws: GmailError.transport(.timedOut)) {
+            try await engine.organizationSamples()
+        }
+        #expect(await settings.calls == ["list"])
+        await engine.stop()
+    }
+
+    @Test func settingsRevokedWhileListingCannotReturnAnApparentlyCompleteRuleContext() async throws {
+        let accounts = try AccountStore.inMemory()
+        try await accounts.save(AccountRecord(id: account, email: "me@example.com", displayName: nil,
+            grantedScopes: GoogleScopes.base + [GoogleScopes.gmailSettings], addedAt: .now,
+            enabledFeatures: [AccountFeature.gmailSettings.rawValue]))
+        let service = OrganizationListingSettings {
+            try await accounts.updateAccount(id: account) { $0.enabledFeatures = [] }
+            return [GmailFilter(id: "private", criteria: .init(from: "sender@example.com"),
+                                action: .init(addLabelIds: ["Label_news"]))]
+        }
+        let (engine, _) = try await organizationContextEngine(accounts: accounts, service: service)
+        await #expect(throws: AssistantMailError.accessChanged) {
+            try await engine.organizationSamples()
+        }
+        await engine.stop()
+    }
+
+    @Test func sampleBudgetIncludesAllRecipientsAndLabelsAndRejectsWithoutConsumingSpace() {
+        let sample = MailOrganizationSample(messageID: "m", threadID: "t", sender: "s",
+            recipients: ["first", "€"], subject: "é", snippet: "", date: nil, isSent: false,
+            labelIDs: ["Label_1"])
+        var budget = OrganizationSampleBudget(maximumBytes: 39)
+        let retained = budget.retain(sample)
+        #expect(retained)
+        #expect(budget.remainingBytes == 19)
+        let retainedAgain = budget.retain(sample)
+        #expect(!retainedAgain)
+        #expect(budget.remainingBytes == 19)
     }
 
     @Test func excludesIneligibleAndMissingMailWithExplicitPartialCoverage() async throws {
@@ -179,6 +291,36 @@ import Testing
 private actor OrganizationSampleAccess {
     private(set) var allowed = true
     func revoke() { allowed = false }
+}
+
+private func organizationContextEngine(filters: [GmailFilter] = [], accounts: AccountStore? = nil,
+                                       service: (any SettingsService)? = nil)
+    async throws -> (SyncEngine, FakeSettings) {
+    let cache = try MailCache.inMemory()
+    let settings = FakeSettings(filters: filters, vacation: .init())
+    let clock = TestClock()
+    let engine = SyncEngine(accountID: account, sender: EmailAddress(address: "me@example.com"),
+        outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: "TernOrganizationTests-\(UUID().uuidString)"),
+        gmail: FakeGmail(), settings: service ?? settings, accounts: accounts, cache: cache,
+        sendsAutomatically: false, now: clock.now)
+    return (engine, settings)
+}
+
+private struct OrganizationListingSettings: SettingsService {
+    let list: @Sendable () async throws -> [GmailFilter]
+
+    func filters() async throws -> [GmailFilter] { try await list() }
+    func createFilter(criteria: GmailFilter.Criteria, action: GmailFilter.Action) throws -> GmailFilter {
+        throw GmailError.invalidRequest("Unexpected filter creation")
+    }
+    func deleteFilter(id: String) throws { throw GmailError.invalidRequest("Unexpected filter deletion") }
+    func vacation() throws -> VacationSettings { throw GmailError.invalidRequest("Unexpected vacation read") }
+    func updateVacation(_ settings: VacationSettings) throws -> VacationSettings {
+        throw GmailError.invalidRequest("Unexpected vacation update")
+    }
+    func updateSignature(sendAsEmail: String, signature: String) throws -> SendAsIdentity {
+        throw GmailError.invalidRequest("Unexpected signature update")
+    }
 }
 
 private actor OrganizationProgressRecorder {

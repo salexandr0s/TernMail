@@ -1,14 +1,19 @@
 import SwiftUI
 import SyncEngine
+import TernAI
 
 struct MailOrganizationLoadingView: View {
     let phase: MailOrganizationModel.Phase
     let progress: MailOrganizationSamplingProgress?
+    let analysisProgress: OrganizationAnalysisProgress?
     let startedAt: Date?
     let sampleCount: Int
+    let scanMaximumMessages: Int
+    let onResume: () -> Void
     let onCancel: () -> Void
 
-    private var isAnalyzing: Bool { phase == .analyzing }
+    private var isAnalyzing: Bool { phase == .analyzing || phase == .paused }
+    private var isPaused: Bool { phase == .paused }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
@@ -20,7 +25,7 @@ struct MailOrganizationLoadingView: View {
                                 in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    Text(isAnalyzing ? "Finding your labels" : "Reading recent mail")
+                    Text(title)
                         .font(.title2.weight(.semibold))
                     Text(detail).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -29,13 +34,17 @@ struct MailOrganizationLoadingView: View {
             }
 
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                if !isAnalyzing, let progress, progress.stage == .reading, progress.selectedCount > 0 {
+                if isAnalyzing, let analysisProgress, analysisProgress.totalBatches > 0 {
+                    ProgressView(value: Double(analysisProgress.completedBatches), total: Double(analysisProgress.totalBatches))
+                        .accessibilityLabel(title)
+                        .accessibilityValue(progressCaption)
+                } else if !isAnalyzing, let progress, progress.stage == .reading, progress.selectedCount > 0 {
                     ProgressView(value: Double(progress.processedCount), total: Double(progress.selectedCount))
-                        .accessibilityLabel("Reading recent mail")
+                        .accessibilityLabel("Reading mail")
                         .accessibilityValue("\(progress.processedCount) of \(progress.selectedCount) messages checked")
                 } else {
                     ProgressView().progressViewStyle(.linear)
-                        .accessibilityLabel(isAnalyzing ? "Analyzing messages" : "Loading recent mail")
+                        .accessibilityLabel(title)
                 }
                 HStack {
                     Text(progressCaption).font(.caption).foregroundStyle(.secondary)
@@ -52,18 +61,24 @@ struct MailOrganizationLoadingView: View {
             }
 
             VStack(spacing: Tokens.Space.s4) {
-                step("Read recent mail", detail: isAnalyzing ? "\(sampleCount) messages ready" : "Received and sent, together",
-                     state: isAnalyzing ? .complete : .current)
-                step("Find patterns", detail: "Topics, recurring senders, and requests",
-                     state: isAnalyzing ? .current : .upcoming)
-                step("Review suggestions", detail: "Choose labels and check their examples", state: .upcoming)
+                step("Read mail and existing setup", detail: isAnalyzing ? "\(sampleCount.formatted()) messages ready" : "Received mail, sent mail, labels, and rules",
+                     state: state(for: 0))
+                step("Find patterns in batches", detail: "Topics, recurring senders, and requests", state: state(for: 1))
+                step("Combine related findings", detail: "Build on the labels and rules you already use", state: state(for: 2))
+                step("Recheck the mail", detail: "Compare every batch with the combined plan", state: state(for: 3))
+                step("Prepare your review", detail: "Choose future rules and optional back-tagging", state: state(for: 4))
             }
             Divider()
             HStack(spacing: Tokens.Space.s3) {
-                Text("Nothing in Gmail changes until you apply.")
+                Text(isPaused ? "Progress is saved while Tern stays open." : "You can leave Settings. Nothing in Gmail changes until you apply.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
+                if isPaused {
+                    Button("Resume analysis", systemImage: "play.fill", action: onResume)
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("organization.resume")
+                }
                 Button("Cancel", action: onCancel)
                     .keyboardShortcut(.cancelAction)
                     .accessibilityLabel("Cancel mail analysis")
@@ -75,13 +90,33 @@ struct MailOrganizationLoadingView: View {
         .ternSurface()
     }
 
+    private var title: String {
+        if isPaused { return "Analysis paused" }
+        guard isAnalyzing else { return "Reading your mailbox" }
+        switch analysisProgress?.stage {
+        case .discovering: return "Finding patterns in your mail"
+        case .consolidating: return "Combining batch findings"
+        case .auditing: return "Checking the combined plan"
+        case .validating: return "Checking labels and rules"
+        case nil: return "Starting batch analysis"
+        }
+    }
+
     private var detail: String {
+        if isPaused { return "Resume from the last completed batch when the connection is available." }
         if isAnalyzing {
-            return "Looking for useful categories across \(sampleCount) recent messages."
+            switch analysisProgress?.stage {
+            case .discovering: return "Looking for useful topics across \(sampleCount.formatted()) messages."
+            case .consolidating: return "Grouping related findings and comparing them with your existing labels and rules."
+            case .auditing: return "Reading each batch again to check its label assignments against the shared plan."
+            case .validating: return "Checking sender patterns and conversation state across the complete scan."
+            case nil: return "Preparing the first batch. Larger scans can take a while."
+            }
         }
         switch progress?.stage {
         case .labels: return "Checking the labels you already use."
-        case .listing: return "Selecting up to 250 received and sent messages."
+        case .rules: return "Checking the Gmail rules you already have."
+        case .listing: return "Selecting up to \(scanMaximumMessages.formatted()) received and sent messages."
         case .reading:
             return "Reading message headers and short previews."
         case nil: return "Connecting to your Google account."
@@ -89,16 +124,35 @@ struct MailOrganizationLoadingView: View {
     }
 
     private var progressCaption: String {
-        if isAnalyzing { return "Analyzing with ChatGPT…" }
+        if isAnalyzing {
+            guard let analysisProgress else { return "Preparing analysis…" }
+            let unit = analysisProgress.stage == .consolidating ? "comparisons" : "batches"
+            return "\(analysisProgress.completedBatches) of \(analysisProgress.totalBatches) \(unit) · \(analysisProgress.analyzedCount.formatted()) messages"
+        }
         guard let progress else { return "Starting…" }
         switch progress.stage {
         case .labels: return "Loading existing labels…"
+        case .rules: return "Loading existing rules…"
         case .listing: return "Finding recent messages…"
         case .reading: return "\(progress.processedCount) of \(progress.selectedCount) messages checked"
         }
     }
 
     private enum StepState { case complete, current, upcoming }
+
+    private func state(for index: Int) -> StepState {
+        let active: Int
+        if !isAnalyzing { active = 0 }
+        else {
+            switch analysisProgress?.stage {
+            case .discovering, nil: active = 1
+            case .consolidating: active = 2
+            case .auditing: active = 3
+            case .validating: active = 4
+            }
+        }
+        return index < active ? .complete : index == active ? .current : .upcoming
+    }
 
     private func step(_ title: String, detail: String, state: StepState) -> some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {

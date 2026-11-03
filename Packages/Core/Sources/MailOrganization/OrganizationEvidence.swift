@@ -36,7 +36,7 @@ public struct OrganizationSenderEvidence: Sendable, Equatable {
 
 /// Evidence is computed over the full supplied sample. Invalid or oversized
 /// samples support neither workflow labels nor future sender rules.
-public struct OrganizationEvidence: Sendable {
+public struct OrganizationEvidence: Sendable, Equatable {
     public let latestMessageIDs: Set<String>
     public let eligibleRuleSenders: Set<String>
     public let senders: [OrganizationSenderEvidence]
@@ -44,7 +44,7 @@ public struct OrganizationEvidence: Sendable {
     private let incomingIDs: [String: Set<String>]
 
     public init(messages: [OrganizationMessageEvidence]) {
-        guard messages.count <= 250, Set(messages.map(\.id)).count == messages.count,
+        guard messages.count <= OrganizationJobLimits.maximumMessages, Set(messages.map(\.id)).count == messages.count,
               messages.allSatisfy({ !$0.id.isEmpty && !$0.threadID.isEmpty }) else {
             latestMessageIDs = []; eligibleRuleSenders = []; senders = []
             latestDirections = [:]; incomingIDs = [:]
@@ -92,9 +92,13 @@ public struct OrganizationEvidence: Sendable {
     }
 
     public func supportsRule(sender: String, classifiedMessageIDs: some Sequence<String>) -> Bool {
+        supportsRule(sender: sender, classifiedMessageIDs: Set(classifiedMessageIDs))
+    }
+
+    public func supportsRule(sender: String, classifiedMessageIDs: Set<String>) -> Bool {
         let address = Self.address(sender)
         guard eligibleRuleSenders.contains(address), let incoming = incomingIDs[address] else { return false }
-        return incoming.isSubset(of: Set(classifiedMessageIDs))
+        return incoming.isSubset(of: classifiedMessageIDs)
     }
 
     private static func address(_ value: String) -> String {

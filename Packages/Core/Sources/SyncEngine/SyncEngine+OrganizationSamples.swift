@@ -1,6 +1,7 @@
 import Foundation
 import GmailAPI
 import MailStore
+import MailOrganization
 import MessageContent
 
 extension SyncEngine {
@@ -11,46 +12,62 @@ extension SyncEngine {
     /// Ordinary message metadata joins the cache for exact-message label overlays.
     /// This read never changes Gmail, downloads bodies, or advances a sync cursor.
     public func organizationSamples(
+        maximumMessages: Int = MailOrganizationSampleLimits.messages,
         isAuthorized: @escaping @Sendable () async -> Bool = { true },
         progress: @escaping @Sendable (MailOrganizationSamplingProgress) async -> Void = { _ in }
     ) async throws -> MailOrganizationSamples {
         typealias Limits = MailOrganizationSampleLimits
+        guard (1...OrganizationJobLimits.maximumMessages).contains(maximumMessages) else {
+            throw GmailError.invalidRequest("Organization scan size")
+        }
+        let boundary = Int64(now().timeIntervalSince1970.rounded(.down))
+        let query = "-in:drafts -in:chats -in:spam -in:trash before:\(boundary)"
         try await organizationReport(.init(stage: .labels), progress: progress, isAuthorized: isAuthorized)
         let labels = try await gmail.labels()
+        try await organizationReport(.init(stage: .rules), progress: progress, isAuthorized: isAuthorized)
+        let rules = try await organizationRuleContext(isAuthorized)
         try await organizationReport(.init(stage: .listing), progress: progress, isAuthorized: isAuthorized)
         var selected: [MessageRef] = []
         var seen = Set<String>()
         var tokens = Set<String>()
         var token: String?
         var partial = false
+        var hasMore = false
         var finished = false
-        for _ in 0..<Limits.pages {
+        let pageSize = min(500, maximumMessages)
+        let pageLimit = max(Limits.pages, (maximumMessages + pageSize - 1) / pageSize + Limits.pages)
+        for _ in 0..<pageLimit {
             try await organizationCheckAccess(isAuthorized)
             let page: MessageListPage
             do {
-                page = try await gmail.listMessages(query: "-in:drafts -in:chats -in:spam -in:trash",
-                    labelIDs: [], includeSpamTrash: false, pageToken: token, maxResults: Limits.messages)
+                page = try await gmail.listMessages(query: query,
+                    labelIDs: [], includeSpamTrash: false, pageToken: token,
+                    maxResults: min(pageSize, maximumMessages - selected.count))
                 try await organizationCheckAccess(isAuthorized)
             } catch {
                 try await organizationCheckAccess(isAuthorized)
                 if Self.organizationAccessError(error) || selected.isEmpty { throw error }
                 partial = true
+                hasMore = true
                 finished = true
                 break
             }
             let references = page.messages ?? []
-            if references.count > Limits.messages { partial = true }
-            for reference in references.prefix(Limits.messages) {
+            if references.count > 500 { partial = true }
+            var consumed = 0
+            for reference in references.prefix(500) {
+                consumed += 1
                 guard Self.organizationValidID(reference.id), Self.organizationValidID(reference.threadId) else {
                     partial = true
                     continue
                 }
                 if seen.insert(reference.id).inserted { selected.append(reference) }
-                if selected.count == Limits.messages { break }
+                if selected.count == maximumMessages { break }
             }
+            hasMore = page.nextPageToken != nil || consumed < references.count
             try await organizationReport(.init(stage: .listing, selectedCount: selected.count),
                                          progress: progress, isAuthorized: isAuthorized)
-            if selected.count == Limits.messages || page.nextPageToken == nil {
+            if selected.count == maximumMessages || page.nextPageToken == nil {
                 finished = true
                 break
             }
@@ -62,16 +79,19 @@ extension SyncEngine {
             }
             token = next
         }
-        if !finished { partial = true }
+        if !finished { partial = true; hasMore = true }
 
         var samples: [MailOrganizationSample] = []
-        var updates: [CacheTransaction.MessageUpdate] = []
         var processed = 0
+        var sampleBudget = OrganizationSampleBudget()
+        var sampleBudgetExceeded = false
         try await organizationReport(.init(stage: .reading, selectedCount: selected.count),
                                      progress: progress, isAuthorized: isAuthorized)
         for start in stride(from: 0, to: selected.count, by: Limits.batchSize) {
             try await organizationCheckAccess(isAuthorized)
             let batch = Array(selected[start..<min(start + Limits.batchSize, selected.count)])
+            var batchSamples: [MailOrganizationSample] = []
+            var updates: [CacheTransaction.MessageUpdate] = []
             let responses: [String: Result<GmailMessage, GmailError>]
             do {
                 responses = try await gmail.messages(ids: batch.map(\.id), format: .metadata,
@@ -113,33 +133,28 @@ extension SyncEngine {
                 let subject = Self.organizationBound(message.header("Subject") ?? "", bytes: Limits.subjectBytes)
                 let snippet = Self.organizationBound(HTMLEntities.decode(message.snippet ?? ""), bytes: Limits.snippetBytes)
                 let hints = Self.organizationHeaderHints(message)
-                samples.append(.init(messageID: message.id, threadID: message.threadId,
+                let sample = MailOrganizationSample(messageID: message.id, threadID: message.threadId,
                     sender: senders.count == 1 ? senders[0].normalized : "", recipients: recipients,
                     subject: subject, snippet: snippet, date: message.date,
                     isSent: labelIDs.contains(SystemLabel.sent), labelIDs: labelIDs,
-                    hasMailingListHeaders: hints.mailingList, isAutomated: hints.automated))
+                    hasMailingListHeaders: hints.mailingList, isAutomated: hints.automated)
+                guard sampleBudget.retain(sample) else {
+                    partial = true; hasMore = true; sampleBudgetExceeded = true
+                    break
+                }
+                batchSamples.append(sample)
                 updates.append(update)
             }
+            try await organizationCheckAccess(isAuthorized)
+            let retained = try await organizationCacheMetadata(updates)
+            samples.append(contentsOf: batchSamples.filter { retained.contains($0.messageID) })
             processed += batch.count
             try await organizationReport(.init(stage: .reading, processedCount: processed, selectedCount: selected.count),
                                          progress: progress, isAuthorized: isAuthorized)
+            if sampleBudgetExceeded { break }
         }
         try await organizationCheckAccess(isAuthorized)
-        let accountID = accountID
-        let metadata = updates
         let deleted = deletedMessageIDs
-        let expires = now().addingTimeInterval(CacheHolds.searchLifetime)
-        if !metadata.isEmpty {
-            let retained = try await write { tx in
-                let live = deleted.withLock { gone in metadata.filter { !gone.contains($0.record.id) } }
-                let threads = try tx.upsertMessages(live)
-                try tx.holdSearchResults(Set(live.map(\.record.threadID)), until: expires, accountID: accountID)
-                try tx.rebuildThreads(threads, accountID: accountID)
-                return Set(live.map(\.record.id))
-            }
-            samples.removeAll { !retained.contains($0.messageID) }
-        }
-        try await organizationCheckAccess(isAuthorized)
         let inspected = samples
         samples = deleted.withLock { gone in inspected.filter { !gone.contains($0.messageID) } }
         samples.sort {
@@ -148,7 +163,42 @@ extension SyncEngine {
         }
         return .init(accountID: accountID, messages: samples, existingLabels: labels,
                      selectedCount: selected.count, unavailableCount: selected.count - samples.count,
-                     isPartial: partial || samples.count < selected.count)
+                     isPartial: partial || samples.count < selected.count,
+                     existingFilters: rules.filters, filterContextAvailable: rules.available, hasMore: hasMore)
+    }
+
+    private func organizationRuleContext(_ isAuthorized: @Sendable () async -> Bool) async throws
+        -> (filters: [GmailFilter], available: Bool) {
+        try await organizationCheckAccess(isAuthorized)
+        guard let settings else { return ([], false) }
+        guard try await organizationSettingsPermission() else { return ([], false) }
+        try await organizationCheckAccess(isAuthorized)
+        let filters = try await settings.filters()
+        try await organizationCheckAccess(isAuthorized)
+        guard try await organizationSettingsPermission() else { throw AssistantMailError.accessChanged }
+        try await organizationCheckAccess(isAuthorized)
+        return (filters, true)
+    }
+
+    private func organizationSettingsPermission() async throws -> Bool {
+        guard let accounts else { return true }
+        guard let account = try await accounts.accounts().first(where: { $0.id == accountID }) else { return false }
+        return account.enabledFeatures.contains(AccountFeature.gmailSettings.rawValue)
+            && GoogleScopes.isCovered(.gmailSettings, by: account.grantedScopes)
+    }
+
+    private func organizationCacheMetadata(_ metadata: [CacheTransaction.MessageUpdate]) async throws -> Set<String> {
+        guard !metadata.isEmpty else { return [] }
+        let accountID = accountID
+        let deleted = deletedMessageIDs
+        let expires = now().addingTimeInterval(CacheHolds.searchLifetime)
+        return try await write { tx in
+            let live = deleted.withLock { gone in metadata.filter { !gone.contains($0.record.id) } }
+            let threads = try tx.upsertMessages(live)
+            try tx.holdSearchResults(Set(live.map(\.record.threadID)), until: expires, accountID: accountID)
+            try tx.rebuildThreads(threads, accountID: accountID)
+            return Set(live.map(\.record.id))
+        }
     }
 
     private static func organizationHeaderHints(_ message: GmailMessage) -> (mailingList: Bool, automated: Bool) {

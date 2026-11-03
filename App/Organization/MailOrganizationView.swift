@@ -63,11 +63,7 @@ private struct MailOrganizationAccountView: View {
             .padding(Tokens.Space.s5)
             Divider()
             MailOrganizationExperience(model: model, canCreateFilters: access.canCreateFilters,
-                requirement: requirement, onOpenSettings: { SettingsNavigationRequests.shared.request($0) },
-                onOpenMessage: { message in
-                    app.openAssistantSource(.init(accountID: accountID, threadID: message.threadID,
-                        messageID: message.messageID, partID: nil, title: message.subject))
-                })
+                requirement: requirement, onOpenSettings: { SettingsNavigationRequests.shared.request($0) })
         }
         .task {
             await model.refreshDelivery()

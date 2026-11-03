@@ -39,14 +39,15 @@ public struct OrganizationCategory: Codable, Equatable, Identifiable, Sendable {
     public let explanation: String
     public let kind: Kind
     public let messageIDs: [String]
+    public let existingLabelID: String?
     /// Exact addresses supported by repeated incoming examples. The mail layer
     /// constructs Gmail criteria; model output never supplies a search query.
     public let ruleSenders: [String]
 
     public init(id: String, name: String, explanation: String, kind: Kind,
-                messageIDs: [String], ruleSenders: [String]) {
+                messageIDs: [String], ruleSenders: [String], existingLabelID: String? = nil) {
         self.id = id; self.name = name; self.explanation = explanation; self.kind = kind
-        self.messageIDs = messageIDs; self.ruleSenders = ruleSenders
+        self.messageIDs = messageIDs; self.ruleSenders = ruleSenders; self.existingLabelID = existingLabelID
     }
 }
 

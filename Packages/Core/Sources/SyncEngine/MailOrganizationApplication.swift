@@ -2,7 +2,6 @@ import Foundation
 import GmailAPI
 import MailStore
 import MailOrganization
-import MessageContent
 
 public struct OrganizationApplicationCategory: Sendable, Equatable {
     public enum Kind: String, Sendable { case topic, action, waiting }
@@ -12,20 +11,26 @@ public struct OrganizationApplicationCategory: Sendable, Equatable {
     public let messageIDs: [String]
     public let ruleSenders: [String]
     public let createFilter: Bool
+    public let existingLabelID: String?
+    public let backfillExisting: Bool
 
     public init(id: String, name: String, kind: Kind, messageIDs: [String],
-                ruleSenders: [String], createFilter: Bool = true) {
+                ruleSenders: [String], createFilter: Bool = true, existingLabelID: String? = nil,
+                backfillExisting: Bool = true) {
         self.id = id
         self.name = name
         self.kind = kind
         self.messageIDs = messageIDs
         self.ruleSenders = ruleSenders
         self.createFilter = createFilter
+        self.existingLabelID = existingLabelID
+        self.backfillExisting = backfillExisting
     }
 }
 
 public enum OrganizationApplicationError: Error, Sendable, Equatable {
     case invalidSelection, accountMismatch, staleSamples, unsafeRule, conflictingChange, settingsPermissionRequired
+    case staleLabels, staleRules, filterLimitReached
 }
 
 /// Retain this receipt while showing delivery progress. The durable queue
@@ -57,34 +62,43 @@ public struct OrganizationApplicationStatus: Sendable, Equatable {
 
 extension SyncEngine {
     /// Atomically records the reviewed changes. Only the queue writes Gmail:
-    /// each message receives a user label, and each filter only adds that label.
+    /// selected backfills add labels, and each future filter only adds its label.
     public func applyOrganization(
         categories: [OrganizationApplicationCategory], samples: MailOrganizationSamples,
         isAuthorized: @escaping @Sendable () async -> Bool = { true }
     ) async throws -> OrganizationApplicationReceipt {
         guard samples.accountID == accountID else { throw OrganizationApplicationError.accountMismatch }
-        try Self.validateOrganization(categories, samples: samples)
+        try OrganizationApplicationValidation.validate(categories, samples: samples)
         try await organizationApplicationAccess(isAuthorized)
         let makesFilters = categories.contains { $0.createFilter && !$0.ruleSenders.isEmpty }
         if makesFilters { try await organizationFilterPermission() }
         let serverLabels = try await gmail.labels()
         try await organizationApplicationAccess(isAuthorized)
-        if makesFilters { try await organizationFilterPermission() }
+        let existing = try OrganizationApplicationValidation.existingLabels(categories, samples: samples, current: serverLabels)
+        let serverFilters: [GmailFilter]
+        if makesFilters, let settings {
+            try await organizationFilterPermission()
+            serverFilters = try await settings.filters()
+            try await organizationApplicationAccess(isAuthorized)
+            try await organizationFilterPermission()
+        } else { serverFilters = [] }
         try await organizationApplicationAccess(isAuthorized)
         let accountID = accountID
         let now = now()
         let hold = undoHolds
-        let rows = try await write { tx in
-            try Self.validateOrganizationCache(samples, categories: categories, accountID: accountID, in: tx)
+        let queued = try await write { tx in
+            try OrganizationApplicationValidation.validateCache(samples, categories: categories, accountID: accountID, in: tx)
+            var pending = try tx.pendingActions(accountID: accountID)
+            let displayed = try tx.displayedLabels(accountID: accountID)
+            let pendingRules = OrganizationApplicationValidation.pendingFilters(pending)
+            var reservedCount = OrganizationApplicationValidation.filterCount(current: serverFilters, pending: pendingRules)
             var result: [PendingAction] = []
+            var filterCount = 0
             for category in categories {
                 let name = category.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                let pending = try tx.pendingActions(accountID: accountID)
-                let displayed = try tx.displayedLabels(accountID: accountID)
-                let server = serverLabels.first { !$0.isSystem && $0.name.lowercased() == name.lowercased() }
-                let local = displayed.first { !$0.isSystem && $0.name.lowercased() == name.lowercased() }
+                let local = displayed.first { !$0.isSystem && $0.name.caseInsensitiveCompare(name) == .orderedSame }
                 let labelID: String
-                if let server {
+                if let server = existing[category.id] {
                     guard !pending.contains(where: { row in
                         row.labelID == server.id && row.state != .sent &&
                             (row.kind == .deleteLabel || (row.kind == .updateLabel && row.labelChange?.newName != nil))
@@ -98,47 +112,78 @@ extension SyncEngine {
                     guard LabelRules.problem(with: name, among: serverLabels.map { Mapping.label($0, accountID: accountID) }) == nil
                     else { throw OrganizationApplicationError.invalidSelection }
                     labelID = LabelRules.temporaryID()
-                    result.append(try tx.enqueueLabelChange(.createLabel, labelID: labelID,
+                    let row = try tx.enqueueLabelChange(.createLabel, labelID: labelID,
                         change: .init(newName: name), accountID: accountID, now: now,
-                        notBefore: now.addingTimeInterval(hold.labels)))
+                        notBefore: now.addingTimeInterval(hold.labels))
+                    result.append(row); pending.append(row)
                 }
-                if let row = try tx.enqueue(.modifyMessages, accountID: accountID,
-                    messageIDs: category.messageIDs.sorted(), add: [labelID], now: now,
-                    notBefore: now.addingTimeInterval(hold.triage)) {
-                    result.append(row)
-                } else {
-                    // A second Apply still reports the first queued operation.
-                    let selected = Set(category.messageIDs)
-                    result += pending.filter {
-                        $0.kind == .modifyMessages && $0.addLabelIDs.contains(labelID)
-                            && !selected.isDisjoint(with: $0.messageIDs)
-                    }
-                }
-                if category.createFilter {
-                    for sender in category.ruleSenders.sorted() {
-                        let filter = GmailFilter(criteria: .init(from: sender.lowercased()), action: .init(addLabelIds: [labelID]))
-                        if let existing = try tx.pendingActions(accountID: accountID).first(where: {
-                            if case .createFilter(let value, _) = $0.settingsChange { return value.hasSameRules(as: filter) }
-                            return false
-                        }) {
-                            result.append(existing)
-                        } else {
-                            result.append(try tx.enqueueSettingsChange(.createFilter(filter: filter, listedIDs: nil),
-                                accountID: accountID, now: now, notBefore: now.addingTimeInterval(hold.settings)))
+                let ids = category.backfillExisting ? category.messageIDs.sorted() : []
+                for start in stride(from: 0, to: ids.count, by: 1_000) {
+                    let chunk = Array(ids[start..<min(start + 1_000, ids.count)])
+                    if let row = try tx.enqueue(.modifyMessages, accountID: accountID,
+                        messageIDs: chunk, add: [labelID], now: now,
+                        notBefore: now.addingTimeInterval(hold.triage)) {
+                        result.append(row); pending.append(row)
+                    } else {
+                        let selected = Set(chunk)
+                        result += pending.filter {
+                            $0.kind == .modifyMessages && $0.addLabelIDs.contains(labelID)
+                                && !selected.isDisjoint(with: $0.messageIDs)
                         }
                     }
                 }
+                guard category.createFilter else { continue }
+                guard !OrganizationApplicationValidation.hasRuleConflict(pending, labelID: labelID) else {
+                    throw OrganizationApplicationError.conflictingChange
+                }
+                let coverage = OrganizationRuleCoverage(labelID: labelID, proposedSenders: category.ruleSenders,
+                                                       existingFilters: serverFilters)
+                if samples.filterContextAvailable {
+                    let reviewed = samples.ruleCoverage(existingLabelID: category.existingLabelID,
+                        labelName: category.name, proposedSenders: category.ruleSenders)
+                    guard Set(reviewed.alreadyCoveredSenders).isSubset(of: Set(coverage.alreadyCoveredSenders)) else {
+                        throw OrganizationApplicationError.staleRules
+                    }
+                }
+                for sender in coverage.newSenders {
+                    let filter = GmailFilter(criteria: .init(from: sender), action: .init(addLabelIds: [labelID]))
+                    if let row = pending.first(where: {
+                        guard $0.state == .queued || $0.state == .sending else { return false }
+                        if case .createFilter(let value, _) = $0.settingsChange { return value.hasSameRules(as: filter) }
+                        return false
+                    }) {
+                        result.append(row)
+                    } else {
+                        guard reservedCount < OrganizationJobLimits.maximumRuleSenders else {
+                            throw OrganizationApplicationError.filterLimitReached
+                        }
+                        let row = try tx.enqueueSettingsChange(.createFilter(filter: filter, listedIDs: nil),
+                            accountID: accountID, now: now, notBefore: now.addingTimeInterval(hold.settings))
+                        result.append(row); pending.append(row); reservedCount += 1
+                    }
+                    filterCount += 1
+                }
             }
             var seen = Set<Int64>()
-            return result.filter { $0.id.map { seen.insert($0).inserted } ?? false }
+            return (rows: result.filter { $0.id.map { seen.insert($0).inserted } ?? false }, filterCount: filterCount)
         }
-        // Register before starting senders so even a fast completed row updates
-        // the review's receipt before a history pass can prune it.
-        let receipt = register(rows)
+        let receipt = register(queued.rows)
         scheduleSending()
-        return OrganizationApplicationReceipt(accountID: accountID, actionIDs: rows.compactMap(\.id),
-            categoryCount: categories.count, messageCount: Set(categories.flatMap(\.messageIDs)).count,
-            filterCount: categories.filter(\.createFilter).reduce(0) { $0 + $1.ruleSenders.count }, actions: receipt)
+        return OrganizationApplicationReceipt(accountID: accountID, actionIDs: queued.rows.compactMap(\.id),
+            categoryCount: categories.count,
+            messageCount: Set(categories.filter(\.backfillExisting).flatMap(\.messageIDs)).count,
+            filterCount: queued.filterCount, actions: receipt)
+    }
+
+    public func renewOrganizationSamples(_ samples: MailOrganizationSamples,
+        isAuthorized: @escaping @Sendable () async -> Bool = { true }) async throws {
+        guard samples.accountID == accountID else { throw OrganizationApplicationError.accountMismatch }
+        try await organizationApplicationAccess(isAuthorized)
+        let ids = Set(samples.messages.map(\.threadID))
+        let accountID = accountID
+        let expires = now().addingTimeInterval(CacheHolds.searchLifetime)
+        try await write { tx in try tx.holdSearchResults(ids, until: expires, accountID: accountID) }
+        try await organizationApplicationAccess(isAuthorized)
     }
 
     public func organizationApplicationStatus(_ receipt: OrganizationApplicationReceipt) async throws -> OrganizationApplicationStatus {
@@ -186,81 +231,4 @@ extension SyncEngine {
         }
     }
 
-    private static func validateOrganization(_ categories: [OrganizationApplicationCategory], samples: MailOrganizationSamples) throws {
-        guard !categories.isEmpty, categories.count <= 20, !samples.messages.isEmpty, samples.messages.count <= 250,
-              Set(samples.messages.map(\.messageID)).count == samples.messages.count,
-              Set(categories.map(\.id)).count == categories.count,
-              Set(categories.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }).count == categories.count
-        else { throw OrganizationApplicationError.invalidSelection }
-        let available = Set(samples.messages.map(\.messageID))
-        let evidence = OrganizationEvidence(messages: samples.messages.map {
-            .init(id: $0.messageID, threadID: $0.threadID, sender: $0.sender, recipients: $0.recipients,
-                  date: $0.date, isSent: $0.isSent, hasMailingListHeaders: $0.hasMailingListHeaders, isAutomated: $0.isAutomated)
-        })
-        var filterCount = 0
-        for category in categories {
-            let name = category.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            // The opaque ID includes a normalized name; lowercasing can expand
-            // Unicode even when the Gmail label itself fits its byte limit.
-            guard !category.id.isEmpty, category.id.utf8.count <= 1_024, !name.isEmpty, name.utf8.count <= 225,
-                  (name.lowercased() != "action" || category.kind == .action),
-                  (name.lowercased() != "waiting" || category.kind == .waiting),
-                  !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-                  LabelRules.problem(with: name, among: []) == nil, !category.messageIDs.isEmpty,
-                  category.messageIDs.count <= 250, Set(category.messageIDs).count == category.messageIDs.count,
-                  Set(category.messageIDs).isSubset(of: available), category.ruleSenders.count <= 30,
-                  Set(category.ruleSenders.map { $0.lowercased() }).count == category.ruleSenders.count
-            else { throw OrganizationApplicationError.invalidSelection }
-            if category.kind != .topic, !category.messageIDs.allSatisfy({
-                evidence.supportsState(messageID: $0, isWaiting: category.kind == .waiting)
-            }) { throw OrganizationApplicationError.staleSamples }
-            guard category.createFilter, !category.ruleSenders.isEmpty else { continue }
-            guard category.kind == .topic, !samples.isPartial else { throw OrganizationApplicationError.unsafeRule }
-            filterCount += category.ruleSenders.count
-            guard filterCount <= 125 else { throw OrganizationApplicationError.unsafeRule }
-            let classified = Set(category.messageIDs)
-            for sender in category.ruleSenders {
-                guard sender.utf8.count <= 254,
-                      sender.range(of: #"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)+$"#, options: .regularExpression) != nil
-                else { throw OrganizationApplicationError.unsafeRule }
-                guard evidence.supportsRule(sender: sender, classifiedMessageIDs: classified)
-                else { throw OrganizationApplicationError.unsafeRule }
-            }
-        }
-    }
-
-    private static func validateOrganizationCache(
-        _ samples: MailOrganizationSamples, categories: [OrganizationApplicationCategory],
-        accountID: String, in tx: CacheTransaction
-    ) throws {
-        for sample in samples.messages {
-            guard let message = try tx.message(id: sample.messageID, accountID: accountID), message.threadID == sample.threadID else {
-                throw OrganizationApplicationError.staleSamples
-            }
-            let senders = EmailAddress.parseList(message.sender).filter(\.isValid)
-            let sender = senders.count == 1 ? senders[0].normalized : ""
-            let labels = try tx.labelIDs(ofMessages: [sample.messageID], accountID: accountID)
-            guard sender == sample.sender.lowercased(), labels.contains(SystemLabel.sent) == sample.isSent,
-                  labels.isDisjoint(with: [SystemLabel.spam, SystemLabel.trash, SystemLabel.draft, "CHAT"]) else {
-                throw OrganizationApplicationError.staleSamples
-            }
-        }
-        // A reply sent or synced while the review was open can make a workflow
-        // classification stale. Check known mail without fetching whole threads.
-        let byID = Dictionary(uniqueKeysWithValues: samples.messages.map { ($0.messageID, $0) })
-        for category in categories where category.kind != .topic {
-            for id in category.messageIDs {
-                guard let sample = byID[id], let date = sample.date,
-                      sample.isSent == (category.kind == .waiting) else { throw OrganizationApplicationError.staleSamples }
-                for message in try tx.messages(threadID: sample.threadID, accountID: accountID)
-                where !LocalSend.isProvisional(message.id)
-                    && message.id != sample.messageID && message.date >= date {
-                    let labels = try tx.labelIDs(ofMessages: [message.id], accountID: accountID)
-                    if labels.isDisjoint(with: [SystemLabel.spam, SystemLabel.trash, SystemLabel.draft, "CHAT"]) {
-                        throw OrganizationApplicationError.staleSamples
-                    }
-                }
-            }
-        }
-    }
 }
