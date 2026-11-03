@@ -1,6 +1,6 @@
 # F16: Meeting preparation
 
-Implementation is authorized after F06 and F05. Start coding only after the lead records F05 verification. This plan implements the [roadmap](ai-and-features-roadmap.md) with existing calendar events, permitted mail retrieval, thread summaries, and accepted follow-ups.
+Implemented after F06 and the recorded F05 verification gate. This plan implements the [roadmap](ai-and-features-roadmap.md) with existing calendar events, permitted mail retrieval, thread summaries, and accepted follow-ups. See the [user guide](../meeting-preparation.md) for the delivered workflow.
 
 ## User workflow
 
@@ -69,3 +69,13 @@ Agree on occurrence identity and captured-scope types first. Keep worker file ow
 - A synthetic native check opens preparation from event details and a calendar context menu, includes/excludes/restores a conversation, opens a citation/file, and exercises narrow-window and partial/error states without changing a live calendar or sending mail.
 
 Run focused store and service/model tests, an app build, and the native workflow check. Record actual F16 verification and any provider-dependent gaps before completing the three-feature goal.
+
+## Verification: November 3, 2026
+
+Six Core store tests, 11 app-model tests, and six service tests passed. They cover occurrence identity and durable source choices, accepted corrections and completed work, current-profile isolation, permission revoke/regrant, runtime replacement, authoritative message membership, citation ownership, discovery limits, and mail or event changes during generation.
+
+The native workflow passed with both calendar entry actions, preservation of the saved event while the editor contains unsaved text, source citations, follow-up review, include/exclude/restore, source search, and file actions. Wide, narrow, source-picker, and tracked-work/file screenshots were inspected. The running synthetic calendar also opened the dedicated preparation window with the correct saved event and date. No live email, calendar mutation, or provider request was used.
+
+Independent code review is complete. Review fixes include reading uncached linked sources, rejecting attendee-only matches, cancelling stale pending summaries, observing calendar lifecycle changes, and checking the exact cached event when it disappears from the visible range. Logs and screenshots are under `build/meeting-preparation/`. The successful native result is `Test-Tern-2026.11.03_19-24-37-+0100.xcresult`.
+
+The final Debug build passed after removing a duplicate error message found during the window smoke check. Provider and network boundaries were tested with injected responses; live provider credentials were not used. Automatic background hosting, recordings, calendar edits, and sending mail remain outside this feature.

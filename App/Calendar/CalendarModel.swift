@@ -90,7 +90,8 @@ final class CalendarModel {
     @ObservationIgnored var emailResponsesInFlight = Set<String>()
     @ObservationIgnored var proposalTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var stoppingEngines: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored var lifecycleRevision = 0
+    /// Captured meeting sessions observe runtime replacement as well as consent changes.
+    var lifecycleRevision = 0
     @ObservationIgnored var notificationRevision = 0
     @ObservationIgnored var editRevision = 0
     @ObservationIgnored let defaults: UserDefaults

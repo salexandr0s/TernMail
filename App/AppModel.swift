@@ -35,6 +35,7 @@ final class AppModel {
     @ObservationIgnored private var todayModel: TodayModel?
     @ObservationIgnored private var todayDashboardModel: TodayDashboardModel?
     @ObservationIgnored private var automaticFollowUpsModel: AutomaticFollowUpCoordinator?
+    var meetingPreparation: MeetingPreparationModel?
     let followUpPreferences = FollowUpPreferences(defaults:
         AssistantRuntimeEnvironment.isTestHost || ProcessInfo.processInfo.arguments.contains("--ui-audit")
             || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") ? nil : .standard)
@@ -145,6 +146,8 @@ final class AppModel {
         ReaderCacheLifecycle.reset()
         ContactThumbnailCache.shared.removeAll()
         isResettingCache = true
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         await maintenance.suspend()
         defer { isResettingCache = false; maintenance.resume(); startCacheMaintenance() }
         let previousMaintenance = maintenanceTask
@@ -221,6 +224,7 @@ final class AppModel {
     private func configureMailRuntime(_ owner: AccountMailbox) {
         owner.onMailSync = { [weak self] snapshot in
             self?.spotlight.mailSynced(accountID: snapshot.accountID)
+            await self?.meetingPreparation?.process(snapshot)
             await self?.mailNotifications?.process(snapshot)
             await self?.automaticFollowUpsModel?.process(snapshot)
             await self?.followUpsModel?.process(snapshot)
@@ -266,6 +270,7 @@ final class AppModel {
         }
         for owner in mailbox?.accounts ?? [] { owner.setActivity(activity) }
         if activity == .suspended {
+            meetingPreparation?.cancel()
             automaticFollowUpsModel?.stop()
             followUpsModel?.stop()
         } else if let followUpsModel, !inboxUpdatesAreStopped {
@@ -1114,6 +1119,7 @@ final class AppModel {
 
     /// Stops background work before quitting. `cancelQuit()` starts it again.
     func prepareToQuit() async {
+        meetingPreparation?.cancel()
         inboxUpdatesAreStopped = true
         syncActivityGeneration += 1
         todayModel?.endVisit()
@@ -1265,6 +1271,8 @@ final class AppModel {
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         syncActivityGeneration += 1
         organizationSessionsModel?.clear()
         todayModel?.endVisit()
@@ -1292,6 +1300,8 @@ final class AppModel {
     private func removeAccountData(
         _ account: AccountRecord, session: AccountSession?
     ) async throws {
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         assistantModel?.forgetAccount(account.id)
         await mailNotifications?.removeAccount(account.id)
         try await scheduleAccountRemoval(accountID: account.id, session: session)
@@ -1352,6 +1362,8 @@ final class AppModel {
 
     /// File deletion runs separately using the manifest's durable draft IDs.
     private func removeCachedData(accountIDs: Set<String>) async throws {
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         guard let cache else { throw AccountRemovalError.incomplete }
         for accountID in accountIDs {
             ReaderCacheLifecycle.invalidate(accountID: accountID)

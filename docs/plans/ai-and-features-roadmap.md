@@ -146,18 +146,24 @@ Newsletter delivery preferences and digests are in F14. A successful request sub
 
 ### F05. Today
 
+- Give Today its own full page as the third workspace option, after Mail and Calendar. Place to-dos on the left, a small calendar and events on the right, and unread and follow-up mail below.
 - Show replies owed, approaching deadlines, unanswered requests, and important changes since the user's previous visit.
 - Explain why an item appears and link to the relevant message or task.
 - Let the user draft a reply, snooze, dismiss, or mark an item complete from the briefing.
 - Use the same commitment records and corrections as thread summaries and Waiting for, so the views agree.
 
+Implemented and verified locally on November 3, 2026. See the [Today guide](../today.md) and [verification](today.md#verification-november-3-2026).
+
 ### F06. Waiting for and follow-ups
 
+- Automatically track unanswered sent conversations. Settings controls the delay in days and a separate opt-in for drafting follow-up messages from permitted conversation context.
 - Track both "I owe Anna a proposal" and "Anna owes me approval."
 - Support "Remind me Friday if nobody replies" and reminders tied to unresolved commitments.
 - Distinguish receiving a reply from resolving the request. Clear a no-reply reminder when a reply arrives; clear a commitment reminder when the commitment is resolved.
 - Allow manual deadlines and status corrections. Offer a follow-up draft when a reminder becomes due.
 - State the execution limits: reminders that require Tern to be running cannot promise delivery while the app or Mac is off. Hosted background execution remains a separate decision.
+
+Implemented and verified locally on November 3, 2026. See the [follow-up guide](../follow-ups.md), [manual tracking verification](follow-ups.md), and [automatic follow-up verification](automatic-follow-ups.md#verification).
 
 ### F07. Natural-language search
 
@@ -225,6 +231,8 @@ Newsletter delivery preferences and digests are in F14. A successful request sub
 - Link each point to its supporting message or document and let the user correct which conversations belong to the meeting. Shared attendees alone do not establish that a conversation is relevant.
 - Respect existing mail and calendar access controls. Indicate unavailable sources and refresh the preparation when the event or supporting mail changes.
 - Reuse F15 calendar events, F03 summaries, and the shared retrieval services. Add F09 changes and F10 contact context as those become available; a full project or contact workspace is not required for the first version.
+
+Implemented and verified locally on November 3, 2026. See the [meeting-preparation guide](../meeting-preparation.md) and [verification](meeting-preparation.md#verification-november-3-2026).
 
 ### F17. Time blocking for tasks
 

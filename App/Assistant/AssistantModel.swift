@@ -1153,3 +1153,104 @@ extension AssistantModel {
         guard access.modelReady, !access.modelID.isEmpty else { throw AssistantError.noModel }
     }
 }
+
+extension AssistantModel {
+    /// The caller supplies its native account scope. Chat selection and the
+    /// reader's narrower selected-thread scope never participate in this token.
+    func meetingPreparationAccess(accountIDs: Set<String>) -> MeetingPreparationAccess {
+        let current = context()
+        let allowed = accountIDs.intersection(enabledAccountIDs).intersection(current.accountInstances.keys)
+        let snapshot = AssistantScopeSnapshot(accountIDs: allowed, threadIDs: nil,
+            accountInstances: current.accountInstances.filter { allowed.contains($0.key) },
+            connectionRevision: current.connectionRevision, canUsePlan: current.canUsePlan,
+            calendarScope: current.calendarScope)
+        return MeetingPreparationAccess(scope: snapshot, modelID: summaryModelID,
+            modelReady: catalogueRevision == current.connectionRevision && models.contains { $0.id == summaryModelID },
+            permissionRevision: composePermissionRevision,
+            mailboxRuntime: app?.mailbox.map { String(describing: ObjectIdentifier($0)) } ?? "unavailable",
+            calendarLifecycle: app?.calendar.lifecycleRevision ?? 0)
+    }
+
+    func makeMeetingPreparationService(event: CalendarDisplayEvent, accountIDs: Set<String>,
+                                       isCurrent: @escaping @MainActor () -> Bool) throws -> MeetingPreparationService {
+        try Task.checkCancellation()
+        let access = meetingPreparationAccess(accountIDs: accountIDs)
+        let calendar = AssistantCalendarKey(accountID: event.accountID, calendarID: event.calendarID)
+        guard access.scope.calendarScope.allows(calendar, details: true) else {
+            throw MeetingPreparationServiceError.calendarDetailsRequired
+        }
+        guard !access.scope.accountIDs.isEmpty else { throw MeetingPreparationServiceError.noMailAccess }
+        let isValid: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return isCurrent() && meetingPreparationAccess(accountIDs: accountIDs) == access
+        }
+        guard isValid() else { throw AssistantError.accessChanged }
+        let raw: AssistantToolSession
+        if let toolFactory { raw = toolFactory(access.scope) }
+        else {
+            guard let app else { throw AssistantError.accessChanged }
+            let mail = MailAssistantTools(app: app, allowedAccountIDs: access.scope.accountIDs, isScopeValid: isValid)
+            raw = AssistantToolSession(definitions: MailAssistantTools.definitions, execute: { try await mail.execute($0) })
+        }
+        let names: Set<String> = ["search_mail", "read_thread"]
+        let tools = AssistantToolSession(definitions: raw.definitions.filter { names.contains($0.name) }, execute: { call in
+            try Task.checkCancellation()
+            guard isValid() else { throw AssistantError.accessChanged }
+            guard call.namespace == "tern", !call.id.isEmpty, names.contains(call.name),
+                  let args = try AIJSON.decode(Data(call.arguments.utf8)).objectValue else { throw AssistantError.invalidTool }
+            if let account = args["account_id"]?.stringValue {
+                guard access.scope.accountIDs.contains(account) else { throw AssistantError.invalidSource }
+            } else if call.name == "read_thread" { throw AssistantError.invalidSource }
+            let result = try await raw.execute(call)
+            try Task.checkCancellation()
+            guard isValid() else { throw AssistantError.accessChanged }
+            guard result.createdDraftID == nil, result.calendarProposals.isEmpty, result.taskResults.isEmpty,
+                  result.eventResults.isEmpty, result.availabilityChoices.isEmpty,
+                  result.sources.allSatisfy({ !$0.isCalendar && access.scope.allows($0) }),
+                  result.emailResults.allSatisfy({ !$0.source.isCalendar && access.scope.allows($0.source) }) else {
+                throw AssistantError.invalidSource
+            }
+            if call.name == "read_thread" {
+                guard let account = args["account_id"]?.stringValue, let thread = args["thread_id"]?.stringValue,
+                      result.data["account_id"]?.stringValue == account,
+                      result.data["thread_id"]?.stringValue == thread,
+                      let messages = result.data["messages"]?.arrayValue, !messages.isEmpty,
+                      result.sources.allSatisfy({ $0.accountID == account && $0.threadID == thread && $0.partID == nil
+                          && $0.messageID != nil }) else { throw AssistantError.invalidSource }
+                let ids = Set(result.sources.compactMap(\.messageID))
+                guard messages.allSatisfy({ $0["thread_id"]?.stringValue == thread
+                    && $0["message_id"]?.stringValue.map(ids.contains) == true }) else { throw AssistantError.invalidSource }
+            }
+            return result
+        })
+        return MeetingPreparationService(event: event, access: access, tools: tools, provider: provider,
+            loadSource: { [weak app] key in
+                guard isValid(), let mailbox = app?.mailbox, let owner = mailbox.account(id: key.accountID) else {
+                    throw AssistantError.accessChanged
+                }
+                let fresh = try await owner.engine.assistantLoadSource(key.threadID)
+                guard isValid(), app?.mailbox === mailbox, mailbox.account(id: key.accountID) === owner,
+                      fresh.allSatisfy({ $0.record.accountID == key.accountID && $0.record.threadID == key.threadID }) else {
+                    throw AssistantError.accessChanged
+                }
+                let records = Dictionary(fresh.map { ($0.record.id, $0.record) }, uniquingKeysWith: { first, _ in first })
+                var iterator = mailbox.cache.thread(accountID: key.accountID, threadID: key.threadID).makeAsyncIterator()
+                guard var detail = try await iterator.next() ?? nil else { return nil }
+                guard isValid(), app?.mailbox === mailbox, mailbox.account(id: key.accountID) === owner else {
+                    throw AssistantError.accessChanged
+                }
+                let revision = ThreadSummaryModel.revision(for: detail)
+                detail.messages = detail.messages.compactMap { message in
+                    guard let record = records[message.id] else { return nil }
+                    var value = message; value.record = record; return value
+                }
+                guard detail.messages.count == records.count else { throw MeetingPreparationServiceError.sourceUnavailable }
+                detail.thread.messageCount = records.count
+                if let latest = detail.messages.max(by: { $0.record.date < $1.record.date }) {
+                    detail.thread.lastDate = latest.record.date; detail.thread.subject = latest.record.subject
+                    detail.thread.snippet = latest.record.snippet
+                }
+                return MeetingPreparationSourceSnapshot(detail: detail, revision: revision)
+            }, isValid: isValid)
+    }
+}

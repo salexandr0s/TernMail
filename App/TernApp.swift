@@ -25,6 +25,7 @@ struct TernApp: App {
                 .focusedSceneValue(\.isMainWindow, true)
                 .modifier(MailURLHandling())
                 .environment(model)
+                .modifier(MeetingPreparationOpening(app: model))
                 .modifier(AddressAvatarEnvironment(app: model))
                 .task { await model.start() }
         }
@@ -35,6 +36,7 @@ struct TernApp: App {
 
         WindowGroup("Conversation", id: ConversationWindow.sceneID, for: MailLink.self) { $link in
             ConversationWindow(link: link).environment(model)
+                .modifier(MeetingPreparationOpening(app: model))
                 .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
@@ -84,12 +86,20 @@ struct TernApp: App {
 
         Window("Assistant", id: AssistantWindow.sceneID) {
             AssistantWindow(model: model.assistant, onOpenSource: model.openAssistantSource)
+                .modifier(MeetingPreparationOpening(app: model))
                 .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .windowResizability(.contentMinSize)
         // The catalog's shortcut goes on the scene's own Window ▸ Assistant item.
         .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
+
+        Window("Meeting Preparation", id: MeetingPreparationWindow.sceneID) {
+            MeetingPreparationWindow().environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
+        }
+        .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
+        .windowResizability(.contentMinSize)
 
         Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
             KeyboardShortcutsView()
