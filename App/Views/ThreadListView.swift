@@ -70,17 +70,14 @@ struct ThreadListView: View {
         }
     }
 
-    /// Space previews the one selected conversation's first attachment, and
-    /// otherwise toggles the selection between read and unread.
-    private func previewOrToggleRead() -> KeyPress.Result {
+    /// Space previews one conversation's first attachment. Other selections
+    /// leave the key available to the native reading and scrolling path.
+    private func previewAttachment() -> KeyPress.Result {
         let selection = mailbox.selectedListRowIDs
-        guard !selection.isEmpty else { return .ignored }
-        if selection.count == 1, let item = mailbox.listItems.first(where: { selection.contains($0.id) }),
-           let attachment = item.attachments.first {
-            Task { previewURL = await mailbox.download(attachment) }
-        } else {
-            mailbox.toggleListRead(selection)
-        }
+        guard selection.count == 1,
+              let item = mailbox.listItems.first(where: { selection.contains($0.id) }),
+              let attachment = item.attachments.first else { return .ignored }
+        Task { previewURL = await mailbox.download(attachment) }
         return .handled
     }
 
@@ -182,7 +179,7 @@ struct ThreadListView: View {
         MessageListSelectionSurface(mailbox: mailbox,
             rows: MessageListRows(mailbox: mailbox, revision: mailbox.listProjectionKey, dragNamespace: dragNamespace))
         .listStyle(.inset)
-        .background(PerformanceScrollSurfaceMarker(name: "mailbox", isActive: true))
+        .background { PerformanceScrollSurfaceMarker(name: "mailbox", isActive: true) }
         .contentMargins(.horizontal, 0, for: .scrollContent)
         .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
         // Dragging a selected row carries the whole selection.
@@ -201,7 +198,7 @@ struct ThreadListView: View {
             openConversations(mailbox.selectedListRowIDs)
             return .handled
         }
-        .onKeyPress(.space) { previewOrToggleRead() }
+        .onKeyPress(.space) { previewAttachment() }
         .quickLookPreview($previewURL)
         .protectAttachmentPreview(previewURL)
         .focused($listFocused)

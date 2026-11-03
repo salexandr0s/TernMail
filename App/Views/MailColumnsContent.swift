@@ -37,7 +37,7 @@ struct MailColumnsContent: View, Equatable {
             SidebarView(mailbox: mailbox)
                 .scrollContentBackground(.hidden)
                 .padding(.trailing, Tokens.Layout.columnGutter)
-                .background(SidebarMaterial())
+                .background { SidebarMaterial() }
                 // AppKit asserts when the system toggle, or any item over the sidebar
                 // column, meets a saved customizable toolbar or a second window, so
                 // the content toolbar carries its own sidebar button.

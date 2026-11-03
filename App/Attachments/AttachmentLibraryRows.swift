@@ -83,11 +83,13 @@ struct AttachmentLibraryCard: View, Equatable {
     let accountName: String
     let accounts: [AccountRecord]
     let selected: Bool
+    var isKeyboardTarget = false
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovered = false
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.item == rhs.item && lhs.accountName == rhs.accountName && lhs.accounts == rhs.accounts && lhs.selected == rhs.selected
+        lhs.item == rhs.item && lhs.accountName == rhs.accountName && lhs.accounts == rhs.accounts
+            && lhs.selected == rhs.selected && lhs.isKeyboardTarget == rhs.isKeyboardTarget
     }
 
     var body: some View {
@@ -127,6 +129,14 @@ struct AttachmentLibraryCard: View, Equatable {
                 .strokeBorder(selected ? Color.accentColor : hovered ? hoverBorder : .clear,
                               lineWidth: selected ? Tokens.Border.focus : Tokens.Border.hairline)
                 .allowsHitTesting(false)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Radius.lg + Tokens.Space.s1)
+                .strokeBorder(Color.primary, lineWidth: Tokens.Border.focus)
+                .padding(-Tokens.Space.s1)
+                .opacity(isKeyboardTarget ? 1 : 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .onHover { hovered = $0 }

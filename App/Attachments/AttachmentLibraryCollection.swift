@@ -22,6 +22,12 @@ struct AttachmentLibraryCollection: View {
             (Tokens.Layout.attachmentWidth + Tokens.Space.s4)))
     }
 
+    /// Focus stays visible before a selection and after the selection is cleared.
+    private var keyboardTargetID: String? {
+        if let currentID, model.items.contains(where: { $0.id == currentID }) { return currentID }
+        return model.items.first(where: { model.selection.contains($0.id) })?.id ?? model.items.first?.id
+    }
+
     var body: some View {
         Group {
             if viewMode == .grid { cards }
@@ -117,19 +123,21 @@ struct AttachmentLibraryCollection: View {
     }
 
     private var cardGrid: some View {
-        ScrollView {
+        let keyboardTargetID = self.keyboardTargetID
+        return ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s4)],
                       spacing: Tokens.Space.s4) {
                 ForEach(model.items) { item in
                     AttachmentCardCell(item: item, model: model, onClick: { select(item, modifiers: heldModifiers) },
-                                       onActivate: { select(item, modifiers: []) }, onOpen: { open(item) })
+                                       onActivate: { select(item, modifiers: []) }, onOpen: { open(item) },
+                                       isKeyboardTarget: gridFocused && keyboardTargetID == item.id)
                         .draggable(containerItemID: item.id, containerNamespace: dragNamespace)
                         .id(item.id)
                 }
             }
             .padding(.horizontal, Tokens.Space.s5)
             .padding(.top, Tokens.Space.s1).padding(.bottom, Tokens.Space.s5)
-            .background(PerformanceScrollSurfaceMarker(name: "attachments", isActive: true))
+            .background { PerformanceScrollSurfaceMarker(name: "attachments", isActive: true) }
         }
         .attachmentDragContainer(model, in: dragNamespace)
     }
@@ -187,10 +195,12 @@ private struct AttachmentCardCell: View {
     /// The accessibility default action, which never extends a selection.
     let onActivate: () -> Void
     let onOpen: () -> Void
+    let isKeyboardTarget: Bool
 
     var body: some View {
         AttachmentLibraryCard(item: item, accountName: model.accountName(item),
-            accounts: model.availableAccounts, selected: model.selection.contains(item.id))
+            accounts: model.availableAccounts, selected: model.selection.contains(item.id),
+            isKeyboardTarget: isKeyboardTarget)
             .equatable()
             .onTapGesture(count: 2, perform: onOpen)
             .onTapGesture(perform: onClick)

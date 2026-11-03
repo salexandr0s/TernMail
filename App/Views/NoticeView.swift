@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The toast at the bottom of the window. Hovering or focusing an action keeps it open.
+/// Errors stay available until dismissed. Hovering or focusing an action
+/// keeps an informational notice open without changing its action's deadline.
 struct NoticeView: View {
     let notice: MailboxModel.Notice
     let onUndo: () -> Void
@@ -48,8 +49,8 @@ struct NoticeView: View {
         .shadow(color: Tokens.Shadow.mdColor, radius: Tokens.Shadow.mdRadius, y: Tokens.Shadow.mdY)
         .onHover { isHovering = $0 }
         .task(id: isInteracting) {
-            guard !isInteracting else { return }
-            try? await Task.sleep(for: notice.duration ?? (notice.isError ? Tokens.Toast.error : Tokens.Toast.info))
+            guard !isInteracting, !notice.isError else { return }
+            try? await Task.sleep(for: notice.duration ?? Tokens.Toast.info)
             if !Task.isCancelled { onDismiss() }
         }
         .onAppear {

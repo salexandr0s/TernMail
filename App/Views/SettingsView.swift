@@ -31,7 +31,7 @@ struct SettingsView: View {
                 sidebar
             }
             .frame(width: Tokens.Settings.sidebarWidth)
-            .background(SidebarMaterial())
+            .background { SidebarMaterial() }
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 if let subtitle = destination.subtitle {
