@@ -32,6 +32,7 @@ struct MailCommands: Commands {
     @FocusedValue(\.readerActions) private var reader
     @FocusedValue(\.assistantModel) private var assistant
     @FocusedValue(\.attachmentLibraryToolbar) private var libraryToolbar
+    @FocusedValue(\.followUpsModel) private var followUps
 
     var body: some Commands {
         ComposeFeatureCommands()
@@ -114,7 +115,7 @@ struct MailCommands: Commands {
             Button("Find…", systemImage: "magnifyingglass") { find() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.find.shortcut)
-                .disabled(reader == nil && calendarActions == nil && libraryToolbar == nil)
+                .disabled(reader == nil && calendarActions == nil && libraryToolbar == nil && followUps == nil)
             Button("Search Mail", systemImage: "magnifyingglass") { focusedMailbox?.search.focusField() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.searchMail.shortcut)
@@ -341,6 +342,9 @@ struct MailCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.goAttachments.shortcut)
                 .disabled(!isMainWindowFocused)
+            Button("Waiting for", systemImage: "clock.badge.checkmark") { app.destination = .followUps }
+                .labelStyle(.titleAndIcon)
+                .disabled(!isMainWindowFocused)
             Divider()
             Button("Go to Label…", systemImage: "tag") { focusedMailbox?.navigation.isShowingSwitcher = true }
                 .labelStyle(.titleAndIcon)
@@ -452,6 +456,8 @@ struct MailCommands: Commands {
             reader.find()
         } else if let libraryToolbar {
             libraryToolbar.searchFocusRequest += 1
+        } else if let followUps {
+            followUps.searchFocusRequest += 1
         } else {
             calendarActions?.find()
         }

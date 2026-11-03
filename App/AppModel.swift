@@ -31,6 +31,7 @@ final class AppModel {
     @ObservationIgnored private var organizationSessionsModel: MailOrganizationSessions?
     @ObservationIgnored private var calendarModel: CalendarModel?
     @ObservationIgnored private var tasksModel: GoogleTasksModel?
+    @ObservationIgnored private var followUpsModel: FollowUpsModel?
     /// A task created from a detached reader can reveal the main window's sidebar.
     private(set) var tasksSidebarRequest: UUID?
     private(set) var accountPreferences: AccountPreferencesModel?
@@ -48,7 +49,7 @@ final class AppModel {
         didSet {
             guard destination != oldValue else { return }
             NavigationPerformance.shared.begin(.workspace, destination: destination.rawValue)
-            if destination == .calendar {
+            if destination != .mail {
                 NavigationPerformance.shared.cancel(.reader)
                 NavigationPerformance.shared.cancel(.mailbox)
             }
@@ -189,6 +190,15 @@ final class AppModel {
     private func bindMailNotificationRoutes() {
         MailNotificationRouter.shared.isOnScreen = { [weak self] key in self?.isConversationOnScreen(key) ?? false }
         MailNotificationRouter.shared.bind { [weak self] target in await self?.routeMailNotification(target) }
+        MailNotificationRouter.shared.bindFollowUps { [weak self] target in
+            guard let self, mailbox?.account(id: target.accountID) != nil else { return }
+            showMainWindow()
+            if let preferences = accountPreferences, !preferences.visibleAccountIDs.contains(target.accountID) {
+                preferences.selectProfile(nil)
+            }
+            destination = .followUps
+            await followUps.openNotification(accountID: target.accountID, commitmentID: target.commitmentID)
+        }
     }
 
     /// A conversation window has it open, or the mailbox shows it selected.
@@ -202,6 +212,7 @@ final class AppModel {
         owner.onMailSync = { [weak self] snapshot in
             self?.spotlight.mailSynced(accountID: snapshot.accountID)
             await self?.mailNotifications?.process(snapshot)
+            await self?.followUpsModel?.process(snapshot)
         }
         owner.onUnreadCountChange = { [weak self] in self?.refreshMailBadges() }
         owner.activityGuard = activityGuard
@@ -235,6 +246,11 @@ final class AppModel {
         guard activity != syncActivity else { return }
         syncActivity = activity
         for owner in mailbox?.accounts ?? [] { owner.setActivity(activity) }
+        if activity == .suspended {
+            followUpsModel?.stop()
+        } else if let followUpsModel, !inboxUpdatesAreStopped {
+            Task { await followUpsModel.resume() }
+        }
     }
 
     private func schedulePreferenceReconciliation() {
@@ -256,6 +272,7 @@ final class AppModel {
             }
             await refreshInboxUpdates()
             refreshMailBadges()
+            await followUpsModel?.refresh()
         }
     }
 
@@ -332,6 +349,13 @@ final class AppModel {
         if let tasksModel { return tasksModel }
         let value = GoogleTasksModel(app: self)
         tasksModel = value
+        return value
+    }
+
+    var followUps: FollowUpsModel {
+        if let followUpsModel { return followUpsModel }
+        let value = FollowUpsModel(app: self)
+        followUpsModel = value
         return value
     }
 
@@ -691,6 +715,7 @@ final class AppModel {
             if turnedOff.contains(.contacts) { ContactThumbnailCache.shared.remove(accountID: account.id) }
             if turnedOff.contains(.calendar) { await EmailCalendarPreparation.shared.remove(accountID: account.id) }
             tasksModel?.invalidateAccount(account.id)
+            followUpsModel?.restoreAccount(account.id)
             defer { if !turnedOff.isEmpty { reportTurnedOff(turnedOff, for: account) } }
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
@@ -1028,6 +1053,7 @@ final class AppModel {
         assistantModel?.connection.cancelSignIn()
         await calendarModel?.stop()
         tasksModel?.stop()
+        followUpsModel?.stop()
     }
 
     /// A user can keep Tern open after its final send attempt fails.
@@ -1037,6 +1063,7 @@ final class AppModel {
         await refreshInboxUpdates()
         await calendarModel?.start()
         tasksModel?.resume()
+        await followUpsModel?.resume()
         assistantModel?.refreshAccess()
         schedulePreferenceReconciliation()
         mailURLRouter?.resume()
@@ -1140,11 +1167,14 @@ final class AppModel {
         startCacheMaintenance()
         spotlight.start()
         Task { await mailbox.start() }
+        for owner in mailbox.accounts { followUps.restoreAccount(owner.account.id) }
+        await followUps.start()
     }
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
         organizationSessionsModel?.clear()
+        followUpsModel?.stop()
         MailNotificationRouter.shared.unbind()
         mailURLRouter?.stop()
         await stopInboxUpdates()
@@ -1202,6 +1232,7 @@ final class AppModel {
                 removeAccount: { [weak self] accountID in
                     await self?.calendarModel?.removeAccount(accountID)
                     await self?.tasksModel?.removeAccount(accountID)
+                    await self?.followUpsModel?.removeAccount(accountID)
                     if let calendarURL {
                         try await AccountCleanupCoordinator.removeCalendarCache(accountID: accountID, at: calendarURL)
                     }

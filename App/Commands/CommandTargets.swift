@@ -40,4 +40,5 @@ extension FocusedValues {
     @Entry var calendarActions: CalendarActions?
     @Entry var assistantModel: AssistantModel?
     @Entry var attachmentLibraryToolbar: AttachmentLibraryToolbarState?
+    @Entry var followUpsModel: FollowUpsModel?
 }

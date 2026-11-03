@@ -425,6 +425,7 @@ private enum MessageListFontMetrics {
 }
 
 struct MessageListMenu: View {
+    @Environment(AppModel.self) private var app
     let mailbox: MailboxModel
     let rows: Set<MailListRowID>
     var body: some View {
@@ -440,6 +441,9 @@ struct MessageListMenu: View {
             Divider()
             if rows.count == 1, let row = rows.first {
                 Button("Open in New Window", systemImage: "macwindow.badge.plus") { mailbox.requestConversationWindow(for: row) }
+                Button("Track Follow-up…", systemImage: "clock.badge.checkmark") {
+                    Task { await app.requestFollowUp(accountID: row.accountID, threadID: row.threadID, messageID: row.messageID) }
+                }
                 Button("Copy Link", systemImage: "link") {
                     if let url = MailLink(accountID: row.accountID, threadID: row.threadID).ternURL {
                         NSPasteboard.general.replaceContents(with: url.absoluteString)
