@@ -24,7 +24,11 @@ struct ComposeQuoteEditor: View {
                 .accessibilityLabel("Quoted text")
                 .accessibilityIdentifier("compose-quote-text")
                 .frame(minHeight: Tokens.Layout.quoteMaxHeight)
-            if saveFailed { Text("Couldn't save the quotation. Try again.").foregroundStyle(Tokens.Status.error) }
+            if saveFailed {
+                Text("Couldn't save the quotation. Try again.")
+                    .foregroundStyle(Tokens.Status.error)
+                    .ternTransition(.disclosure)
+            }
             HStack {
                 Button("Remove Quotation") { text = "" }
                 Spacer()
@@ -46,5 +50,6 @@ struct ComposeQuoteEditor: View {
         .frame(minWidth: Tokens.Sheet.smallWidth, idealWidth: Tokens.Layout.composeWidth)
         .disabled(isSaving)
         .interactiveDismissDisabled(isSaving)
+        .ternAnimation(value: saveFailed)
     }
 }

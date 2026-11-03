@@ -23,7 +23,10 @@ struct AttachmentLibraryView: View {
         VStack(spacing: 0) {
             filterBar
             Divider()
-            if let error = model.errorMessage { errorBanner(error) }
+            if let error = model.errorMessage {
+                errorBanner(error)
+                    .ternTransition(.disclosure)
+            }
             GeometryReader { geometry in
                 if model.items.isEmpty { emptyState }
                 else {
@@ -34,6 +37,7 @@ struct AttachmentLibraryView: View {
             Divider()
             footer
         }
+        .ternAnimation(value: model.errorMessage != nil)
         .background(Tokens.Surface.canvas)
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .protectAttachmentPreview(model.previewURL)
@@ -54,6 +58,7 @@ struct AttachmentLibraryView: View {
         }
         .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
+        .ternAnimation(value: AttachmentFilterChip.values(for: model).filter { $0.id != "search" && $0.id != "category" }.map(\.id))
     }
 
     private var filtersButton: some View {
@@ -65,8 +70,10 @@ struct AttachmentLibraryView: View {
                     Text(filterCount.formatted()).font(.caption.weight(.semibold))
                         .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
                         .background(Color.accentColor.opacity(Tokens.Opacity.tint), in: Capsule())
+                        .ternTransition(.fade)
                 }
             }
+            .ternAnimation(value: filterCount > 0, duration: Tokens.Motion.fast)
         }
         .fixedSize()
         .accessibilityLabel(filterCount == 0 ? "Filters" : "Filters, \(filterCount) active")
@@ -115,8 +122,11 @@ struct AttachmentLibraryView: View {
     private var footer: some View {
         VStack(spacing: Tokens.Space.s3) {
             if !model.selection.isEmpty {
-                AttachmentSelectionActions(model: model)
-                Divider()
+                VStack(spacing: Tokens.Space.s3) {
+                    AttachmentSelectionActions(model: model)
+                    Divider()
+                }
+                .ternTransition(.disclosure)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Tokens.Space.s3) { pageControls; Spacer(minLength: Tokens.Space.s3); coverageButton }
@@ -124,6 +134,7 @@ struct AttachmentLibraryView: View {
             }
             .font(.caption).foregroundStyle(.secondary)
         }
+        .ternAnimation(value: model.selection.isEmpty)
         .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
     }

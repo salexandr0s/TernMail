@@ -154,13 +154,16 @@ struct ThreadSummaryContent: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             header
             if isExpanded {
-                overview
-                if report.hasPartialCoverage {
-                    Label("Based on partial message content", systemImage: "info.circle")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .help("Some messages, attachments, or longer passages could not be included.")
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    overview
+                    if report.hasPartialCoverage {
+                        Label("Based on partial message content", systemImage: "info.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .help("Some messages, attachments, or longer passages could not be included.")
+                    }
+                    details
                 }
-                details
+                .ternTransition(.disclosure)
             }
 
             if let refreshError {
@@ -283,7 +286,7 @@ struct ThreadSummaryContent: View {
     }
 
     private func animate(_ changes: () -> Void) {
-        withAnimation(reduceMotion ? nil : Tokens.Motion.standard(), changes)
+        withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.slow), changes)
     }
 
     private var summaryText: some View {
@@ -362,6 +365,7 @@ struct ThreadSummaryContent: View {
             if isOpen {
                 VStack(alignment: .leading, spacing: 0, content: content)
                     .padding(.top, Tokens.Space.s1)
+                    .ternTransition(.disclosure)
             }
         }
     }

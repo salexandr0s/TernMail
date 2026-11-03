@@ -138,8 +138,9 @@ import Testing
         try await expectBoundary(split, showsSidebar: false)
         try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
         try await expectBoundary(split)
-        #expect(abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) <= 1,
-            "Showing the Attachments sidebar must restore its dragged width")
+        let reopenedSidebarWidth = try #require(split.arrangedSubviews.first).frame.width
+        #expect(abs(reopenedSidebarWidth - Tokens.Layout.sidebarMaxWidth) <= 1,
+            "Showing the Attachments sidebar must restore its dragged width, found \(reopenedSidebarWidth)")
         app.destination = .calendar
         try await settle()
         app.destination = .mail
@@ -191,8 +192,9 @@ import Testing
                 #expect(!sidebarPopover.isVisible)
             }
         }
-        #expect(abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) <= 1,
-            "Widening the window must restore the Attachments sidebar's dragged width")
+        let widenedSidebarWidth = try #require(split.arrangedSubviews.first).frame.width
+        #expect(abs(widenedSidebarWidth - Tokens.Layout.sidebarMaxWidth) <= 1,
+            "Widening the window must restore the Attachments sidebar's dragged width, found \(widenedSidebarWidth)")
         await app.signOut()
     }
 
@@ -824,7 +826,7 @@ import Testing
     }
 
     private func settle() async throws {
-        // Allow SwiftUI updates and the asynchronous mailbox observation to lay out.
-        try await Task.sleep(for: .milliseconds(200))
+        // Include the sidebar's presentation duration before checking final native columns.
+        try await Task.sleep(for: .seconds(Tokens.Motion.slow + Tokens.Motion.fast))
     }
 }

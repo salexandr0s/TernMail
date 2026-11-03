@@ -92,8 +92,11 @@ struct CalendarEventEditor: View {
                     if !allDay {
                         CalendarTimeZonePicker(title: "Time Zone", identifier: $zoneID)
                             .disabled(preservesImportedDates)
+                            .ternTransition(.disclosure)
                     }
-                }.disabled(!editable || draft.isDeletion)
+                }
+                .disabled(!editable || draft.isDeletion)
+                .ternAnimation(value: allDay)
                 if isRecurring {
                     Section("Apply Changes To") {
                         Picker("Events", selection: $draft.editScope) {
@@ -110,9 +113,13 @@ struct CalendarEventEditor: View {
                             Text(draft.isDeletion ? "This event and all following occurrences will be deleted." : (knownExceptionCount ?? draft.followingExceptionsCount).map { "This splits the series. \($0) later exceptions may be reset." }
                                  ?? "This splits the series. Later exceptions may be reset; Tern checks the series before saving.")
                                 .font(.caption).foregroundStyle(.secondary)
+                                .ternTransition(.disclosure)
                             Toggle("I have reviewed the change to following events", isOn: $draft.acknowledgesFollowingReset)
+                                .ternTransition(.disclosure)
                         }
-                    }.disabled(!editable)
+                    }
+                    .disabled(!editable)
+                    .ternAnimation(value: draft.editScope)
                 }
                 Section("Repeat") {
                     CalendarRecurrenceControl(rules: $recurrence, allDay: allDay, timeZone: eventZone)
@@ -180,10 +187,16 @@ struct CalendarEventEditor: View {
                                 Button { reminders.removeAll { $0.id == row.id } } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.borderless).help("Remove alert").accessibilityLabel("Remove alert")
                             }
+                            .ternTransition(.disclosure)
                         }
-                        Button("Add Alert") { reminders.append(EditableReminder(reminder: CalendarReminder(minutes: 10))) }.disabled(reminders.count >= 5)
+                        Button("Add Alert") { reminders.append(EditableReminder(reminder: CalendarReminder(minutes: 10))) }
+                            .disabled(reminders.count >= 5)
+                            .ternTransition(.disclosure)
                     }
-                }.disabled(!editable || draft.isDeletion)
+                }
+                .disabled(!editable || draft.isDeletion)
+                .ternAnimation(value: useDefaultAlerts)
+                .ternAnimation(value: reminders.map(\.id))
                 Section {
                     Group {
                         Picker("Show as", selection: $draft.event.transparency.or("opaque")) {
@@ -211,7 +224,10 @@ struct CalendarEventEditor: View {
             .environment(\.timeZone, eventZone)
             Divider()
             VStack(spacing: Tokens.Space.s3) {
-                if let error { CalendarInlineError(message: error) }
+                if let error {
+                    CalendarInlineError(message: error)
+                        .ternTransition(.disclosure)
+                }
                 HStack(spacing: Tokens.Space.s3) {
                     if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving event") }
                     if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {
@@ -226,6 +242,7 @@ struct CalendarEventEditor: View {
                 }
             }.padding(Tokens.Space.s4)
                 .background(Tokens.Surface.muted)
+                .ternAnimation(value: error != nil)
         }
         .frame(minWidth: Tokens.Calendar.editorWidth, idealWidth: Tokens.Calendar.editorWidth, maxWidth: .infinity,
                minHeight: Tokens.Calendar.sheetMinHeight, idealHeight: CalendarSheetLayout.height(Tokens.Calendar.editorHeight), maxHeight: .infinity)

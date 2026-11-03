@@ -109,7 +109,6 @@ struct ComposeView: View {
     @State private var senderAvatars = SenderAvatarModels()
     @Environment(AppModel.self) private var app
     @Environment(\.addressAvatarContext) private var avatarContext
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var showsQuote = false
     @State private var editsQuote = false
@@ -228,9 +227,11 @@ struct ComposeView: View {
                 ) {
                     model.droppedFormatting = false
                 }
+                .ternTransition(.disclosure)
             }
             if let status = model.status, status.isError {
                 Banner(systemImage: "exclamationmark.circle", text: status.text, isError: true)
+                    .ternTransition(.disclosure)
             }
             if let progress = model.progressText {
                 HStack(spacing: Tokens.Space.s2) {
@@ -242,6 +243,7 @@ struct ComposeView: View {
                 .padding(.vertical, Tokens.Space.s2)
                 .background(Tokens.Surface.muted)
                 .accessibilityElement(children: .combine)
+                .ternTransition(.disclosure)
             } else if availableWidth < Tokens.Compose.labeledToolbarWidth,
                       let status = model.status, !status.isError {
                 Text(status.text)
@@ -251,13 +253,14 @@ struct ComposeView: View {
                     .padding(.horizontal, Tokens.Compose.gutter)
                     .padding(.vertical, Tokens.Space.s1_5)
                     .background(Tokens.Surface.muted)
+                    .ternTransition(.disclosure)
             }
             header
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
             if model.showsFormatting {
                 formattingBar
-                    .transition(.opacity)
+                    .ternTransition(.disclosure)
             }
             RichTextEditor(
                 document: $model.content.body,
@@ -296,7 +299,7 @@ struct ComposeView: View {
                 .frame(maxWidth: Tokens.Compose.assistantMaxWidth)
                 .frame(maxWidth: .infinity)
                 .padding(Tokens.Space.s3)
-                .transition(disclosureTransition)
+                .ternTransition(.disclosure)
             }
             if showsAttachments {
                 AttachmentStrip(
@@ -309,7 +312,7 @@ struct ComposeView: View {
                 ) {
                     model.removeAttachment($0)
                 }
-                .transition(disclosureTransition)
+                .ternTransition(.disclosure)
             }
             if model.content.signatureAboveQuote { signature }
             if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
@@ -318,8 +321,12 @@ struct ComposeView: View {
             if !model.content.signatureAboveQuote { signature }
         }
         .ternAnimation(value: model.showsFormatting)
-        .ternAnimation(value: showsAssistant)
+        .ternAnimation(value: showsAssistant, duration: Tokens.Motion.slow)
         .ternAnimation(value: showsAttachments)
+        .ternAnimation(value: model.droppedFormatting)
+        .ternAnimation(value: model.status?.isError == true)
+        .ternAnimation(value: model.progressText != nil)
+        .ternAnimation(value: availableWidth < Tokens.Compose.labeledToolbarWidth && model.status != nil)
         // The AI bar consumes its own drops as context; the rest of the form attaches to mail.
         .composeFileDrop(isEnabled: model.isEditable, isTargeted: $isFileDropTargeted) { files in
             model.attach(files.map(Attachable.dropped))
@@ -348,10 +355,6 @@ struct ComposeView: View {
 
     private var showsAttachments: Bool {
         model.attachments.contains(where: { $0.contentID == nil }) || !model.failedAttachments.isEmpty
-    }
-
-    private var disclosureTransition: AnyTransition {
-        reduceMotion ? .identity : .opacity
     }
 
     private var signature: some View {
@@ -400,20 +403,22 @@ struct ComposeView: View {
                 .buttonStyle(.borderless)
             }
             if model.showsCc {
-                rowDivider
-                    .transition(disclosureTransition)
-                fieldRow("Cc:", field: .cc) {
-                    recipientField("Cc", addresses: $model.content.cc, field: .cc)
+                VStack(spacing: 0) {
+                    rowDivider
+                    fieldRow("Cc:", field: .cc) {
+                        recipientField("Cc", addresses: $model.content.cc, field: .cc)
+                    }
                 }
-                .transition(disclosureTransition)
+                .ternTransition(.disclosure)
             }
             if model.showsBcc {
-                rowDivider
-                    .transition(disclosureTransition)
-                fieldRow("Bcc:", field: .bcc) {
-                    recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
+                VStack(spacing: 0) {
+                    rowDivider
+                    fieldRow("Bcc:", field: .bcc) {
+                        recipientField("Bcc", addresses: $model.content.bcc, field: .bcc)
+                    }
                 }
-                .transition(disclosureTransition)
+                .ternTransition(.disclosure)
             }
             rowDivider
             fieldRow("Subject:", field: .subject) {
@@ -429,6 +434,7 @@ struct ComposeView: View {
                 fromField
                 if let change = model.senderChange {
                     senderChangeNote(change)
+                        .ternTransition(.disclosure)
                 }
             }
         }
@@ -440,6 +446,7 @@ struct ComposeView: View {
         .ternAnimation(value: focusedRecipient)
         .ternAnimation(value: model.showsCc)
         .ternAnimation(value: model.showsBcc)
+        .ternAnimation(value: model.senderChange != nil)
     }
 
     /// Hairlines follow the editable values, leaving the labels quiet.
@@ -510,7 +517,7 @@ struct ComposeView: View {
                 RoundedRectangle(cornerRadius: Tokens.Radius.sm)
                     .fill(Color.accentColor.opacity(Tokens.Opacity.tint))
                     .padding(.vertical, Tokens.Space.s0_5)
-                    .transition(.opacity)
+                    .ternTransition(.fade)
             }
         }
         .overlay { focusRing(focus == .from) }
@@ -666,34 +673,36 @@ struct ComposeView: View {
             .accessibilityLabel(showsQuote ? "Hide \(noun)" : "Show \(noun)")
             .accessibilityValue(showsQuote ? "Expanded" : "Collapsed")
             if showsQuote {
-                HStack(spacing: Tokens.Space.s2) {
-                    Button("Edit Quotation") {
-                        model.isEditingSupplement = true
-                        editsQuote = true
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: Tokens.Space.s2) {
+                        Button("Edit Quotation") {
+                            model.isEditingSupplement = true
+                            editsQuote = true
+                        }
+                        .accessibilityIdentifier("compose-edit-quote")
+                        Spacer()
                     }
-                    .accessibilityIdentifier("compose-edit-quote")
-                    Spacer()
+                    .controlSize(.small)
+                    .disabled(!model.isEditable)
+                    .padding(.horizontal, Tokens.Compose.gutter)
+                    .padding(.bottom, Tokens.Space.s2)
+                    ScrollView {
+                        Text(quote)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Tokens.Compose.gutter)
+                            .padding(.bottom, Tokens.Space.s2)
+                    }
+                    .frame(minHeight: Tokens.Space.s16, maxHeight: Tokens.Layout.quoteMaxHeight)
                 }
-                .controlSize(.small)
-                .disabled(!model.isEditable)
-                .padding(.horizontal, Tokens.Compose.gutter)
-                .padding(.bottom, Tokens.Space.s2)
-                ScrollView {
-                    Text(quote)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Tokens.Compose.gutter)
-                        .padding(.bottom, Tokens.Space.s2)
-                }
-                .frame(minHeight: Tokens.Space.s16, maxHeight: Tokens.Layout.quoteMaxHeight)
-                .transition(disclosureTransition)
+                .ternTransition(.disclosure)
             }
         }
         .background(Tokens.Surface.muted)
         .overlay(alignment: .top) { Divider() }
-        .ternAnimation(value: showsQuote)
+        .ternAnimation(value: showsQuote, duration: Tokens.Motion.slow)
     }
 
     // MARK: Toolbar

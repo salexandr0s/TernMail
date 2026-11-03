@@ -32,10 +32,13 @@ struct CalendarRecurrenceControl: View {
                 TextEditor(text: $selection.custom).font(.system(.caption, design: .monospaced))
                     .frame(minHeight: Tokens.Space.s16 + Tokens.Space.s2)
                     .accessibilityLabel("Recurrence rules")
+                    .ternTransition(.disclosure)
                 Text("One RRULE, RDATE or EXDATE per line. Existing custom rules are preserved.")
                     .font(.caption).foregroundStyle(.secondary)
+                    .ternTransition(.disclosure)
             } else if selection.frequency != "NONE" {
                 Stepper("Every \(selection.interval) \(unit)", value: $selection.interval, in: 1...999)
+                    .ternTransition(.disclosure)
                 if selection.frequency == "WEEKLY" {
                     HStack(spacing: Tokens.Space.s1) {
                         ForEach(Array(RecurrenceSelection.dayCodes.enumerated()), id: \.element) { index, code in
@@ -46,14 +49,24 @@ struct CalendarRecurrenceControl: View {
                             .frame(maxWidth: .infinity)
                         }
                     }
+                    .ternTransition(.disclosure)
                 }
                 Picker("Ends", selection: $selection.endMode) {
                     Text("Never").tag("never"); Text("After Occurrences").tag("count"); Text("On Date").tag("until")
                 }
-                if selection.endMode == "count" { Stepper("After ^[\(selection.count) event](inflect: true)", value: $selection.count, in: 1...9999) }
-                if selection.endMode == "until" { DatePicker("Last Date", selection: $selection.until, displayedComponents: .date) }
+                .ternTransition(.disclosure)
+                if selection.endMode == "count" {
+                    Stepper("After ^[\(selection.count) event](inflect: true)", value: $selection.count, in: 1...9999)
+                        .ternTransition(.disclosure)
+                }
+                if selection.endMode == "until" {
+                    DatePicker("Last Date", selection: $selection.until, displayedComponents: .date)
+                        .ternTransition(.disclosure)
+                }
             }
         }
+        .ternAnimation(value: selection.frequency)
+        .ternAnimation(value: selection.endMode)
         .onChange(of: selection) { _, _ in publish() }
         .onChange(of: allDay) { _, _ in if selection.endMode == "until" { publish() } }
         .onChange(of: timeZone) { _, _ in if selection.endMode == "until" { publish() } }

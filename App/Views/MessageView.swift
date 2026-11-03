@@ -91,6 +91,7 @@ struct MessageView: View {
                 }
                 .padding(.horizontal, Tokens.Space.s4)
                 .padding(.vertical, Tokens.Space.s3)
+                .ternTransition(.fade)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,7 +103,7 @@ struct MessageView: View {
                     .allowsHitTesting(false)
             }
         }
-        .ternAnimation(value: isExpanded)
+        .ternAnimation(value: isExpanded, duration: Tokens.Motion.slow)
         .onScrollVisibilityChange(threshold: 0) { visible in
             isInViewport = visible
             if visible { onVisible() }

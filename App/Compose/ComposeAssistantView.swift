@@ -66,6 +66,7 @@ struct ComposeAssistantView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternOutline(radius: Tokens.Radius.lg)
         .overlay { dropOutline(isTargeted: barHasFileDrop) }
+        .ternAnimation(value: model.contextAttachments.isEmpty)
         .shadow(color: Tokens.Shadow.mdColor, radius: Tokens.Shadow.mdRadius, y: Tokens.Shadow.mdY)
         .accessibilityIdentifier("compose-assistant-bar")
         .composeFileDrop(isEnabled: true, isTargeted: $barDropTargeted, onDrop: acceptContextFiles)
@@ -254,19 +255,22 @@ struct ComposeAssistantView: View {
                 .onAppear { scrollToResult(proxy) }
             }
             if model.proposal != nil || model.canUndo {
-                Divider()
-                HStack(spacing: Tokens.Space.s2) {
-                    Text(model.proposal == nil ? "Draft updated" : "Review before sending")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer(minLength: Tokens.Space.s2)
-                    if model.canUndo { Button("Undo") { model.undo() }.help("Undo the assistant's changes") }
-                    if model.proposal != nil {
-                        Button("Apply to Draft") { model.apply() }
-                            .buttonStyle(.borderedProminent).disabled(!model.canApply)
-                            .accessibilityIdentifier("compose-assistant-apply")
+                VStack(spacing: 0) {
+                    Divider()
+                    HStack(spacing: Tokens.Space.s2) {
+                        Text(model.proposal == nil ? "Draft updated" : "Review before sending")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer(minLength: Tokens.Space.s2)
+                        if model.canUndo { Button("Undo") { model.undo() }.help("Undo the assistant's changes") }
+                        if model.proposal != nil {
+                            Button("Apply to Draft") { model.apply() }
+                                .buttonStyle(.borderedProminent).disabled(!model.canApply)
+                                .accessibilityIdentifier("compose-assistant-apply")
+                        }
                     }
+                    .padding(Tokens.Space.s3)
                 }
-                .padding(Tokens.Space.s3)
+                .ternTransition(.disclosure)
             }
             Divider()
             VStack(spacing: Tokens.Space.s2) {
@@ -278,10 +282,12 @@ struct ComposeAssistantView: View {
                 }
             }
             .padding(Tokens.Space.s3)
+            .ternAnimation(value: model.contextAttachments.isEmpty)
         }
         .frame(width: Tokens.Sheet.smallWidth)
         .background(Tokens.Surface.muted)
         .overlay { dropOutline(isTargeted: conversationHasFileDrop) }
+        .ternAnimation(value: model.proposal != nil || model.canUndo)
         .composeFileDrop(isEnabled: true, isTargeted: $conversationDropTargeted, onDrop: acceptContextFiles)
         .onAppear { focusedInput = .conversation }
         .onDisappear { focusedInput = .bar }
@@ -332,13 +338,16 @@ struct ComposeAssistantView: View {
                             .padding(.horizontal, Tokens.Space.s2).padding(.vertical, Tokens.Space.s1)
                             .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                             .ternOutline(radius: Tokens.Radius.md)
+                            .ternTransition(.disclosure)
                         }
                     }
+                    .ternAnimation(value: model.contextAttachments.map(\.id))
                 }
                 .scrollIndicators(.hidden)
                 .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .ternTransition(.disclosure)
         }
     }
 

@@ -23,12 +23,14 @@ struct AssistantResultCards: View {
                             state: model.taskDestinationModel?.creationState(for: task.request) ?? .idle,
                             isEnabled: model.canUseTaskResult(task) && model.taskDestinationModel != nil,
                             onReview: { reviewingTask = task }, onOpenSource: onOpenSource)
+                            .ternTransition(.disclosure)
                     }
                     if message.taskResults.count > Tokens.AssistantFormatting.resultPreviewCount {
                         expansionButton(isExpanded: $showsAllTasks,
                             total: message.taskResults.count, kind: "tasks")
                     }
                 }
+                .ternAnimation(value: showsAllTasks, duration: Tokens.Motion.slow)
             }
             if !message.eventResults.isEmpty {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -37,12 +39,14 @@ struct AssistantResultCards: View {
                         AssistantEventCard(event: event, isEnabled: model.canUseEventResult(event),
                             isReviewing: reviewingEventID == event.id, error: eventErrors[event.id],
                             onReview: { review(event) }, onOpenSource: onOpenSource)
+                            .ternTransition(.disclosure)
                     }
                     if message.eventResults.count > Tokens.AssistantFormatting.resultPreviewCount {
                         expansionButton(isExpanded: $showsAllEvents,
                             total: message.eventResults.count, kind: "events")
                     }
                 }
+                .ternAnimation(value: showsAllEvents, duration: Tokens.Motion.slow)
             }
         }
         .sheet(item: $reviewingTask) { task in
@@ -245,20 +249,24 @@ private struct AssistantResultFooter<Action: View>: View {
             }
             .controlSize(.small)
             if showsDetails {
-                if let notes, !notes.isEmpty {
-                    Text(notes).font(Tokens.AssistantFormatting.supportingFont)
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
+                    if let notes, !notes.isEmpty {
+                        Text(notes).font(Tokens.AssistantFormatting.supportingFont)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let evidence, !evidence.isEmpty {
+                        Text("Source excerpt").font(Tokens.AssistantFormatting.metadataFont.weight(.medium)).foregroundStyle(.secondary)
+                        Text(evidence).font(Tokens.AssistantFormatting.supportingFont).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                if let evidence, !evidence.isEmpty {
-                    Text("Source excerpt").font(Tokens.AssistantFormatting.metadataFont.weight(.medium)).foregroundStyle(.secondary)
-                    Text(evidence).font(Tokens.AssistantFormatting.supportingFont).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                .ternTransition(.disclosure)
             }
         }
         .font(Tokens.AssistantFormatting.metadataFont)
+        .ternAnimation(value: showsDetails)
     }
 
     private var sourceControls: some View {

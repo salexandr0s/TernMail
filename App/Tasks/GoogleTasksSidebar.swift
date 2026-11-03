@@ -297,9 +297,10 @@ struct GoogleTasksSidebar: View {
                     LazyVStack(spacing: 0) { ForEach(completed) { row($0) } }
                         .padding(Tokens.Space.s1)
                         .ternSurface(style: .grouped)
+                        .ternTransition(.disclosure)
                 }
             }
-            .ternAnimation(value: showsCompleted)
+            .ternAnimation(value: showsCompleted, duration: Tokens.Motion.slow)
         }
     }
 

@@ -8,6 +8,7 @@ struct MainView: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workspaceToolbarID) private var toolbarIdentifier
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(SingleKeyShortcuts.settingKey) private var usesSingleKeys = false
     @AppStorage(MailWindowPreferences.hidesReaderKey) private var hidesReader = false
     @State private var mailWidth: CGFloat = 0
@@ -58,7 +59,9 @@ struct MainView: View {
 
     private func toggleSidebar() {
         sidebarHiddenForWidth = false
-        columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
+        withAnimation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.slow)) {
+            columnVisibility = showsSidebar ? (hidesReader ? .detailOnly : .doubleColumn) : .all
+        }
     }
 
     /// Below the three columns' minimum widths the split view clips the
@@ -118,34 +121,48 @@ struct MainView: View {
                 mailContent(topInset: contentTopInset)
                     .frame(width: layout.mailWidth, alignment: .leading)
                     .clipped()
-                if showsPanel {
-                    Rectangle()
-                        .fill(Tokens.Surface.border)
-                        .frame(width: Tokens.Border.hairline)
-                        .overlay {
-                            AssistantSidebarResizeHandle(width: layout.sidebarWidth, onResize: resizeAssistant)
-                                .frame(width: Tokens.Space.s3)
-                                .accessibilityElement()
-                                .accessibilityLabel(utilityPanel == .tasks ? "Tasks width" : "Assistant width")
-                                .accessibilityValue("\(Int(layout.sidebarWidth)) points")
-                                .accessibilityAdjustableAction { direction in
-                                    resizeAssistant(layout.sidebarWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                HStack(spacing: 0) {
+                    if showsPanel {
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(Tokens.Surface.border)
+                                .frame(width: Tokens.Border.hairline)
+                                .overlay {
+                                    AssistantSidebarResizeHandle(width: layout.sidebarWidth, onResize: resizeAssistant)
+                                        .frame(width: Tokens.Space.s3)
+                                        .accessibilityElement()
+                                        .accessibilityLabel(utilityPanel == .tasks ? "Tasks width" : "Assistant width")
+                                        .accessibilityValue("\(Int(layout.sidebarWidth)) points")
+                                        .accessibilityAdjustableAction { direction in
+                                            resizeAssistant(layout.sidebarWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                                        }
                                 }
+                            ZStack {
+                                if utilityPanel == .tasks {
+                                    GoogleTasksSidebar(model: app.tasks, onClose: closePanel, isActive: isActive)
+                                        .ternTransition(.fade)
+                                } else {
+                                    AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
+                                        onExpand: { openAssistantWindow(fullScreen: true) },
+                                        onDetach: { openAssistantWindow(fullScreen: false) }, onClose: closePanel)
+                                        .ternTransition(.fade)
+                                }
+                            }
+                            .ternAnimation(value: utilityPanel, duration: Tokens.Motion.fast)
+                            .frame(width: layout.sidebarWidth)
+                            .clipped()
                         }
-                    Group {
-                        if utilityPanel == .tasks {
-                            GoogleTasksSidebar(model: app.tasks, onClose: closePanel, isActive: isActive)
-                        } else {
-                            AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
-                                onExpand: { openAssistantWindow(fullScreen: true) },
-                                onDetach: { openAssistantWindow(fullScreen: false) }, onClose: closePanel)
-                        }
+                        .ternTransition(.panel(edge: .trailing))
                     }
-                    .frame(width: layout.sidebarWidth)
-                    .clipped()
                 }
+                .frame(width: showsPanel ? layout.sidebarWidth + Tokens.Border.hairline : 0, alignment: .leading)
+                .clipped()
+                .allowsHitTesting(showsPanel && isActive)
+                .accessibilityHidden(!showsPanel || !isActive)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+            .ternAnimation(value: showsPanel, duration: Tokens.Motion.slow)
             .onChange(of: layout.hidesMailboxNavigation, initial: true) { _, narrow in
                 updateNavigationVisibility(isNarrow: narrow && !hidesReader)
             }

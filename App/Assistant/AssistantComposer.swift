@@ -21,6 +21,7 @@ struct AssistantComposer: View {
                     .buttonStyle(.link).font(.caption)
                         .disabled(model.isLoadingModels)
                 }
+                .ternTransition(.disclosure)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Tokens.Space.s2) {
@@ -45,6 +46,7 @@ struct AssistantComposer: View {
         .background(Tokens.Assistant.composerBackground,
                     in: RoundedRectangle(cornerRadius: Tokens.Assistant.composerRadius))
         .ternOutline(radius: Tokens.Assistant.composerRadius, style: .contrastOnly)
+        .ternAnimation(value: setup != nil && !model.messages.isEmpty)
     }
 
     private var input: some View {

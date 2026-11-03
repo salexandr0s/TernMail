@@ -281,10 +281,17 @@ struct ThreadView: View {
                         return .handled
                     }
                     .onKeyPress(.space) { pageDown() }
-                    .overlay(alignment: .bottomLeading) { linkReadout }
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        if finder.isVisible { ReaderFindBar(model: finder) }
+                    .overlay(alignment: .bottomLeading) {
+                        linkReadout
+                            .ternAnimation(value: hoveredLink != nil, duration: Tokens.Motion.fast)
                     }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if finder.isVisible {
+                            ReaderFindBar(model: finder)
+                                .ternTransition(.disclosure)
+                        }
+                    }
+                    .ternAnimation(value: finder.isVisible)
                     .onChange(of: messages.map(\.id), initial: true) { _, ids in finder.order = ids }
                     .onChange(of: finder.requestRevision) { _, _ in
                         guard isReaderActive, let id = finder.requestedMessageID else { return }
@@ -546,6 +553,7 @@ struct ThreadView: View {
                 .padding(Tokens.Space.s2)
                 .allowsHitTesting(false)
                 .accessibilityLabel("Link destination: \(url)")
+                .ternTransition(.fade)
         }
     }
 }

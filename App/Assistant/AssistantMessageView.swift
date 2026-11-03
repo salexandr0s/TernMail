@@ -22,8 +22,11 @@ struct AssistantMessageView: View {
             VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s2) {
                 bubble
                 footer
-                if showsSources, !sources.isEmpty { sourceList }
+                if showsSources, !sources.isEmpty {
+                    sourceList.ternTransition(.disclosure)
+                }
             }
+            .ternAnimation(value: showsSources, duration: Tokens.Motion.slow)
             .accessibilityElement(children: .contain)
             .accessibilityLabel(message.isUser ? "Your message" : "Assistant response")
             .accessibilityHint(messageDate)
@@ -72,6 +75,7 @@ struct AssistantMessageView: View {
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     ForEach(showsAllEmails ? emails : Array(emails.prefix(Tokens.AssistantFormatting.resultPreviewCount))) { email in
                         AssistantEmailCard(email: email, onOpen: onOpenSource, onOpenInNewWindow: onOpenSourceInNewWindow)
+                            .ternTransition(.disclosure)
                     }
                     if emails.count > Tokens.AssistantFormatting.resultPreviewCount {
                         Button {
@@ -85,6 +89,7 @@ struct AssistantMessageView: View {
                         .accessibilityValue(showsAllEmails ? "Expanded" : "Collapsed")
                     }
                 }
+                .ternAnimation(value: showsAllEmails, duration: Tokens.Motion.slow)
             }
             ForEach(message.draftIDs, id: \.self) { draftID in
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {

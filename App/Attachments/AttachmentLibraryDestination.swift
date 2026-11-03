@@ -12,13 +12,10 @@ struct AttachmentLibraryDestination: View {
     private var mailbox: MailboxModel { model.mailbox }
 
     var body: some View {
-        HSplitView {
-            if toolbar.showsSidebar {
-                SidebarView(mailbox: mailbox)
-                    .frame(minWidth: Tokens.Layout.sidebarMinWidth,
-                        idealWidth: toolbar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
-                    .background { AttachmentSidebarWidthProbe(toolbar: toolbar) }
-            }
+        TernSidebarSplit(isPresented: toolbar.showsSidebar, sidebarWidth: $toolbar.sidebarWidth,
+                         minimumWidth: Tokens.Layout.sidebarMinWidth, maximumWidth: Tokens.Layout.sidebarMaxWidth) {
+            SidebarView(mailbox: mailbox)
+        } detail: {
             AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
                 .background {
@@ -62,60 +59,6 @@ struct AttachmentLibraryDestination: View {
         guard app.destination == .mail, mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID else { return }
         NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained)
         NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .retained)
-    }
-}
-
-/// Restore the dragged width when AppKit inserts the sidebar into its split.
-/// An ideal SwiftUI width alone lets that insertion fall back to the minimum.
-private struct AttachmentSidebarWidthProbe: NSViewRepresentable {
-    let toolbar: AttachmentLibraryToolbarState
-
-    func makeNSView(context: Context) -> Probe {
-        let view = Probe()
-        view.widthToRestore = toolbar.sidebarWidth
-        return view
-    }
-
-    func updateNSView(_ view: Probe, context: Context) {
-        view.toolbar = toolbar
-        view.scheduleMeasurement()
-    }
-
-    final class Probe: NSView {
-        weak var toolbar: AttachmentLibraryToolbarState?
-        var widthToRestore: CGFloat?
-        private var splitWidth: CGFloat?
-        private var scheduled = false
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); scheduleMeasurement() }
-        override func layout() { super.layout(); scheduleMeasurement() }
-
-        func scheduleMeasurement() {
-            guard !scheduled else { return }
-            scheduled = true
-            Task { @MainActor [weak self] in
-                await Task.yield()
-                guard let self else { return }
-                scheduled = false
-                guard window != nil, let toolbar, toolbar.showsSidebar,
-                      let divider = EnclosingSplitDivider(of: self) else { return }
-                // Window resizing must not replace the user's dragged width.
-                if let previous = splitWidth, abs(previous - divider.split.bounds.width) > 0.5 {
-                    widthToRestore = toolbar.sidebarWidth
-                }
-                splitWidth = divider.split.bounds.width
-                if let width = widthToRestore {
-                    let lower = divider.split.minPossiblePositionOfDivider(at: divider.index)
-                    let upper = divider.split.maxPossiblePositionOfDivider(at: divider.index)
-                    guard width >= lower, width <= upper else { return }
-                    divider.split.setPosition(width, ofDividerAt: divider.index)
-                    widthToRestore = nil
-                }
-                let width = divider.pane.frame.width
-                if width > 0, abs(toolbar.sidebarWidth - width) > 0.5 { toolbar.sidebarWidth = width }
-            }
-        }
     }
 }
 

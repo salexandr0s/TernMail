@@ -314,7 +314,6 @@ extension MailboxModel {
 /// it shows while the row is expanded or under the pointer, and keeps its
 /// width otherwise so titles stay aligned.
 struct SidebarDisclosureChevron: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let isExpanded: Bool
     let isHovered: Bool
 
@@ -323,9 +322,10 @@ struct SidebarDisclosureChevron: View {
             .font(.caption2.weight(.medium))
             .foregroundStyle(.secondary)
             .rotationEffect(.degrees(isExpanded ? 90 : 0))
-            .animation(reduceMotion ? nil : Tokens.Motion.standard(duration: Tokens.Motion.fast), value: isExpanded)
             .frame(width: Tokens.Space.s3, height: Tokens.Space.s5)
             .opacity(isExpanded || isHovered ? 1 : 0)
+            .ternAnimation(value: isExpanded, duration: Tokens.Motion.fast)
+            .ternAnimation(value: isExpanded || isHovered, duration: Tokens.Motion.fast)
             .accessibilityHidden(true)
     }
 }

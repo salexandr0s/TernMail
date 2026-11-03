@@ -5,17 +5,26 @@ struct MessageListHeader: View {
     let mailbox: MailboxModel
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if mailbox.search.isActive, mailbox.selectedSavedSearch == nil {
+            if showsSearchScope {
                 SearchScopeBar(mailbox: mailbox)
                     .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
+                    .ternTransition(.disclosure)
             }
             if mailbox.listPreferences.presentsQuickFilters || showsDestructiveHeader {
                 actionHeader
                     .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
+                    .ternTransition(.disclosure)
             }
             SearchSuggestionsView(mailbox: mailbox)
         }
         .background(.bar)
+        .ternAnimation(value: showsSearchScope)
+        .ternAnimation(value: mailbox.listPreferences.presentsQuickFilters)
+        .ternAnimation(value: showsDestructiveHeader)
+    }
+
+    private var showsSearchScope: Bool {
+        mailbox.search.isActive && mailbox.selectedSavedSearch == nil
     }
 
     private var showsDestructiveHeader: Bool {
@@ -35,8 +44,10 @@ struct MessageListHeader: View {
                         Button("Clear") { mailbox.listPreferences.filters = [] }
                             .controlSize(.small)
                             .fixedSize()
+                            .ternTransition(.fade)
                     }
                 }
+                .ternTransition(.disclosure)
             }
             if showsDestructiveHeader {
                 HStack {
@@ -47,8 +58,10 @@ struct MessageListHeader: View {
                     }
                     .controlSize(.small).disabled(mailbox.triage.isPreparing)
                 }
+                .ternTransition(.disclosure)
             }
         }
+        .ternAnimation(value: mailbox.listPreferences.filters.isEmpty, duration: Tokens.Motion.fast)
     }
 
     private var quickFilters: some View {
@@ -140,8 +153,10 @@ struct SearchSuggestionsView: View {
                 }
                 .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
                 .accessibilityLabel("Search suggestions")
+                .ternTransition(.disclosure)
             }
         }
+        .ternAnimation(value: mailbox.search.isActive && !suggestions.isEmpty)
         .task(id: mailbox.search.text + mailbox.presentedAccounts.map(\.account.id).joined(separator: ":")) {
             suggestions = await mailbox.searchSuggestions(for: mailbox.search.text)
         }

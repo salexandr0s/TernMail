@@ -69,6 +69,7 @@ struct MailOrganizationCategoryRow: View {
 
             if isExpanded {
                 Divider()
+                    .ternTransition(.fade)
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                     exampleList
                     Divider()
@@ -83,10 +84,11 @@ struct MailOrganizationCategoryRow: View {
                     }
                 }
                 .padding(Tokens.Space.s4)
+                .ternTransition(.disclosure)
             }
         }
         .ternSurface()
-        .ternAnimation(value: isExpanded)
+        .ternAnimation(value: isExpanded, duration: Tokens.Motion.slow)
         .accessibilityElement(children: .contain)
     }
 
@@ -242,5 +244,6 @@ struct MailOrganizationCategoryRow: View {
                 .font(.callout)
             }
         }
+        .ternAnimation(value: visibleExampleCount, duration: Tokens.Motion.slow)
     }
 }

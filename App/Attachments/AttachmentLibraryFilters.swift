@@ -74,8 +74,10 @@ struct AttachmentLibraryFilters: View {
             if isOn.wrappedValue {
                 DatePicker(title, selection: day, displayedComponents: .date)
                     .labelsHidden()
+                    .ternTransition(.fade)
             }
         }
+        .ternAnimation(value: isOn.wrappedValue)
     }
 
     private func labelTitle(_ label: LabelRecord) -> String {
@@ -157,6 +159,7 @@ struct AttachmentActiveFilters: View {
                             .buttonStyle(.plain)
                             .help("Remove \(chip.title)")
                             .accessibilityLabel("Remove filter: \(chip.title)")
+                            .ternTransition(.fade)
                         }
                     }
                     .padding(.vertical, Tokens.Space.s1)
@@ -166,6 +169,7 @@ struct AttachmentActiveFilters: View {
                 Button("Clear all") { model.clearFilters() }
                     .buttonStyle(.link).font(.caption).fixedSize()
             }
+            .ternTransition(.disclosure)
         }
     }
 }

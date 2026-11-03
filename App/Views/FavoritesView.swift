@@ -47,6 +47,7 @@ struct FavoritesView: View {
                     .contentShape(Rectangle())
                     .ternHover()
                     .opacity(showsHeaderControls ? 1 : 0)
+                    .ternAnimation(value: showsHeaderControls, duration: Tokens.Motion.fast)
             }
             .buttonStyle(.borderless)
             .focusable()
@@ -68,6 +69,7 @@ struct FavoritesView: View {
                     .ternHover()
                     .opacity(showsHeaderControls ? 1 : 0)
                     .ternAnimation(value: isCollapsed)
+                    .ternAnimation(value: showsHeaderControls, duration: Tokens.Motion.fast)
             }
             .buttonStyle(.borderless)
             .focusable()

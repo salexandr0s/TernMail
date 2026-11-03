@@ -34,6 +34,8 @@ struct GoogleTaskEditor: View {
             else { modalEditor }
         }
         .task(id: context.id) { focusedField = .title }
+        .ternAnimation(value: session.error != nil)
+        .ternAnimation(value: session.needsConflictReview)
     }
 
     private var inlineEditor: some View {
@@ -190,20 +192,24 @@ struct GoogleTaskEditor: View {
                 DatePicker("Due", selection: $session.dueDate, displayedComponents: .date)
                     .datePickerStyle(.field).labelsHidden()
                     .accessibilityLabel("Task due date")
+                    .ternTransition(.fade)
             }
         }
         .disabled(session.isSaving)
+        .ternAnimation(value: session.hasDueDate)
     }
 
     @ViewBuilder private var errorMessage: some View {
         if session.needsConflictReview {
             GoogleTaskConflictReview(session: session)
+                .ternTransition(.disclosure)
         }
         if let error = session.error {
             Label(error, systemImage: "exclamationmark.circle")
                 .font(isInline ? .caption : .callout).foregroundStyle(Tokens.Status.error)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("google-task-editor-error")
+                .ternTransition(.disclosure)
         }
     }
 

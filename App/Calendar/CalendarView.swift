@@ -42,14 +42,10 @@ struct CalendarView: View {
     var body: some View {
         VStack(spacing: 0) {
             // One split view at every width keeps the grid mounted while the sidebar changes.
-            HSplitView {
-                if sidebarState.showsSidebar {
-                    sidebar.frame(minWidth: Tokens.Layout.sidebarWidth,
-                                  idealWidth: Tokens.Calendar.sidebarWidth, maxWidth: Tokens.Layout.sidebarMaxWidth)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
-                            if width > 0 { sidebarState.width = width }
-                        }
-                }
+            TernSidebarSplit(isPresented: sidebarState.showsSidebar, sidebarWidth: $sidebarState.width,
+                             minimumWidth: Tokens.Layout.sidebarWidth, maximumWidth: Tokens.Layout.sidebarMaxWidth) {
+                sidebar
+            } detail: {
                 calendarPane(compact: sidebarState.isCompact)
                     .safeAreaInset(edge: .bottom, spacing: 0) { footer }
                     .frame(minWidth: sidebarState.isCompact ? nil : Tokens.Calendar.contentMinWidth)

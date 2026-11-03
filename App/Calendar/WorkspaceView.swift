@@ -29,35 +29,53 @@ struct WorkspaceView: View {
                 .background {
                     MailWorkspacePerformance(mailbox: mailbox, isActive: app.destination == .mail)
                 }
-            HStack(spacing: 0) {
-                CalendarView(model: app.calendar, isActive: app.destination == .calendar, sidebarState: calendarSidebar)
-                if let calendarPanel {
-                    Rectangle()
-                        .fill(Tokens.Surface.border)
-                        .frame(width: Tokens.Border.hairline)
-                        .overlay {
-                            AssistantSidebarResizeHandle(width: CGFloat(preferredAssistantWidth), onResize: resizeAssistant)
-                                .frame(width: Tokens.Space.s3)
-                                .accessibilityElement()
-                                .accessibilityLabel(calendarPanel == .tasks ? "Tasks width" : "Assistant width")
-                                .accessibilityValue("\(Int(preferredAssistantWidth)) points")
-                                .accessibilityAdjustableAction { direction in
-                                    resizeAssistant(CGFloat(preferredAssistantWidth) + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    CalendarView(model: app.calendar, isActive: app.destination == .calendar, sidebarState: calendarSidebar)
+                        .frame(width: max(0, geometry.size.width - (calendarPanel == nil ? 0 : CGFloat(preferredAssistantWidth) + Tokens.Border.hairline)),
+                               alignment: .leading)
+                        .clipped()
+                    HStack(spacing: 0) {
+                        if let calendarPanel {
+                            HStack(spacing: 0) {
+                                Rectangle()
+                                    .fill(Tokens.Surface.border)
+                                    .frame(width: Tokens.Border.hairline)
+                                    .overlay {
+                                        AssistantSidebarResizeHandle(width: CGFloat(preferredAssistantWidth), onResize: resizeAssistant)
+                                            .frame(width: Tokens.Space.s3)
+                                            .accessibilityElement()
+                                            .accessibilityLabel(calendarPanel == .tasks ? "Tasks width" : "Assistant width")
+                                            .accessibilityValue("\(Int(preferredAssistantWidth)) points")
+                                            .accessibilityAdjustableAction { direction in
+                                                resizeAssistant(CGFloat(preferredAssistantWidth) + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                                            }
+                                    }
+                                ZStack {
+                                    if calendarPanel == .tasks {
+                                        GoogleTasksSidebar(model: app.tasks, onClose: { self.calendarPanel = nil },
+                                            isActive: app.destination == .calendar)
+                                            .ternTransition(.fade)
+                                    } else {
+                                        AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
+                                            onExpand: { openAssistant(fullScreen: true) },
+                                            onDetach: { openAssistant(fullScreen: false) },
+                                            onClose: { self.calendarPanel = nil })
+                                            .ternTransition(.fade)
+                                    }
                                 }
-                        }
-                    Group {
-                        if calendarPanel == .tasks {
-                            GoogleTasksSidebar(model: app.tasks, onClose: { self.calendarPanel = nil },
-                                isActive: app.destination == .calendar)
-                        } else {
-                            AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
-                                onExpand: { openAssistant(fullScreen: true) },
-                                onDetach: { openAssistant(fullScreen: false) },
-                                onClose: { self.calendarPanel = nil })
+                                .frame(width: CGFloat(preferredAssistantWidth))
+                                .ternAnimation(value: calendarPanel, duration: Tokens.Motion.fast)
+                            }
+                            .ternTransition(.panel(edge: .trailing))
                         }
                     }
-                    .frame(width: CGFloat(preferredAssistantWidth))
+                    .allowsHitTesting(calendarPanel != nil)
+                    .accessibilityHidden(calendarPanel == nil)
                 }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .ternAnimation(value: calendarPanel != nil, duration: Tokens.Motion.slow)
+                .clipped()
             }
             .opacity(app.destination == .calendar ? 1 : 0)
             .allowsHitTesting(app.destination == .calendar)

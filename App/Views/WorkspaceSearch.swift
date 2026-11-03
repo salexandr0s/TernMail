@@ -139,12 +139,14 @@ struct WorkspaceSearchItem: View {
     @State private var openSource: WorkspaceSearchFocusRequest.Source?
 
     private var isOpen: Bool { openSource == focusRequest.source }
+    private var showsField: Bool { !canFold || !text.isEmpty || isOpen }
 
     var body: some View {
-        Group {
-            if canFold && text.isEmpty && !isOpen {
+        ZStack(alignment: .trailing) {
+            if !showsField {
                 Button(placeholder, systemImage: "magnifyingglass") { openSource = focusRequest.source }
                     .labelStyle(.iconOnly)
+                    .ternTransition(.fade)
                     // ⌥⌘F and Find open the field when it's folded.
                     .onChange(of: focusRequest) { previous, request in
                         if request.isNewRequest(after: previous) { openSource = request.source }
@@ -158,6 +160,16 @@ struct WorkspaceSearchItem: View {
                     }
                 )
                 .frame(width: width)
+                .ternTransition(.fade)
+            }
+        }
+        .ternAnimation(value: showsField)
+        .transaction { transaction in
+            // Switching search owners must retire the old native editor at
+            // once, so a returning Find request can create and focus its field.
+            if let openSource, openSource != focusRequest.source {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
             }
         }
         .onChange(of: focusRequest.source) { _, _ in

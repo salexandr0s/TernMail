@@ -15,8 +15,13 @@ struct ComposeSignatureView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Tokens.Space.s2) {
                 Button { isExpanded.toggle() } label: {
-                    Label("Signature", systemImage: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.medium))
+                    Label {
+                        Text("Signature")
+                    } icon: {
+                        Image(systemName: "chevron.right")
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .font(.caption.weight(.medium))
                 }
                 .buttonStyle(.plain)
                 .disabled(html == nil)
@@ -55,11 +60,12 @@ struct ComposeSignatureView: View {
                 .frame(height: min(height, Tokens.Layout.quoteMaxHeight))
                 .padding(.horizontal, Tokens.Space.s5)
                 .padding(.bottom, Tokens.Space.s2)
+                .ternTransition(.disclosure)
             }
         }
         .background(Tokens.Surface.muted)
         .overlay(alignment: .top) { Divider() }
-        .ternAnimation(value: isExpanded)
+        .ternAnimation(value: isExpanded && html != nil, duration: Tokens.Motion.slow)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Message signature")
     }

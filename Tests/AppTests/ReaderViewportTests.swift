@@ -250,13 +250,13 @@ import WebKit
         guard let view else { return [] }
         return ((view as? ContentSizedWebView).map { [$0] } ?? []) + view.subviews.flatMap { messageViews(in: $0) }
     }
-    private func waitUntil(_ condition: () -> Bool) async throws {
-        try await waitUntilAsync { condition() }
+    private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
+        try await waitUntilAsync(sourceLocation: sourceLocation) { condition() }
     }
-    private func waitUntilAsync(_ condition: () async throws -> Bool) async throws {
+    private func waitUntilAsync(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while try await !condition() {
-            try #require(ContinuousClock.now < deadline, "Hosted reader did not reach its expected state")
+            try #require(ContinuousClock.now < deadline, "Hosted reader did not reach its expected state", sourceLocation: sourceLocation)
             try await Task.sleep(for: .milliseconds(10))
         }
     }
