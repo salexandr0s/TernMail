@@ -239,6 +239,10 @@ private struct MessageListRows: View, Equatable {
     var body: some View {
         @Bindable var model = mailbox
         let rows = mailbox.listItems
+        // Native separators belong to the preceding row's bottom edge.
+        let rowsBeforeUnread = Set(zip(rows, rows.dropFirst()).compactMap { row, next in
+            next.thread.isUnread ? row.id : nil
+        })
         let isSearching = mailbox.search.isActive
         let accountMarks = compactAccountMarks
         let accountColors = AccountAppearance.colorIndexes(
@@ -254,6 +258,7 @@ private struct MessageListRows: View, Equatable {
                 item: row, mailbox: mailbox,
                 accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
             )
+                .listRowSeparator(row.thread.isUnread || rowsBeforeUnread.contains(row.id) ? .hidden : .automatic, edges: .bottom)
                 .tag(row.id)
                 .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
                 // Only the first targeted row anchors the snooze popover.

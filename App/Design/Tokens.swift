@@ -45,6 +45,7 @@ enum Tokens {
     enum MessageList {
         static let unreadWeight: Font.Weight = .bold
         static let readWeight: Font.Weight = .regular
+        static let separator = Surface.border.opacity(0.6)
 
         static func backgroundTint(isUnread: Bool, colorScheme: ColorScheme) -> Color {
             Color.primary.opacity(isUnread == (colorScheme == .dark) ? Opacity.pressed : 0)

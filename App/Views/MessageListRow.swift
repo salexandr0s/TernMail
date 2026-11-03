@@ -34,6 +34,7 @@ struct MessageListRow: View {
         #endif
         MessageListVisualRow(item: item, mailbox: mailbox, selected: isSelected,
             dateKey: ThreadDate.short(item.thread.lastDate), accountMark: accountMark, accountColor: accountColor)
+            .listRowSeparatorTint(Tokens.MessageList.separator)
             .background {
                 if NavigationPerformance.rowFeedbackDiagnosticsEnabled {
                     RowSelectionFeedbackDiagnostic(mailbox: mailbox, row: item.id)
