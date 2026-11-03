@@ -5,7 +5,6 @@ import argparse
 import json
 import pathlib
 import plistlib
-import shutil
 import subprocess
 import uuid
 
@@ -15,6 +14,13 @@ def run(command: list[str], log: pathlib.Path, root: pathlib.Path) -> None:
         result = subprocess.run(command, cwd=root, stdout=output, stderr=subprocess.STDOUT)
     if result.returncode:
         raise SystemExit(f"Capture stopped. See {log}")
+
+
+def export_srgb(source: pathlib.Path, destination: pathlib.Path,
+                log: pathlib.Path, root: pathlib.Path) -> None:
+    # Convert colors as well as replacing the display profile, which can identify the monitor.
+    run(["/usr/bin/sips", "--matchTo", "/System/Library/ColorSync/Profiles/sRGB Profile.icc",
+         str(source), "--out", str(destination)], log, root)
 
 
 def main() -> None:
@@ -69,7 +75,7 @@ def main() -> None:
     output = root / "docs" / "screenshots"
     output.mkdir(parents=True, exist_ok=True)
     for name, source in sorted(images.items()):
-        shutil.copyfile(source, output / f"{name}.png")
+        export_srgb(source, output / f"{name}.png", derived / f"color-{name}-{run_id}.log", root)
     print("Saved mail-light.png, mail-dark.png, and calendar.png to docs/screenshots.")
     print("Review all three images before committing them.")
 
