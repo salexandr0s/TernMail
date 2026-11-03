@@ -108,7 +108,7 @@ struct GoogleTaskRow: View {
             CalendarDateTile(
                 month: date?.formatted(.dateTime.month(.abbreviated)).uppercased(),
                 day: date?.formatted(.dateTime.day()),
-                size: Tokens.Space.s10,
+                size: Tokens.Space.s8,
                 isMuted: task.isCompleted
             )
                 .overlay(alignment: .topTrailing) {
