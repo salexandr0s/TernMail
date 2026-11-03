@@ -1,5 +1,4 @@
 import MailStore
-import MessageContent
 import SwiftUI
 
 struct AnalyticsCorrespondentsView: View {
@@ -89,74 +88,6 @@ struct AnalyticsCorrespondentsView: View {
             Text(value, format: .number).foregroundStyle(.secondary)
         }
         .font(.caption2)
-    }
-}
-
-struct AnalyticsRecentMessagesView: View {
-    let messages: [MailAnalyticsMessage]
-    let mailbox: MailboxModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            AnalyticsListHeading(title: "Recent emails", subtitle: "Latest in this period", count: min(messages.count, 10))
-            if messages.isEmpty {
-                AnalyticsListEmptyState(symbol: "tray", title: "No email in this period",
-                    detail: "Choose another date range to see your messages.")
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(messages.prefix(10)) { message in
-                        AnalyticsConversationButton(link: .init(accountID: message.accountID,
-                            threadID: message.threadID, messageID: message.messageID), mailbox: mailbox) {
-                            messageRow(message)
-                        }
-                        .buttonStyle(.plain)
-                        .ternHover()
-                        .help("\(message.subject.isEmpty ? "No subject" : message.subject)\n\(message.sender)\n\(message.date.formatted(date: .complete, time: .shortened))")
-                        if message.id != messages.prefix(10).last?.id {
-                            Divider().opacity(Tokens.Opacity.outline)
-                                .padding(.leading, Tokens.Space.s4 + Tokens.Space.s2 + Tokens.Space.s1)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(Tokens.Space.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .analyticsPanel()
-    }
-
-    private func messageRow(_ message: MailAnalyticsMessage) -> some View {
-        let sent = message.direction == .sent
-        let color = sent ? Tokens.Analytics.sent : Tokens.Analytics.received
-        let sender = EmailAddress.parseList(message.sender).first
-        let name = sender?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let displayName = name.isEmpty ? (sender?.address ?? message.sender) : name
-        let dateFormat: Date.FormatStyle = Calendar.current.isDate(message.date, equalTo: .now, toGranularity: .year)
-            ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year()
-        return HStack(alignment: .top, spacing: Tokens.Space.s2) {
-            Image(systemName: sent ? "arrow.up.right" : "arrow.down.left")
-                .font(.callout.weight(.medium)).foregroundStyle(color)
-                .frame(width: Tokens.Space.s4, height: Tokens.Space.s4)
-                .accessibilityLabel(sent ? "Sent" : "Received")
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
-                    Text(displayName).font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
-                        .help(message.sender).accessibilityLabel(message.sender)
-                    Spacer(minLength: 0)
-                    Text(message.date, format: dateFormat)
-                        .font(.caption).foregroundStyle(.secondary).fixedSize()
-                        .accessibilityLabel(message.date.formatted(date: .complete, time: .shortened))
-                }
-                Text(message.subject.isEmpty ? "No subject" : message.subject)
-                    .font(.callout.weight(.medium)).foregroundStyle(.primary)
-                    .lineLimit(1).multilineTextAlignment(.leading)
-            }
-        }
-        .padding(.vertical, Tokens.Space.s1_5)
-        .padding(.horizontal, Tokens.Space.s1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
     }
 }
 

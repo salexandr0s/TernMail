@@ -192,17 +192,13 @@ private struct MailAnalyticsDashboard: View {
                         AnalyticsMilestonesView(snapshot: snapshot)
                         if geometry.size.width >= Tokens.Analytics.twoColumnWidth {
                             HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                                VStack(spacing: Tokens.Space.s3) {
-                                    people(snapshot: snapshot)
-                                    receipts
-                                }
-                                .frame(maxWidth: .infinity)
-                                AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
+                                people(snapshot: snapshot)
+                                    .frame(maxWidth: .infinity)
+                                receipts
                                     .frame(maxWidth: .infinity)
                             }
                         } else {
                             people(snapshot: snapshot)
-                            AnalyticsRecentMessagesView(messages: snapshot.recentMessages, mailbox: mailbox)
                             receipts
                         }
                         AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)

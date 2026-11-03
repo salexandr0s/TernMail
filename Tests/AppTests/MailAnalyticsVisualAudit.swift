@@ -54,13 +54,6 @@ import Testing
                 address: "alex@example.invalid", name: "Alex Morgan with a longer display name"), mailbox: mailbox),
             size: NSSize(width: Tokens.Analytics.minWidth, height: Tokens.Analytics.minHeight),
             scheme: .dark, waitFor: "Emails over time", name: "sender-analytics-minimum", captureBottom: true)
-        let previousYear = try #require(Calendar.current.date(byAdding: .year, value: -1, to: now))
-        let olderMessage = MailAnalyticsMessage(accountID: account.id, messageID: "older", threadID: "t0",
-            date: previousYear, subject: "Planning the next project phase",
-            sender: "Alex Morgan <alex@example.invalid>", direction: .received)
-        try await capture(AnalyticsRecentMessagesView(messages: [olderMessage], mailbox: mailbox)
-            .padding(Tokens.Space.s5), size: NSSize(width: 400, height: 220), scheme: .light,
-            waitFor: "Planning the next project phase", name: "recent-email-previous-year", captureBottom: false)
         let snapshot = try await cache.mailAnalytics(query: .init(accountIDs: [account.id], period: .year, now: now))
         let largeSnapshot = MailAnalyticsSnapshot(sentCount: snapshot.sentCount * 50_000,
             receivedCount: snapshot.receivedCount * 50_000, threadCount: snapshot.threadCount * 50_000,
