@@ -2,6 +2,9 @@ import SwiftUI
 
 struct CalendarScheduleView: View {
     @Environment(\.calendarPresentation) private var presentation
+    @Environment(\.calendarIdentities) private var identities
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
+    @Environment(\.isEnabled) private var isEnabled
     let date: Date
     let calendar: Calendar
     let events: [CalendarDisplayEvent]
@@ -49,9 +52,9 @@ struct CalendarScheduleView: View {
                     }
                 }
                 .listStyle(.inset)
-                .onDeleteCommand { if let selected, selected.canEdit { delete(selected) } }
+                .onDeleteCommand { if isEnabled, let selected, selected.canEdit { delete(selected) } }
                 .onKeyPress(.return) {
-                    guard let selected else { return .ignored }
+                    guard isEnabled, let selected else { return .ignored }
                     edit(selected)
                     return .handled
                 }
@@ -68,12 +71,18 @@ struct CalendarScheduleView: View {
     }
 
     private func row(_ event: CalendarDisplayEvent, on day: Date) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s3) {
+        let calendarTitle = identities.title(for: event.calendarKey)
+        let description = eventDescription(event, calendarTitle: calendarTitle)
+        return HStack(alignment: .top, spacing: Tokens.Space.s3) {
             Text(timeLabel(event, on: day)).font(.callout).monospacedDigit()
                 .frame(width: Tokens.Space.s16 + Tokens.Space.s12, alignment: .leading)
             Capsule().fill(event.color).frame(width: Tokens.Space.s1, height: Tokens.Space.s8)
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text(event.title).font(.headline)
+                if differentiate {
+                    Text(calendarTitle).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let location = event.event.location, !location.isEmpty {
                     Label(location, systemImage: "mappin.and.ellipse").font(.caption).foregroundStyle(.secondary)
                 }
@@ -87,11 +96,24 @@ struct CalendarScheduleView: View {
         .contentShape(Rectangle())
         .ternHover()
         .draggable(CalendarEventTransfer(event))
-        .onTapGesture(count: 2) { edit(event) }
+        .onTapGesture(count: 2) { if isEnabled { edit(event) } }
         .contextMenu { CalendarEventMenuItems(event: event, edit: edit, duplicate: duplicate, delete: delete) }
+        .help(description)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(description)
         .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { edit(event) }
+        .accessibilityAction { if isEnabled { edit(event) } }
+    }
+
+    private func eventDescription(_ event: CalendarDisplayEvent, calendarTitle: String) -> String {
+        let dateStyle: Date.FormatStyle = event.isAllDay ? .dateTime.month(.wide).day().year() : .dateTime.month(.wide).day().year().hour().minute()
+        let start = CalendarLayout.format(event.start, style: dateStyle, calendar: calendar)
+        let end = CalendarLayout.format(event.end, style: dateStyle, calendar: calendar)
+        var parts = [event.title, calendarTitle, event.isAllDay ? String(localized: "\(start), all day") : "\(start) – \(end)"]
+        if let location = event.event.location, !location.isEmpty { parts.append(location) }
+        if event.isPending { parts.append(String(localized: "Pending sync")) }
+        if event.isRecurring { parts.append(String(localized: "Repeating event")) }
+        return parts.joined(separator: ", ")
     }
 
     private func timeLabel(_ event: CalendarDisplayEvent, on day: Date) -> String {

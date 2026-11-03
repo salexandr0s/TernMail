@@ -38,6 +38,7 @@ struct MainView: View {
     var calendarPanel: WorkspacePanel?
     var onCalendarPanelToggle: ((WorkspacePanel) -> Void)?
     var calendarSidebarState: CalendarSidebarState?
+    var isCalendarUtilityCompact = false
 
     private var showsOutbox: Bool {
         mailbox.selectedLabelID == MailboxModel.outboxID && !mailbox.search.isActive
@@ -52,7 +53,7 @@ struct MainView: View {
 
     /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
     private var sidebarToggle: SidebarToggle? {
-        guard isActive else { return calendarSidebarState?.sidebarToggle }
+        guard isActive else { return isCalendarUtilityCompact ? nil : calendarSidebarState?.sidebarToggle }
         if showsLibrary { return libraryToolbar.sidebarToggle }
         return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
     }
@@ -108,11 +109,11 @@ struct MainView: View {
         }
     }
 
-    var body: some View {
+    private var workspaceLayout: some View {
         // Snapshot Mail before the new destination changes native column constraints.
         let _ = paneSizing.setToolbarSidebarWidth(toolbarSidebarWidth)
         let contentTopInset = toolbarInset.top
-        GeometryReader { geometry in
+        return GeometryReader { geometry in
             let layout = AssistantSidebarLayout(availableWidth: geometry.size.width,
                 preferredWidth: CGFloat(preferredAssistantWidth), isPresented: showsPanel)
             HStack(spacing: 0) {
@@ -175,6 +176,10 @@ struct MainView: View {
                 toolbarInset.refresh()
             }
         }
+    }
+
+    private var workspaceScene: some View {
+        workspaceLayout
         .background {
             MailShortcutContext(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID,
                 perform: perform)
@@ -189,6 +194,11 @@ struct MainView: View {
         .focusedSceneValue(\.mailboxModel, focusedMailbox)
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
+        .focusedValue(\.calendarWorkspaceHasFocus, !isActive)
+    }
+
+    private var workspaceLifecycle: some View {
+        workspaceScene
         .onAppear {
             mailbox.undoManager = undoManager
             if let stored = NavigationSplitViewVisibility(storageValue: storedColumnVisibility) {
@@ -216,6 +226,10 @@ struct MainView: View {
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
         .modifier(MainMailFeatures(mailbox: mailbox, libraryToolbar: libraryToolbar))
+    }
+
+    var body: some View {
+        workspaceLifecycle
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { workspaceWidth = $0 }
         .toolbar(id: toolbarIdentifier) {
             WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
@@ -225,7 +239,8 @@ struct MainView: View {
                 isAssistantAvailable: section != .attachments && (isActive || onCalendarPanelToggle != nil),
                 onToggleAssistant: { if isActive { togglePanel(.assistant) } else { onCalendarPanelToggle?(.assistant) } },
                 isTasksPresented: (isActive ? utilityPanel : calendarPanel) == .tasks,
-                onToggleTasks: { if isActive { togglePanel(.tasks) } else { onCalendarPanelToggle?(.tasks) } })
+                onToggleTasks: { if isActive { togglePanel(.tasks) } else { onCalendarPanelToggle?(.tasks) } },
+                isCalendarUtilityCompact: !isActive && isCalendarUtilityCompact)
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar(removing: workspaceWidth < Tokens.Layout.toolbarTitleFoldWidth ? .title : nil)
@@ -236,7 +251,7 @@ struct MainView: View {
     /// The retained Mail split owns the shared toolbar. Each visible destination
     /// supplies its sidebar geometry without changing Mail's saved layout.
     private var toolbarSidebarWidth: CGFloat? {
-        if !isActive { return calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 } }
+        if !isActive { return isCalendarUtilityCompact ? 0 : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 } }
         if showsLibrary { return libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0 }
         return nil
     }

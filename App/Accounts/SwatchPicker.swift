@@ -17,8 +17,15 @@ struct SwatchPicker: View {
                         .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
                         .overlay {
                             if isSelected {
-                                Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.white)
+                                Image(systemName: "checkmark")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.primary)
+                                    .frame(width: Tokens.Space.s4, height: Tokens.Space.s4)
+                                    .background(Tokens.Surface.primary, in: Circle())
                             }
+                        }
+                        .overlay {
+                            Circle().strokeBorder(isSelected ? Color.primary : .clear, lineWidth: Tokens.Border.hairline)
                         }
                         .frame(width: targetSize, height: targetSize)
                         .contentShape(Rectangle())

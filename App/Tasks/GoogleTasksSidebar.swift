@@ -6,6 +6,7 @@ struct GoogleTasksSidebar: View {
     @Bindable var model: GoogleTasksModel
     var onClose: (() -> Void)? = nil
     var isActive = true
+    var onCloseAvailabilityChange: (Bool) -> Void = { _ in }
     @State private var newTitle = ""
     @State private var showsCompleted = false
     @State private var editor: GoogleTaskEditorContext?
@@ -57,6 +58,9 @@ struct GoogleTasksSidebar: View {
         .background(Tokens.Surface.muted)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-tasks-sidebar")
+        .onChange(of: inlineEditor != nil, initial: true) { _, hasInlineEditor in
+            onCloseAvailabilityChange(!hasInlineEditor)
+        }
         .task(id: isActive) {
             guard isActive else { return }
             model.resume()
@@ -277,9 +281,11 @@ struct GoogleTasksSidebar: View {
                     }
                 }
                 ForEach(open) { task in
-                    row(task)
-                    if task.id != lastOpenID {
-                        Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
+                    VStack(spacing: 0) {
+                        row(task)
+                        if task.id != lastOpenID {
+                            Divider().padding(.leading, Tokens.Space.s12).padding(.trailing, Tokens.Space.s3)
+                        }
                     }
                 }
             }
@@ -310,10 +316,14 @@ struct GoogleTasksSidebar: View {
                 .accessibilityIdentifier("google-tasks-completed-toggle")
                 .disabled(inlineEditor?.context.task?.isCompleted == true)
                 if showsCompleted {
-                    LazyVStack(spacing: 0) { ForEach(completed) { row($0) } }
-                        .padding(Tokens.Space.s1)
-                        .ternSurface()
-                        .ternTransition(.disclosure)
+                    LazyVStack(spacing: 0) {
+                        ForEach(completed) { task in
+                            VStack(spacing: 0) { row(task) }
+                        }
+                    }
+                    .padding(Tokens.Space.s1)
+                    .ternSurface()
+                    .ternTransition(.disclosure)
                 }
             }
             .ternAnimation(value: showsCompleted, duration: Tokens.Motion.slow)

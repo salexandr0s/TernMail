@@ -13,99 +13,114 @@ struct WorkspaceView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var calendarPanel: WorkspacePanel?
     @State private var calendarSidebar = CalendarSidebarState()
+    @State private var tasksAllowClosing = true
+    @FocusState private var compactBackFocused: Bool
+    @FocusedValue(\.calendarWorkspaceHasFocus) private var calendarHasFocus
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     let mailbox: MailboxModel
 
     var body: some View {
-        ZStack {
-            MainView(mailbox: mailbox, isActive: app.destination == .mail,
-                calendarPanel: calendarPanel,
-                onCalendarPanelToggle: { calendarPanel = calendarPanel == $0 ? nil : $0 }, calendarSidebarState: calendarSidebar)
-                .opacity(app.destination == .mail ? 1 : 0)
-                .allowsHitTesting(app.destination == .mail)
-                .accessibilityHidden(app.destination != .mail)
-                .zIndex(app.destination == .mail ? 1 : 0)
-                .background {
-                    MailWorkspacePerformance(mailbox: mailbox, isActive: app.destination == .mail)
-                }
-            GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    CalendarView(model: app.calendar, isActive: app.destination == .calendar, sidebarState: calendarSidebar)
-                        .frame(width: max(0, geometry.size.width - (calendarPanel == nil ? 0 : CGFloat(preferredAssistantWidth) + Tokens.Border.hairline)),
-                               alignment: .leading)
-                        .clipped()
-                    HStack(spacing: 0) {
-                        if let calendarPanel {
-                            HStack(spacing: 0) {
-                                Rectangle()
-                                    .fill(Tokens.Surface.border)
-                                    .frame(width: Tokens.Border.hairline)
-                                    .overlay {
-                                        AssistantSidebarResizeHandle(width: CGFloat(preferredAssistantWidth), onResize: resizeAssistant)
-                                            .frame(width: Tokens.Space.s3)
-                                            .accessibilityElement()
-                                            .accessibilityLabel(calendarPanel == .tasks ? "Tasks width" : "Assistant width")
-                                            .accessibilityValue("\(Int(preferredAssistantWidth)) points")
-                                            .accessibilityAdjustableAction { direction in
-                                                resizeAssistant(CGFloat(preferredAssistantWidth) + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
-                                            }
-                                    }
-                                ZStack {
-                                    if calendarPanel == .tasks {
-                                        GoogleTasksSidebar(model: app.tasks, onClose: { self.calendarPanel = nil },
-                                            isActive: app.destination == .calendar)
-                                            .ternTransition(.fade)
-                                    } else {
-                                        AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
-                                            onExpand: { openAssistant(fullScreen: true) },
-                                            onDetach: { openAssistant(fullScreen: false) },
-                                            onClose: { self.calendarPanel = nil })
-                                            .ternTransition(.fade)
-                                    }
-                                }
-                                .frame(width: CGFloat(preferredAssistantWidth))
-                                .ternAnimation(value: calendarPanel, duration: Tokens.Motion.fast)
-                            }
-                            .ternTransition(.panel(edge: .trailing))
-                        }
+        GeometryReader { geometry in
+            let layout = CalendarUtilityLayout(availableWidth: geometry.size.width,
+                preferredWidth: CGFloat(preferredAssistantWidth), isPresented: calendarPanel != nil)
+            ZStack {
+                MainView(mailbox: mailbox, isActive: app.destination == .mail,
+                    calendarPanel: calendarPanel,
+                    onCalendarPanelToggle: toggleCalendarPanel, calendarSidebarState: calendarSidebar,
+                    isCalendarUtilityCompact: layout.isCompact)
+                    .opacity(app.destination == .mail ? 1 : 0)
+                    .allowsHitTesting(app.destination == .mail)
+                    .accessibilityHidden(app.destination != .mail)
+                    .zIndex(app.destination == .mail ? 1 : 0)
+                    .background {
+                        MailWorkspacePerformance(mailbox: mailbox, isActive: app.destination == .mail)
                     }
-                    .allowsHitTesting(calendarPanel != nil)
-                    .accessibilityHidden(calendarPanel == nil)
+                ZStack(alignment: .topLeading) {
+                    CalendarView(model: app.calendar, isActive: app.destination == .calendar && !layout.isCompact,
+                        sidebarState: calendarSidebar, onDeactivateFocus: {
+                            if layout.isCompact { compactBackFocused = true }
+                        })
+                        .frame(width: layout.calendarWidth, height: geometry.size.height, alignment: .leading)
+                        .clipped()
+                        .opacity(layout.isCompact ? 0 : 1)
+                        .allowsHitTesting(!layout.isCompact)
+                        .accessibilityHidden(layout.isCompact)
+                        .focusedValue(\.calendarWorkspaceHasFocus, true)
+                    if let calendarPanel {
+                        CalendarUtilityPanel(layout: layout, height: geometry.size.height,
+                            title: calendarPanel == .tasks ? "Tasks" : "Assistant",
+                            canClose: calendarPanel != .tasks || tasksAllowClosing,
+                            backFocused: $compactBackFocused, onBack: closeCalendarPanel, onResize: resizeAssistant) {
+                            ZStack {
+                                if calendarPanel == .tasks {
+                                    GoogleTasksSidebar(model: app.tasks, onClose: closeCalendarPanel,
+                                        isActive: app.destination == .calendar,
+                                        onCloseAvailabilityChange: { tasksAllowClosing = $0 })
+                                        .ternTransition(.fade)
+                                } else {
+                                    AssistantView(model: app.assistant, onOpenSource: app.openAssistantSource,
+                                        onExpand: { openAssistant(fullScreen: true) },
+                                        onDetach: { openAssistant(fullScreen: false) }, onClose: closeCalendarPanel)
+                                        .ternTransition(.fade)
+                                }
+                            }
+                            .ternAnimation(value: calendarPanel, duration: Tokens.Motion.fast)
+                        }
+                        .ternTransition(.panel(edge: .trailing))
+                    }
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height)
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 .ternAnimation(value: calendarPanel != nil, duration: Tokens.Motion.slow)
                 .clipped()
+                .opacity(app.destination == .calendar ? 1 : 0)
+                .allowsHitTesting(app.destination == .calendar)
+                .accessibilityHidden(app.destination != .calendar)
+                .zIndex(app.destination == .calendar ? 1 : 0)
+                .background {
+                    CalendarWorkspacePerformance(model: app.calendar, isActive: app.destination == .calendar)
+                }
             }
-            .opacity(app.destination == .calendar ? 1 : 0)
-            .allowsHitTesting(app.destination == .calendar)
-            .accessibilityHidden(app.destination != .calendar)
-            .zIndex(app.destination == .calendar ? 1 : 0)
-            .background {
-                CalendarWorkspacePerformance(model: app.calendar, isActive: app.destination == .calendar)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Tokens.Surface.border)
+                    .frame(height: Tokens.Border.hairline)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .toolbar(removing: .sidebarToggle)
+            .onChange(of: layout.isCompact) { _, compact in
+                if compact, app.destination == .calendar, calendarHasFocus == true {
+                    compactBackFocused = true
+                }
+            }
+            .task { await app.calendar.start() }
+            .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
+                if app.destination == .calendar, request != nil {
+                    if calendarPanel != .tasks { toggleCalendarPanel(.tasks) }
+                    app.didShowTasks()
+                }
+            }
+            .onChange(of: app.destination, initial: true) { _, destination in
+                app.calendar.isVisible = destination == .calendar
+            }
+            .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in
+                Task { await app.calendar.refresh() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                Task { await app.calendar.refresh() }
             }
         }
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Tokens.Surface.border)
-                .frame(height: Tokens.Border.hairline)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-        .toolbar(removing: .sidebarToggle)
-        .task { await app.calendar.start() }
-        .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
-            if app.destination == .calendar, request != nil { calendarPanel = .tasks; app.didShowTasks() }
-        }
-        .onChange(of: app.destination, initial: true) { _, destination in
-            app.calendar.isVisible = destination == .calendar
-        }
-        .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in
-            Task { await app.calendar.refresh() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await app.calendar.refresh() }
-        }
+    }
+
+    private func toggleCalendarPanel(_ panel: WorkspacePanel) {
+        guard calendarPanel != .tasks || tasksAllowClosing else { return }
+        calendarPanel = calendarPanel == panel ? nil : panel
+    }
+
+    private func closeCalendarPanel() {
+        guard calendarPanel != .tasks || tasksAllowClosing else { return }
+        calendarPanel = nil
     }
 
     private func resizeAssistant(_ width: CGFloat) {

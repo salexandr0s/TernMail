@@ -2,6 +2,8 @@ import SwiftUI
 
 struct CalendarTimelineEvent: View {
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
+    @Environment(\.calendarIdentities) private var identities
     let event: CalendarDisplayEvent
     let selected: Bool
     let height: CGFloat
@@ -48,12 +50,17 @@ struct CalendarTimelineEvent: View {
     private var fillColor: Color {
         event.color.opacity(CalendarColor.tint(selected ? Tokens.Calendar.selectedTint : Tokens.Calendar.allDayTint, contrast: contrast))
     }
-    private var accessibilityDescription: String { event.title + ", " + timeDescription }
-    private var tooltip: String { event.title + "\n" + timeDescription }
+    private var calendarTitle: String { identities.title(for: event.calendarKey) }
+    private var showsSeparateCalendarTitle: Bool { differentiate && height >= Tokens.Space.s16 }
+    private var accessibilityDescription: String { String(localized: "\(event.title), \(calendarTitle), \(timeDescription)") }
+    private var tooltip: String { "\(event.title)\n\(calendarTitle)\n\(timeDescription)" }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
             headline
+            if showsSeparateCalendarTitle {
+                Text(calendarTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
             if height >= Tokens.Space.s12 || showsRange { details }
             Spacer(minLength: 0)
         }
@@ -61,7 +68,10 @@ struct CalendarTimelineEvent: View {
 
     private var headline: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s1) {
-            Text(event.title).font(.caption.weight(.semibold)).lineLimit(height >= Tokens.Space.s16 ? 2 : 1)
+            Text(differentiate && !showsSeparateCalendarTitle
+                 ? String(localized: "\(calendarTitle): \(event.title)") : event.title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(height >= Tokens.Space.s16 && (!differentiate || height >= Tokens.Space.s16 + Tokens.Space.s4) ? 2 : 1)
             if event.isPending {
                 Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary)
             }

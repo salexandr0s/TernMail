@@ -14,6 +14,7 @@ struct CalendarView: View {
     @Environment(\.undoManager) private var undoManager
     @Bindable var model: CalendarModel
     var isActive = true
+    var onDeactivateFocus: (() -> Void)?
     @State private var showActivity = false
     @State private var showImport = false
     @State private var importRequest: CalendarImportRequest?
@@ -32,9 +33,11 @@ struct CalendarView: View {
     @State private var heldEvents: [CalendarDisplayEvent] = []
     @FocusState private var hasKeyboardFocus: Bool
 
-    init(model: CalendarModel, isActive: Bool = true, sidebarState: CalendarSidebarState? = nil) {
+    init(model: CalendarModel, isActive: Bool = true, sidebarState: CalendarSidebarState? = nil,
+         onDeactivateFocus: (() -> Void)? = nil) {
         self.model = model
         self.isActive = isActive
+        self.onDeactivateFocus = onDeactivateFocus
         self._sidebarState = State(initialValue: sidebarState ?? CalendarSidebarState())
         self.hasToolbarSidebar = sidebarState != nil
     }
@@ -55,11 +58,15 @@ struct CalendarView: View {
         // the sidebar material, which otherwise extends into the title bar.
         .padding(.top, Tokens.Border.hairline)
         .clipped()
+        .disabled(!isActive)
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: {
             sidebarState.updateCompact($0)
         }
         .onChange(of: isActive) { _, active in
             if !active {
+                if hasKeyboardFocus || showDatePicker { onDeactivateFocus?() }
+                hasKeyboardFocus = false
+                showDatePicker = false
                 sidebarState.isPopoverPresented = false
                 importRequest = nil
             }
@@ -67,6 +74,7 @@ struct CalendarView: View {
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
         .environment(\.calendarPresentation, isActive ? model.presentation : heldPresentation)
+        .environment(\.calendarIdentities, CalendarIdentityPresentation(calendars: model.calendars))
         .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
             MailUserActivity.describeCalendarDay(
                 activity, date: model.date, calendar: model.calendar,
@@ -271,9 +279,11 @@ struct CalendarView: View {
                 .focusable()
                 .focusEffectDisabled()
                 .focused($hasKeyboardFocus)
-                .background(CalendarScrollNavigation(isEnabled: canHandleKeys) { direction in
-                    model.shift(periods: direction)
-                })
+                .background {
+                    CalendarScrollNavigation(isEnabled: canHandleKeys) { direction in
+                        model.shift(periods: direction)
+                    }
+                }
                 .onDeleteCommand { if isActive, let selected, selected.canEdit { requestDelete(selected) } }
                 .onCopyCommand { copyProviders() }
                 .onPasteCommand(of: [.plainText]) { providers in paste(providers) }

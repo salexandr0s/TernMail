@@ -24,6 +24,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     let onToggleAssistant: () -> Void
     var isTasksPresented = false
     var onToggleTasks: () -> Void = {}
+    var isCalendarUtilityCompact = false
 
     private var showsProfile: Bool { section == .mail && accounts?.profiles.isEmpty == false }
     private var compactActions: Bool {
@@ -46,6 +47,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             }
         }
         .customizationBehavior(.disabled)
+        .mailToolbarVisible(!isCalendarUtilityCompact)
         WorkspaceSectionToolbar(section: section, onSelect: onSelect)
         // Retain the existing identifier for saved toolbar configurations.
         ToolbarItem(id: "mail.compose", placement: .navigation) {
@@ -61,6 +63,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             .disabled(section == .calendar && !calendar.calendars.contains(where: \.canWrite))
         }
         .customizationBehavior(.disabled)
+        .mailToolbarVisible(!isCalendarUtilityCompact)
 
         ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(id: "mail.profile", placement: .primaryAction) {
@@ -72,10 +75,11 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
         MailToolbar(mailbox: mailbox, reply: onReply, isCompact: compactActions,
             foldsReplies: width < Tokens.Layout.replyMenuFoldWidth, isVisible: section == .mail)
         // Mail's permanent spaces fall in the open area before other sections.
-        CalendarToolbar(model: calendar).mailToolbarVisible(section == .calendar)
+        CalendarToolbar(model: calendar).mailToolbarVisible(section == .calendar && !isCalendarUtilityCompact)
         AttachmentLibraryToolbar(state: library, isCompact: compactActions, isVisible: section == .attachments)
         WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar, libraryToolbar: library,
             section: section, isFolded: width < Tokens.Layout.searchFoldWidth)
+            .mailToolbarVisible(!isCalendarUtilityCompact)
         WorkspaceAssistantToolbar(isAssistantPresented: isAssistantPresented,
             onToggleAssistant: onToggleAssistant, isAssistantAvailable: isAssistantAvailable,
             isTasksPresented: isTasksPresented, onToggleTasks: onToggleTasks)

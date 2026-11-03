@@ -3,6 +3,8 @@ import SwiftUI
 struct CalendarEventChip: View {
     @Environment(\.timeZone) private var timeZone
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
+    @Environment(\.calendarIdentities) private var identities
     let event: CalendarDisplayEvent
     var selected = false
     var showsTime = true
@@ -18,16 +20,17 @@ struct CalendarEventChip: View {
             .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(outlineColor, lineWidth: Tokens.Border.focus) }
             .contentShape(Rectangle())
             .ternHover(pointer: pointer)
-            .help(event.title + "\n" + dateDescription)
+            .help("\(event.title)\n\(calendarTitle)\n\(dateDescription)")
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(event.title + ", " + dateDescription)
+            .accessibilityLabel(String(localized: "\(event.title), \(calendarTitle), \(dateDescription)"))
             .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var content: some View {
         HStack(spacing: Tokens.Space.s1) {
             Capsule().fill(event.color).frame(width: Tokens.Space.s0_5, height: Tokens.Space.s3)
-            Text(event.title).font(.caption.weight(.medium)).lineLimit(1)
+            Text(differentiate ? String(localized: "\(calendarTitle): \(event.title)") : event.title)
+                .font(.caption.weight(.medium)).lineLimit(1)
             Spacer(minLength: 0)
             if showsTime {
                 Text(event.start, style: .time).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
@@ -43,6 +46,7 @@ struct CalendarEventChip: View {
     }
 
     private var outlineColor: Color { selected ? .accentColor : .clear }
+    private var calendarTitle: String { identities.title(for: event.calendarKey) }
 
     private var dateDescription: String {
         event.start.formatted(Date.FormatStyle(date: .abbreviated, time: event.isAllDay ? .omitted : .shortened, timeZone: timeZone))
