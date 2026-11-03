@@ -48,6 +48,7 @@ final class AssistantModel {
         didSet { emailExtractionRequests.cancelAll() }
     }
     var summaryAccessRevision: Int { calendarExtractionRevision }
+    var summaryScope: AssistantScopeSnapshot { scope(in: context()) }
     var hasCalendarAccess: Bool { context().calendarScope.hasAccess }
     var hasAssistantDataAccess: Bool { !enabledAccountIDs.isEmpty || hasCalendarAccess }
 

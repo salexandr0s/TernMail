@@ -130,7 +130,7 @@ import TernAI
     }
 
     @Test(.timeLimit(.minutes(1))) func hostedSummaryTracksScopeDisclosureAndSourceRevisions() async throws {
-        let provider = SummaryProvider(replies: [nil, nil, nil])
+        let provider = SummaryProvider(replies: [nil, nil, nil, nil])
         let fixture = Fixture(provider: provider)
         await fixture.model.refreshConnection()
         fixture.context.selectedThreads = [.init(accountID: "a", threadID: "other")]
@@ -173,8 +173,23 @@ import TernAI
             try await Task.sleep(for: .milliseconds(50))
         }
         try #require(await provider.requests.count == 1)
+
+        // This scope change cancels the in-flight request even though this
+        // conversation stays ready under the same source/access revision.
+        fixture.context.selectedThreads = [Self.key]
+        fixture.model.selectedScope = .selectedThreads
+        #expect(fixture.model.summaryAvailability(for: Self.key) == .ready)
+        #expect(fixture.model.summaryAccessRevision == accessRevision)
+        #expect(ThreadSummaryModel.revision(for: detail) == sourceRevision)
+        let restartDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while await provider.requests.count < 2, ContinuousClock.now < restartDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(await provider.requests.count == 2,
+            "A ready-to-ready scope change must restart the cancelled summary request")
+        await provider.release(0, response: try Self.response("An obsolete summary."))
         let summary = "A proposal needs review."
-        await provider.release(0, response: try Self.response(summary))
+        await provider.release(1, response: try Self.response(summary))
         let displayDeadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !Self.accessibilityContains(summary, in: controller.view), ContinuousClock.now < displayDeadline {
             try await Task.sleep(for: .milliseconds(50))
@@ -184,7 +199,8 @@ import TernAI
         // disappearance cleanup and discard the newly displayed report.
         try await Task.sleep(for: .milliseconds(400))
         #expect(Self.accessibilityContains(summary, in: controller.view))
-        #expect(await provider.requests.count == 1)
+        #expect(await provider.requests.count == 2)
+        #expect(!Self.accessibilityContains("An obsolete summary.", in: controller.view))
 
         func disclosureValue() -> String? {
             Self.accessibilityElement(in: controller.view) {
@@ -213,9 +229,9 @@ import TernAI
         revised.messages[0].record.snippet = "The proposal has changed."
         controller.rootView = ThreadSummaryView(key: Self.key, detail: revised,
             assistant: fixture.model, isActive: true, onOpenSource: { _ in }).environment(fixture.app)
-        await provider.waitForRequests(2)
+        await provider.waitForRequests(3)
         #expect(!Self.accessibilityContains(summary, in: controller.view), "A source change must hide the previous report")
-        await provider.release(1, response: try Self.response("The revised proposal needs review."))
+        await provider.release(2, response: try Self.response("The revised proposal needs review."))
         try await waitFor { Self.accessibilityContains("The revised proposal needs review.", in: controller.view) }
         #expect(disclosureValue() == "Expanded", "A source revision must keep this conversation's disclosure choice")
 
@@ -228,8 +244,8 @@ import TernAI
         revised.messages[0].record.threadID = nextKey.threadID
         controller.rootView = ThreadSummaryView(key: nextKey, detail: revised,
             assistant: fixture.model, isActive: true, onOpenSource: { _ in }).environment(fixture.app)
-        await provider.waitForRequests(3)
-        await provider.release(2, response: try Self.response("A different conversation.", sourceID: nextSource.id))
+        await provider.waitForRequests(4)
+        await provider.release(3, response: try Self.response("A different conversation.", sourceID: nextSource.id))
         try await waitFor { Self.accessibilityContains("A different conversation.", in: controller.view) }
         #expect(disclosureValue() == "Collapsed", "A new conversation starts compact")
     }

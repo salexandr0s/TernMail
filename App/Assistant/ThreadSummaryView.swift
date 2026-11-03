@@ -25,12 +25,13 @@ struct ThreadSummaryView: View {
         let attempt: Int
         let isActive: Bool
         let availability: ThreadSummaryAvailability
+        let scope: AssistantScopeSnapshot
     }
 
     private var identity: LoadIdentity {
         LoadIdentity(source: .init(revision: ThreadSummaryModel.revision(for: detail),
             access: assistant.summaryAccessRevision), attempt: attempt, isActive: isActive,
-            availability: assistant.summaryAvailability(for: key))
+            availability: assistant.summaryAvailability(for: key), scope: assistant.summaryScope)
     }
 
     var body: some View {
