@@ -1,6 +1,6 @@
 # Design findings: implementation and verification
 
-All fourteen findings are implemented and verified. The final combined app checks passed 179 tests with no failures and one opt-in native preview test skipped. Core MessageContent passed 121 tests, and the separate Calendar utility run passed all three tests. The changes are committed locally in scoped groups.
+The initial implementation addressed all fourteen findings. Its combined app checks passed 179 tests with no failures and one opt-in native preview test skipped. Core MessageContent passed 121 tests, and the separate Calendar utility run passed all three tests. The follow-up review below records two further corrections and verification without the concurrent uncommitted work.
 
 The work uses swiftui-pro and preserves the macOS 26 deployment target, Swift 6 language mode, semantic macOS styles, existing draft/recovery interfaces, authorization boundaries, and delivery deadlines. Validation used Xcode 26.3, Swift 6.2.4, and macOS 27.2. No installation, publication, push, or real-account mutation was performed.
 
@@ -40,3 +40,16 @@ Logs, result bundles, captures and workstream notes are in the [verification dir
 Validation used the final integrated working tree, including preserved concurrent work. The logical commits were not each built separately; generated project variants include only the new files present at each step. No deployment-target increase, installation, push or provider mutation was performed.
 
 Implementation commits: `11777e0` (A), `809f571` (B), `6cd944f` (C), `6d6da2f` (D). The documentation record is committed separately.
+
+## Follow-up review, 3 November 2026
+
+An independent source review checked all fourteen findings and corrected two remaining defects:
+
+- **Summary loading:** changing Assistant scope during generation could cancel the request while leaving the conversation authorized. The reader's load identity now includes the same scope snapshot used by cancellation, so generation restarts. The extended hosted test fails on the previous production code and passes with the fix; it also rejects the obsolete response. Commit: `df5ff46`.
+- **Calendar descriptions:** Schedule and month/all-day chips omitted the last date of multi-day all-day events. They now share Search's inclusive date-range formatter. Timed chips retain both endpoint dates, and the existing date test also covers the autumn daylight-saving transition. Commit: `7e52ba1`.
+
+Verification used an isolated checkout of committed source plus these review changes, excluding the other chat's uncommitted avatar, scrolling, reader and performance work. The [combined hosted run](/Users/developer/GitHub/TernMail/build/Verification/design-review-20261103/ReviewedDesignFindings.xcresult) passed 182 tests across 24 suites, with zero failures and the same one opt-in Quick Look test skipped. [Core MessageContent](/Users/developer/GitHub/TernMail/build/Verification/design-review-20261103/core-message-content.log) passed all 121 tests. The concurrent committed Calendar header change (`de6e5ed`) matches its own passing visual evidence and was included in the successful final build.
+
+Fresh captures were inspected for compact reader content, attachment focus, Calendar utility layout, plain-text measure and minimum Compose sizing. A Compose capture discrepancy prompted a stronger assertion against the actual header viewport after layout, with native caret geometry attached. The [focused Compose run](/Users/developer/GitHub/TernMail/build/Verification/design-review-20261103/ComposeViewport.xcresult) passed all four tests; the final capture confirms the last recipient and insertion caret are visible. No additional Compose production change was needed. These four tests overlap the combined run and are not added to its total.
+
+The final test build, source comparison, regression reproduction, exported captures and result summaries are retained in [the follow-up verification directory](/Users/developer/GitHub/TernMail/build/Verification/design-review-20261103). The earlier limitations concerning live VoiceOver, Full Keyboard Access and existing warnings still apply. No live-account changes or app installation were part of this review.
