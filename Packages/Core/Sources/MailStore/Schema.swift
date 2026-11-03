@@ -591,6 +591,7 @@ enum Schema {
         Milestone5ConfigSchema.register(in: &migrator)
         MessageSnoozeSchema.registerConfig(in: &migrator)
         AccountRemovalSchema.register(in: &migrator)
+        CommitmentSchema.register(in: &migrator)
         return migrator
     }
 }
