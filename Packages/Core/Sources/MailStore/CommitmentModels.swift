@@ -29,6 +29,7 @@ public struct CommitmentRecord: Codable, Sendable, Equatable, FetchableRecord, P
     public var direction: CommitmentDirection
     public var status: CommitmentStatus
     public var dueAt: Date?
+    public var deferredUntil: Date?
     public var acceptanceKey: String?
     public var createdAt: Date
     public var updatedAt: Date
@@ -38,13 +39,13 @@ public struct CommitmentRecord: Codable, Sendable, Equatable, FetchableRecord, P
                 sourceMessageID: String, sourceMessageDate: Date, sourceSubject: String,
                 title: String, ownerName: String? = nil, ownerEmail: String? = nil,
                 direction: CommitmentDirection, status: CommitmentStatus = .open,
-                dueAt: Date? = nil, acceptanceKey: String? = nil,
+                dueAt: Date? = nil, deferredUntil: Date? = nil, acceptanceKey: String? = nil,
                 createdAt: Date = Date(), updatedAt: Date? = nil, revision: Int = 0) {
         self.accountID = accountID; self.id = id; self.threadID = threadID
         self.sourceMessageID = sourceMessageID; self.sourceMessageDate = sourceMessageDate
         self.sourceSubject = sourceSubject; self.title = title
         self.ownerName = ownerName; self.ownerEmail = ownerEmail; self.direction = direction
-        self.status = status; self.dueAt = dueAt; self.acceptanceKey = acceptanceKey
+        self.status = status; self.dueAt = dueAt; self.deferredUntil = deferredUntil; self.acceptanceKey = acceptanceKey
         self.createdAt = createdAt; self.updatedAt = updatedAt ?? createdAt; self.revision = revision
     }
 }

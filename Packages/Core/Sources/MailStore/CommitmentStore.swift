@@ -35,6 +35,7 @@ extension AccountStore {
             saved.revision = 1
             try saved.insert(db)
             try Self.replaceCommitmentReminders(db, record: saved, requested: reminders, existing: [])
+            try Self.replaceAutomaticFollowUpWithManualWork(db, record: saved)
             return try Self.requireCommitmentEntry(db, accountID: saved.accountID, id: saved.id)
         }
     }
@@ -45,12 +46,21 @@ extension AccountStore {
             try Self.requireCommitmentAccount(db, accountID: entry.record.accountID)
             let current = try Self.requireCommitmentEntry(db, accountID: entry.record.accountID, id: entry.record.id)
             guard current.record.revision == expectedRevision else { throw CommitmentStoreError.conflict }
-            guard Self.sameCommitmentSource(current.record, entry.record) else { throw CommitmentStoreError.invalidRecord }
+            guard Self.sameCommitmentSource(current.record, entry.record),
+                  current.record.deferredUntil == entry.record.deferredUntil else { throw CommitmentStoreError.invalidRecord }
             var saved = entry.record
             saved.createdAt = current.record.createdAt
             saved.updatedAt = now
             saved.revision = try Self.nextCommitmentRevision(current.record)
             try Self.validateCommitment(saved)
+            let oldNoReply = current.reminders.first { $0.kind == .noReply }
+            let requestedNoReply = entry.reminders.first { $0.kind == .noReply }
+            let rearmedNoReply = requestedNoReply.map {
+                $0.remindAt != oldNoReply?.remindAt || $0.baselineMessageID != oldNoReply?.baselineMessageID
+                    || $0.baselineDate != oldNoReply?.baselineDate
+            } ?? false
+            try Self.stopManagingAutomaticFollowUp(db, accountID: saved.accountID, commitmentID: saved.id,
+                enableReminder: rearmedNoReply)
             try saved.update(db)
             // Reopening alone does not rearm reminders. An explicit editor choice can add a new one.
             try Self.replaceCommitmentReminders(db, record: saved, requested: entry.reminders, existing: current.reminders,
@@ -69,8 +79,40 @@ extension AccountStore {
             entry.record.updatedAt = now
             entry.record.revision = try Self.nextCommitmentRevision(entry.record)
             try Self.validateCommitment(entry.record)
+            try Self.stopManagingAutomaticFollowUp(db, accountID: accountID, commitmentID: id)
             try entry.record.update(db)
             if status != .open { try Self.deleteCommitmentReminders(db, accountID: accountID, id: id) }
+            return try Self.requireCommitmentEntry(db, accountID: accountID, id: id)
+        }
+    }
+
+    /// Defers attention without changing the deadline or the condition being monitored.
+    public func setCommitmentDeferral(accountID: String, id: String, until: Date?, expectedRevision: Int,
+                                      now: Date = Date()) async throws -> CommitmentEntry {
+        try Task.checkCancellation()
+        return try await writer.write { db in
+            try Task.checkCancellation()
+            try Self.requireCommitmentAccount(db, accountID: accountID)
+            var entry = try Self.requireCommitmentEntry(db, accountID: accountID, id: id)
+            guard entry.record.revision == expectedRevision else { throw CommitmentStoreError.conflict }
+            guard entry.record.status == .open, until.map({ $0.timeIntervalSince1970.isFinite }) ?? true else {
+                throw CommitmentStoreError.invalidRecord
+            }
+            try Self.stopManagingAutomaticFollowUp(db, accountID: accountID, commitmentID: id)
+            guard entry.record.deferredUntil != until else { return entry }
+            entry.record.deferredUntil = until
+            entry.record.updatedAt = now
+            entry.record.revision = try Self.nextCommitmentRevision(entry.record)
+            try Self.validateCommitment(entry.record)
+            try entry.record.update(db)
+            for var reminder in entry.reminders {
+                if reminder.kind == .unresolved || reminder.receivedReplyMessageID == nil {
+                    reminder.deliveredAt = nil
+                    reminder.notificationID = nil
+                }
+                reminder.revision = entry.record.revision
+                try reminder.update(db)
+            }
             return try Self.requireCommitmentEntry(db, accountID: accountID, id: id)
         }
     }
@@ -88,6 +130,7 @@ extension AccountStore {
             try Self.validateCommitment(entry.record)
             try entry.record.update(db)
             var reminder = entry.reminders[index]
+            try Self.stopManagingAutomaticFollowUp(db, accountID: accountID, commitmentID: commitmentID, enableReminder: kind == .noReply)
             reminder.remindAt = until
             reminder.deliveredAt = nil
             reminder.notificationID = nil
@@ -108,6 +151,7 @@ extension AccountStore {
             entry.record.revision = try Self.nextCommitmentRevision(entry.record)
             try Self.validateCommitment(entry.record)
             try entry.record.update(db)
+            try Self.stopManagingAutomaticFollowUp(db, accountID: accountID, commitmentID: commitmentID)
             try db.execute(sql: "DELETE FROM commitmentReminder WHERE accountID = ? AND commitmentID = ? AND kind = ?",
                            arguments: [accountID, commitmentID, kind.rawValue])
             return try Self.requireCommitmentEntry(db, accountID: accountID, id: commitmentID)
@@ -116,9 +160,15 @@ extension AccountStore {
 
     /// Returns only pending, due reminders in each entry. Use commitmentEntries for editing a full record.
     public func dueCommitmentReminders(accountIDs: Set<String>, now: Date) async throws -> [CommitmentEntry] {
-        try await commitmentEntries(accountIDs: accountIDs, includeClosed: false).compactMap { entry in
-            let due = entry.reminders.filter { $0.isPending && $0.remindAt <= now }
-            return due.isEmpty ? nil : CommitmentEntry(record: entry.record, reminders: due)
+        try await writer.read { db in
+            try Self.commitmentEntries(db, accountIDs: accountIDs, includeClosed: false).compactMap { entry in
+                guard entry.record.deferredUntil.map({ $0 <= now }) ?? true else { return nil }
+                let due = try entry.reminders.filter {
+                    guard $0.isPending && $0.remindAt <= now else { return false }
+                    return try Self.automaticReminderAllowsDelivery(db, reminder: $0)
+                }
+                return due.isEmpty ? nil : CommitmentEntry(record: entry.record, reminders: due)
+            }
         }
     }
 
@@ -151,8 +201,10 @@ extension AccountStore {
         try await writer.write { db in
             try Self.requireCommitmentAccount(db, accountID: accountID)
             guard var record = try Self.commitment(db, accountID: accountID, id: commitmentID), record.status == .open,
+                  record.deferredUntil.map({ $0 <= at }) ?? true,
                   var reminder = try Self.commitmentReminder(db, accountID: accountID, id: commitmentID, kind: kind),
                   reminder.revision == expectedReminderRevision, reminder.isPending,
+                  try Self.automaticReminderAllowsDelivery(db, reminder: reminder),
                   at.timeIntervalSince1970.isFinite, reminder.remindAt <= at else { return false }
             record.revision = try Self.nextCommitmentRevision(record)
             record.updatedAt = at
@@ -164,9 +216,14 @@ extension AccountStore {
             return true
         }
     }
+
+    /// Shared transaction-local read for Today acknowledgements, keeping config snapshots atomic.
+    static func currentCommitmentEntries(_ db: Database, accountIDs: Set<String>) throws -> [CommitmentEntry] {
+        try commitmentEntries(db, accountIDs: accountIDs, includeClosed: true)
+    }
 }
 
-private extension AccountStore {
+extension AccountStore {
     static func requireCommitmentAccount(_ db: Database, accountID: String) throws {
         let available = try Bool.fetchOne(db, sql: """
             SELECT EXISTS(SELECT 1 FROM account WHERE id = ?
@@ -227,7 +284,7 @@ private extension AccountStore {
 
     static func validateCommitment(_ record: CommitmentRecord) throws {
         let required = [record.accountID, record.id, record.threadID, record.sourceMessageID, record.title]
-        let dates = [record.sourceMessageDate, record.createdAt, record.updatedAt] + [record.dueAt].compactMap { $0 }
+        let dates = [record.sourceMessageDate, record.createdAt, record.updatedAt] + [record.dueAt, record.deferredUntil].compactMap { $0 }
         guard required.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
               dates.allSatisfy({ $0.timeIntervalSince1970.isFinite }),
               record.acceptanceKey.map({ !$0.isEmpty }) ?? true else { throw CommitmentStoreError.invalidRecord }

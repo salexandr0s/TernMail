@@ -592,6 +592,8 @@ enum Schema {
         MessageSnoozeSchema.registerConfig(in: &migrator)
         AccountRemovalSchema.register(in: &migrator)
         CommitmentSchema.register(in: &migrator)
+        TodaySchema.register(in: &migrator)
+        AutomaticFollowUpSchema.register(in: &migrator)
         return migrator
     }
 }

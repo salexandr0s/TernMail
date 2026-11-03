@@ -112,15 +112,46 @@ import Testing
         #expect(try await cache.read { try $0.localDrafts(accountID: account) }.isEmpty)
         #expect(try await cache.read { try $0.pendingActions(accountID: account) }.isEmpty)
     }
+
+    @Test func authoritativeSourceMembershipDoesNotIncludeStaleCachedMessages() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        try await seed(cache, [("deleted-sent", "t", [SystemLabel.sent])])
+        let current = try assistantFixture(id: "current", thread: "t")
+        await gmail.setThread(try assistantThreadFixture([current], id: "t"))
+        let loaded = try await engine.assistantLoadSource("t")
+        #expect(loaded.map(\.record.id) == ["current"])
+        #expect(try await cache.read { try $0.message(id: "deleted-sent", accountID: account) } != nil)
+    }
+
+    @Test func replyAllFromVerifiedAliasKeepsExternalCcAndNeverOverwritesAnExistingDraft() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        await gmail.add(try assistantFixture(id: "alias-sent", thread: "t", sender: "Alias <alias@example.com>",
+                                             recipients: "me@example.com", cc: "Anna <anna@example.com>"))
+        let draft = try await engine.assistantPrepareDraft(id: "auto-reserved", replyKind: .replyAll,
+            messageID: "alias-sent", expectedThreadID: "t", recipients: [], subject: "Proposal", text: "Following up.",
+            ownAddresses: ["alias@example.com"], isAuthorized: { true })
+        #expect(Set((draft.to + draft.cc).map(\.normalized)) == ["anna@example.com"])
+        var edited = draft.content
+        edited.body = ComposeDocument(plainText: "My correction")
+        _ = try await engine.updateDraft(draft.id, content: edited)
+        let again = try await engine.assistantPrepareDraft(id: draft.id, replyKind: .replyAll,
+            messageID: "alias-sent", expectedThreadID: "t", recipients: [], subject: "Proposal", text: "Must not replace",
+            ownAddresses: ["alias@example.com"], isAuthorized: { true })
+        #expect(again.body == edited.body)
+        #expect(try await cache.read { try $0.localDrafts(accountID: account) }.count == 1)
+        #expect(await gmail.draftCalls.isEmpty)
+    }
 }
 
-private func assistantFixture(id: String, thread: String, text: String = "Body", externalBody: String? = nil, attachmentSize: Int? = nil) throws -> GmailMessage {
-    let headers = [
-        ["name": "From", "value": "Sender <sender@example.invalid>"],
-        ["name": "To", "value": "me@example.com"],
+private func assistantFixture(id: String, thread: String, text: String = "Body", externalBody: String? = nil, attachmentSize: Int? = nil,
+                              sender: String = "Sender <sender@example.invalid>", recipients: String = "me@example.com", cc: String? = nil) throws -> GmailMessage {
+    var headers = [
+        ["name": "From", "value": sender],
+        ["name": "To", "value": recipients],
         ["name": "Subject", "value": "Proposal"],
         ["name": "Message-ID", "value": "<\(id)@example.invalid>"]
     ]
+    if let cc { headers.append(["name": "Cc", "value": cc]) }
     let body: [String: Any] = externalBody.map { ["attachmentId": $0, "size": 20] }
         ?? ["data": Data(text.utf8).base64EncodedString(), "size": text.utf8.count]
     var payload: [String: Any] = ["mimeType": "text/plain", "partId": "0", "headers": headers, "body": body]

@@ -4,9 +4,10 @@ import MailStore
 import MessageContent
 
 extension SyncEngine {
-    /// Hydrates a source only when the user opens its citation. The normal reader
-    /// can then load bodies and apply the user's usual read-state behavior.
-    public func assistantLoadSource(_ threadID: String) async throws {
+    /// Hydrates source metadata without changing read state and returns the exact
+    /// fetched membership. Cached messages absent from this response are not evidence.
+    @discardableResult
+    public func assistantLoadSource(_ threadID: String) async throws -> [CacheTransaction.MessageUpdate] {
         try checkAssistantAccess()
         let (updates, missing) = try await fetchThreadMetadata([threadID])
         try checkAssistantAccess()
@@ -14,14 +15,16 @@ extension SyncEngine {
         let accountID = accountID
         let deleted = deletedMessageIDs
         let expiry = now().addingTimeInterval(CacheHolds.searchLifetime)
-        try await write { tx in
+        let loaded = try await write { tx in
             let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
             guard !live.isEmpty else { throw AssistantMailError.unavailable }
             let changed = try tx.upsertMessages(live)
             try tx.holdSearchResults([threadID], until: expiry, accountID: accountID)
             try tx.rebuildThreads(changed, accountID: accountID)
+            return live
         }
         try checkAssistantAccess()
+        return loaded
     }
 
     /// Fetches MIME metadata for a cited file, without downloading its bytes.
@@ -109,6 +112,7 @@ extension SyncEngine {
     public func assistantPrepareDraft(
         id: String, replyKind: ReplyKind?, messageID: String?, expectedThreadID: String?,
         recipients: [EmailAddress], subject: String, text: String,
+        ownAddresses: Set<String> = [],
         isAuthorized: @escaping @Sendable () async -> Bool
     ) async throws -> LocalDraft {
         try checkAssistantAccess()
@@ -128,7 +132,15 @@ extension SyncEngine {
             let body = try await assistantBody(message)
             var original = OriginalMessage(message)
             original.body = body.value
-            let reply = ReplyBuilder.draft(replyKind, replyingTo: original, ownAddresses: [sender.address])
+            let allOwnAddresses = Set(ownAddresses.union([sender.address]).map { $0.lowercased() })
+            var reply = ReplyBuilder.draft(replyKind, replyingTo: original, ownAddresses: allOwnAddresses)
+            if !ownAddresses.isEmpty {
+                // Compose normally preserves a self-note fallback when To is
+                // empty. Automatic follow-ups supply verified identities and
+                // must exclude that fallback even when all others are in Cc.
+                reply.to.removeAll { allOwnAddresses.contains($0.normalized) }
+                reply.cc.removeAll { allOwnAddresses.contains($0.normalized) }
+            }
             draft = LocalDraft(
                 id: id, accountID: accountID, kind: LocalDraft.Kind(replyKind),
                 content: DraftContent(to: reply.to, cc: reply.cc, subject: reply.subject, body: ComposeDocument(plainText: text)),
