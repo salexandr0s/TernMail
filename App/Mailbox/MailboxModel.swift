@@ -133,7 +133,7 @@ final class MailboxModel {
     private(set) var undoableSendID: String?
 
     private(set) var threads: [ThreadRecord] = [] { didSet { listDataRevision &+= 1 } }
-    /// Gmail's older pages of the selected mailbox, after Load Older Conversations.
+    /// Gmail's older pages of the selected mailbox.
     private(set) var older: GmailPager?
 
     /// The window's undo manager, so Edit > Undo reverts mail actions.
@@ -157,7 +157,7 @@ final class MailboxModel {
     @ObservationIgnored private var threadsTask: Task<Void, Never>?
     @ObservationIgnored private let listPages = MailListPageCache()
     @ObservationIgnored private var mailboxPage = MailListPage.empty
-    @ObservationIgnored private var mailboxPageReady = false
+    private var mailboxPageReady = false
     private var searchPage = MailListPage.empty
     @ObservationIgnored private var searchPageTask: Task<Void, Never>?
     @ObservationIgnored private var searchPageGeneration: UInt64 = 0
@@ -571,6 +571,33 @@ final class MailboxModel {
         observeThreads()
     }
 
+    struct EmptyMailboxLoadRequest: Equatable {
+        let projection: MessageListProjection.Key
+        let isReady: Bool
+        let hasSynced: Bool
+        let canSync: Bool
+        let gmailState: GmailPager.State?
+    }
+
+    /// Observe sync readiness too: the first local page can arrive before
+    /// the account finishes restoring its saved sync state.
+    var emptyMailboxLoadRequest: EmptyMailboxLoadRequest {
+        .init(projection: listProjectionKey, isReady: mailboxPageReady,
+              hasSynced: selectedHaveSyncedOnce,
+              canSync: selectedAccounts.allSatisfy(\.syncEnabled), gmailState: older?.state)
+    }
+
+    func loadMoreForEmptyMailbox() {
+        guard !isStopped, !Task.isCancelled, !search.isActive, mailboxPageReady,
+              !selectedAccounts.isEmpty, listItems.isEmpty else { return }
+        if threads.count >= threadLimit {
+            loadMoreThreads()
+        } else if selectedHaveSyncedOnce, selectedAccounts.allSatisfy(\.syncEnabled), listPreferences.filters.isEmpty,
+                  older == nil || older?.state == .ready || older?.state == .more {
+            loadOlderConversations()
+        }
+    }
+
     /// Initial sync is bounded, including Inbox. Only a completed Gmail
     /// listing establishes that this visit has reached the end of a mailbox.
     var offersOlderConversations: Bool {
@@ -603,6 +630,9 @@ final class MailboxModel {
         pager.next { [weak self, weak pager] page in
             guard let self, let pager, older === pager, !search.isActive else { return }
             threadLimit = max(threadLimit, threads.count + page.count + 1)
+            // A successful page may change no rows. Read after its writes
+            // before deciding whether an empty list needs another Gmail page.
+            listPages.invalidateActive()
             observeThreads()
         }
     }
@@ -969,6 +999,7 @@ final class MailboxModel {
 
     private func observeThreads() {
         threadsTask?.cancel()
+        mailboxPageReady = false
         mailboxPageGeneration &+= 1
         let generation = mailboxPageGeneration
         let sources = selectedAccounts.map(\.account.id)

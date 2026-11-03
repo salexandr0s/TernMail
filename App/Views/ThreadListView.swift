@@ -49,6 +49,7 @@ struct ThreadListView: View {
                 listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
             }
             .task(id: mailbox.accounts.map(\.account.id)) { await observeAddresses() }
+            .task(id: mailbox.emptyMailboxLoadRequest) { mailbox.loadMoreForEmptyMailbox() }
             .onChange(of: mailbox.listPreferences.conversations) { _, _ in
                 mailbox.search.setMessageMode(!mailbox.listPreferences.conversations)
                 mailbox.selectedMessageRows = []
@@ -56,9 +57,8 @@ struct ThreadListView: View {
             }
             .onChange(of: mailbox.listProjectionKey) { _, _ in
                 mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(mailbox.listItems.map(\.id)))
-                if mailbox.listItems.isEmpty {
-                    if mailbox.search.isActive { mailbox.search.loadMoreResults() }
-                    else { mailbox.loadMoreThreads() }
+                if mailbox.listItems.isEmpty, mailbox.search.isActive {
+                    mailbox.search.loadMoreResults()
                 }
             }
     }
@@ -207,6 +207,7 @@ struct ThreadListView: View {
     private var emptyDescription: String {
         if mailbox.selectedLabelID == SystemLabel.inbox { return mailbox.older?.state == .finished ? "Your inbox is empty." : "No inbox conversations are saved on this Mac." }
         if mailbox.showsSnoozed { return "Snoozed conversations wait here until they return to the Inbox." }
+        if mailbox.older?.state == .finished { return "No conversations in this mailbox." }
         return "No conversations are saved on this Mac for this mailbox."
     }
 }

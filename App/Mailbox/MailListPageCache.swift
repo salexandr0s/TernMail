@@ -177,6 +177,12 @@ final class MailListPageCache {
     /// continues, but revisiting another destination must read after the write.
     func invalidateRetained() {
         for key in Array(entries.keys) where key != active { remove(key) }
+        invalidateActive()
+    }
+
+    /// The next activation reads a fresh page, including after a Gmail
+    /// response that leaves the database unchanged.
+    func invalidateActive() {
         if let active, let entry = entries[active] {
             // Even a pre-mutation read already being prepared must not restore
             // an older replay value after invalidation. A revisit resubscribes.
