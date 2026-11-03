@@ -92,12 +92,13 @@ actor DomainLogoImages {
     }
 
     /// Cancels queued loads and makes ignored-cancellation completions obsolete.
-    func removeAll() {
+    func removeAll() async {
         let tasks = pending.values.map(\.task)
         pending.removeAll()
         tasks.forEach { $0.cancel() }
         entries.removeAll()
         if let directory { try? FileManager.default.removeItem(at: directory) }
+        if self === Self.shared { await MainActor.run { DomainLogoThumbnailCache.shared.removeAll() } }
     }
 
 #if DEBUG

@@ -47,6 +47,12 @@ final class AddressAvatarModel {
         self.profilePhoto = profilePhoto
     }
 
+    /// A known account photo can render before onAppear configures observation.
+    func cachedProfilePhoto(for address: String, context: AddressAvatarContext) -> NSImage? {
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return context.profileAccountIDs[normalized].flatMap { profilePhoto($0) }
+    }
+
     func configure(address: String, accountID: String?, context: AddressAvatarContext,
                    showsLogos: Bool, preferredAccountID: String? = nil) {
         let address = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -154,7 +160,9 @@ final class AddressAvatarModel {
             let data = await load(request.address)
             guard !Task.isCancelled, let self, self.generation == token else { return }
             self.logoTask = nil
-            self.logoImage = data.flatMap(NSImage.init(data:))
+            let image = if let data { await DomainLogoThumbnailCache.shared.image(for: request.address, data: data) } else { nil as NSImage? }
+            guard !Task.isCancelled, self.generation == token else { return }
+            self.logoImage = image
             self.publish(self.profileImage ?? self.contactImage ?? self.logoImage,
                          isLogo: self.profileImage == nil && self.contactImage == nil && self.logoImage != nil)
         }

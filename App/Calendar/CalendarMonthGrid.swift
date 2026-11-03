@@ -18,7 +18,8 @@ struct CalendarMonthGrid: View {
     @Namespace private var canvas
     @State private var drag: MonthDrag?
     @State private var cancelled = false
-    @State private var frames: [CalendarMonthRegion: CGRect] = [:]
+    @State private var geometryFrames = CalendarGeometryFrames<CalendarMonthRegion>()
+    private var frames: [CalendarMonthRegion: CGRect] { geometryFrames.values }
     @GestureState private var pointerIsDown = false
 
     private enum Action { case create, move, start, end }
@@ -59,7 +60,7 @@ struct CalendarMonthGrid: View {
             return true
         }
         .onPreferenceChange(CalendarMonthFrames.self) { value in
-            frames = value
+            geometryFrames.values = value
             if let drag { updateDrag(at: drag.pointer) }
         }
         .background { CalendarDragCancellation(isActive: drag != nil) { cancelDrag() } }

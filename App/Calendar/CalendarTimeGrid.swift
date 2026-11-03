@@ -19,8 +19,10 @@ struct CalendarTimeGrid: View {
     let hourHeight = Tokens.Space.s16
     let gutter = Tokens.Space.s16
     static let coordinateSpace = "calendarTimeline"
-    // Internal, not private: the drag gesture in CalendarTimelineGesture.swift reads and sets these.
-    @State var frames: [CalendarTimelineRegion: CGRect] = [:]
+    @State private var geometryFrames = CalendarGeometryFrames<CalendarTimelineRegion>()
+    // The drag gesture in CalendarTimelineGesture.swift reads the latest coordinates.
+    var frames: [CalendarTimelineRegion: CGRect] { geometryFrames.values }
+    // Internal, not private: the drag gesture reads and sets these.
     @State var drag: CalendarTimelineDrag?
     @State var dragCancelled = false
     @GestureState var pointerIsDown = false
@@ -28,6 +30,10 @@ struct CalendarTimeGrid: View {
     /// are eight unless the clocks change earlier in the days shown. A user's
     /// scroll replaces the point, so the grid is never pulled back to it.
     @State private var hourScroll: ScrollPosition
+
+    #if DEBUG || TERN_PERFORMANCE
+    static var onBodyEvaluation: ((CalendarTimeGrid) -> Void)?
+    #endif
 
     init(date: Date, isWeek: Bool, calendar: Calendar, events: [CalendarDisplayEvent],
          presentation: CalendarPresentationSnapshot? = nil, selectedID: Binding<String?>,
@@ -59,6 +65,9 @@ struct CalendarTimeGrid: View {
     }
 
     var body: some View {
+        #if DEBUG || TERN_PERFORMANCE
+        let _ = Self.onBodyEvaluation?(self)
+        #endif
         let axis = timeAxis
         GeometryReader { geometry in
             let minimumWidth = gutter + CGFloat(days.count) * (Tokens.Space.s16 + Tokens.Space.s8)
@@ -77,7 +86,7 @@ struct CalendarTimeGrid: View {
             return true
         }
         .onPreferenceChange(CalendarTimelineFrames.self) { value in
-            frames = value
+            geometryFrames.values = value
             if let drag, !dragCancelled { updateDrag(at: drag.pointer) }
         }
         .background { CalendarDragCancellation(isActive: drag != nil) { cancelDrag() } }

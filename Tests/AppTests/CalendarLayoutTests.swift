@@ -145,6 +145,84 @@ import Testing
         return ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
     }
 
+    @MainActor @Test func nativeScrollingUpdatesHitTestingWithoutRebuildingGridAndKeepsDragRangeLive() async throws {
+        let calendar = try calendar()
+        let day = try #require(calendar.date(from: DateComponents(year: 2031, month: 6, day: 12)))
+        var latest: CalendarTimeGrid?
+        var bodyEvaluations = 0
+        let previousHook = CalendarTimeGrid.onBodyEvaluation
+        CalendarTimeGrid.onBodyEvaluation = { grid in
+            previousHook?(grid)
+            guard grid.date == day, !grid.isWeek else { return }
+            latest = grid
+            bodyEvaluations += 1
+        }
+        defer { CalendarTimeGrid.onBodyEvaluation = previousHook }
+        let grid = CalendarTimeGrid(date: day, isWeek: false, calendar: calendar, events: [], selectedID: .constant(nil),
+                                   create: { _ in }, edit: { _ in }, change: { _, _ in }, delete: { _ in },
+                                   duplicate: { _ in }, dropMail: { _, _ in })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: grid)
+        window.orderFront(nil)
+        defer { window.close() }
+
+        let readinessDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while (scrollViews(in: window.contentView).first(where: {
+            ($0.documentView?.bounds.height ?? 0) > 12 * grid.hourHeight
+        })?.contentView.bounds.origin.y ?? 0) < 8 * grid.hourHeight, ContinuousClock.now < readinessDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        let scroll = try #require(scrollViews(in: window.contentView).first {
+            ($0.documentView?.bounds.height ?? 0) > 12 * grid.hourHeight
+        })
+        // Reading a State location from this test before scrolling could itself
+        // subscribe the original grid to that value. Count the first native
+        // scroll without inspecting the view's stored coordinates.
+        let beforeBodies = bodyEvaluations
+        let beforeOffset = scroll.contentView.bounds.origin
+        scroll.contentView.scroll(to: CGPoint(x: beforeOffset.x, y: beforeOffset.y + grid.hourHeight))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(abs(scroll.contentView.bounds.origin.y - beforeOffset.y - grid.hourHeight) < 1)
+        #expect(bodyEvaluations == beforeBodies)
+
+        let mounted = try #require(latest)
+        let viewport = try #require(mounted.frames[.viewport])
+        let point = CGPoint(x: viewport.midX, y: viewport.midY)
+        let beforeDate = try #require(mounted.timedDate(at: point, snapped: false))
+        let beforeContent = try #require(mounted.frames[.content])
+        let geometryOffset = scroll.contentView.bounds.origin
+        scroll.contentView.scroll(to: CGPoint(x: geometryOffset.x, y: geometryOffset.y + grid.hourHeight))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let scrollDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while mounted.frames[.content] == beforeContent, ContinuousClock.now < scrollDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let afterContent = try #require(mounted.frames[.content])
+        #expect(afterContent.minY < beforeContent.minY)
+        let afterDate = try #require(mounted.timedDate(at: point, snapped: false))
+        #expect(abs(afterDate.timeIntervalSince(beforeDate) - 3_600) < 1)
+
+        let dragAnchor = try #require(mounted.timedDate(at: point))
+        mounted.drag = CalendarTimelineDrag(action: .createTimed, anchor: dragAnchor, pointer: point)
+        mounted.updateDrag(at: point)
+        let initialRange = try #require(mounted.drag?.range)
+        let dragOffset = scroll.contentView.bounds.origin
+        scroll.contentView.scroll(to: CGPoint(x: dragOffset.x, y: dragOffset.y + grid.hourHeight))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let dragDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while mounted.drag?.range == initialRange, ContinuousClock.now < dragDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let updatedRange = try #require(mounted.drag?.range)
+        #expect(updatedRange.start == initialRange.start)
+        #expect(updatedRange.end > initialRange.end)
+        mounted.drag = nil
+    }
+
     @Test func overlappingEventsReceiveIndependentLanesAndLaterEventsRecoverWidth() throws {
         let calendar = try calendar()
         let day = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 30)))

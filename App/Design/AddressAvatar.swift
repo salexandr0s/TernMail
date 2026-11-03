@@ -28,21 +28,32 @@ struct AddressAvatar<Placeholder: View>: View {
     private let placeholder: Placeholder
     @Environment(\.addressAvatarContext) private var environmentContext
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
-    @State private var model = AddressAvatarModel()
+    @State private var model: AddressAvatarModel
     @State private var configuredIdentity: String?
 
     init(accountID: String? = nil, address: String, name: String = "", size: CGFloat = Tokens.Control.avatar,
-         context: AddressAvatarContext? = nil, @ViewBuilder placeholder: () -> Placeholder) {
+         context: AddressAvatarContext? = nil, model: AddressAvatarModel = AddressAvatarModel(),
+         @ViewBuilder placeholder: () -> Placeholder) {
         self.accountID = accountID; self.address = address; self.name = name; self.size = size
         self.contextOverride = context; self.placeholder = placeholder()
+        _model = State(initialValue: model)
     }
 
     private var context: AddressAvatarContext { contextOverride ?? environmentContext }
     private var identity: String { "\(accountID ?? "")|\(address.lowercased())|\(context.identity)|\(showsLogos)" }
 
+    private var displayedImage: NSImage? {
+        if configuredIdentity == identity {
+            return !model.isLogo || showsLogos ? model.image : nil
+        }
+        if let profile = model.cachedProfilePhoto(for: address, context: context) { return profile }
+        guard showsLogos, accountID == nil || context.cache == nil || context.accounts == nil else { return nil }
+        return DomainLogoThumbnailCache.shared.image(for: address)
+    }
+
     var body: some View {
         Group {
-            if configuredIdentity == identity, !model.isLogo || showsLogos, let image = model.image {
+            if let image = displayedImage {
                 AvatarImage(image: image, size: size)
             } else { placeholder }
         }
@@ -50,7 +61,8 @@ struct AddressAvatar<Placeholder: View>: View {
         .accessibilityHidden(true)
         .onAppear(perform: configure)
         .onChange(of: identity) { _, _ in configure() }
-        .onDisappear { model.stop() }
+        // A lazy row can disappear while SwiftUI retains its state. The model
+        // keeps its pixels and access observation until that state is released.
     }
 
     private func configure() {

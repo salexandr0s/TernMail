@@ -11,6 +11,7 @@ enum PerformanceAudit {
         case all
         case workspaceOnly = "workspace-only"
         case readerOnly = "reader-only"
+        case scrollOnly = "scroll-only"
     }
 
     private static var hasRun = false
@@ -160,7 +161,6 @@ enum PerformanceAudit {
         let count = max(100, min(1_000, argumentInteger("--performance-iterations=") ?? 100))
         await PerformanceAuditTransport.shared.configure(.idle)
         var scenarios: [Scenario] = []
-        var scrolling: [PerformanceScrollAudit.Result] = []
         func record(_ scenario: Scenario) {
             scenarios.append(scenario)
             writeProgress(scenarios)
@@ -169,6 +169,14 @@ enum PerformanceAudit {
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         _ = await wait { !mailbox.listItems.isEmpty }
         try? await Task.sleep(for: .milliseconds(500))
+
+        if scope == .scrollOnly {
+            let visibleRows = mailbox.listItems.count
+            let scrolling = await runScrollScenarios(app: app, mailbox: mailbox, window: window)
+            await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: visibleRows, scenarios: [],
+                         scrolling: scrolling, heartbeat: heartbeat, initialMemory: initialMemory)
+            return
+        }
 
         if scope != .readerOnly {
             record(await exercise("workspace-warm", kind: .workspace, count: count * 2) { index in
@@ -317,6 +325,14 @@ enum PerformanceAudit {
                 try selectFixture(key, in: mailbox)
             })
         }
+        let scrolling = await runScrollScenarios(app: app, mailbox: mailbox, window: window)
+        await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: rows.count, scenarios: scenarios,
+                     scrolling: scrolling, heartbeat: heartbeat, initialMemory: initialMemory)
+    }
+
+    private static func runScrollScenarios(app: AppModel, mailbox: MailboxModel,
+                                           window: NSWindow) async -> [PerformanceScrollAudit.Result] {
+        var scrolling: [PerformanceScrollAudit.Result] = []
         mailbox.search.clear()
         _ = await wait { !mailbox.search.isActive && mailbox.listItems.count >= 20 }
         scrolling.append(await measureScroll("mailbox", in: window, surface: .mailbox))
@@ -352,8 +368,7 @@ enum PerformanceAudit {
         scrolling.append(await measureScroll("attachments", in: window, surface: .attachments))
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
-        await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: rows.count, scenarios: scenarios,
-                     scrolling: scrolling, heartbeat: heartbeat, initialMemory: initialMemory)
+        return scrolling
     }
 
     private static func finish(app: AppModel, mailbox: MailboxModel, scope: Scope, visibleRows: Int,

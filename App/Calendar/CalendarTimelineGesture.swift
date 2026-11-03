@@ -1,6 +1,14 @@
 import GmailAPI
 import SwiftUI
 
+/// Native scrolling changes hit-test coordinates without changing event content.
+/// The owning grid keeps this reference for its lifetime; active drags publish
+/// their updated range separately after each geometry update.
+@MainActor
+final class CalendarGeometryFrames<Region: Hashable> {
+    var values: [Region: CGRect] = [:]
+}
+
 enum CalendarTimelineRegion: Hashable, Sendable { case canvas, allDay, content, viewport }
 struct CalendarTimelineFrames: PreferenceKey {
     static let defaultValue: [CalendarTimelineRegion: CGRect] = [:]

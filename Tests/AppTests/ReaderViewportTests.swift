@@ -123,7 +123,7 @@ import WebKit
         await app.signOut()
     }
 
-    @Test(.timeLimit(.minutes(1))) func longConversationReusesMeasuredHeightsWhenBodiesReenterTheViewport() async throws {
+    @Test(.timeLimit(.minutes(1))) func longConversationReusesRendererOnQuickReversalAndMeasuredHeightsAfterEviction() async throws {
         try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
         let app = AppModel()
         await app.start()
@@ -148,6 +148,23 @@ import WebKit
         // Measure the renderer under test after its own asynchronous height commit.
         try await waitUntil { !initialView.isLoading && initialView.frame.height > 200 }
         window.contentView?.layoutSubtreeIfNeeded()
+        try await waitUntil { !initialView.isLoading }
+        let justPastInitialMessage = initialView.convert(initialView.bounds, to: scroll.documentView).maxY + 100
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: justPastInitialMessage))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(initialView.convert(initialView.bounds, to: scroll.contentView).maxY < scroll.contentView.bounds.minY)
+        #expect(messageViews(in: window.contentView).contains { $0 === initialView },
+                "A brief viewport exit should preserve the native document through a quick reversal")
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: anchor))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await waitUntil {
+            self.messageViews(in: window.contentView).contains { $0 === initialView }
+                && initialView.convert(initialView.bounds, to: scroll.contentView).intersects(scroll.contentView.bounds)
+        }
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(messageViews(in: window.contentView).contains { $0 === initialView },
+                "Returning to the viewport must cancel its pending renderer eviction")
         let end = max(0, (scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.height)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: end))
         scroll.reflectScrolledClipView(scroll.contentView)

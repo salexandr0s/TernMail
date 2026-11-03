@@ -19,9 +19,11 @@ def validate(report):
     elif native_input:
         errors.append(f'Unexpected native input invalidated the report ({native_input} events).')
     scope = report.get('requestedScenario')
-    if scope not in {'all', 'workspace-only', 'reader-only'}:
+    if scope not in {'all', 'workspace-only', 'reader-only', 'scroll-only'}:
         errors.append('Unknown requested scenario scope.')
     expected = {'reader-recent', 'reader-local'} if scope == 'reader-only' else {'workspace-warm'}
+    if scope == 'scroll-only':
+        expected = set()
     if scope == 'all':
         expected |= {'attachments-return', 'reader-recent', 'reader-local', 'reader-network',
                      'reader-image-heavy-local', 'reader-memory-plateau', 'reader-stress-2MiB', 'reader-stress-8MiB'}
@@ -96,7 +98,7 @@ def validate(report):
             if any(s['preparedDocumentBytes'] > 56 * 1024 * 1024 for s in samples):
                 errors.append(name + ': prepared-document budget exceeded')
     scrolls = report.get('scrolling', [])
-    expected_scrolls = {'mailbox', 'reader-20', 'reader-100', 'calendar', 'attachments'} if scope == 'all' else set()
+    expected_scrolls = {'mailbox', 'reader-20', 'reader-100', 'calendar', 'attachments'} if scope in {'all', 'scroll-only'} else set()
     if expected_scrolls - {s['name'] for s in scrolls}:
         errors.append('Required scrolling scenarios are missing.')
     for scroll in scrolls:

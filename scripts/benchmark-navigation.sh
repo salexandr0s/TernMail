@@ -6,11 +6,12 @@ task_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 event_count="${1:-100}"
 scenario="${2:-all}"
 variant="${3:-normal}"
-case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only|reader-only]' >&2; exit 2 ;; esac
-case "$scenario" in all|workspace-only|reader-only) ;; *) echo 'Scenario must be all, workspace-only, or reader-only.' >&2; exit 2 ;; esac
+case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only|reader-only|scroll-only]' >&2; exit 2 ;; esac
+case "$scenario" in all|workspace-only|reader-only|scroll-only) ;; *) echo 'Scenario must be all, workspace-only, reader-only, or scroll-only.' >&2; exit 2 ;; esac
 case "$variant" in normal|fixed-key-loop) ;; *) echo 'Variant must be normal or fixed-key-loop.' >&2; exit 2 ;; esac
 build_root="${TERN_PERFORMANCE_BUILD_DIR:-/tmp/tern-performance-audit-build}"
-report_dir="$HOME/Library/Containers/dev.tern.performance/Data/tmp"
+audit_bundle_id="${TERN_PERFORMANCE_BUNDLE_ID:-dev.tern.performance}"
+report_dir="${TERN_PERFORMANCE_REPORT_DIR:-$HOME/Library/Containers/$audit_bundle_id/Data/tmp}"
 report_path="$report_dir/tern-navigation-$event_count-$scenario-$variant.json"
 mkdir -p "$build_root"
 mkdir -p "$report_dir"
@@ -31,11 +32,11 @@ else
     -derivedDataPath "$build_root" \
     -clonedSourcePackagesDirPath "${TERN_SOURCE_PACKAGES_DIR:-$task_root/build/SourcePackages}" \
     -disableAutomaticPackageResolution \
-    PRODUCT_BUNDLE_IDENTIFIER=dev.tern.performance "TERN_BUILD_REVISION=$build_revision" \
+    "PRODUCT_BUNDLE_IDENTIFIER=$audit_bundle_id" "TERN_BUILD_REVISION=$build_revision" \
     'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) TERN_PERFORMANCE' \
     ONLY_ACTIVE_ARCH=YES build > "$build_root/build.log" 2>&1
 fi
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$build_root/Build/Products/Release/Tern.app/Contents/Info.plist")" = dev.tern.performance
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$build_root/Build/Products/Release/Tern.app/Contents/Info.plist")" = "$audit_bundle_id"
 /usr/bin/shasum -a 256 "$build_root/Build/Products/Release/Tern.app/Contents/MacOS/Tern" > "$run_dir/executable-sha256.txt"
 
 /usr/bin/python3 - "$report_path" <<'PY'
@@ -46,6 +47,7 @@ pathlib.Path(sys.argv[1] + '.current.json').unlink(missing_ok=True)
 PY
 audit_variant_args=()
 if [ "$variant" = fixed-key-loop ]; then audit_variant_args+=(--performance-fixed-key-loop); fi
+if [ -n "${TERN_PERFORMANCE_START_FILE:-}" ]; then audit_variant_args+=("--performance-start-file=$TERN_PERFORMANCE_START_FILE"); fi
 /usr/bin/python3 "$task_root/scripts/performance-process-memory.py" "$run_dir" \
     "$build_root/Build/Products/Release/Tern.app/Contents/MacOS/Tern" \
     --ui-audit --ui-audit-calendar --performance-audit --performance-exit --performance-memory-pause=12 \

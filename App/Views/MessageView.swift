@@ -41,6 +41,7 @@ struct MessageView: View {
     @State private var resourceSnapshot: ReadingResourceSnapshot?
     @State private var resourcesAvailableAt: ContinuousClock.Instant?
     @State private var isInViewport = true
+    @State private var retainsViewportBody = false
     @State private var preparationTier: NavigationCacheTier = .local
     @State private var requiredContentReadyAt: ContinuousClock.Instant?
     @Environment(AppModel.self) private var app
@@ -75,7 +76,7 @@ struct MessageView: View {
             remembered: rememberedImagePermission)
     }
     private var isRealized: Bool {
-        isExpanded && ((isReaderActive && (isInViewport || finder.requestedMessageID == message.id)) || retainsHiddenBody)
+        isExpanded && ((isReaderActive && (isInViewport || retainsViewportBody || finder.requestedMessageID == message.id)) || retainsHiddenBody)
     }
 
     var body: some View {
@@ -114,8 +115,22 @@ struct MessageView: View {
         }
         .ternAnimation(value: isExpanded, duration: Tokens.Motion.slow)
         .onScrollVisibilityChange(threshold: 0) { visible in
+            // Keep an already prepared body through a quick scroll reversal.
+            if !visible, isInViewport { retainsViewportBody = rendered != nil }
             isInViewport = visible
             if visible { onVisible() }
+        }
+        .task(id: isReaderActive && isExpanded && !isInViewport) {
+            guard isReaderActive, isExpanded, !isInViewport else {
+                retainsViewportBody = false
+                return
+            }
+            do { try await Task.sleep(for: .milliseconds(350)) }
+            catch { return }
+            retainsViewportBody = false
+        }
+        .onChange(of: ReaderCacheLifecycle.shared.pressureRevision) { _, _ in
+            retainsViewportBody = false
         }
         .task(id: isReaderActive && isRealized) {
             guard isReaderActive, isRealized else { return }
