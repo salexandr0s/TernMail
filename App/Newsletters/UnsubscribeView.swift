@@ -40,7 +40,9 @@ struct UnsubscribeView: View {
                             ForEach(model.visibleSubscriptions) { subscription in
                                 UnsubscribeRow(subscription: subscription, model: model,
                                     isCompact: geometry.size.width < Tokens.Layout.readableWidth)
-                                Divider().padding(.leading, Tokens.Space.s6)
+                                Divider()
+                                    .padding(.leading, Tokens.Space.s6 * 2 + Tokens.Space.s3 * 2 + Tokens.Control.avatarLarge)
+                                    .padding(.trailing, Tokens.Space.s6)
                             }
                         }
                     }

@@ -9,14 +9,20 @@ struct UnsubscribeConfirmationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                Text(count == 1 ? "Unsubscribe from this newsletter?" : "Unsubscribe from \(count) newsletters?")
-                    .font(.title2.weight(.semibold))
-                Text(count == 1
-                    ? "Tern will send an unsubscribe request to this sender. It can take a few days for messages to stop. Your existing emails will stay in your mailbox."
-                    : "Tern will send an unsubscribe request to each sender. It can take a few days for messages to stop. Your existing emails will stay in your mailbox.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                Image(systemName: "minus.circle")
+                    .font(.title2).foregroundStyle(Color.accentColor)
+                    .frame(width: Tokens.Control.avatarLarge, height: Tokens.Control.avatarLarge)
+                    .background(Color.accentColor.opacity(Tokens.Opacity.wash),
+                        in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text(count == 1 ? "Unsubscribe from this newsletter?" : "Unsubscribe from \(count) newsletters?")
+                        .font(.title2.weight(.semibold))
+                    Text(count == 1 ? "Send an unsubscribe request to this sender." : "Send an unsubscribe request to each sender.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
@@ -42,6 +48,9 @@ struct UnsubscribeConfirmationView: View {
             .fixedSize(horizontal: false, vertical: true)
             .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .ternOutline(radius: Tokens.Radius.md)
+            Label("Existing emails stay in your mailbox. Senders may take a few days to stop new messages.", systemImage: "tray")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if confirmation.subscriptions.contains(where: { $0.status == .failed }) {
                 Label("An earlier request may already have reached a sender. Continuing sends another request.",
                     systemImage: "exclamationmark.circle")

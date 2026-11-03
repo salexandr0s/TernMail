@@ -95,24 +95,14 @@ struct UnsubscribeRow: View {
                 } else if subscription.status == .opened {
                     statusIcon("clock", title: "Finish unsubscribing on the website or by email", tint: .secondary)
                 }
-                if model.selectedAccountID.isEmpty && model.accounts.count > 1 {
-                    Text(model.accountTitle(for: subscription.accountID))
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.tail)
-                        .padding(.horizontal, Tokens.Space.s1_5).padding(.vertical, Tokens.Space.s0_5)
-                        .background(Tokens.Surface.muted, in: Capsule())
-                        .help("Receiving account: \(model.accountTitle(for: subscription.accountID))")
-                }
             }
-            Text(subscription.senderAddress).font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1).truncationMode(.middle).help(subscription.senderAddress)
             if showsListID, let listID = subscription.listID {
                 Label(listID, systemImage: "list.bullet")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     .help("Mailing list: \(listID). Latest message: \(subscription.latestSubject)")
             } else if !subscription.latestSubject.isEmpty {
                 Button { model.openLatestMessage(subscription) } label: {
-                    Text(subscription.latestSubject).font(.caption).foregroundStyle(.secondary)
+                    Text(subscription.latestSubject).font(.callout).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.tail)
                 }
                 .buttonStyle(.plain)
@@ -120,16 +110,31 @@ struct UnsubscribeRow: View {
                 .accessibilityLabel("Open latest message from \(subscription.displayName): \(subscription.latestSubject)")
                 .disabled(unavailable)
             }
+            HStack(spacing: Tokens.Space.s1_5) {
+                Text(subscription.senderAddress)
+                    .lineLimit(1).truncationMode(.middle).help(subscription.senderAddress)
+                    .layoutPriority(1)
+                if model.selectedAccountID.isEmpty && model.accounts.count > 1 {
+                    Text("·").accessibilityHidden(true)
+                    Text(model.accountTitle(for: subscription.accountID))
+                        .lineLimit(1).truncationMode(.tail)
+                        .help("Receiving account: \(model.accountTitle(for: subscription.accountID))")
+                }
+            }
+            .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
     private var activity: some View {
         VStack(alignment: .trailing, spacing: Tokens.Space.s1_5) {
             HStack(spacing: Tokens.Space.s1_5) {
-                Image(systemName: "envelope").font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "envelope").font(.caption2).foregroundStyle(.secondary)
                 Text(subscription.messageCount.formatted(.number.notation(.compactName).precision(.fractionLength(0...1))))
-                    .font(.callout.weight(.medium)).monospacedDigit().lineLimit(1)
+                    .font(.callout.weight(.semibold)).monospacedDigit().lineLimit(1)
             }
+            .padding(.horizontal, Tokens.Space.s2)
+            .padding(.vertical, Tokens.Space.s1)
+            .background(Color.primary.opacity(Tokens.Opacity.hover), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             Text(subscription.latestDate, format: .dateTime.month(.abbreviated).day())
                 .font(.caption).foregroundStyle(.secondary)
         }
