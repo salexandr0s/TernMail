@@ -1,6 +1,6 @@
 # Design findings: implementation and verification
 
-All fourteen findings are implemented and verified. The final combined app checks passed 179 tests with no failures and one opt-in native preview test skipped. Core MessageContent passed 121 tests, and the separate Calendar utility run passed all three tests. The changes are being recorded in scoped local commits.
+All fourteen findings are implemented and verified. The final combined app checks passed 179 tests with no failures and one opt-in native preview test skipped. Core MessageContent passed 121 tests, and the separate Calendar utility run passed all three tests. The changes are committed locally in scoped groups.
 
 The work uses swiftui-pro and preserves the macOS 26 deployment target, Swift 6 language mode, semantic macOS styles, existing draft/recovery interfaces, authorization boundaries, and delivery deadlines. Validation used Xcode 26.3, Swift 6.2.4, and macOS 27.2. No installation, publication, push, or real-account mutation was performed.
 
@@ -38,3 +38,5 @@ Live VoiceOver, Full Keyboard Access system mode and live accessibility-setting 
 Logs, result bundles, captures and workstream notes are in the [verification directory](/Users/developer/GitHub/TernMail/build/Verification/design-findings-20261103). [Source fingerprints](/Users/developer/GitHub/TernMail/build/Verification/design-findings-20261103/integrated-source-inputs.json) identify the verified files. The initial concurrent-work snapshot, source copies and binary patch are preserved; no unrelated source changes were reverted. The shared handoff remains with the other chats' uncommitted work.
 
 Validation used the final integrated working tree, including preserved concurrent work. The logical commits were not each built separately; generated project variants include only the new files present at each step. No deployment-target increase, installation, push or provider mutation was performed.
+
+Implementation commits: `11777e0` (A), `809f571` (B), `6cd944f` (C), `6d6da2f` (D). The documentation record is committed separately.
