@@ -92,11 +92,13 @@ struct CalendarEventEditor: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text(editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details")
-                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            HStack(spacing: Tokens.Space.s4) {
-                CalendarDateTile(month: CalendarLayout.format(start, style: .dateTime.month(.abbreviated), calendar: eventCalendar).uppercased(),
-                                 day: "\(eventCalendar.component(.day, from: start))", size: Tokens.Space.s12)
+            HStack(alignment: .top, spacing: Tokens.Space.s4) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    Text(editable ? draft.isDeletion ? "Delete event" : draft.isNew ? "New event" : "Edit event" : "Event details")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    CalendarDateTile(month: CalendarLayout.format(start, style: .dateTime.month(.abbreviated), calendar: eventCalendar).uppercased(),
+                                     day: "\(eventCalendar.component(.day, from: start))", size: Tokens.Space.s12)
+                }
                 Spacer(minLength: 0)
                 CalendarEditorCalendarPicker(selection: $draft.calendarKey, calendars: calendars)
                     .disabled(!editable || draft.isDeletion || isSaving)
