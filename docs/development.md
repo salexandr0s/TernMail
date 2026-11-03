@@ -67,9 +67,11 @@ On a logged-in, unlocked Mac, run:
 python3 scripts/capture-readme-screenshots.py
 ```
 
-The script builds a Debug test app and captures its native window with fictional, in-memory mail and calendar services. It uses no live accounts and needs no Google or ChatGPT credentials; a blank local configuration works.
+The script builds a Debug test app and captures its native windows with fictional, in-memory mail, calendar, and task services. A local assistant provider supplies scripted responses to the production conversation and card views. It uses no live accounts and needs no Google or ChatGPT credentials; a blank local configuration works.
 
-The three images are written to `docs/screenshots/`. Build logs and capture results stay in `build/readme-demo/`. Review the images before committing them. Use `--skip-build` only when that directory already contains a current test build.
+The seven images are written to `docs/screenshots/`: light and dark mail, Calendar, the assistant overview, follow-up emails, event suggestions, and Tasks. Build logs and capture results stay in `build/readme-demo/`. Review the images before committing them. Use `--section workspace` or `--section assistant` to update only that group, and `--skip-build` only when that directory already contains a current test build.
+
+The assistant examples use November 2026 dates. Some date labels follow the Mac's regional settings, time zone, and current date; the checked-in captures use English and Europe/Vienna.
 
 ## Signing
 

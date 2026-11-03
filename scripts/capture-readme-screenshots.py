@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture the native workspace with fictional mail, labels, and calendars."""
+"""Capture native Tern views with fictional mail, calendars, tasks, and assistant responses."""
 
 import argparse
 import json
@@ -26,6 +26,8 @@ def export_srgb(source: pathlib.Path, destination: pathlib.Path,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-build", action="store_true", help="Use an existing, current Debug test build")
+    parser.add_argument("--section", choices=("all", "workspace", "assistant"), default="all",
+                        help="Capture all views, the mail/calendar workspace, or the assistant and Tasks")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parent.parent
     derived = root / "build" / "readme-demo"
@@ -52,32 +54,39 @@ def main() -> None:
 
     run_id = uuid.uuid4().hex[:12]
     result = derived / f"screenshots-{run_id}.xcresult"
+    sections = {
+        "workspace": ("captureWorkspace", {"mail-light", "mail-dark", "calendar"}),
+        "assistant": ("captureAssistantAndTasks", {"assistant", "follow-up", "events", "tasks"}),
+    }
+    selected = list(sections.values()) if args.section == "all" else [sections[args.section]]
+    expected = set().union(*(names for _, names in selected))
+    identifiers = {f"ReadmeScreenshots/{test}()" for test, _ in selected}
+    tests = [f"-only-testing:TernTests/ReadmeScreenshots/{test}()" for test, _ in selected]
     print("Capturing the synthetic workspace. Keep the Mac unlocked…", flush=True)
     run(["xcodebuild", "test-without-building", "-xctestrun", str(prepared),
          "-destination", destination, "-parallel-testing-enabled", "NO",
-         "-only-testing:TernTests/ReadmeScreenshots", "-resultBundlePath", str(result)],
+         *tests, "-resultBundlePath", str(result)],
         derived / f"capture-{run_id}.log", root)
     exported = derived / f"export-{run_id}"
     run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(result),
          "--output-path", str(exported)], derived / f"export-{run_id}.log", root)
 
-    expected = {"mail-light", "mail-dark", "calendar"}
     images = {}
     for test in json.loads((exported / "manifest.json").read_text()):
-        if test["testIdentifier"] != "ReadmeScreenshots/captureWorkspace()":
+        if test["testIdentifier"] not in identifiers:
             continue
         for attachment in test["attachments"]:
             name = attachment["suggestedHumanReadableName"].split("_", 1)[0]
             if name in expected and not attachment["isAssociatedWithFailure"]:
                 images[name] = exported / attachment["exportedFileName"]
     if images.keys() != expected:
-        raise SystemExit(f"The capture did not produce all three images. Inspect {result}")
+        raise SystemExit(f"Missing captures: {', '.join(sorted(expected - images.keys()))}. Inspect {result}")
     output = root / "docs" / "screenshots"
     output.mkdir(parents=True, exist_ok=True)
     for name, source in sorted(images.items()):
         export_srgb(source, output / f"{name}.png", derived / f"color-{name}-{run_id}.log", root)
-    print("Saved mail-light.png, mail-dark.png, and calendar.png to docs/screenshots.")
-    print("Review all three images before committing them.")
+    print(f"Saved {', '.join(name + '.png' for name in sorted(images))} to docs/screenshots.")
+    print(f"Review all {len(images)} images before committing them.")
 
 
 if __name__ == "__main__":

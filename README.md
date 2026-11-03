@@ -18,7 +18,7 @@
 
 Tern brings your Gmail accounts into a SwiftUI app with a conversation reader, Google Calendar, Google Tasks, and an attachment library. An optional ChatGPT assistant helps you find mail, summarize conversations, and prepare replies.
 
-All screenshots show fictional demo accounts, messages, labels, and events. [Reproduce the screenshots](docs/development.md#screenshots) from the native app.
+All screenshots show fictional demo accounts, messages, labels, events, and tasks. Assistant responses are scripted locally for the demo. [Reproduce the screenshots](docs/development.md#screenshots) from the native app.
 
 ## Inside the app
 
@@ -44,6 +44,33 @@ Native menus, keyboard shortcuts, light and dark appearances, and macOS sharing 
     <td width="50%">
       <a href="docs/screenshots/calendar.png"><img src="docs/screenshots/calendar.png" alt="Tern's calendar populated with fictional events"></a>
       <p align="center">Google Calendar</p>
+    </td>
+  </tr>
+</table>
+
+## From conversations to next steps
+
+Ask the assistant what needs your attention, see which emails need a reply, and review tasks and events found in your mail. Each suggestion keeps its source conversation close by; you review tasks and events before saving them.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/assistant.png"><img src="docs/screenshots/assistant.png" alt="Tern's assistant showing a task, an event, and an email in response to a weekly overview request"></a>
+      <p align="center">Your assistant, with context from your mail</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/follow-up.png"><img src="docs/screenshots/follow-up.png" alt="Three follow-up email cards with senders, colored labels, and the next action for each conversation"></a>
+      <p align="center">Emails that need a follow-up</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/events.png"><img src="docs/screenshots/events.png" alt="Two event suggestions from emails, with dates, locations, source links, and Add to Calendar buttons"></a>
+      <p align="center">Events found in your conversations</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/tasks.png"><img src="docs/screenshots/tasks.png" alt="Tern's Tasks sidebar showing a studio task list, due dates, notes, and a completed-task count"></a>
+      <p align="center">Tasks and deadlines beside your mail</p>
     </td>
   </tr>
 </table>
