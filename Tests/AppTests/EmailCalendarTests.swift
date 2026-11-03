@@ -6,6 +6,96 @@ import TernAI
 @testable import Tern
 
 @Suite @MainActor struct EmailCalendarTests {
+    @Test func simultaneousInterpretationsShareInferenceWhenOneReaderCancels() async throws {
+        let provider = SharedEmailCalendarProvider()
+        let requests = AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>()
+        let service = sharedService(provider: provider, requests: requests)
+        let first = Task { try await service.extract(messages: [message()], timeZone: .gmt) }
+        defer { first.cancel() }
+        try await provider.waitForRequests(1)
+        let second = Task { try await service.extract(messages: [message()], timeZone: .gmt) }
+        defer { second.cancel() }
+        try await waitForJoinedReaders(2, service: service, requests: requests)
+
+        first.cancel()
+        await #expect(throws: CancellationError.self) { try await first.value }
+        #expect(await provider.requestCount == 1)
+        #expect(await provider.cancellationCount == 0)
+        await provider.complete(text: try response())
+        #expect(try await second.value.map(\.title) == ["Planning"])
+    }
+
+    @Test(arguments: ["source", "timeZone", "model", "access"])
+    func interpretationSharingKeepsSourceModelZoneAndAccessSeparate(change: String) async throws {
+        let provider = SharedEmailCalendarProvider()
+        let requests = AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>()
+        let service = sharedService(provider: provider, requests: requests)
+        let first = Task { try await service.extract(messages: [message()], timeZone: .gmt) }
+        defer { first.cancel() }
+        try await provider.waitForRequests(1)
+
+        var otherService = service
+        var otherMessage = message()
+        var zone = TimeZone.gmt
+        switch change {
+        case "source": otherMessage.forwardedText = "Confirmed flight July 15, 2031."
+        case "timeZone": zone = try #require(TimeZone(identifier: "Europe/Vienna"))
+        case "model": otherService = sharedService(provider: provider, requests: requests, model: "other-model")
+        default: otherService = sharedService(provider: provider, requests: requests, accessRevision: 2)
+        }
+        let changedService = otherService, changedMessage = otherMessage, changedZone = zone
+        let second = Task { try await changedService.extract(messages: [changedMessage], timeZone: changedZone) }
+        defer { second.cancel() }
+        try await provider.waitForRequests(2)
+        await provider.complete(text: try response())
+        _ = try await (first.value, second.value)
+        #expect(await provider.requestCount == 2)
+    }
+
+    @Test func sharedInterpretationRechecksEachReadersAccessBeforeReturning() async throws {
+        let provider = SharedEmailCalendarProvider()
+        let requests = AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>()
+        let firstService = sharedService(provider: provider, requests: requests)
+        var secondHasAccess = true
+        var secondService = sharedService(provider: provider, requests: requests)
+        secondService = EmailCalendarExtractionService(provider: provider, model: secondService.model,
+            requests: requests, requestIdentity: secondService.requestIdentity, isScopeValid: { secondHasAccess })
+        let first = Task { try await firstService.extract(messages: [message()], timeZone: .gmt) }
+        defer { first.cancel() }
+        try await provider.waitForRequests(1)
+        let joinedService = secondService
+        let second = Task { try await joinedService.extract(messages: [message()], timeZone: .gmt) }
+        defer { second.cancel() }
+        try await waitForJoinedReaders(2, service: firstService, requests: requests)
+        secondHasAccess = false
+        await provider.complete(text: try response())
+        #expect(try await first.value.count == 1)
+        await #expect(throws: AssistantError.self) { try await second.value }
+        #expect(await provider.requestCount == 1)
+    }
+
+    private func sharedService(provider: any AIProvider,
+                               requests: AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>,
+                               model: String = "fixture", accessRevision: Int = 1) -> EmailCalendarExtractionService {
+        let scope = AssistantScopeSnapshot(accountIDs: ["a"], threadIDs: nil,
+            accountInstances: ["a": "instance"], connectionRevision: 1, canUsePlan: true)
+        return EmailCalendarExtractionService(provider: provider, model: model, requests: requests,
+            requestIdentity: .init(scope: scope, thread: .init(accountID: "a", threadID: "thread"), accessRevision: accessRevision),
+            isScopeValid: { true })
+    }
+
+    private func waitForJoinedReaders(_ count: Int, service: EmailCalendarExtractionService,
+                                     requests: AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>) async throws {
+        let identity = try #require(service.requestIdentity)
+        let key = EmailCalendarExtractionService.RequestKey(identity: identity, model: service.model,
+            sourceRevision: EmailCalendarModel.fingerprint([message()], timeZone: .gmt))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while requests.waiterCount(for: key) < count, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(requests.waiterCount(for: key) == count)
+    }
+
     private func message(_ id: String = "message") -> EmailCalendarMessage {
         EmailCalendarMessage(id: id, subject: "Planning", date: Date(timeIntervalSince1970: 1_700_000_000),
                              text: "Meet July 15, 2031 at 14:00.")
@@ -407,6 +497,48 @@ private struct FailedEmailCalendarProvider: AIProvider {
     func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
         AsyncThrowingStream { $0.finish(throwing: AIProviderError.streamInterrupted) }
     }
+}
+
+private actor SharedEmailCalendarProvider: AIProvider {
+    private var responses: [AsyncThrowingStream<AIEvent, any Error>.Continuation] = []
+    private(set) var requestCount = 0
+    private(set) var cancellationCount = 0
+
+    func models() async throws -> [AIModel] { [] }
+
+    nonisolated func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            continuation.onTermination = { termination in
+                if case .cancelled = termination { Task { await self.recordCancellation() } }
+            }
+            Task { await self.start(continuation) }
+        }
+    }
+
+    func waitForRequests(_ count: Int) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while requestCount < count, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(requestCount >= count)
+    }
+
+    func complete(text: String) {
+        let response = AIResponse(output: [], text: text, toolCalls: [])
+        let completed = responses
+        responses.removeAll()
+        for continuation in completed {
+            continuation.yield(.completed(response))
+            continuation.finish()
+        }
+    }
+
+    private func start(_ continuation: AsyncThrowingStream<AIEvent, any Error>.Continuation) {
+        requestCount += 1
+        responses.append(continuation)
+    }
+
+    private func recordCancellation() { cancellationCount += 1 }
 }
 
 private struct EmailCalendarProvider: AIProvider {

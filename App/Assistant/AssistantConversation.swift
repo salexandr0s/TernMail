@@ -131,7 +131,7 @@ struct AssistantContext {
     var calendarScope = AssistantCalendarScope()
 }
 
-struct AssistantScopeSnapshot: Equatable {
+struct AssistantScopeSnapshot: Equatable, Sendable {
     let accountIDs: Set<String>
     let threadIDs: Set<ThreadKey>?
     let accountInstances: [String: String]

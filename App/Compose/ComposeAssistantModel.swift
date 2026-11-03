@@ -23,6 +23,7 @@ final class ComposeAssistantModel {
     @ObservationIgnored private var previousSuggestion: ComposeAssistantProposal?
     @ObservationIgnored private var undoContext: (before: ComposeAssistantContext, after: ComposeAssistantContext)?
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var activeTextStream: AssistantTextStream?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var lastRequest: String?
     @ObservationIgnored private var contextSources: [UUID: ComposeDroppedFile] = [:]
@@ -106,6 +107,7 @@ final class ComposeAssistantModel {
     }
 
     func stop() {
+        activeTextStream?.finish(); activeTextStream = nil
         task?.cancel(); task = nil; turnID = nil; isRunning = false; statusText = nil
         if let index = messages.lastIndex(where: { $0.state == .streaming }) { messages[index].state = .cancelled }
     }
@@ -262,6 +264,7 @@ final class ComposeAssistantModel {
         let files = contextAttachments.compactMap { contextContents[$0.id] }
         do {
             try validate(session, turn: turn)
+            async let pendingStyle = session.writingStyle()
             var thread: AIJSON = .null
             if let threadID = context.threadID {
                 let args = AIJSON.object(["account_id": .string(context.accountID), "thread_id": .string(threadID)])
@@ -278,7 +281,7 @@ final class ComposeAssistantModel {
             }
             input.append(try context.input(request: request, thread: thread, previousSuggestion: previousSuggestion,
                 contextFiles: files, previouslyIncludedFileIDs: contextFileIDsInHistory))
-            let style = try await session.writingStyle()
+            let style = try await pendingStyle
             try validate(session, turn: turn)
             let instructions = ComposeAssistantInstructions.text() + "\n" + style
             let readDefinitions = session.tools.definitions.filter { ComposeAssistantSession.readToolNames.contains($0.name) }
@@ -294,20 +297,30 @@ final class ComposeAssistantModel {
                 statusText = "Writing…"
                 var completed: AIResponse?
                 let prefix = messages.first { $0.id == messageID }?.text ?? ""
-                var streamed = ""
+                let textStream = AssistantTextStream { [weak self] text in
+                    guard let self, self.turnID == turn, session.isValid(), self.compose.isEditable,
+                          session.scope.accountIDs == Set([self.compose.draft?.accountID].compactMap { $0 }) else { return }
+                    self.update(messageID) { $0.text = Self.join(prefix, text) }
+                }
+                activeTextStream = textStream
+                defer {
+                    textStream.finish()
+                    if activeTextStream === textStream { activeTextStream = nil }
+                }
                 for try await event in session.provider.respond(.init(model: session.model, input: input,
                     instructions: instructions + "\n" + budget, tools: definitions)) {
                     try validate(session, turn: turn)
                     switch event {
                     case .textDelta(let delta):
                         guard completed == nil else { throw AIProviderError.invalidResponse }
-                        streamed += delta
-                        guard streamed.utf8.count <= AssistantModel.maximumHistoryBytes else { throw AssistantError.historyLimit }
-                        update(messageID) { $0.text = Self.join(prefix, streamed) }
+                        guard delta.utf8.count <= AssistantModel.maximumHistoryBytes - textStream.utf8Count else {
+                            throw AssistantError.historyLimit
+                        }
+                        textStream.append(delta)
                     case .completed(let response):
                         guard completed == nil else { throw AIProviderError.invalidResponse }
                         completed = response
-                        update(messageID) { $0.text = Self.join(prefix, response.text) }
+                        textStream.complete(response.text)
                     }
                 }
                 try validate(session, turn: turn)

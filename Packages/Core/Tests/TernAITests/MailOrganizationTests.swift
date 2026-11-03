@@ -111,6 +111,27 @@ import Testing
         #expect(sent.allSatisfy { $0["snippet"]?.stringValue?.contains("\u{FFFD}") == false })
     }
 
+    @Test func matchingMessageLabelsRetainRankedSpellingAndCanonicalEquivalence() async throws {
+        let recorder = OrganizationRequestRecorder()
+        let analyzer = MailOrganizationAnalyzer(provider: OrganizationProvider(events: [.completed(try response([]))], recorder: recorder))
+        let messages = [
+            OrganizationEmail(id: "first", threadID: "first-thread", sender: "sender@example.invalid",
+                recipients: [], subject: "First", snippet: "", date: Date(timeIntervalSince1970: 2), isSent: false,
+                labelNames: ["travel", "PROJECTS/CAFE\u{301}", "billing", "travel", "Unknown"]),
+            OrganizationEmail(id: "second", threadID: "second-thread", sender: "sender@example.invalid",
+                recipients: [], subject: "Second", snippet: "", date: Date(timeIntervalSince1970: 1), isSent: false,
+                labelNames: ["Travel", "projects/café"]),
+        ]
+        _ = try await analyzer.analyze(messages: messages,
+            existingLabelNames: ["Travel", "Projects/Café", "projects/CAFE\u{301}", "Billing", "Unused"], model: "test")
+        let request = try #require(await recorder.requests.first)
+        let content = try #require(request.input.first?["content"]?.stringValue)
+        let input = try AIJSON.decode(Data(content.utf8))
+        let sent = try #require(input["messages"]?.arrayValue)
+        #expect(sent[0]["labels"] == .array(["Projects/Café", "Travel", "Billing"].map(AIJSON.string)))
+        #expect(sent[1]["labels"] == .array(["Projects/Café", "Travel"].map(AIJSON.string)))
+    }
+
     @Test(arguments: ["headers", "ids", "senderProfiles"])
     func worstCaseEscapingFitsActualProviderEnvelopeWithoutDroppingMail(kind: String) async throws {
         let recorder = OrganizationHTTPRecorder()

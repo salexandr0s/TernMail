@@ -203,11 +203,43 @@ final class MailAssistantTools {
         guard token == nil || selectedAccount != nil else { throw ToolError.invalidArguments }
         let accounts = selectedAccount.map { [$0] } ?? allowedAccountIDs.sorted()
         guard accounts.count <= 10 else { throw ToolError.narrowScope }
+        let owners = try accounts.map { try owner($0) }
+        let foundPages = try await withThrowingTaskGroup(of: (Int, GmailResultPage).self) { group in
+            let initialCount = min(3, owners.count)
+            for index in 0..<initialCount {
+                let owner = owners[index]
+                let engine = owner.engine
+                group.addTask {
+                    try await self.checkOwner(owner)
+                    let page = try await engine.searchGmail(SearchQuery(query), timeZone: .current, pageToken: token)
+                    try await self.checkOwner(owner)
+                    return (index, page)
+                }
+            }
+            var next = initialCount
+            var results: [(Int, GmailResultPage)] = []
+            while let result = try await group.next() {
+                results.append(result)
+                if next < owners.count {
+                    let index = next
+                    let owner = owners[index]
+                    let engine = owner.engine
+                    next += 1
+                    group.addTask {
+                        try await self.checkOwner(owner)
+                        let page = try await engine.searchGmail(SearchQuery(query), timeZone: .current, pageToken: token)
+                        try await self.checkOwner(owner)
+                        return (index, page)
+                    }
+                }
+            }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
+        }
         var pages: [AIJSON] = []
         var sources: [AssistantSource] = []
-        for accountID in accounts {
-            let owner = try owner(accountID)
-            let page = try await owner.engine.searchGmail(SearchQuery(query), timeZone: .current, pageToken: token)
+        for (index, accountID) in accounts.enumerated() {
+            let owner = owners[index]
+            let page = foundPages[index]
             try checkOwner(owner)
             let found = page.threadIDs.filter { isAllowedThread(accountID: accountID, threadID: $0) }
             guard let mailbox = mailbox() else { throw AssistantMailError.accessChanged }

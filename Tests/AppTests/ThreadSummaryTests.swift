@@ -10,6 +10,119 @@ import TernAI
     private static let key = ThreadKey(accountID: "a", threadID: "t")
     private static let source = AssistantSource(accountID: "a", threadID: "t", messageID: "m", partID: nil, title: "Proposal")
 
+    @Test(arguments: [false, true])
+    func simultaneousReadersShareOneReadAndGeneration(forceRefresh: Bool) async throws {
+        let provider = SummaryProvider(replies: [nil])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let first = Task { try await fixture.model.readerSummary(thread: Self.key, revision: "r1", forceRefresh: forceRefresh) }
+        await provider.waitForRequests(1)
+        let second = Task { try await fixture.model.readerSummary(thread: Self.key, revision: "r1", forceRefresh: forceRefresh) }
+        try await fixture.context.waitForSessions(2)
+        await provider.release(0, response: try Self.response("Shared summary"))
+
+        let firstResult = try await first.value
+        let secondResult = try await second.value
+        #expect(firstResult == secondResult)
+        #expect(fixture.context.reads == 1)
+        #expect(await provider.requests.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func readerCancellationLeavesOnlyOwnedSharedWork(cancelBoth: Bool) async throws {
+        let provider = SummaryProvider(replies: [nil, try Self.response("Replacement summary")])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let first = Task { try await fixture.model.readerSummary(thread: Self.key, revision: "r1") }
+        await provider.waitForRequests(1)
+        let second = Task { try await fixture.model.readerSummary(thread: Self.key, revision: "r1") }
+        try await fixture.context.waitForSessions(2)
+        first.cancel()
+        await #expect(throws: CancellationError.self) { try await first.value }
+
+        if cancelBoth {
+            second.cancel()
+            await #expect(throws: CancellationError.self) { try await second.value }
+            await provider.waitForCancellations(1)
+            let replacement = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
+            #expect(replacement.summary.summary == "Replacement summary")
+            #expect(fixture.context.reads == 2)
+            #expect(await provider.requests.count == 2)
+        } else {
+            #expect(await provider.cancellations == 0)
+            await provider.release(0, response: try Self.response("Shared summary"))
+            #expect(try await second.value.summary.summary == "Shared summary")
+            #expect(fixture.context.reads == 1)
+            #expect(await provider.requests.count == 1)
+        }
+    }
+
+    @Test func revokedSummaryIsCancelledBeforeTheProviderRepliesAndCannotBeRejoined() async throws {
+        let provider = SummaryProvider(replies: [nil, try Self.response("Fresh summary")])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let pending = Task { try await fixture.model.readerSummary(thread: Self.key, revision: "r1") }
+        await provider.waitForRequests(1)
+        fixture.model.setAccountEnabled("a", enabled: false)
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        await provider.waitForCancellations(1)
+        fixture.model.setAccountEnabled("a", enabled: true)
+        let fresh = try await fixture.model.readerSummary(thread: Self.key, revision: "r1")
+        #expect(fresh.summary.summary == "Fresh summary")
+        #expect(await provider.requests.count == 2)
+    }
+
+    @Test func sharedReadersValidateTheirExpectedMessagesIndependently() async throws {
+        let provider = SummaryProvider(replies: [nil])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let mismatched = Task {
+            try await fixture.model.readerSummary(thread: Self.key, revision: "r1", expectedMessageIDs: ["m", "missing"])
+        }
+        await provider.waitForRequests(1)
+        let matching = Task {
+            try await fixture.model.readerSummary(thread: Self.key, revision: "r1", expectedMessageIDs: ["m"])
+        }
+        try await fixture.context.waitForSessions(2)
+        await provider.release(0, response: try Self.response("Shared summary"))
+        await #expect(throws: ThreadSummaryError.self) { try await mismatched.value }
+        #expect(try await matching.value.summary.summary == "Shared summary")
+        _ = try await fixture.model.readerSummary(thread: Self.key, revision: "r1", expectedMessageIDs: ["m"])
+        #expect(await provider.requests.count == 1)
+        #expect(fixture.context.reads == 1)
+    }
+
+    @Test func calendarExtractionFactoryCancelsPendingInferenceWhenMailAccessIsRevoked() async throws {
+        let provider = SummaryProvider(replies: [nil])
+        let fixture = Fixture(provider: provider)
+        await fixture.model.refreshConnection()
+        let service = try fixture.model.calendarExtractionService(for: Self.key)
+        let message = EmailCalendarMessage(id: "m", subject: "Planning", date: .distantPast,
+            text: "Meet July 15, 2031 at 14:00.")
+        let pending = Task { try await service.extract(messages: [message], timeZone: .gmt) }
+        defer { pending.cancel() }
+        await provider.waitForRequests(1)
+        fixture.model.setAccountEnabled("a", enabled: false)
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        await provider.waitForCancellations(1)
+    }
+
+    @Test func aCompletedOlderWaiterCannotReplaceTheNewerRefreshCache() throws {
+        var cache = ThreadSummaryCache()
+        let key = ThreadSummaryCache.Key(thread: Self.key, accountInstance: "instance", connectionRevision: 1,
+            modelID: "test", sourceRevision: "r1")
+        func report(_ text: String) throws -> ThreadSummaryReport {
+            let response = try Self.response(text)
+            return ThreadSummaryReport(summary: try AssistantSummary.decode(Data(response.text.utf8),
+                allowedSourceIDs: [Self.source.id]), sources: [Self.source], hasPartialCoverage: false)
+        }
+        let older = cache.beginRequest(for: key)
+        let refresh = cache.beginRequest(for: key)
+        cache.insert(try report("Fresh summary"), for: key, requestID: refresh)
+        cache.insert(try report("Older summary"), for: key, requestID: older)
+        #expect(cache.report(for: key)?.summary.summary == "Fresh summary")
+    }
+
     @Test func taskDueDatesUseLocalFormattingWithoutChangingTheCalendarDay() {
         #expect(SummaryDueDate.formatted("2026-11-04", locale: Locale(identifier: "en_US")) == "Nov 4, 2026")
         #expect(SummaryDueDate.formatted("2026-11-04", locale: Locale(identifier: "de_AT")) == "04.11.2026")
@@ -369,6 +482,11 @@ import TernAI
         var connectionRevision = 1
         var reads = 0
         var sessions = 0
+        func waitForSessions(_ count: Int) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+            while sessions < count, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+            try #require(sessions >= count)
+        }
         func value() -> AssistantContext {
             .init(accounts: [account], isAccountListReady: true, currentAccountIDs: ["a"],
                 selectedThreads: selectedThreads, accountInstances: instance.map { ["a": $0] } ?? [:],
@@ -404,6 +522,8 @@ private actor SummaryProvider: AIProvider {
     private(set) var requests: [AIRequest] = []
     private var suspended: [Int: AsyncThrowingStream<AIEvent, any Error>.Continuation] = [:]
     private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private(set) var cancellations = 0
+    private var cancellationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     init(replies: [AIResponse?], modelIDs: [String] = ["test", "alternate"], failures: [Int: AIProviderError] = [:]) {
         self.replies = replies; self.modelIDs = modelIDs; self.failures = failures
     }
@@ -414,12 +534,25 @@ private actor SummaryProvider: AIProvider {
     nonisolated func respond(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task { await self.start(request, continuation: continuation) }
-            continuation.onTermination = { _ in task.cancel() }
+            continuation.onTermination = { termination in
+                task.cancel()
+                if case .cancelled = termination { Task { await self.recordCancellation() } }
+            }
         }
     }
     func waitForRequests(_ count: Int) async {
         if requests.count >= count { return }
         await withCheckedContinuation { waiters.append((count, $0)) }
+    }
+    func waitForCancellations(_ count: Int) async {
+        if cancellations >= count { return }
+        await withCheckedContinuation { cancellationWaiters.append((count, $0)) }
+    }
+    private func recordCancellation() {
+        cancellations += 1
+        let ready = cancellationWaiters.filter { cancellations >= $0.0 }
+        cancellationWaiters.removeAll { cancellations >= $0.0 }
+        ready.forEach { $0.1.resume() }
     }
     func release(_ index: Int, response: AIResponse) {
         let stream = suspended.removeValue(forKey: index)

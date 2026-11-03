@@ -1,4 +1,5 @@
 import Foundation
+import GmailAPI
 import MailStore
 import SyncEngine
 import TernAI
@@ -7,6 +8,57 @@ import Testing
 
 @MainActor
 @Suite struct MailAssistantToolsTests {
+    @Test func accountSearchesOverlapWithinTheirLimitAndRetainAccountOrder() async throws {
+        let transport = AssistantSearchTransport()
+        let mailbox = try await makeSearchMailbox(transport: transport)
+        let tools = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["a", "b", "c", "d"]) { true }
+        let request = try call("search_mail", ["query": .string("plans"), "account_id": .null, "page_token": .null])
+        let operation = Task { try await tools.execute(request) }
+        defer { operation.cancel() }
+
+        try await waitForSearch { await transport.started.count >= 3 }
+        #expect(await transport.started.sorted() == ["a", "b", "c"])
+        await transport.release("b")
+        try await waitForSearch { await transport.started.count == 4 }
+        await transport.release("d")
+        await transport.release("c")
+        await transport.release("a")
+
+        let result = try await operation.value
+        let pages = try #require(result.data["pages"]?.arrayValue)
+        #expect(pages.compactMap { $0["account_id"]?.stringValue } == ["a", "b", "c", "d"])
+        #expect(pages.compactMap { $0["next_page_token"]?.stringValue } == ["next-a", "next-b", "next-c", "next-d"])
+        #expect(await transport.maximumInFlight == 3)
+        await mailbox.stop()
+    }
+
+    @Test(arguments: ["revoke", "cancel", "replace"])
+    func accountSearchesDiscardWorkAfterAccessChangesOrCancellation(change: String) async throws {
+        let transport = AssistantSearchTransport()
+        let mailbox = try await makeSearchMailbox(transport: transport)
+        var enabled = true
+        let tools = MailAssistantTools(mailbox: mailbox, allowedAccountIDs: ["a", "b", "c", "d"]) { enabled }
+        let request = try call("search_mail", ["query": .string("plans"), "account_id": .null, "page_token": .null])
+        let operation = Task { try await tools.execute(request) }
+        defer { operation.cancel() }
+        try await waitForSearch { await transport.started.count >= 3 }
+
+        if change == "cancel" { operation.cancel() }
+        else if change == "revoke" { enabled = false }
+        else {
+            let original = try #require(mailbox.account(id: "a"))
+            await mailbox.replaceAccountRuntime(record: original.account, gmail: AuditGmail(), syncEnabled: false)
+        }
+        await transport.release("a")
+        if change == "revoke" {
+            await #expect(throws: AssistantMailError.accessChanged) { try await operation.value }
+        } else {
+            await #expect(throws: CancellationError.self) { try await operation.value }
+        }
+        #expect(await transport.started.count == 3)
+        await mailbox.stop()
+    }
+
     @Test func rejectsAccountsAndThreadsOutsideTheImmutableScope() async throws {
         let mailbox = try makeAssistantMailbox()
         let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
@@ -235,4 +287,59 @@ private func call(_ name: String, _ arguments: [String: AIJSON], id: String = UU
 
 private func emailSelection(_ sourceID: String, reason: String? = nil) -> AIJSON {
     .object(["source_id": .string(sourceID), "reason": reason.map(AIJSON.string) ?? .null])
+}
+
+@MainActor
+private func makeSearchMailbox(transport: AssistantSearchTransport) async throws -> MailboxModel {
+    func account(_ id: String) -> AccountRecord {
+        .init(id: id, email: "\(id)@example.invalid", displayName: nil, grantedScopes: [], addedAt: .distantPast)
+    }
+    func gmail(_ id: String) -> GmailClient {
+        .init(tokens: AssistantSearchTokens(accountID: id), transport: transport)
+    }
+    let mailbox = MailboxModel(account: account("a"), cache: try MailCache.inMemory(), gmail: gmail("a"),
+        outgoingDirectory: FileManager.default.temporaryDirectory, syncEnabled: false)
+    for id in ["b", "c", "d"] { await mailbox.addAccount(account(id), gmail: gmail(id), syncEnabled: false) }
+    return mailbox
+}
+
+@MainActor
+private func waitForSearch(_ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+    while !(await condition()), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    try #require(await condition(), "The account searches did not reach the expected state")
+}
+
+private struct AssistantSearchTokens: AccessTokenProvider {
+    let accountID: String
+    func accessToken(forceRefresh: Bool) async throws -> String { accountID }
+}
+
+private actor AssistantSearchTransport: HTTPTransport {
+    private(set) var started: [String] = []
+    private(set) var maximumInFlight = 0
+    private var waiting: [String: CheckedContinuation<Void, any Error>] = [:]
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let accountID = try #require(request.value(forHTTPHeaderField: "Authorization")?.split(separator: " ").last.map(String.init))
+        let url = try #require(request.url)
+        #expect(url.path.hasSuffix("/threads"))
+        try Task.checkCancellation()
+        started.append(accountID)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                waiting[accountID] = $0
+                maximumInFlight = max(maximumInFlight, waiting.count)
+            }
+        } onCancel: {
+            Task { await self.cancel(accountID) }
+        }
+        try Task.checkCancellation()
+        let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        let data = try AIJSON.object(["threads": .array([]), "nextPageToken": .string("next-" + accountID)]).encoded()
+        return (data, response)
+    }
+
+    func release(_ accountID: String) { waiting.removeValue(forKey: accountID)?.resume() }
+    private func cancel(_ accountID: String) { waiting.removeValue(forKey: accountID)?.resume(throwing: CancellationError()) }
 }

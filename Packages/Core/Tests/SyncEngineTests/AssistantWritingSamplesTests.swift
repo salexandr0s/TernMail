@@ -24,7 +24,10 @@ import Testing
         #expect(result.samples.last?.messageID == "m99")
         #expect(result.hasMoreSentMail)
         #expect(!result.truncated)
-        #expect(Set(await gmail.metadataRequests.flatMap { $0 }).count == 100)
+        let requests = await gmail.metadataRequests
+        #expect(requests.count == 5)
+        #expect(requests.allSatisfy { $0.count == 20 })
+        #expect(requests.flatMap { $0 } == (0..<100).map { "m\($0)" })
         #expect(try await cache.read { try $0.thread(id: "cached-thread", accountID: account) }?.isUnread == true)
         #expect(try await cache.read { try $0.thread(id: "same-thread", accountID: account) } == nil)
         #expect(try await cache.read { try $0.pendingActions(accountID: account) }.isEmpty)
@@ -120,7 +123,7 @@ import Testing
         #expect(result.samples.allSatisfy { $0.text.utf8.count <= 2_048 && $0.truncated })
         #expect(result.failures.filter { $0.reason == .excerptLimit }.count == 60)
         #expect(result.truncated)
-        #expect(await gmail.metadataRequests.count == 10)
+        #expect(await gmail.metadataRequests.count == 5)
         #expect(await gmail.attachmentRequests.isEmpty)
     }
 

@@ -61,15 +61,18 @@ extension CalendarModel {
         guard let owner = app?.mailbox?.account(id: key.accountID), let cache = app?.cache else { return }
         let preparation = model.beginPreparation()
         let timeZone = calendar.timeZone
+        let replyEngine = owner.engine
+        let suggestionStore = store
         do {
+            async let replyAddresses = replyEngine.calendarReplyAddresses()
+            async let savedSuggestions = suggestionStore?.suggestions(accountID: key.accountID, threadID: key.threadID) ?? []
             let state: CalendarInvitationState
             if let invitationState { state = invitationState }
             else { state = try await cache.read { try $0.calendarInvitationState(accountID: key.accountID) } }
-            let addresses = try await owner.engine.calendarReplyAddresses()
-            let saved = try await store?.suggestions(accountID: key.accountID, threadID: key.threadID) ?? []
             try validateEmailLifetime(revision, accountID: key.accountID)
             let prepared = try await EmailCalendarPreparation.shared.prepare(detail: detail, invitations: state.invitations, accountID: key.accountID,
                 lifetime: String(describing: ObjectIdentifier(owner)) + ":\(revision)", timeZone: timeZone)
+            let (addresses, saved) = try await (replyAddresses, savedSuggestions)
             try validateEmailLifetime(revision, accountID: key.accountID)
             guard model.acceptsPreparation(preparation), calendar.timeZone == timeZone,
                   app?.mailbox?.account(id: key.accountID) === owner else { return }

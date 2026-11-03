@@ -20,6 +20,7 @@ final class AssistantModel {
                 calendarExtractionRevision += 1
                 composePermissionRevision += 1
                 readerSummaryCache.removeAll()
+                readerSummaryRequests.cancelAll()
             }
             refreshWritingStyleAccess()
         }
@@ -43,7 +44,9 @@ final class AssistantModel {
     private(set) var calendarChoiceError: String?
     /// Thread readers observe this token to cancel extraction when permission
     /// or model readiness changes; the chat's internal epoch is not observed.
-    private(set) var calendarExtractionRevision = 0
+    private(set) var calendarExtractionRevision = 0 {
+        didSet { emailExtractionRequests.cancelAll() }
+    }
     var summaryAccessRevision: Int { calendarExtractionRevision }
     var hasCalendarAccess: Bool { context().calendarScope.hasAccess }
     var hasAssistantDataAccess: Bool { !enabledAccountIDs.isEmpty || hasCalendarAccess }
@@ -59,7 +62,10 @@ final class AssistantModel {
     @ObservationIgnored private var lastNavigationScope: AssistantScopeSnapshot?
     @ObservationIgnored private var toolSession: AssistantToolSession?
     @ObservationIgnored private var readerSummaryCache = ThreadSummaryCache()
+    @ObservationIgnored private let readerSummaryRequests = AssistantSharedRequests<ThreadSummaryRequestKey, ThreadSummaryRequestResult>()
+    @ObservationIgnored private let emailExtractionRequests = AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>()
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var activeTextStream: AssistantTextStream?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var conversationEpoch = 0
     @ObservationIgnored private var retryContext: RetryContext?
@@ -258,6 +264,10 @@ final class AssistantModel {
             catalogueTask?.cancel(); catalogueTask = nil; catalogueTaskRevision = nil; catalogueTaskID = nil
             isLoadingModels = false
         }
+        readerSummaryRequests.cancel { $0.scope != snapshot || $0.accessRevision != summaryAccessRevision }
+        emailExtractionRequests.cancel {
+            $0.identity.scope != snapshot || $0.identity.accessRevision != calendarExtractionRevision
+        }
         refreshWritingStyleAccess()
     }
 
@@ -309,11 +319,13 @@ final class AssistantModel {
             catalogueRevision = revision
             if !choices.contains(where: { $0.id == selectedModelID }) { selectedModelID = choices.first?.id ?? "" }
             calendarExtractionRevision += 1
+            readerSummaryRequests.cancelAll()
             modelErrorMessage = choices.isEmpty ? "No models are available for this ChatGPT connection." : nil
         } catch {
             guard context().connectionRevision == revision else { refreshAccess(); return }
             models = []
             readerSummaryCache.removeAll()
+            readerSummaryRequests.cancelAll()
             calendarExtractionRevision += 1
             modelErrorMessage = Self.message(for: error)
         }
@@ -380,6 +392,7 @@ final class AssistantModel {
     }
 
     func stop() {
+        activeTextStream?.finish(); activeTextStream = nil
         task?.cancel(); task = nil; turnID = nil
         if let index = messages.lastIndex(where: { $0.state == .streaming }) {
             messages[index].state = .cancelled
@@ -482,9 +495,12 @@ final class AssistantModel {
               snapshot.threadIDs?.contains(thread) ?? true else { throw AssistantError.accessChanged }
         let epoch = conversationEpoch
         let model = selectedModelID
-        return EmailCalendarExtractionService(provider: provider, model: model) { [weak self] in
+        let accessRevision = calendarExtractionRevision
+        return EmailCalendarExtractionService(provider: provider, model: model,
+            requests: emailExtractionRequests,
+            requestIdentity: .init(scope: snapshot, thread: thread, accessRevision: accessRevision)) { [weak self] in
             guard let self else { return false }
-            return conversationEpoch == epoch && scope(in: context()) == snapshot
+            return conversationEpoch == epoch && calendarExtractionRevision == accessRevision && scope(in: context()) == snapshot
                 && selectedModelID == model && catalogueRevision == snapshot.connectionRevision
                 && models.contains(where: { $0.id == model })
         }
@@ -527,11 +543,18 @@ final class AssistantModel {
             try cached.validateMessages(expectedMessageIDs)
             return cached
         }
-        let report = try await service.report(thread: thread)
+        let requestKey = ThreadSummaryRequestKey(cacheKey: key, scope: snapshot, accessRevision: summaryAccessRevision)
+        // Refresh bypasses completed cache entries, but joins matching work that
+        // is already fetching this exact source under the same access revision.
+        let result = try await readerSummaryRequests.value(for: requestKey) {
+            let requestID = self.readerSummaryCache.beginRequest(for: key)
+            return ThreadSummaryRequestResult(report: try await service.report(thread: thread), requestID: requestID)
+        }
         try Task.checkCancellation()
         guard service.isScopeValid() else { throw AssistantError.accessChanged }
+        let report = result.report
         try report.validateMessages(expectedMessageIDs)
-        readerSummaryCache.insert(report, for: key)
+        readerSummaryCache.insert(report, for: key, requestID: result.requestID)
         return report
     }
 
@@ -667,6 +690,7 @@ final class AssistantModel {
     private func clearConversation() {
         stop(); conversationEpoch += 1
         calendarExtractionRevision += 1
+        readerSummaryRequests.cancelAll()
         history = []; messages = []; toolSession = nil; composerText = ""
         retryContext = nil
         errorMessage = nil; usage = nil
@@ -743,19 +767,26 @@ final class AssistantModel {
                 }
                 var completed: AIResponse?
                 let prefix = messages.first(where: { $0.id == messageID })?.text ?? ""
-                var streamedText = ""
+                let textStream = AssistantTextStream { [weak self] text in
+                    guard let self, self.turnID == turn, self.isCurrentChatScope(snapshot) else { return }
+                    self.update(messageID) { $0.text = Self.joinReply(prefix, text) }
+                }
+                activeTextStream = textStream
+                defer {
+                    textStream.finish()
+                    if activeTextStream === textStream { activeTextStream = nil }
+                }
                 for try await event in provider.respond(AIRequest(model: model, input: input,
                     instructions: instructions + "\n" + budgetInstructions + "\n" + styleInstructions, tools: roundDefinitions)) {
                     try ensureCurrent(snapshot, turn: turn)
                     switch event {
                     case .textDelta(let delta):
                         guard completed == nil else { throw AIProviderError.malformedResponse(.terminalEnvelope) }
-                        streamedText += delta
-                        update(messageID) { $0.text = Self.joinReply(prefix, streamedText) }
+                        textStream.append(delta)
                     case .completed(let response):
                         guard completed == nil else { throw AIProviderError.malformedResponse(.terminalEnvelope) }
                         completed = response
-                        update(messageID) { $0.text = Self.joinReply(prefix, response.text) }
+                        textStream.complete(response.text)
                     }
                 }
                 try ensureCurrent(snapshot, turn: turn)

@@ -128,53 +128,5 @@ public struct AIHTTPTransport: Sendable {
     public let send: @Sendable (URLRequest) async throws -> AIHTTPResponse
     public init(send: @escaping @Sendable (URLRequest) async throws -> AIHTTPResponse) { self.send = send }
 
-    public static let live = AIHTTPTransport { request in
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil
-        configuration.httpCookieStorage = nil
-        configuration.timeoutIntervalForRequest = 120
-        configuration.timeoutIntervalForResource = 120
-        let session = URLSession(configuration: configuration, delegate: AIRedirectBlocker(), delegateQueue: nil)
-        return try await withTaskCancellationHandler {
-            do {
-                let (bytes, response) = try await session.bytes(for: request)
-                guard let response = response as? HTTPURLResponse else {
-                    session.invalidateAndCancel()
-                    throw AIProviderError.malformedResponse(.httpResponse)
-                }
-                // At most 2 MiB can wait for the parser, including a large completed-event frame.
-                let body = AsyncThrowingStream<Data, any Error>(bufferingPolicy: .bufferingOldest(2048)) { continuation in
-                    let task = Task {
-                        defer { session.invalidateAndCancel() }
-                        do {
-                            var chunk = Data()
-                            for try await byte in bytes {
-                                try Task.checkCancellation()
-                                chunk.append(byte)
-                                if byte == 10 || chunk.count == 1024 {
-                                    if case .dropped = continuation.yield(chunk) { throw AIProviderError.responseLimit }
-                                    chunk.removeAll(keepingCapacity: true)
-                                }
-                            }
-                            if !chunk.isEmpty, case .dropped = continuation.yield(chunk) { throw AIProviderError.responseLimit }
-                            continuation.finish()
-                        } catch { continuation.finish(throwing: error) }
-                    }
-                    continuation.onTermination = { _ in task.cancel(); session.invalidateAndCancel() }
-                }
-                return AIHTTPResponse(status: response.statusCode, contentType: response.value(forHTTPHeaderField: "Content-Type"), body: body,
-                                      cancel: { session.invalidateAndCancel() })
-            } catch {
-                session.invalidateAndCancel()
-                throw error
-            }
-        } onCancel: { session.invalidateAndCancel() }
-    }
-}
-
-private final class AIRedirectBlocker: NSObject, URLSessionTaskDelegate, Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
+    public static let live = AIHTTPSession().transport
 }

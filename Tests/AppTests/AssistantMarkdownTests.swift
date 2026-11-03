@@ -3,6 +3,77 @@ import Testing
 @testable import Tern
 
 struct AssistantMarkdownTests {
+    @Test @MainActor func streamedTextCoalescesBurstsAndFlushesWhileTheProviderPauses() async throws {
+        let delay = TextStreamDelay()
+        var publications: [String] = []
+        let updates = AsyncStream<String>.makeStream()
+        var iterator = updates.stream.makeAsyncIterator()
+        let stream = AssistantTextStream(sleep: delay.sleep) {
+            publications.append($0)
+            updates.continuation.yield($0)
+        }
+        defer { stream.finish(); updates.continuation.finish() }
+
+        stream.append("")
+        #expect(publications.isEmpty)
+        stream.append("First")
+        #expect(publications == ["First"])
+        #expect(await iterator.next() == "First")
+        for _ in 0..<1_000 { stream.append(" fragment") }
+        #expect(publications.count == 1)
+        #expect(stream.utf8Count == 9_005)
+        await delay.waitUntilSleeping()
+        delay.release()
+        #expect(await iterator.next() == "First" + String(repeating: " fragment", count: 1_000))
+        #expect(publications.count == 2)
+    }
+
+    @Test @MainActor func streamedTextFinalizationCancelsDelayedUpdatesAndKeepsTheLastText() async throws {
+        for authoritative in [false, true] {
+            let delay = TextStreamDelay()
+            var publications: [String] = []
+            let stream = AssistantTextStream(sleep: delay.sleep) { publications.append($0) }
+            stream.append("First")
+            stream.append(" pending")
+            await delay.waitUntilSleeping()
+
+            if authoritative { stream.complete("Final answer") } else { stream.finish() }
+            #expect(publications == ["First", authoritative ? "Final answer" : "First pending"])
+            stream.append(" stale")
+            stream.complete("Stale completion")
+            stream.finish()
+            delay.release()
+            await delay.waitUntilReturned()
+            #expect(publications == ["First", authoritative ? "Final answer" : "First pending"])
+        }
+    }
+
+    @MainActor private final class TextStreamDelay {
+        private var sleeper: CheckedContinuation<Void, Never>?
+        private var startWaiter: CheckedContinuation<Void, Never>?
+        private var returnWaiter: CheckedContinuation<Void, Never>?
+        private var returned = false
+
+        func sleep(_ duration: Duration) async throws {
+            #expect(duration == .milliseconds(40))
+            await withCheckedContinuation {
+                sleeper = $0
+                startWaiter?.resume(); startWaiter = nil
+            }
+            returned = true
+            returnWaiter?.resume(); returnWaiter = nil
+        }
+        func waitUntilSleeping() async {
+            if sleeper != nil { return }
+            await withCheckedContinuation { startWaiter = $0 }
+        }
+        func release() { sleeper?.resume(); sleeper = nil }
+        func waitUntilReturned() async {
+            if returned { return }
+            await withCheckedContinuation { returnWaiter = $0 }
+        }
+    }
+
     @Test @MainActor func unchangedMessageTextReusesLazyPresentation() {
         var message = AssistantMessage(isUser: false, text: "**Read** the proposal.", state: .streaming)
         let presentation = message.markdown

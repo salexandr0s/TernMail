@@ -10,6 +10,47 @@ import TernAI
 @testable import Tern
 
 @Suite @MainActor struct ComposeAssistantTests {
+    @Test(arguments: [false, true])
+    func streamedBurstsKeepAllPartialTextAndUseTheAuthoritativeCompletion(completes: Bool) async throws {
+        let fragments = ["First"] + Array(repeating: " fragment", count: 200)
+        let provider = Provider(replies: [.streamed(fragments, completes ? Self.answer("Final answer") : nil)])
+        let fixture = try await Fixture(provider: provider)
+        defer { fixture.stop() }
+        fixture.model.prompt = "Answer briefly"
+        fixture.model.send()
+        await fixture.model.waitForCurrentTurn()
+
+        #expect(fixture.model.messages.last?.text == (completes ? "Final answer" : fragments.joined()))
+        #expect(fixture.model.messages.last?.state == (completes ? .completed : .failed))
+        await fixture.close()
+    }
+
+    @Test(arguments: [false, true])
+    func stoppingStreamKeepsItsPendingTailUnlessAccessWasRevoked(revokeAccess: Bool) async throws {
+        let provider = Provider(replies: [.streamedSuspended(["First", " tail"])])
+        let fixture = try await Fixture(provider: provider)
+        defer { fixture.stop() }
+        fixture.model.prompt = "Answer briefly"
+        fixture.model.send()
+        try await Self.waitUntil { fixture.model.messages.last?.text.isEmpty == false }
+        await Task.yield()
+
+        if revokeAccess {
+            fixture.assistant.setAccountEnabled("audit", enabled: false)
+            fixture.model.refreshAccess()
+        } else { fixture.model.stop() }
+        if revokeAccess { #expect(fixture.model.messages.isEmpty) }
+        else {
+            #expect(fixture.model.messages.last?.text == "First tail")
+            #expect(fixture.model.messages.last?.state == .cancelled)
+        }
+        await provider.release(Self.answer("Late private answer"))
+        try await Task.sleep(for: .milliseconds(80))
+        if revokeAccess { #expect(fixture.model.messages.isEmpty) }
+        else { #expect(fixture.model.messages.last?.text == "First tail") }
+        await fixture.close()
+    }
+
     @Test func replyContextStaysWithTheComposerAndFollowupsIncludeUnappliedSuggestions() async throws {
         let search = try Self.call("search_mail", ["query": .string("plans"), "account_id": .string("audit"), "page_token": .null])
         let check = try Self.call("check_requested_availability", ["calendars": .null,
@@ -535,7 +576,7 @@ import TernAI
     }
 
     private actor Provider: AIProvider {
-        enum Reply: Sendable { case complete(AIResponse), suspended }
+        enum Reply: Sendable { case complete(AIResponse), streamed([String], AIResponse?), streamedSuspended([String]), suspended }
         private var replies: [Reply]
         private(set) var requests: [AIRequest] = []
         private var suspended: AsyncThrowingStream<AIEvent, any Error>.Continuation?
@@ -557,6 +598,13 @@ import TernAI
             guard !replies.isEmpty else { continuation.finish(throwing: AIProviderError.invalidResponse); return }
             switch replies.removeFirst() {
             case .complete(let response): continuation.yield(.completed(response)); continuation.finish()
+            case .streamed(let fragments, let response):
+                for fragment in fragments { continuation.yield(.textDelta(fragment)) }
+                if let response { continuation.yield(.completed(response)) }
+                continuation.finish()
+            case .streamedSuspended(let fragments):
+                suspended = continuation
+                for fragment in fragments { continuation.yield(.textDelta(fragment)) }
             case .suspended: suspended = continuation
             }
         }

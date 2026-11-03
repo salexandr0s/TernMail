@@ -6,6 +6,48 @@ import TernAI
 @testable import Tern
 
 @Suite @MainActor struct AssistantModelTests {
+    @Test(arguments: [false, true])
+    func streamedBurstsKeepAllPartialTextAndUseTheAuthoritativeCompletion(completes: Bool) async throws {
+        let fragments = ["First"] + Array(repeating: " fragment", count: 200)
+        let provider = AssistantProviderFixture(replies: [.streamed(fragments, completes ? Self.answer("Final answer") : nil)])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Answer briefly")
+        await fixture.model.waitForCurrentTurn()
+
+        #expect(fixture.model.messages.last?.text == (completes ? "Final answer" : fragments.joined()))
+        #expect(fixture.model.messages.last?.state == (completes ? .completed : .failed))
+    }
+
+    @Test(arguments: [false, true])
+    func stoppingStreamKeepsItsPendingTailUnlessAccessWasRevoked(revokeAccess: Bool) async throws {
+        let provider = AssistantProviderFixture(replies: [.streamedSuspended(["First", " tail"])])
+        let fixture = try Fixture(provider: provider)
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Answer briefly")
+        await provider.waitForRequests(1)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while fixture.model.messages.last?.text.isEmpty != false, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(fixture.model.messages.last?.text.isEmpty == false)
+        await Task.yield()
+
+        if revokeAccess { fixture.model.setAccountEnabled("a", enabled: false) }
+        else { fixture.model.stop() }
+        if revokeAccess { #expect(fixture.model.messages.isEmpty) }
+        else {
+            #expect(fixture.model.messages.last?.text == "First tail")
+            #expect(fixture.model.messages.last?.state == .cancelled)
+        }
+        await provider.release(Self.answer("Late private answer"))
+        try await Task.sleep(for: .milliseconds(80))
+        if revokeAccess { #expect(fixture.model.messages.isEmpty) }
+        else { #expect(fixture.model.messages.last?.text == "First tail") }
+    }
+
     @Test func toolResultsAndValidatedSourcesContinueTheConversation() async throws {
         let source = Self.source("a")
         let call = AIToolCall(id: "read-1", namespace: "tern", name: "read_thread", arguments: "{}")
@@ -1092,7 +1134,9 @@ import TernAI
 }
 
 private actor AssistantProviderFixture: AIProvider {
-    enum Reply: Sendable { case complete(AIResponse), interrupted(String), suspended }
+    enum Reply: Sendable {
+        case complete(AIResponse), interrupted(String), streamed([String], AIResponse?), streamedSuspended([String]), suspended
+    }
     private var replies: [Reply]
     private(set) var requests: [AIRequest] = []
     private var suspended: AsyncThrowingStream<AIEvent, any Error>.Continuation?
@@ -1127,6 +1171,13 @@ private actor AssistantProviderFixture: AIProvider {
         switch replies.removeFirst() {
         case .complete(let value): continuation.yield(.completed(value)); continuation.finish()
         case .interrupted(let value): continuation.yield(.textDelta(value)); continuation.finish()
+        case .streamed(let fragments, let response):
+            for fragment in fragments { continuation.yield(.textDelta(fragment)) }
+            if let response { continuation.yield(.completed(response)) }
+            continuation.finish()
+        case .streamedSuspended(let fragments):
+            suspended = continuation
+            for fragment in fragments { continuation.yield(.textDelta(fragment)) }
         case .suspended: suspended = continuation
         }
     }

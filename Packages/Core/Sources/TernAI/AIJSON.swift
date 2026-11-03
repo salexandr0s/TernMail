@@ -39,6 +39,10 @@ public indirect enum AIJSON: Codable, Equatable, Sendable {
     public var boolValue: Bool? { if case .bool(let value) = self { value } else { nil } }
 
     public static func decode(_ data: Data) throws -> AIJSON { try JSONDecoder().decode(Self.self, from: data) }
-    public func encoded() throws -> Data { try JSONEncoder().encode(self) }
+    public func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(self)
+    }
     public func jsonString() throws -> String { String(decoding: try encoded(), as: UTF8.self) }
 }

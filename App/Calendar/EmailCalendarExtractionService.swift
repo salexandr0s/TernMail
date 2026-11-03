@@ -9,7 +9,21 @@ import TernAI
 struct EmailCalendarExtractionService {
     let provider: any AIProvider
     let model: String
+    var requests: AssistantSharedRequests<RequestKey, [EmailCalendarItem]>? = nil
+    var requestIdentity: RequestIdentity? = nil
     let isScopeValid: @MainActor () -> Bool
+
+    struct RequestIdentity: Equatable, Sendable {
+        let scope: AssistantScopeSnapshot
+        let thread: ThreadKey
+        let accessRevision: Int
+    }
+
+    struct RequestKey: Equatable, Sendable {
+        let identity: RequestIdentity
+        let model: String
+        let sourceRevision: String
+    }
 
     private struct Extraction: Decodable {
         let events: [Event]
@@ -33,6 +47,22 @@ struct EmailCalendarExtractionService {
     }
 
     func extract(messages: [EmailCalendarMessage], timeZone: TimeZone) async throws -> [EmailCalendarItem] {
+        guard let requests, let requestIdentity else {
+            return try await extractUnshared(messages: messages, timeZone: timeZone)
+        }
+        try validateAccess()
+        guard messages.count <= 100 else { throw AIProviderError.responseLimit }
+        guard Set(messages.map(\.id)).count == messages.count else { throw AIProviderError.invalidRequest }
+        let key = RequestKey(identity: requestIdentity, model: model,
+            sourceRevision: EmailCalendarModel.fingerprint(messages, timeZone: timeZone))
+        let result = try await requests.value(for: key) {
+            try await extractUnshared(messages: messages, timeZone: timeZone)
+        }
+        try validateAccess()
+        return result
+    }
+
+    private func extractUnshared(messages: [EmailCalendarMessage], timeZone: TimeZone) async throws -> [EmailCalendarItem] {
         try validateAccess()
         guard messages.count <= 100 else { throw AIProviderError.responseLimit }
         guard Set(messages.map(\.id)).count == messages.count else { throw AIProviderError.invalidRequest }

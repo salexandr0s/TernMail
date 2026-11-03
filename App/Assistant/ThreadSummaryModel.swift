@@ -34,6 +34,17 @@ enum ThreadSummaryAvailability: Equatable {
     case unavailable
 }
 
+struct ThreadSummaryRequestKey: Equatable, Sendable {
+    let cacheKey: ThreadSummaryCache.Key
+    let scope: AssistantScopeSnapshot
+    let accessRevision: Int
+}
+
+struct ThreadSummaryRequestResult: Sendable {
+    let report: ThreadSummaryReport
+    let requestID: UUID
+}
+
 @MainActor
 @Observable
 final class ThreadSummaryModel {
@@ -104,7 +115,7 @@ struct ThreadSummaryCache {
         let canUsePlan: Bool
         let modelID: String
     }
-    struct Key: Equatable {
+    struct Key: Equatable, Sendable {
         let thread: ThreadKey
         let accountInstance: String
         let connectionRevision: Int
@@ -112,7 +123,12 @@ struct ThreadSummaryCache {
         let sourceRevision: String
     }
     private var access: Access?
-    private var entries: [(key: Key, report: ThreadSummaryReport)] = []
+    private struct Entry {
+        let key: Key
+        var report: ThreadSummaryReport?
+        let requestID: UUID
+    }
+    private var entries: [Entry] = []
     private let capacity = 16
 
     mutating func updateAccess(_ current: Access) {
@@ -122,15 +138,23 @@ struct ThreadSummaryCache {
     mutating func removeAll() { entries.removeAll() }
 
     mutating func report(for key: Key) -> ThreadSummaryReport? {
-        guard let index = entries.firstIndex(where: { $0.key == key }) else { return nil }
+        guard let index = entries.firstIndex(where: { $0.key == key }), entries[index].report != nil else { return nil }
         let entry = entries.remove(at: index)
         entries.append(entry)
         return entry.report
     }
 
-    mutating func insert(_ report: ThreadSummaryReport, for key: Key) {
+    mutating func beginRequest(for key: Key) -> UUID {
+        let requestID = UUID()
+        let previous = entries.first(where: { $0.key == key })?.report
         entries.removeAll { $0.key == key }
-        entries.append((key, report))
+        entries.append(Entry(key: key, report: previous, requestID: requestID))
         if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
+        return requestID
+    }
+
+    mutating func insert(_ report: ThreadSummaryReport, for key: Key, requestID: UUID) {
+        guard let index = entries.firstIndex(where: { $0.key == key && $0.requestID == requestID }) else { return }
+        entries[index].report = report
     }
 }

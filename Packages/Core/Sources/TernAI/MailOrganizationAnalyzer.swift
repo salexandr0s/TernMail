@@ -74,6 +74,10 @@ public struct MailOrganizationAnalyzer: Sendable {
     /// Measure the actual provider envelope, including JSON escaping and schema.
     private static func request(messages: [OrganizationEmail], labels: [String], model: String) throws -> AIRequest {
         let evidence = OrganizationEvidence(messages: messages.map(\.evidence))
+        let labelPositions = Dictionary(uniqueKeysWithValues: labels.enumerated().map { (labelKey($0.element), $0.offset) })
+        let messageLabels = messages.map { message in
+            Set(message.labelNames.map(labelKey)).compactMap { labelPositions[$0] }.sorted().map { labels[$0] }
+        }
         let senderPatterns = evidence.senders.filter { $0.incomingCount >= 2 }.map { sender in
             AIJSON.object([
                 "sender": .string(ruleAddress(sender.address) ?? bounded(sender.address, bytes: 254)),
@@ -90,7 +94,9 @@ public struct MailOrganizationAnalyzer: Sendable {
             let input = AIJSON.object([
                 "existing_labels": .array(labels.prefix(budget.existingLabels).map(AIJSON.string)),
                 "sender_patterns": .array(senderPatterns),
-                "messages": .array(messages.map { json($0, budget: budget, labels: labels, evidence: evidence) }),
+                "messages": .array(messages.indices.map {
+                    json(messages[$0], budget: budget, labels: messageLabels[$0], evidence: evidence)
+                }),
             ])
             let content = try input.jsonString()
             let request = AIRequest(model: model, input: [.object(["role": .string("user"), "content": .string(content)])],
@@ -125,7 +131,6 @@ public struct MailOrganizationAnalyzer: Sendable {
 
     private static func json(_ message: OrganizationEmail, budget: InputBudget, labels: [String],
                              evidence: OrganizationEvidence) -> AIJSON {
-        let attached = Set(message.labelNames.map(labelKey))
         let snippet = bounded(message.snippet, bytes: budget.snippet)
         return .object([
             "id": .string(message.id), "thread_id": .string(message.threadID),
@@ -140,7 +145,7 @@ public struct MailOrganizationAnalyzer: Sendable {
             "mailing_list": .bool(message.hasMailingListHeaders),
             "automated": .bool(message.isAutomated),
             "latest_in_thread": .bool(evidence.latestMessageIDs.contains(message.id)),
-            "labels": .array(labels.filter { attached.contains(labelKey($0)) }.prefix(budget.labels).map(AIJSON.string)),
+            "labels": .array(labels.prefix(budget.labels).map(AIJSON.string)),
         ])
     }
 

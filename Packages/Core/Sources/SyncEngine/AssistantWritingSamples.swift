@@ -55,7 +55,7 @@ public struct AssistantWritingSampleFailure: Sendable, Equatable {
 public enum AssistantWritingSampleLimits {
     public static let messages = 100
     public static let pages = 5
-    public static let batchSize = 10
+    public static let batchSize = 20
     public static let bodyPartsPerMessage = 2
     public static let bodyBytesPerMessage = 131_072
     public static let totalBodyBytes = 2_000_000
