@@ -3,10 +3,11 @@ import MailStore
 import MessageContent
 
 extension MailboxModel {
-    func startMailto(_ request: MailtoRequest) async -> String? {
-        var owner = composeAccount
+    func startMailto(_ request: MailtoRequest, accountID: String? = nil) async -> String? {
+        if let accountID, account(id: accountID) == nil { return nil }
+        var owner = accountID.flatMap { account(id: $0) } ?? composeAccount
         let candidates = selectedAccounts.isEmpty ? presentedAccounts : selectedAccounts
-        if ComposePreferences.defaultAccountID == nil, candidates.count > 1,
+        if accountID == nil, ComposePreferences.defaultAccountID == nil, candidates.count > 1,
            let first = request.to.first,
            let last = try? await cache.lastCorrespondenceAccount(with: first.address, accountIDs: candidates.map { $0.account.id }),
            let recent = account(id: last) { owner = recent }

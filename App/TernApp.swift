@@ -40,6 +40,13 @@ struct TernApp: App {
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .commandsRemoved()
 
+        Window("Unsubscribe", id: UnsubscribeWindow.sceneID) {
+            UnsubscribeWindow().environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
+        }
+        .defaultSize(width: Tokens.Analytics.contentWidth, height: Tokens.Layout.windowHeight)
+        .windowResizability(.contentMinSize)
+
         WindowGroup("Analytics", id: MailAnalyticsWindow.sceneID, for: MailAnalyticsRoute.self) { $route in
             MailAnalyticsWindow(route: route).environment(model)
                 .modifier(AddressAvatarEnvironment(app: model))

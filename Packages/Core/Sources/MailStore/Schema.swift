@@ -516,6 +516,7 @@ enum Schema {
                 lastError = 'Reload history to include Bcc recipients.'
                 """)
         }
+        NewsletterSchema.register(in: &migrator)
         return migrator
     }
 

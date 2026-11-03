@@ -61,6 +61,7 @@ public struct CacheTransaction {
         "mailAnalyticsContact", "mailAnalyticsMessage", "mailAnalyticsState", "recipientHeaderBackfill",
         "readReceiptRecipient", "readReceiptRequest", "readReceiptEvent",
         "readReceiptPending",
+        "newsletterMessage", "newsletterScanToken", "newsletterScanState", "newsletterOutcome",
     ]
 
     // MARK: Labels

@@ -171,6 +171,13 @@ public actor SyncEngine {
     /// and consumed row IDs even after history has removed the queue rows.
     var unavailableUndoIDs = Set<Int64>()
     var undoReceipts: [Int64: [WeakActionReceipt]] = [:]
+    /// Claims from an earlier engine are recovered without touching this
+    /// engine's live requests when the page refreshes its snapshot.
+    let newsletterOwnerID = UUID().uuidString
+    var newsletterRequestTasks: [String: Task<Void, any Error>] = [:]
+    /// Completed requests whose outcome could not be saved. Recovery touches
+    /// these exact IDs after storage recovers, never another active request.
+    var abandonedNewsletterRequests = Set<String>()
     private(set) var isStopped = false
     /// Set as `stop()` begins. A lock, so another engine's write that adds
     /// rows for this account can check it inside its transaction.
@@ -277,6 +284,8 @@ public actor SyncEngine {
             await withCheckedContinuation { sendWaiters.append($0) }
         }
         isStopped = true
+        let newsletterRequests = Array(newsletterRequestTasks.values)
+        newsletterRequests.forEach { $0.cancel() }
         let background = [pollTask, peopleTask, requestedPasses, afterActionTask, attachmentIndexTask, prefetchTask].compactMap { $0 }
         for sleeper in sleepers.values { sleeper.cancel() }
         prefetchTargets = []
@@ -304,6 +313,7 @@ public actor SyncEngine {
         _ = try? await attachmentPass?.value
         for task in reading { _ = try? await task.value }
         _ = try? await classificationPass?.value
+        for task in newsletterRequests { _ = try? await task.value }
         if writesInFlight > 0 {
             await withCheckedContinuation { writeWaiters.append($0) }
         }
@@ -313,6 +323,7 @@ public actor SyncEngine {
         peopleTask = nil
         attachmentIndexTask = nil
         drainTasks = [:]
+        newsletterRequestTasks = [:]
         continuation.finish()
         mailNotificationContinuation.finish()
     }

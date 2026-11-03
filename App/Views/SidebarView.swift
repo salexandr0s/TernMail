@@ -3,6 +3,7 @@ import GmailAPI
 import SwiftUI
 
 struct SidebarView: View {
+    @Environment(\.openWindow) private var openWindow
     @Bindable var mailbox: MailboxModel
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
     @AppStorage(SidebarExpansion.storageKey) private var expanded = SidebarExpansion.initial
@@ -19,6 +20,16 @@ struct SidebarView: View {
         List(selection: selection) {
             FavoritesView(mailbox: mailbox, isCollapsed: $favoritesCollapsed, isAddingFavorite: $isAddingFavorite)
             SavedSearchRows(mailbox: mailbox)
+            Section {
+                Button { openWindow(id: UnsubscribeWindow.sceneID) } label: {
+                    Label("Unsubscribe", systemImage: "envelope.open")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.unsubscribe")
+                .help("Manage newsletter subscriptions")
+            }
             if mailbox.presentedAccounts.count > 1 {
                 let colors = accountColors
                 let names = mailbox.sidebarAccountNames
