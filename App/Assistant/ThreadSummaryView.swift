@@ -15,6 +15,7 @@ struct ThreadSummaryView: View {
     @State private var loadedIdentity: LoadIdentity?
     @State private var displayed: ThreadSummaryDisplayState?
     @State private var showsSettings = false
+    @State private var summaryIsExpanded = false
     @State private var attempt = 0
     @State private var handledAttempt = 0
     @Environment(AppModel.self) private var app
@@ -23,21 +24,24 @@ struct ThreadSummaryView: View {
         let source: ThreadSummaryDisplayState.Source
         let attempt: Int
         let isActive: Bool
+        let availability: ThreadSummaryAvailability
     }
 
     private var identity: LoadIdentity {
         LoadIdentity(source: .init(revision: ThreadSummaryModel.revision(for: detail),
-            access: assistant.summaryAccessRevision), attempt: attempt, isActive: isActive)
+            access: assistant.summaryAccessRevision), attempt: attempt, isActive: isActive,
+            availability: assistant.summaryAvailability(for: key))
     }
 
     var body: some View {
         let availability = assistant.summaryAvailability(for: key)
-        if Self.isOffered(availability, isRestoring: assistant.connection.isRestoring) {
-            // Keep task and disappearance ownership stable when loading gives way
-            // to content; Group would distribute those modifiers to each child.
-            VStack(alignment: .leading, spacing: 0) {
+        // Keep task and disclosure ownership stable across loading, source
+        // revisions, and availability changes within this conversation.
+        VStack(alignment: .leading, spacing: 0) {
+            if Self.isOffered(availability, isRestoring: assistant.connection.isRestoring) {
                 if availability == .ready, isActive, let report = displayed?.report(for: identity.source) {
                     ThreadSummaryContent(report: report, detail: detail,
+                        isExpanded: $summaryIsExpanded,
                         isRefreshing: loadedIdentity != identity,
                         refreshError: loadedIdentity == identity ? model.errorMessage : nil,
                         onOpenSource: onOpenSource, onRefresh: { attempt += 1 },
@@ -55,25 +59,28 @@ struct ThreadSummaryView: View {
                         .modifier(SummarySurface())
                 }
             }
-            .task(id: identity) {
-                let requested = identity
-                loadedIdentity = nil
-                if displayed?.source != requested.source { displayed = nil }
-                guard requested.isActive else { model.clear(); displayed = nil; return }
-                let forceRefresh = requested.attempt != handledAttempt
-                handledAttempt = requested.attempt
-                await model.load(key: key, revision: requested.source.revision, assistant: assistant,
-                    forceRefresh: forceRefresh, expectedMessageIDs: Set(detail.messages.map(\.id)))
-                guard !Task.isCancelled, requested == identity else { return }
-                if let report = model.report {
-                    displayed = .init(source: requested.source, value: report)
-                }
-                loadedIdentity = requested
+        }
+        .task(id: identity) {
+            let requested = identity
+            loadedIdentity = nil
+            if displayed?.source != requested.source { displayed = nil }
+            guard requested.isActive, requested.availability == .ready else {
+                model.clear(); displayed = nil; return
             }
-            .onDisappear { model.clear(); loadedIdentity = nil; displayed = nil }
-            .sheet(isPresented: $showsSettings) {
-                AssistantSettingsView(model: assistant, isSheet: true, showsMailScope: true)
+            let forceRefresh = requested.attempt != handledAttempt
+            handledAttempt = requested.attempt
+            await model.load(key: key, revision: requested.source.revision, assistant: assistant,
+                forceRefresh: forceRefresh, expectedMessageIDs: Set(detail.messages.map(\.id)))
+            guard !Task.isCancelled, requested == identity else { return }
+            if let report = model.report {
+                displayed = .init(source: requested.source, value: report)
             }
+            loadedIdentity = requested
+        }
+        .onDisappear { model.clear(); loadedIdentity = nil; displayed = nil }
+        .onChange(of: key) { _, _ in summaryIsExpanded = false }
+        .sheet(isPresented: $showsSettings) {
+            AssistantSettingsView(model: assistant, isSheet: true, showsMailScope: true)
         }
     }
 
@@ -105,6 +112,7 @@ struct ThreadSummaryDisplayState {
 struct ThreadSummaryContent: View {
     let report: ThreadSummaryReport
     let detail: ThreadDetail
+    @Binding var isExpanded: Bool
     var isRefreshing = false
     var refreshError: String? = nil
     let onOpenSource: (AssistantSource) -> Void
@@ -116,7 +124,6 @@ struct ThreadSummaryContent: View {
 
     private enum Section: String, Hashable { case tasks, decisions }
 
-    @State private var isExpanded = true
     @State private var isOverviewExpanded = false
     @State private var expandedSections: Set<Section> = []
     @State private var fullTextHeight: CGFloat = 0
@@ -153,15 +160,15 @@ struct ThreadSummaryContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             header
-            if isExpanded {
+            overview
+            if report.hasPartialCoverage {
+                Label("Based on partial message content", systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .help("Some messages, attachments, or longer passages could not be included.")
+            }
+            if isExpanded, !availableSections.isEmpty {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     Divider()
-                    overview
-                    if report.hasPartialCoverage {
-                        Label("Based on partial message content", systemImage: "info.circle")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .help("Some messages, attachments, or longer passages could not be included.")
-                    }
                     details
                 }
                 .ternTransition(.disclosure)
@@ -208,11 +215,6 @@ struct ThreadSummaryContent: View {
             .help(isExpanded ? "Minimise summary" : "Expand summary")
 
             if isRefreshing { ProgressView().controlSize(.mini).accessibilityLabel("Refreshing summary") }
-            if !isExpanded, report.hasPartialCoverage {
-                Image(systemName: "info.circle").foregroundStyle(.secondary)
-                    .accessibilityLabel("Based on partial message content")
-                    .help("Based on partial message content")
-            }
             if !availableSections.isEmpty || hasClippedOverview {
                 Button {
                     animate {
@@ -255,7 +257,7 @@ struct ThreadSummaryContent: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
             summaryText
-                .lineLimit(isOverviewExpanded ? nil : 3)
+                .lineLimit(isExpanded && isOverviewExpanded ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("summary-overview")
@@ -267,7 +269,7 @@ struct ThreadSummaryContent: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullTextHeight = $0 }
                         .hidden().accessibilityHidden(true)
                 }
-            if hasClippedOverview {
+            if isExpanded && hasClippedOverview {
                 Button {
                     animate { isOverviewExpanded.toggle() }
                 } label: {

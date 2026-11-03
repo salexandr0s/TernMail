@@ -145,6 +145,9 @@ import WebKit
         scroll.reflectScrolledClipView(scroll.contentView)
         try await waitUntil { abs(scroll.contentView.bounds.origin.y - 180) < 2 }
         let anchor = scroll.contentView.bounds.origin.y
+        // Measure the renderer under test after its own asynchronous height commit.
+        try await waitUntil { !initialView.isLoading && initialView.frame.height > 200 }
+        window.contentView?.layoutSubtreeIfNeeded()
         let end = max(0, (scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.height)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: end))
         scroll.reflectScrolledClipView(scroll.contentView)

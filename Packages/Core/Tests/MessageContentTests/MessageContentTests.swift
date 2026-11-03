@@ -65,10 +65,14 @@ import Testing
     }
 
     @Test func plainTextIsEscapedAndLinked() {
-        let page = MessageDocument.render(plainText: "<b>hi</b> see https://example.com/a?b=1&c=2").html
+        let text = "  <b>hi</b>\n\tsee https://example.com/a?b=1&c=2\n\n  Final line."
+        let rendered = MessageDocument.render(plainText: text)
+        let page = rendered.html
 
-        #expect(page.contains("&lt;b&gt;hi&lt;/b&gt;"))
+        #expect(page.contains("  &lt;b&gt;hi&lt;/b&gt;\n\tsee "))
+        #expect(page.contains("</a>\n\n  Final line."))
         #expect(page.contains("<a href=\"https://example.com/a?b=1&amp;c=2\">https://example.com/a?b=1&amp;c=2</a>"))
+        #expect(rendered.searchableText == text)
         #expect(HTMLEntities.decode("Tom&#39;s &amp; Jerry") == "Tom's & Jerry")
     }
 

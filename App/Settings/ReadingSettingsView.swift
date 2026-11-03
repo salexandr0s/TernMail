@@ -22,6 +22,8 @@ struct ReadingSettingsView: View {
                         Text("Large").tag(1.15)
                         Text("Extra large").tag(1.3)
                         Text("Largest").tag(1.5)
+                        Text("175%").tag(1.75)
+                        Text("200%").tag(2.0)
                     }
                     .fixedSize()
                 }

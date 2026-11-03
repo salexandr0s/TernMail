@@ -195,7 +195,8 @@ public enum MessageDocument {
         :root{color-scheme:light dark}\
         html{background:Canvas;color:CanvasText}\
         body{margin:0;padding:0;font:13px -apple-system,system-ui,sans-serif}\
-        .tern-plain{white-space:pre-wrap;overflow-wrap:anywhere}
+        .tern-plain{white-space:pre-wrap;overflow-wrap:anywhere}\
+        @media screen{.tern-plain{max-inline-size:75ch;margin-inline:auto;line-height:1.45}}
         """
 
     private static func headMarkup(style: String, policy: MessageRenderPolicy = .init()) -> String {

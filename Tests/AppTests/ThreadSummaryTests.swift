@@ -129,10 +129,14 @@ import TernAI
         #expect(SummaryDueDate.formatted("2026-02-29", locale: Locale(identifier: "en_US")) == "2026-02-29")
     }
 
-    @Test func hostedSummaryKeepsItsReportAfterLoadingContentAppears() async throws {
-        let provider = SummaryProvider(replies: [nil])
+    @Test(.timeLimit(.minutes(1))) func hostedSummaryTracksScopeDisclosureAndSourceRevisions() async throws {
+        let provider = SummaryProvider(replies: [nil, nil, nil])
         let fixture = Fixture(provider: provider)
         await fixture.model.refreshConnection()
+        fixture.context.selectedThreads = [.init(accountID: "a", threadID: "other")]
+        fixture.model.selectedScope = .selectedThreads
+        let accessRevision = fixture.model.summaryAccessRevision
+        #expect(fixture.model.summaryAvailability(for: Self.key) == .unavailable)
         let cache = try MailCache.inMemory()
         let record = MessageRecord(accountID: "a", id: "m", threadID: "t", historyID: 1,
             date: .distantPast, snippet: "Please review.", sender: "sender@example.invalid",
@@ -144,6 +148,7 @@ import TernAI
         var iterator = cache.thread(accountID: "a", threadID: "t").makeAsyncIterator()
         let first = try await iterator.next()
         let detail = try #require(first ?? nil)
+        let sourceRevision = ThreadSummaryModel.revision(for: detail)
         let controller = NSHostingController(rootView: ThreadSummaryView(key: Self.key, detail: detail,
             assistant: fixture.model, isActive: true, onOpenSource: { _ in }).environment(fixture.app))
         controller.sizingOptions = []
@@ -153,6 +158,15 @@ import TernAI
         window.contentViewController = controller
         window.orderFront(nil)
         defer { window.close() }
+
+        // The stable owner mounts while this thread is outside selected scope.
+        // Broadening scope must restart it even without source/access changes.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await provider.requests.isEmpty)
+        fixture.model.selectedScope = .allEnabledAccounts
+        #expect(fixture.model.summaryAvailability(for: Self.key) == .ready)
+        #expect(fixture.model.summaryAccessRevision == accessRevision)
+        #expect(ThreadSummaryModel.revision(for: detail) == sourceRevision)
 
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while await provider.requests.isEmpty, ContinuousClock.now < deadline {
@@ -171,6 +185,53 @@ import TernAI
         try await Task.sleep(for: .milliseconds(400))
         #expect(Self.accessibilityContains(summary, in: controller.view))
         #expect(await provider.requests.count == 1)
+
+        func disclosureValue() -> String? {
+            Self.accessibilityElement(in: controller.view) {
+                $0.responds(to: NSSelectorFromString("accessibilityIdentifier"))
+                    && $0.value(forKey: "accessibilityIdentifier") as? String == "summary-disclosure"
+            }?.value(forKey: "accessibilityValue") as? String
+        }
+        func waitFor(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+            try #require(condition())
+        }
+        #expect(disclosureValue() == "Collapsed")
+        let disclosure = try #require(Self.accessibilityElement(in: controller.view) {
+            $0.responds(to: NSSelectorFromString("accessibilityIdentifier"))
+                && $0.value(forKey: "accessibilityIdentifier") as? String == "summary-disclosure"
+        })
+        let press = NSSelectorFromString("accessibilityPerformPress")
+        let implementation = try #require(disclosure.method(for: press))
+        // AppKit's public -(BOOL)accessibilityPerformPress method has this ABI.
+        typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+        try #require(unsafeBitCast(implementation, to: Press.self)(disclosure, press))
+        try await waitFor { disclosureValue() == "Expanded" }
+
+        var revised = detail
+        revised.messages[0].record.snippet = "The proposal has changed."
+        controller.rootView = ThreadSummaryView(key: Self.key, detail: revised,
+            assistant: fixture.model, isActive: true, onOpenSource: { _ in }).environment(fixture.app)
+        await provider.waitForRequests(2)
+        #expect(!Self.accessibilityContains(summary, in: controller.view), "A source change must hide the previous report")
+        await provider.release(1, response: try Self.response("The revised proposal needs review."))
+        try await waitFor { Self.accessibilityContains("The revised proposal needs review.", in: controller.view) }
+        #expect(disclosureValue() == "Expanded", "A source revision must keep this conversation's disclosure choice")
+
+        let nextKey = ThreadKey(accountID: "a", threadID: "next")
+        let nextSource = AssistantSource(accountID: "a", threadID: "next", messageID: "m", partID: nil, title: "Next proposal")
+        fixture.context.summarySource = nextSource
+        fixture.context.selectedThreads = [nextKey]
+        fixture.model.refreshAccess()
+        revised.thread.id = nextKey.threadID
+        revised.messages[0].record.threadID = nextKey.threadID
+        controller.rootView = ThreadSummaryView(key: nextKey, detail: revised,
+            assistant: fixture.model, isActive: true, onOpenSource: { _ in }).environment(fixture.app)
+        await provider.waitForRequests(3)
+        await provider.release(2, response: try Self.response("A different conversation.", sourceID: nextSource.id))
+        try await waitFor { Self.accessibilityContains("A different conversation.", in: controller.view) }
+        #expect(disclosureValue() == "Collapsed", "A new conversation starts compact")
     }
 
     @Test func visibleSummarySurvivesRefreshOnlyForTheSameContentAndAccess() throws {
@@ -452,17 +513,27 @@ import TernAI
     }
 
     private static func accessibilityContains(_ text: String, in root: NSView) -> Bool {
+        accessibilityElement(in: root) { object in
+            ["accessibilityValue", "accessibilityLabel"].contains {
+                object.responds(to: NSSelectorFromString($0)) && object.value(forKey: $0) as? String == text
+            }
+        } != nil
+    }
+
+    private static func accessibilityElement(in root: NSView, matching predicate: (NSObject) -> Bool) -> NSObject? {
         var seen: Set<ObjectIdentifier> = []
-        func visit(_ item: Any) -> Bool {
-            guard let object = item as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return false }
+        func visit(_ item: Any) -> NSObject? {
+            guard let object = item as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return nil }
             func value(_ key: String) -> Any? {
                 object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil
             }
-            if [value("accessibilityValue"), value("accessibilityLabel")].contains(where: { $0 as? String == text }) { return true }
+            if predicate(object) { return object }
             let children = value("accessibilityChildren") as? [Any] ?? []
             let views = (object as? NSView)?.subviews ?? []
-            return (children + NSAccessibility.unignoredChildren(from: children)).contains(where: visit)
-                || views.contains(where: visit)
+            for child in children + NSAccessibility.unignoredChildren(from: children) + views {
+                if let match = visit(child) { return match }
+            }
+            return nil
         }
         return visit(root)
     }
@@ -480,6 +551,7 @@ import TernAI
         var selectedThreads: Set<ThreadKey> = [ThreadSummaryTests.key]
         var instance: String? = "account-instance"
         var connectionRevision = 1
+        var summarySource = ThreadSummaryTests.source
         var reads = 0
         var sessions = 0
         func waitForSessions(_ count: Int) async throws {
@@ -507,7 +579,7 @@ import TernAI
                     return AssistantToolSession(definitions: [], execute: { call in
                         #expect(call.name == "read_thread")
                         context.reads += 1
-                        return .init(data: .object(["truncated": .bool(false), "total_messages": .number(1)]), sources: [ThreadSummaryTests.source])
+                        return .init(data: .object(["truncated": .bool(false), "total_messages": .number(1)]), sources: [context.summarySource])
                     })
                 })
             model.setAccountEnabled("a", enabled: true)

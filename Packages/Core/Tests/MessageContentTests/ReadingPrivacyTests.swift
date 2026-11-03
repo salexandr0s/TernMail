@@ -181,6 +181,9 @@ import Testing
             policy: .init(textScale: 1.5))
         #expect(rendered.html.contains("prefers-color-scheme"))
         #expect(rendered.html.contains("font-size:19.5px"))
+        #expect(MessageDocument.render(plainText: "Large reading text", policy: .init(textScale: 2)).html.contains("font-size:26.0px"))
+        #expect(MessageDocument.render(html: "<p>Large reading text</p>", policy: .init(textScale: 2)).html.contains("font-size:26.0px"))
+        #expect(MessageRenderPolicy(textScale: 3).textScale == 2)
         #expect(MessageRenderPolicy(textScale: .infinity).textScale == 1)
     }
 }

@@ -273,7 +273,7 @@ struct ThreadView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
-                        .background(PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive))
+                        .background { PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive) }
                     }
                     .scrollPosition($scrollPosition)
                     .onScrollGeometryChange(for: ReaderPage.self, of: ReaderPage.init) { _, page in paging.page = page }
@@ -350,14 +350,18 @@ struct ThreadView: View {
         }
     }
 
-    var body: some View {
+    private var readerSceneContent: some View {
         conversationContent
         .disabled(!isReaderActive)
         .background(Tokens.Surface.canvas)
-        .background(VisibleContentProbe(kind: .reader, isActive: isReaderActive && primaryBodyReady && interaction?.body != nil,
-            revision: Int(truncatingIfNeeded: interaction?.body ?? 0)))
-        .background(VisibleContentProbe(kind: .readerHeader, isActive: isReaderActive && readingDetail != nil && interaction?.header != nil,
-            revision: Int(truncatingIfNeeded: interaction?.header ?? 0)))
+        .background {
+            VisibleContentProbe(kind: .reader, isActive: isReaderActive && primaryBodyReady && interaction?.body != nil,
+                revision: Int(truncatingIfNeeded: interaction?.body ?? 0))
+        }
+        .background {
+            VisibleContentProbe(kind: .readerHeader, isActive: isReaderActive && readingDetail != nil && interaction?.header != nil,
+                revision: Int(truncatingIfNeeded: interaction?.header ?? 0))
+        }
         .focusedSceneValue(\.selectedMailQuote, isReaderActive ? selectedMailQuote : nil)
         .focusedSceneValue(\.readerActions, isReaderActive ? readerActions : nil)
         .userActivity(MailUserActivity.conversationType, isActive: isReaderActive && readingDetail != nil) { activity in
@@ -367,6 +371,10 @@ struct ThreadView: View {
             )
         }
         .focusedSceneValue(\.readerAppearance, isReaderActive ? readerAppearance : nil)
+    }
+
+    private var readerLifecycleContent: some View {
+        readerSceneContent
         .onChange(of: key) { _, _ in
             selectedMailQuote = nil
             finder.hide()
@@ -458,6 +466,10 @@ struct ThreadView: View {
                 NavigationPerformance.shared.contentReady(.readerHeader, cacheTier: .retained, generation: generation)
             }
         }
+    }
+
+    var body: some View {
+        readerLifecycleContent
         .task(id: CalendarSuggestionLoadIdentity(detail: readingDetail, storeReady: app.calendar.store != nil,
             access: app.calendar.accessRevision, timeZone: app.calendar.calendar.timeZone.identifier,
             isActive: isReaderActive && primaryBodyReady)) {

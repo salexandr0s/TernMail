@@ -15,7 +15,7 @@ enum ReadingPreferences {
     enum Order: String, CaseIterable { case oldestFirst, newestFirst }
     enum MarkRead: String, CaseIterable { case immediately, delayed, manually }
 
-    static func textScale(_ value: Double) -> Double { value.isFinite ? min(1.5, max(0.85, value)) : 1 }
+    static func textScale(_ value: Double) -> Double { value.isFinite ? min(2, max(0.85, value)) : 1 }
     static func readDelay(_ value: Double) -> Duration { .seconds(value.isFinite ? min(30, max(1, value)) : 3) }
 
     /// The messages a conversation opens with: the newest, every unread one

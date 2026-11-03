@@ -131,7 +131,8 @@ import WebKit
             """.utf8))
         let report = ThreadSummaryReport(summary: summary, sources: [], hasPartialCoverage: false)
         var additions: [TaskCreationRequest] = []
-        let root = ThreadSummaryContent(report: report, detail: detail, onOpenSource: { _ in }, onRefresh: {}, onSettings: {},
+        let root = ThreadSummaryContent(report: report, detail: detail, isExpanded: .constant(true),
+            onOpenSource: { _ in }, onRefresh: {}, onSettings: {},
             tasks: model, taskAccountEmail: "owner@example.invalid", onAddTask: { additions.append($0) })
         let controller = NSHostingController(rootView: root)
         controller.sizingOptions = []
@@ -184,7 +185,7 @@ import WebKit
     }
 
     @Test(arguments: [560, 280], [false, true])
-    func calendarSuggestionPlusUsesCalendarAndKeepsDetailsSeparate(width: Int, dark: Bool) async throws {
+    func calendarSuggestionReviewUsesCalendarAndKeepsDetailsSeparate(width: Int, dark: Bool) async throws {
         let calendar = Calendar(identifier: .gregorian)
         let suggestions = EmailCalendarModel()
         let item = EmailCalendarItem(id: "interpreted:planning", messageID: "message", title: "Planning call",
@@ -217,6 +218,11 @@ import WebKit
         }
         #expect(element("calendar-task-add-" + item.id, in: controller.view) == nil)
         #expect(element("calendar-review-" + item.id, in: controller.view) == nil)
+        let reviewAction = try #require(element(addID, in: controller.view))
+        #expect((reviewAction.value(forKey: "accessibilityLabel") as? String)?.contains("Review") == true)
+        let disclosure = try #require(element(detailsID, in: controller.view))
+        let badge = EmailCalendarPresentation(item: item, calendar: calendar).badge.text
+        #expect((disclosure.value(forKey: "accessibilityValue") as? String)?.contains(badge) == true)
         let addFrame = try visibleControlFrame(addID, in: window)
         let detailsFrame = try visibleControlFrame(detailsID, in: window)
         #expect(addFrame.width >= Tokens.Control.iconButton - Tokens.Border.hairline)

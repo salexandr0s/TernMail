@@ -19,7 +19,7 @@ import Testing
 
     @Test func invalidPreferenceValuesDoNotProduceUnboundedScalingOrDelay() {
         #expect(ReadingPreferences.textScale(.nan) == 1)
-        #expect(ReadingPreferences.textScale(10) == 1.5)
+        #expect(ReadingPreferences.textScale(10) == 2)
         #expect(ReadingPreferences.textScale(0) == 0.85)
         #expect(ReadingPreferences.readDelay(.infinity) == .seconds(3))
         #expect(ReadingPreferences.readDelay(10_000) == .seconds(30))

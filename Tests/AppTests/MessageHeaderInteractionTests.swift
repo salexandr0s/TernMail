@@ -246,9 +246,10 @@ import WebKit
         defer { fixture.settings.removePersistentDomain(forName: fixture.suite) }
         for variant in ["short", "long", "tasks", "decisions"] {
             let report = try summary(for: fixture.detail, variant: variant)
-            let state = HeaderState(expanded: false)
+            @Bindable var state = HeaderState(expanded: false)
             let root = VStack {
                 ThreadSummaryContent(report: report, detail: fixture.detail,
+                    isExpanded: $state.expanded,
                     onOpenSource: { _ in state.sourceActions += 1 }, onRefresh: {}, onSettings: {})
                 Spacer(minLength: 0)
             }.padding(Tokens.Space.s4).background(Tokens.Surface.canvas)
@@ -258,6 +259,11 @@ import WebKit
                 let control = try #require(element(id: id, in: window))
                 try #require(control.press())
             }
+            try await eventually { self.element(id: "summary-disclosure", in: window)?.value == "Collapsed" }
+            #expect(element(id: "summary-overview", in: window) != nil,
+                "The overview remains available before expanding supporting details")
+            #expect(element(id: "summary-tasks-toggle", in: window) == nil)
+            try activate("summary-disclosure")
             try await eventually { self.element(id: "summary-disclosure", in: window)?.value == "Expanded" }
             try await settle()
             #expect(element(id: "summary-task-sources-0", in: window) == nil)
@@ -300,11 +306,13 @@ import WebKit
                 try capture(window, name: "summary-tasks-only.png")
             }
             try activate("summary-disclosure")
-            try await eventually { self.element(id: "summary-overview", in: window) == nil }
+            try await eventually { self.element(id: "summary-overview", in: window) != nil }
             try await eventually { self.element(id: "summary-tasks-toggle", in: window) == nil }
             #expect(element(id: "summary-disclosure", in: window)?.value == "Collapsed")
             if variant == "tasks" {
-                #expect(elements(in: window).contains { $0.label == "Based on partial message content" })
+                #expect(elements(in: window).contains {
+                    $0.label == "Based on partial message content" || $0.value == "Based on partial message content"
+                }, "The partial-coverage warning remains accessible after collapsing the summary")
                 window.setContentSize(NSSize(width: 420, height: 480))
             }
             try await Task.sleep(for: .seconds(Tokens.Motion.base))

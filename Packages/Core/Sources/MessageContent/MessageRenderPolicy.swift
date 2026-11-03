@@ -8,7 +8,7 @@ public struct MessageRenderPolicy: Sendable, Equatable {
     public init(allowsRemoteImages: Bool = false, inlineResources: InlineResourceMap = .init(), textScale: Double = 1) {
         self.allowsRemoteImages = allowsRemoteImages
         self.inlineResources = inlineResources
-        self.textScale = textScale.isFinite ? min(1.5, max(0.85, textScale)) : 1
+        self.textScale = textScale.isFinite ? min(2, max(0.85, textScale)) : 1
     }
 
     public var contentSecurityPolicy: String {

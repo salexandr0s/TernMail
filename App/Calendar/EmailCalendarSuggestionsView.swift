@@ -189,7 +189,12 @@ private struct EmailCalendarSuggestionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let warning = item.authenticityWarning {
+            Label(presentation.badge.text, systemImage: presentation.badge.symbol)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("calendar-status-\(item.id)")
+            if let warning = item.authenticityWarning, warning != presentation.badge.text {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -252,14 +257,10 @@ private struct EmailCalendarSuggestionRow: View {
 
     private var calendarButton: some View {
         Button(action: onReview) {
-            HStack(spacing: Tokens.Space.s1_5) {
-                Image(systemName: calendarActionSymbol)
-                    .font(.callout.weight(.semibold))
-                if item.kind == .cancelled { Text("Remove").font(.callout.weight(.medium)) }
-                else if item.kind == .updated, item.existingEventID != nil { Text("Update").font(.callout.weight(.medium)) }
-            }
+            Label(calendarActionLabel, systemImage: calendarActionSymbol)
+            .font(.callout.weight(.medium))
             .foregroundStyle(calendarActionColor)
-            .padding(.horizontal, isAdding ? 0 : Tokens.Space.s2)
+            .padding(.horizontal, Tokens.Space.s2)
             .frame(minWidth: Tokens.Control.iconButton, minHeight: Tokens.Control.iconButton)
             .background(calendarActionColor.opacity(Tokens.Opacity.wash), in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .overlay {
@@ -279,12 +280,13 @@ private struct EmailCalendarSuggestionRow: View {
 
     private var isAdding: Bool { item.kind != .cancelled && !(item.kind == .updated && item.existingEventID != nil) }
     private var calendarActionColor: Color { item.kind == .cancelled ? Tokens.Status.error : .accentColor }
-    private var calendarActionSymbol: String { isAdding ? "plus" : item.kind == .cancelled ? "trash" : "arrow.triangle.2.circlepath" }
+    private var calendarActionSymbol: String { isAdding ? "calendar.badge.plus" : item.kind == .cancelled ? "trash" : "arrow.triangle.2.circlepath" }
+    private var calendarActionLabel: String { isAdding ? "Review…" : item.kind == .cancelled ? "Remove…" : "Update…" }
 
     private var calendarActionTitle: String {
         if item.kind == .cancelled { return "Remove cancelled event" }
         if item.kind == .updated, item.existingEventID != nil { return "Update in Calendar" }
-        return item.invitation == nil ? "Add to Calendar" : "Add personal copy to Calendar"
+        return item.invitation == nil ? "Review before adding to Calendar" : "Review personal copy before adding to Calendar"
     }
 
     private var moreMenu: some View {
