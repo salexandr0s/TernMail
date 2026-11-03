@@ -555,7 +555,9 @@ final class MailboxModel {
             guard let owner = account(id: attachment.accountID) else { return nil }
             // Message IDs repeat across accounts, so each account has its own folder.
             let folder = downloadsDirectory.appending(path: attachment.accountID, directoryHint: .isDirectory)
-            return try await owner.engine.downloadAttachment(attachment, into: folder)
+            return try await owner.engine.downloadAttachment(attachment, into: folder, protectedURLs: { @MainActor in
+                AttachmentPreviewRegistry.shared.activeURLs
+            })
         } catch {
             guard !isStopped, !(error is CancellationError) else { return nil }
             notice = Notice(message: "Couldn't download “\(attachment.filename)”. Try again.", isError: true)

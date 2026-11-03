@@ -15,7 +15,9 @@ enum AttachmentFileCache {
     }
 
     static func prune(_ directory: URL, keeping activeURL: URL, now: Date,
-                      maximumBytes: Int = maximumBytes, lifetime: TimeInterval = lifetime) throws {
+                      maximumBytes: Int = maximumBytes, lifetime: TimeInterval = lifetime,
+                      protectedURLs: Set<URL> = []) throws {
+        let protected = Set(protectedURLs.union([activeURL]).map { $0.standardizedFileURL.resolvingSymlinksInPath() })
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
         guard let enumerator = FileManager.default.enumerator(at: directory,
             includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return }
@@ -27,7 +29,8 @@ enum AttachmentFileCache {
         }
         var total = files.reduce(0) { $0 + $1.size }
         var count = files.count
-        for file in files.sorted(by: { $0.date < $1.date }) where file.url != activeURL {
+        for file in files.sorted(by: { $0.date < $1.date }) {
+            guard !protected.contains(file.url.standardizedFileURL.resolvingSymlinksInPath()) else { continue }
             guard total > maximumBytes || count > maximumFiles || file.date < now.addingTimeInterval(-lifetime) else { continue }
             do { try FileManager.default.removeItem(at: file.url) } catch { continue }
             total -= file.size

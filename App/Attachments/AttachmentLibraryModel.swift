@@ -34,7 +34,9 @@ final class AttachmentLibraryModel {
     var maximumSize: Int?
     var label: AttachmentLibraryLabel?
     var sort: AttachmentLibrarySort = .newest
-    var previewURL: URL?
+    var previewURL: URL? {
+        didSet { if previewURL == nil { cancelPreviewPreparation() } }
+    }
     /// The files Quick Look pages through, in list order.
     private(set) var previewURLs: [URL] = []
     /// The conversation Open Conversation in New Window loaded. The library
@@ -65,6 +67,8 @@ final class AttachmentLibraryModel {
     @ObservationIgnored private var observationRevision = UUID()
     @ObservationIgnored private var coverageRevision = UUID()
     @ObservationIgnored private var presentationRevision = UUID()
+    @ObservationIgnored private var previewRequest: UUID?
+    @ObservationIgnored private var previewPreparation: Task<Void, Never>?
     @ObservationIgnored private var lastFilter: AttachmentLibraryQuery?
     @ObservationIgnored private var lastAction: Action?
     @ObservationIgnored private let pasteboard: NSPasteboard
@@ -295,30 +299,93 @@ final class AttachmentLibraryModel {
         return items.filter { selection.contains($0.id) }
     }
 
-    /// Quick Look opens on `item` and pages through the rest of the selection,
-    /// so those files download first. One that fails to download is left out.
+    /// Quick Look opens on `item` first. Other selected files join in list
+    /// order as they arrive; one that fails to download is left out.
     func preview(_ item: AttachmentLibraryItem) async {
         await preview(item, in: selectedItems(with: item))
     }
 
     private func preview(_ item: AttachmentLibraryItem, in group: [AttachmentLibraryItem]) async {
-        let revision = presentationRevision
-        await perform(.preview(item, group)) {
-            var urls: [URL] = []
-            var shown: URL?
-            for candidate in group {
-                if candidate.id == item.id {
-                    let url = try await file(for: candidate)
-                    urls.append(url)
-                    shown = url
-                } else if let url = try? await file(for: candidate) {
-                    urls.append(url)
+        guard !isWorking else { return }
+        previewURL = nil
+        guard begin(.preview(item, group)) else { return }
+        let request = UUID()
+        previewRequest = request
+        let owners = Dictionary(group.compactMap { candidate in
+            mailbox.account(id: candidate.accountID).map { (candidate.accountID, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+        let preparation = Task { await preparePreview(item, in: group, request: request, owners: owners) }
+        previewPreparation = preparation
+        await withTaskCancellationHandler {
+            await preparation.value
+        } onCancel: {
+            preparation.cancel()
+        }
+    }
+
+    private func preparePreview(_ item: AttachmentLibraryItem, in group: [AttachmentLibraryItem],
+                                request: UUID, owners: [String: AccountMailbox]) async {
+        defer {
+            if previewRequest == request {
+                previewPreparation = nil
+                if case .preview = lastAction {
+                    isWorking = false
+                    if Task.isCancelled { lastAction = nil }
                 }
             }
-            guard presentationRevision == revision, let shown else { return }
-            previewURLs = urls
-            previewURL = shown
         }
+        do {
+            try Task.checkCancellation()
+            let selected = try await file(for: item)
+            guard previewIsCurrent(request, owners: owners), !Task.isCancelled else { return }
+            var files = [item.id: selected]
+            previewURLs = [selected]
+            previewURL = selected
+            lastAction = nil
+            isWorking = false
+            // One secondary download at a time keeps speculative work bounded
+            // and uses the same account budget as every attachment request.
+            for candidate in group where files[candidate.id] == nil {
+                guard previewIsCurrent(request, owners: owners), !Task.isCancelled else { return }
+                do {
+                    let url = try await file(for: candidate)
+                    guard previewIsCurrent(request, owners: owners), !Task.isCancelled else { return }
+                    files[candidate.id] = url
+                    previewURLs = group.compactMap { files[$0.id] }
+                } catch is CancellationError { return }
+                catch {
+                    guard previewIsCurrent(request, owners: owners), !Task.isCancelled else { return }
+                }
+            }
+        } catch is CancellationError {
+            if previewRequest == request, case .preview = lastAction {
+                isWorking = false
+                lastAction = nil
+            }
+        } catch {
+            guard previewIsCurrent(request, owners: owners), !Task.isCancelled else { return }
+            errorMessage = Self.message(for: error)
+        }
+    }
+
+    private func previewIsCurrent(_ request: UUID, owners: [String: AccountMailbox]) -> Bool {
+        guard previewRequest == request else { return false }
+        guard owners.allSatisfy({ mailbox.account(id: $0.key) === $0.value }) else {
+            previewURL = nil
+            return false
+        }
+        return true
+    }
+
+    private func cancelPreviewPreparation() {
+        if previewPreparation != nil, case .preview = lastAction {
+            isWorking = false
+            lastAction = nil
+        }
+        previewRequest = nil
+        previewPreparation?.cancel()
+        previewPreparation = nil
+        previewURLs = []
     }
 
     func openFile(_ item: AttachmentLibraryItem) async {
@@ -455,7 +522,11 @@ final class AttachmentLibraryModel {
     private func file(for item: AttachmentLibraryItem) async throws -> URL {
         let owner = try owner(for: item)
         let root = mailbox.downloadsDirectory.appending(path: item.accountID, directoryHint: .isDirectory)
-        let file = try await owner.engine.downloadAttachment(item.attachment, into: root)
+        let file = try await owner.engine.downloadAttachment(item.attachment, into: root, protectedURLs: { @MainActor [weak self] in
+            var protected = AttachmentPreviewRegistry.shared.activeURLs
+            if let current = self?.previewURL { protected.insert(current) }
+            return protected
+        })
         guard try self.owner(for: item) === owner else { throw AttachmentActionError.accountUnavailable }
         try Task.checkCancellation()
         return file

@@ -6,7 +6,10 @@ extension SyncEngine {
     /// Downloads a received attachment into `directory` and returns the file.
     /// A file downloaded before is reused. Each one sits under its message
     /// and part, so two attachments with one name don't collide.
-    public func downloadAttachment(_ attachment: AttachmentRecord, into directory: URL) async throws -> URL {
+    /// Active previews are read just before pruning so navigation during a
+    /// download protects the file currently on screen.
+    public func downloadAttachment(_ attachment: AttachmentRecord, into directory: URL,
+        protectedURLs: (@Sendable () async -> Set<URL>)? = nil) async throws -> URL {
         try validateAttachmentAccount(attachment)
         // Stop waits for this operation before account removal deletes files.
         return try await gated {
@@ -15,7 +18,9 @@ extension SyncEngine {
             let timestamp = now()
             if AttachmentFileCache.isReusable(url, expectedSize: attachment.size, now: timestamp) {
                 try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: url.path)
-                try AttachmentFileCache.prune(directory, keeping: url, now: timestamp)
+                let protection = await protectedURLs?() ?? []
+                try validateAttachmentAccount(attachment)
+                try AttachmentFileCache.prune(directory, keeping: url, now: timestamp, protectedURLs: protection)
                 return url
             }
             let data = try await attachmentData(attachment)
@@ -23,7 +28,9 @@ extension SyncEngine {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
             try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: url.path)
-            try AttachmentFileCache.prune(directory, keeping: url, now: timestamp)
+            let protection = await protectedURLs?() ?? []
+            try validateAttachmentAccount(attachment)
+            try AttachmentFileCache.prune(directory, keeping: url, now: timestamp, protectedURLs: protection)
             return url
         }
     }

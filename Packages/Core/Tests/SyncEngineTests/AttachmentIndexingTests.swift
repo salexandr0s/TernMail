@@ -172,12 +172,74 @@ import Testing
             attachmentID: "data", filename: record.filename, mimeType: record.mimeType, size: 4, isInline: false)
         let otherURL = try await other.downloadAttachment(otherRecord, into: directory)
         #expect(otherURL != url)
+        let disposable = directory.appending(path: "disposable.txt")
+        try Data("file".utf8).write(to: disposable)
+        try AttachmentFileCache.prune(directory, keeping: otherURL, now: Date(), maximumBytes: 4,
+            protectedURLs: [url.standardizedFileURL.resolvingSymlinksInPath()])
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(FileManager.default.fileExists(atPath: otherURL.path))
+        #expect(!FileManager.default.fileExists(atPath: disposable.path))
+        // Closing the preview makes its file disposable again on the next pass.
         try AttachmentFileCache.prune(directory, keeping: otherURL, now: Date(), maximumBytes: 4)
         #expect(!FileManager.default.fileExists(atPath: url.path))
         #expect(FileManager.default.fileExists(atPath: otherURL.path))
         #expect(SyncEngine.safeFilename(String(repeating: "🪶", count: 500) + ".pdf").utf8.count <= 220)
         await engine.stop()
         await #expect(throws: CancellationError.self) { try await engine.downloadAttachment(record, into: directory) }
+    }
+
+    @Test func previewProtectionIsReadAfterTheDownloadAndAgainForCacheReuse() async throws {
+        let cache = try MailCache.inMemory()
+        let gmail = LibraryGmail()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let engine = libraryEngine(cache: cache, gmail: gmail)
+        let record = AttachmentRecord(accountID: account, messageID: "m", partID: "1", attachmentID: "data",
+            filename: "invoice.pdf", mimeType: "application/pdf", size: 4, isInline: false)
+        let previous = directory.appending(path: "previous.pdf")
+        let current = directory.appending(path: "current.pdf")
+        let protection = LibraryPreviewProtection(urls: [previous])
+        await gmail.holdNextDownload()
+        let pending = Task {
+            try await engine.downloadAttachment(record, into: directory, protectedURLs: { await protection.values() })
+        }
+        while !(await gmail.isHoldingDownload) { await Task.yield() }
+        #expect(await protection.reads.isEmpty)
+        await protection.setURLs([current])
+        await gmail.releaseDownload()
+        _ = try await pending.value
+        #expect(await protection.reads == [[current]])
+        await protection.setURLs([])
+        _ = try await engine.downloadAttachment(record, into: directory, protectedURLs: { await protection.values() })
+        #expect(await protection.reads == [[current], []])
+        #expect(await gmail.downloadRequests == 1)
+        await engine.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func cancellationWhileReadingPreviewProtectionDoesNotPrune(fromCache: Bool) async throws {
+        let cache = try MailCache.inMemory()
+        let gmail = LibraryGmail()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let engine = libraryEngine(cache: cache, gmail: gmail)
+        let record = AttachmentRecord(accountID: account, messageID: "m", partID: "1", attachmentID: "data",
+            filename: "invoice.pdf", mimeType: "application/pdf", size: 4, isInline: false)
+        if fromCache { _ = try await engine.downloadAttachment(record, into: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let expired = directory.appending(path: "expired.txt")
+        try Data("old".utf8).write(to: expired)
+        try FileManager.default.setAttributes([.modificationDate: Date.distantPast], ofItemAtPath: expired.path)
+        let protection = LibraryPreviewProtection(holdRead: true)
+        let pending = Task {
+            try await engine.downloadAttachment(record, into: directory, protectedURLs: { await protection.values() })
+        }
+        while !(await protection.isHoldingRead) { await Task.yield() }
+        pending.cancel()
+        await protection.releaseRead()
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        #expect(FileManager.default.fileExists(atPath: expired.path))
+        await engine.stop()
     }
 
     @Test func signOutWaitsForDownloadAndPreventsRecreatingItsCache() async throws {
@@ -197,6 +259,27 @@ import Testing
         await stopping.value
         await #expect(throws: CancellationError.self) { try await pending.value }
         #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+}
+
+private actor LibraryPreviewProtection {
+    private var urls: Set<URL>
+    private let holdRead: Bool
+    private var heldRead: CheckedContinuation<Void, Never>?
+    private(set) var reads: [Set<URL>] = []
+
+    init(urls: Set<URL> = [], holdRead: Bool = false) {
+        self.urls = urls
+        self.holdRead = holdRead
+    }
+
+    func setURLs(_ urls: Set<URL>) { self.urls = urls }
+    var isHoldingRead: Bool { heldRead != nil }
+    func releaseRead() { heldRead?.resume(); heldRead = nil }
+    func values() async -> Set<URL> {
+        if holdRead { await withCheckedContinuation { heldRead = $0 } }
+        reads.append(urls)
+        return urls
     }
 }
 
