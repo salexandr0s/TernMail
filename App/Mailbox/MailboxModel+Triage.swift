@@ -35,9 +35,13 @@ final class MailTriageModel {
 
     init(mailbox: MailboxModel) { self.mailbox = mailbox }
 
-    func perform(_ action: TriageAction, targets: [(accountID: String, target: MailActionTarget)]? = nil) {
-        guard let mailbox else { return }
-        let targets = targets ?? mailbox.selectedActionTargets
+    /// One Undo covers every account in `targets`, from the notice or Edit > Undo.
+    @discardableResult
+    func perform(_ action: TriageAction, targets: [(accountID: String, target: MailActionTarget)]? = nil) -> Task<Void, Never>? {
+        guard let mailbox else { return nil }
+        let selection = mailbox.selectedListRowIDs
+        let selected = mailbox.actionTargets(forRows: selection)
+        let targets = targets ?? selected
         let name: String
         switch action {
         case .spam: name = "Report Spam"
@@ -45,31 +49,46 @@ final class MailTriageModel {
         case .important: name = "Mark as Important"
         case .notImportant: name = "Mark as Not Important"
         }
-        mailbox.undoManager?.beginUndoGrouping()
-        for (accountID, target) in targets {
-            guard let owner = mailbox.account(id: accountID) else { continue }
-            mailbox.queueUndoable(name, confirmation: name, in: owner) { engine in
-                try await engine.performTriage(action, target: target)
-            }
+        let owners = targets.compactMap { mailbox.account(id: $0.accountID) }
+        guard !owners.isEmpty else { return nil }
+        // Selected mail that leaves the list hands the selection to the next
+        // row, as Archive does in the Inbox, so the reader doesn't go empty.
+        if !mailbox.search.isActive, let labelID = mailbox.selectedLabelID, Self.mailLeaves(labelID, after: action),
+           selected.elementsEqual(targets, by: { $0.accountID == $1.accountID && $0.target == $1.target }) {
+            mailbox.selectThread(after: Set(selection.map(\.threadKey)))
         }
-        mailbox.undoManager?.endUndoGrouping()
+        return mailbox.queueUndoable(name, confirmation: name, across: owners) { owner in
+            guard let target = targets.first(where: { $0.accountID == owner.account.id })?.target else { return nil }
+            return try await owner.engine.performTriage(action, target: target)
+        }
     }
 
-    func markAllRead() {
-        guard let mailbox, let box = mailbox.selectedMailbox, !mailbox.search.isActive else { return }
-        markAllRead(in: box)
+    /// Whether mail leaves the list for `labelID` after `action`. Mail in
+    /// Trash or Snoozed stays listed there after Report Spam.
+    static func mailLeaves(_ labelID: String, after action: TriageAction) -> Bool {
+        switch action {
+        case .spam: ![SystemLabel.spam, SystemLabel.trash, MailboxModel.snoozedID].contains(labelID)
+        case .notSpam: labelID == SystemLabel.spam
+        case .important: false
+        case .notImportant: labelID == SystemLabel.important
+        }
+    }
+
+    @discardableResult
+    func markAllRead() -> Task<Void, Never>? {
+        guard let mailbox, let box = mailbox.selectedMailbox, !mailbox.search.isActive else { return nil }
+        return markAllRead(in: box)
     }
 
     /// Sidebar rows offer this for mailboxes other than the selected one.
-    func markAllRead(in box: MailboxID) {
-        guard let mailbox, Self.canMarkAllRead(box) else { return }
-        mailbox.undoManager?.beginUndoGrouping()
-        for owner in mailbox.owners(of: box) {
-            mailbox.queueUndoable("Mark All as Read", confirmation: "Unread messages marked as read", in: owner) { engine in
-                try await engine.markAllRead(labelID: box.id)
-            }
+    /// One Undo covers every account the mailbox shows.
+    @discardableResult
+    func markAllRead(in box: MailboxID) -> Task<Void, Never>? {
+        guard let mailbox, Self.canMarkAllRead(box) else { return nil }
+        return mailbox.queueUndoable("Mark All as Read", confirmation: "Unread messages marked as read",
+                                     across: mailbox.owners(of: box)) { owner in
+            try await owner.engine.markAllRead(labelID: box.id)
         }
-        mailbox.undoManager?.endUndoGrouping()
     }
 
     /// The Outbox and Snoozed are not Gmail labels, so Gmail cannot mark them.
@@ -151,7 +170,13 @@ extension MailboxModel {
         if unsnooze { return unsnoozeRows(rows) }
         let targets = actionTargets(forRows: rows)
         guard !targets.isEmpty else { return nil }
-        return queueUndoable("Move to Inbox", for: Set(rows.map(\.threadKey))) { owner, _ in
+        // Mail moved out of Trash or Spam leaves the list, like Archive in the Inbox.
+        if !search.isActive, let labelID = selectedLabelID, [SystemLabel.trash, SystemLabel.spam].contains(labelID) {
+            selectRow(after: rows)
+        }
+        let subject = Self.mailSubject(count: rows.count, messages: rows.allSatisfy { $0.messageID != nil })
+        return queueUndoable("Move to Inbox", confirmation: "\(subject) moved to the Inbox",
+                             for: Set(rows.map(\.threadKey))) { owner, _ in
             guard let target = targets.first(where: { $0.accountID == owner.account.id })?.target else { return nil }
             return try await owner.engine.editLabels(target: target, add: [SystemLabel.inbox],
                                                      remove: [SystemLabel.trash, SystemLabel.spam])

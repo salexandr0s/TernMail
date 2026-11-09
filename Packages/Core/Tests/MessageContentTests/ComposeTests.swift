@@ -120,6 +120,25 @@ import Testing
 
         #expect(lines == (value == "pre-line" ? ["a b", "c"] : ["  a  b", "\tc"]) + ["d e"])
     }
+
+    @Test func importHandlesMarkupNestedTooDeeplyToRecurseThrough() {
+        // 10,000 open elements, far more than a test thread's stack holds as
+        // nested calls, in the body and again in the detached quote.
+        let nested = String(repeating: "<div><span>", count: 5_000) + "Deep <b>text</b>" + String(repeating: "</span></div>", count: 5_000)
+        let html = nested + "<p>After</p><div class=\"gmail_quote\">" + nested + "<img src=\"cid:logo@example.com\"></div>"
+
+        let imported = HTMLImporter.importHTML(html)
+
+        #expect(imported.document.blocks == [
+            Block(runs: [Run("Deep "), Run("text", bold: true)]),
+            Block(runs: [Run("After")]),
+        ])
+        #expect(imported.quotedTail?.contains("Deep <b>text</b>") == true)
+        #expect(HTMLImporter.inlineImageContentIDs(in: html) == ["logo@example.com"])
+        // Nested framesets leave no body, which `Document.body()` searches for by recursion.
+        let frames = HTMLImporter.importHTML(String(repeating: "<frameset>", count: 10_000))
+        #expect(frames.droppedFormatting && frames.quotedTail == nil)
+    }
 }
 
 @Suite struct ReplyBuilderTests {
@@ -143,11 +162,16 @@ import Testing
         let all = ReplyBuilder.draft(.replyAll, replyingTo: original, ownAddresses: own)
         let forward = ReplyBuilder.draft(.forward, replyingTo: original, ownAddresses: own)
 
-        #expect(reply.to == [list])
+        // The Reply-To isn't the sender, so its token shows the address.
+        let replyTo = EmailAddress(address: "list@example.com", origin: .replyTo)
+        #expect(reply.to == [replyTo])
         #expect(reply.cc.isEmpty)
-        #expect(all.to == [list, bob])
+        #expect(all.to == [replyTo, bob])
         #expect(all.cc == [carol])
         #expect(forward.to.isEmpty && forward.cc.isEmpty)
+
+        let fromItself = OriginalMessage(threadID: "t1", from: [jane], replyTo: [EmailAddress(name: "Jane D", address: "JANE@example.com")])
+        #expect(ReplyBuilder.draft(.reply, replyingTo: fromItself, ownAddresses: own).to.map(\.origin) == [nil])
     }
 
     @Test func replyingToYourOwnMessageGoesToItsRecipients() {

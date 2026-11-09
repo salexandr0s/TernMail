@@ -108,12 +108,18 @@ import Testing
         let clock = LogoClock()
         let transport = LogoTransport(routes: ["https://brand.com/favicon.ico": .image(try png())])
         let first = DomainLogoImages(cacheDirectory: directory, now: { clock.now() }, fetch: { try await transport.fetch($0) })
+        // Reading only the cache never reaches the website.
+        #expect(await first.cachedData(for: "one@brand.com") == nil)
+        #expect(await transport.requests.isEmpty)
         let data = try #require(await first.data(for: "one@brand.com"))
         let offline = LogoTransport(offline: true)
         let restarted = DomainLogoImages(cacheDirectory: directory, now: { clock.now() }, fetch: { try await offline.fetch($0) })
+        #expect(await restarted.cachedData(for: "two@brand.com") == data)
         #expect(await restarted.data(for: "two@brand.com") == data)
         #expect(await offline.requests.isEmpty)
         clock.advance(8 * 86400)
+        #expect(await restarted.cachedData(for: "two@brand.com") == nil)
+        #expect(await offline.requests.isEmpty)
         #expect(await restarted.data(for: "two@brand.com") == data)
         #expect(await offline.requests.count == 1)
         #expect(await restarted.data(for: "two@brand.com") == data)
@@ -150,7 +156,7 @@ import Testing
         #expect(await cancelled.requests.count == 2)
     }
 
-#if DEBUG
+#if TERN_TEST_SUPPORT
     @Test func concurrentRowsShareWorkAndResetRejectsLateResponses() async throws {
         let gate = LogoGate()
         let transport = LogoTransport(routes: ["https://brand.com/favicon.ico": .image(try png())], gate: gate)

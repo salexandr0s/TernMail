@@ -29,6 +29,9 @@ public struct PeopleClient: Sendable {
     static let host = "people.googleapis.com"
     /// The largest page both lists allow.
     static let pageSize = 1000
+    /// The most pages one sync reads, far beyond Google's 25,000 saved
+    /// contacts, so only a server that keeps issuing new tokens reaches it.
+    static let maxSyncPages = 1000
     /// Fields asked for on every person. Callers store `Source.syncSignature`
     /// with the token, since sources must also match the request that issued it.
     public static let fields = "names,emailAddresses,metadata,photos"
@@ -83,18 +86,23 @@ public struct PeopleClient: Sendable {
     /// Every page of a full sync (no `syncToken`) or an incremental one. The
     /// returned token is the last page's, so a caller that stores it only
     /// after writing `people` never skips a page.
+    ///
+    /// - Throws: `GmailError.decoding` when a page token repeats or the sync
+    ///   runs past `maxSyncPages`, either of which would never end.
     public func sync(_ source: Source, syncToken: String? = nil) async throws -> ContactSync {
         var people: [Person] = []
         var pageToken: String?
-        while true {
+        var visited = Set<String>()
+        for _ in 0..<Self.maxSyncPages {
             let page = try await page(source, syncToken: syncToken, pageToken: pageToken)
             people += page.people
             guard let next = page.nextPageToken, !next.isEmpty else {
                 return ContactSync(people: people, syncToken: page.nextSyncToken)
             }
-            guard next != pageToken else { throw GmailError.decoding("ContactPage.nextPageToken") }
+            guard visited.insert(next).inserted else { throw GmailError.decoding("ContactPage.nextPageToken") }
             pageToken = next
         }
+        throw GmailError.decoding("ContactPage.nextPageToken")
     }
 
     /// `people.searchDirectoryPeople` over domain profiles and domain contacts,

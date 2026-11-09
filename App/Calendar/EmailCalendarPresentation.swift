@@ -67,7 +67,10 @@ struct EmailCalendarPresentation {
         if item.isOutdated {
             return Badge(text: "Replaced by a newer invitation", symbol: "clock.arrow.circlepath", tone: .neutral)
         }
-        if item.kind == .cancelled { return Badge(text: "Cancelled", symbol: "xmark", tone: .negative) }
+        if item.kind == .cancelled {
+            if let notice = item.removalNotice { return Badge(text: notice, symbol: "questionmark", tone: .caution) }
+            return Badge(text: "Cancelled", symbol: "xmark", tone: .negative)
+        }
         if item.hasAmbiguousMatch {
             return Badge(text: "Several calendar matches. Review details.", symbol: "questionmark", tone: .caution)
         }

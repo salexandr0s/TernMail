@@ -50,7 +50,7 @@ struct SenderAccountLabel: View {
         return name.isEmpty ? account.email : name
     }
 
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     /// A local illustration exercises the photo path without a Google account.
     static var auditImage: NSImage {
         let renderer = ImageRenderer(content:

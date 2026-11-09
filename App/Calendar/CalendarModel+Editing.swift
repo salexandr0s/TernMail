@@ -180,11 +180,11 @@ extension CalendarModel {
         if editor?.id == draft.id { editor = nil }
         proposedEditors[draft.id] = nil
         if case .create = change {
-            undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: owner.accountID, calendarID: targetCalendarID))
-            registerUndo(named: draft.isImport ? "Import Event" : "Add Event")
+            pushUndo(CalendarUndoAction(operationID: operation.id, accountID: owner.accountID, calendarID: targetCalendarID,
+                name: draft.isImport ? "Import Event" : "Add Event"))
         } else if let before {
-            undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: owner.accountID, calendarID: targetCalendarID, before: before))
-            registerUndo(named: draft.isDeletion ? "Delete Event" : "Change Event")
+            pushUndo(CalendarUndoAction(operationID: operation.id, accountID: owner.accountID, calendarID: targetCalendarID,
+                name: draft.isDeletion ? "Delete Event" : "Change Event", before: before))
         }
         if let sourceID = draft.sourceID {
             do { try await recordAcceptedSuggestion(sourceID: sourceID, event: event, operation: operation) }
@@ -222,13 +222,16 @@ extension CalendarModel {
         }
         var fields = edited.changedFields(from: source.event)
         // Apply an occurrence's time change as an offset to the series anchor.
+        // All-day dates are read in the calendar's zone, the zone they are written in.
+        let zone = calendar.timeZone
         for name in ["start", "end"] where fields[name] != nil {
             let old = name == "start" ? source.event.start : source.event.end
             let new = name == "start" ? edited.start : edited.end
             let anchor = name == "start" ? master.start : master.end
-            if let oldDate = old?.resolvedDate(), let newDate = new?.resolvedDate(), let anchorDate = anchor?.resolvedDate() {
-                let adjusted = CalendarDateTime(date: adjustSeriesAnchor(anchorDate, from: oldDate, to: newDate, timeZone: TimeZone(identifier: old?.timeZone ?? "") ?? calendar.timeZone),
-                    timeZone: TimeZone(identifier: new?.timeZone ?? "") ?? calendar.timeZone, allDay: new?.isAllDay == true)
+            if let oldDate = old?.resolvedDate(fallbackTimeZone: zone), let newDate = new?.resolvedDate(fallbackTimeZone: zone),
+               let anchorDate = anchor?.resolvedDate(fallbackTimeZone: zone) {
+                let adjusted = CalendarDateTime(date: adjustSeriesAnchor(anchorDate, from: oldDate, to: newDate, timeZone: TimeZone(identifier: old?.timeZone ?? "") ?? zone),
+                    timeZone: TimeZone(identifier: new?.timeZone ?? "") ?? zone, allDay: new?.isAllDay == true)
                 fields[name] = try CalendarJSON.encoding(adjusted)
             }
         }
@@ -272,9 +275,8 @@ extension CalendarModel {
         } else { change = .delete(eventID: id, etag: original.etag) }
         let operation = try await engine.enqueue(change, calendarID: display.calendarID, beforeEvent: original)
         if scope == .occurrence, !display.isRecurring {
-            undoActions.append(CalendarUndoAction(operationID: operation.id, accountID: display.accountID,
-                calendarID: display.calendarID, before: original))
-            registerUndo(named: "Delete Event")
+            pushUndo(CalendarUndoAction(operationID: operation.id, accountID: display.accountID,
+                calendarID: display.calendarID, name: "Delete Event", before: original))
         }
         await reloadOperations()
         projectPendingEvents()
@@ -294,36 +296,73 @@ extension CalendarModel {
         try await save(CalendarEditorDraft(event: changed, calendarKey: display.calendarKey, source: display))
     }
 
+    /// Each Edit ▸ Undo entry stands for one undo action, newest last.
+    private func pushUndo(_ action: CalendarUndoAction) {
+        undoActions.append(action)
+        registerUndo(named: action.name)
+    }
+
+    /// Undoes the newest undo action's own operation, never another change. A
+    /// change Google has not received is withdrawn and a completed one gets an
+    /// inverse. One that is still syncing stays for a later Undo.
     func undo() async {
-        guard !isUndoing else { return }
+        guard !isUndoing, let action = undoActions.last else { return }
         isUndoing = true
         defer { isUndoing = false }
-        if let pending = operations.last(where: { $0.status == .queued && $0.attempts == 0 }), let engine = engines[pending.accountID] {
+        guard let engine = engines[action.accountID] else { errorMessage = CalendarModelError.unavailable.localizedDescription; return }
+        await reloadOperations(reconcileEmailLinks: false)
+        if let pending = operations.first(where: { $0.id == action.operationID }), [.proposed, .queued].contains(pending.status) {
+            // The store withdraws it only while no attempt to send it has started.
             do {
                 try await engine.cancel(operationID: pending.id)
                 undoActions.removeAll { $0.operationID == pending.id }
-            } catch { errorMessage = error.localizedDescription }
-            await reloadOperations(); await reloadOccurrences(); return
+                await reloadOperations(); await reloadOccurrences(); return
+            } catch let error as CalendarEngineError where error == .invalidOperation {
+                await reloadOperations(reconcileEmailLinks: false)
+            } catch {
+                errorMessage = error.localizedDescription
+                registerUndo(named: action.name); return
+            }
         }
-        guard let action = undoActions.last,
-              let operation = operations.first(where: { $0.id == action.operationID }), operation.status == .completed else { return }
-        let recipients = Set(((operation.resultEvent?.attendees ?? []) + (action.before?.attendees ?? [])).map(\.email))
-        if !recipients.isEmpty { undoConfirmation = recipients.sorted(); return }
-        await performConfirmedUndo()
+        guard let operation = operations.first(where: { $0.id == action.operationID }) else {
+            undoActions.removeAll { $0.operationID == action.operationID }; return
+        }
+        switch operation.status {
+        case .completed:
+            let recipients = Set(((operation.resultEvent?.attendees ?? []) + (action.before?.attendees ?? [])).map(\.email))
+            guard recipients.isEmpty else {
+                undoAwaitingConfirmation = action
+                undoConfirmation = recipients.sorted(); return
+            }
+            await performConfirmedUndo(action)
+        case .proposed, .queued, .running:
+            errorMessage = "This change is still syncing. Try Undo again when it finishes."
+            registerUndo(named: action.name)
+        case .failed, .conflicted:
+            undoActions.removeAll { $0.operationID == action.operationID }
+            errorMessage = "This change needs review in Calendar activity."
+        case .cancelled:
+            undoActions.removeAll { $0.operationID == action.operationID }
+        }
     }
 
-    func cancelUndo() { undoConfirmation = nil }
+    /// The change stays, so Edit ▸ Undo offers it again.
+    func cancelUndo() {
+        undoConfirmation = nil
+        if let action = undoAwaitingConfirmation { registerUndo(named: action.name) }
+        undoAwaitingConfirmation = nil
+    }
 
     func confirmUndo() async {
-        guard !isUndoing else { return }
+        guard !isUndoing, let action = undoAwaitingConfirmation else { return }
         isUndoing = true
         defer { isUndoing = false }
-        undoConfirmation = nil
-        await performConfirmedUndo()
+        undoConfirmation = nil; undoAwaitingConfirmation = nil
+        await performConfirmedUndo(action)
     }
 
-    private func performConfirmedUndo() async {
-        guard let action = undoActions.last, let engine = engines[action.accountID],
+    private func performConfirmedUndo(_ action: CalendarUndoAction) async {
+        guard let engine = engines[action.accountID],
               let operation = operations.first(where: { $0.id == action.operationID }), operation.status == .completed else { return }
         do {
             let mutation: CalendarMutation

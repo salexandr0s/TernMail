@@ -14,7 +14,10 @@ final class RecipientTokenField: NSTokenField {
     var avatarAddresses: [EmailAddress] = [] {
         didSet { refreshAvatars() }
     }
+    /// Help for the token under the pointer, such as the full address it stands for.
+    var tokenHelp: ((Any) -> String?)?
     private var editorOverlay: RecipientAvatarOverlay?
+    private var helpTrackingArea: NSTrackingArea?
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
@@ -41,6 +44,47 @@ final class RecipientTokenField: NSTokenField {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard currentEditor() == nil, !avatarAddresses.isEmpty else { return }
+        let (text, layout, container, origin) = cellLayout()
+        Self.drawAvatars(in: text, layout: layout, container: container,
+                         origin: origin, addresses: avatarAddresses, image: avatarImage)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let helpTrackingArea { removeTrackingArea(helpTrackingArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        helpTrackingArea = area
+    }
+
+    // These pass each event on, so the token field's own pointer handling still runs.
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let help = token(at: convert(event.locationInWindow, from: nil)).flatMap { tokenHelp?($0) }
+        if toolTip != help { toolTip = help }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        if event.trackingArea === helpTrackingArea { toolTip = nil }
+    }
+
+    /// The represented object of the token at `point`, in the field's
+    /// coordinates. While someone types here, the field editor holds the tokens.
+    func token(at point: NSPoint) -> Any? {
+        if let editor = currentEditor() as? NSTextView {
+            guard let text = editor.textStorage, let layout = editor.layoutManager,
+                  let container = editor.textContainer else { return nil }
+            return Self.token(at: editor.convert(point, from: self), in: text, layout: layout, container: container,
+                              origin: editor.textContainerOrigin)
+        }
+        let (text, layout, container, origin) = cellLayout()
+        return Self.token(at: point, in: text, layout: layout, container: container, origin: origin)
+    }
+
+    /// The inactive field's value laid out as its cell draws it, and where the layout starts.
+    private func cellLayout() -> (text: NSTextStorage, layout: NSLayoutManager, container: NSTextContainer, origin: NSPoint) {
         // Reading the inactive field's attributed value leaves active typing untouched.
         let text = NSTextStorage(attributedString: attributedStringValue)
         let layout = NSLayoutManager()
@@ -49,8 +93,22 @@ final class RecipientTokenField: NSTokenField {
         container.lineFragmentPadding = Self.cellLineFragmentPadding
         text.addLayoutManager(layout)
         layout.addTextContainer(container)
-        Self.drawAvatars(in: text, layout: layout, container: container,
-                         origin: rect.origin, addresses: avatarAddresses, image: avatarImage)
+        return (text, layout, container, rect.origin)
+    }
+
+    private static func token(at point: NSPoint, in text: NSAttributedString, layout: NSLayoutManager,
+                              container: NSTextContainer, origin: NSPoint) -> Any? {
+        let location = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        layout.ensureLayout(for: container)
+        let glyph = layout.glyphIndex(for: location, in: container, fractionOfDistanceThroughGlyph: nil)
+        guard glyph < layout.numberOfGlyphs,
+              layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(location)
+        else { return nil }
+        let character = layout.characterIndexForGlyph(at: glyph)
+        guard character < text.length,
+              let attachment = text.attribute(.attachment, at: character, effectiveRange: nil) as? NSTextAttachment
+        else { return nil }
+        return (attachment.attachmentCell as? NSCell)?.representedObject
     }
 
     func refreshAvatars() {

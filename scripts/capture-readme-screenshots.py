@@ -25,7 +25,7 @@ def export_srgb(source: pathlib.Path, destination: pathlib.Path,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skip-build", action="store_true", help="Use an existing, current Debug test build")
+    parser.add_argument("--skip-build", action="store_true", help="Use an existing, current Debug-Testing build")
     parser.add_argument("--section", choices=("all", "workspace", "assistant"), default="all",
                         help="Capture all views, the mail/calendar workspace, or the assistant and Tasks")
     args = parser.parse_args()
@@ -35,7 +35,7 @@ def main() -> None:
     destination = "platform=macOS,arch=" + subprocess.check_output(["uname", "-m"], text=True).strip()
     if not args.skip_build:
         print("Building the app and native capture test…", flush=True)
-        run(["xcodebuild", "-project", "Tern.xcodeproj", "-scheme", "Tern", "-configuration", "Debug",
+        run(["xcodebuild", "-project", "Tern.xcodeproj", "-scheme", "Tern", "-configuration", "Debug-Testing",
              "-derivedDataPath", str(derived), "-destination", destination, "build-for-testing"],
             derived / "build.log", root)
 

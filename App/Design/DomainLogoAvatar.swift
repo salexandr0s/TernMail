@@ -3,28 +3,29 @@ import ImageIO
 import SwiftUI
 
 /// Website icons supplement missing photos without changing images inside mail.
+/// It shows only icons that are already cached and never asks a website: its
+/// callers, such as the attachment library, which includes Spam, can't tell
+/// Spam or first-time senders apart.
 struct DomainLogoAvatar<Placeholder: View>: View {
     let address: String
     let size: CGFloat
-    let allowsLookup: Bool
     private let placeholder: Placeholder
-    private let load: AddressAvatarModel.LogoLoader
+    private let cached: AddressAvatarModel.LogoLoader
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var image: NSImage?
     @State private var loadedAddress: String?
 
-    init(address: String, size: CGFloat = Tokens.Control.avatar, allowsLookup: Bool = true,
-         load: @escaping AddressAvatarModel.LogoLoader = { await DomainLogoImages.shared.data(for: $0) },
+    init(address: String, size: CGFloat = Tokens.Control.avatar,
+         cached: @escaping AddressAvatarModel.LogoLoader = { await DomainLogoImages.shared.cachedData(for: $0) },
          @ViewBuilder placeholder: () -> Placeholder) {
         self.address = address
         self.size = size
-        self.allowsLookup = allowsLookup
-        self.load = load
+        self.cached = cached
         self.placeholder = placeholder()
     }
 
     private var request: Request {
-        Request(address: address.lowercased(), enabled: showsLogos && allowsLookup)
+        Request(address: address.lowercased(), enabled: showsLogos)
     }
 
     var body: some View {
@@ -42,12 +43,11 @@ struct DomainLogoAvatar<Placeholder: View>: View {
                 image = DomainLogoThumbnailCache.shared.image(for: current.address)
                 loadedAddress = current.address
             }
-            let data = await load(current.address)
-            guard !Task.isCancelled else { return }
-            let prepared = if let data { await DomainLogoThumbnailCache.shared.image(for: current.address, data: data) } else { nil as NSImage? }
+            // Decoded pixels in memory win; otherwise try the icon cache on disk.
+            guard image == nil, let data = await cached(current.address), !Task.isCancelled else { return }
+            let prepared = await DomainLogoThumbnailCache.shared.image(for: current.address, data: data)
             guard !Task.isCancelled else { return }
             image = prepared
-            loadedAddress = current.address
         }
     }
 

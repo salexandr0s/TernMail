@@ -101,7 +101,7 @@ enum AssistantWritingStyleStoreError: Error, LocalizedError {
 @MainActor
 enum AssistantWritingStyleStores {
     static func makeDefault() -> any AssistantWritingStyleStore {
-        if AssistantRuntimeEnvironment.isTestHost || ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+        if LaunchMode.current.isIsolated {
             return MemoryAssistantWritingStyleStore()
         }
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

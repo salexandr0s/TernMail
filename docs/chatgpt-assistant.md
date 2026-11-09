@@ -1,15 +1,45 @@
-# ChatGPT assistant
+# AI assistant
 
-Tern uses Sign in with ChatGPT to connect its assistant to your ChatGPT plan. Model choices come from the connected account. No OpenAI API key or Codex installation is needed.
+Tern connects its assistant to ChatGPT, Claude through the official Claude Code CLI, OpenAI API, Claude API, or DeepSeek API. The logo and name at the top left open the provider menu. Choose a model at the bottom right of the message box. Models come from the selected connection, and Tern remembers a separate model choice for each service. ChatGPT uses browser sign-in, Claude (CLI) uses the account connected through Claude Code, and the API connections use your own provider key.
+
+When a connection has no available model, the model control says **Choose model**, **Loading models…**, or **Models unavailable**. It does not use the provider name as a model. **Manage Connections…** in the provider menu opens Assistant settings. Switching providers cancels active work and clears the retained conversation before another provider can receive it.
 
 ## Connect
 
 1. Open Tern, then **Settings → Assistant**, or **Assistant Options → Assistant Settings…** in the assistant's header.
-2. Choose **Continue with ChatGPT** and finish signing in in your browser. Grant ChatGPT plan usage when offered. An identity-only connection cannot run the assistant.
-3. Enable the mail accounts the assistant may use and choose an available model.
+2. Select a connection. For ChatGPT, choose **Continue with ChatGPT** and finish signing in in your browser. Grant ChatGPT plan usage when offered; an identity-only connection cannot run the assistant. For **Claude (CLI)**, follow the setup below. For an API connection, enter a key from that provider and connect it.
+3. Choose a model and enable the mail accounts the assistant may use. ChatGPT and API connections load live model lists; refresh them after changing access at the provider. Claude (CLI) offers model aliases resolved by Claude Code.
 4. Open the assistant and ask a question. Mail scope starts at **All enabled accounts**. Choose **Mailbox accounts** or **Selected conversations** to narrow it; New Chat keeps your current choice.
 
-Choose a suggestion to ask immediately, or write a request such as “What needs my attention this week?” Suggestions respect the selected scope. Summary and draft suggestions require selected conversations; drafting requires one conversation. Open an email card or source to read the supporting conversation. **Review Draft** opens the normal Tern composer for editing and sending.
+| Connection | Credential | Where usage is billed |
+|---|---|---|
+| ChatGPT | Browser sign-in to your ChatGPT account | Your ChatGPT plan and its usage settings |
+| Claude (CLI) | Your account connected through the installed Claude Code CLI | The account and billing method active in Claude Code |
+| OpenAI API | [OpenAI API key](https://platform.openai.com/api-keys) | Your OpenAI API account |
+| Claude API | [Anthropic API key](https://platform.claude.com/settings/keys) | Your Claude Console workspace |
+| DeepSeek API | [DeepSeek API key](https://platform.deepseek.com/api_keys) | Your DeepSeek API account |
+
+API keys use the provider's API billing and limits, separately from a chat subscription. Loading models checks catalogue access; it does not guarantee that every inference request has sufficient quota or permissions. Tern uses the selected connection for chat, compose assistance, summaries, calendar interpretation, writing-style learning, and mail organization. It does not automatically switch to another provider or billing method after a failure.
+
+### Connect through Claude Code
+
+Install the official, unmodified native Claude Code binary using Anthropic's [setup instructions](https://code.claude.com/docs/en/setup#install-claude-code). Tern verifies Anthropic's Developer ID signature; npm JavaScript installations and shell wrappers are not accepted. It also requires a version that supports its safety options, including safe mode and disabling session persistence. Tern does not install or modify the CLI.
+
+In **Settings → Assistant**, choose **Claude (CLI)**, then **Connect Claude Code** to enable Tern to use the CLI's current account and billing method. **Sign In…** starts the official CLI sign-in flow when you need to authenticate. Finish signing in in your browser. If Claude shows a sign-in code, paste it into Tern's **Sign-in code** field. Anthropic supports several account types; subscription access, organization policy, model availability, and limits still apply. See [Claude Code authentication](https://code.claude.com/docs/en/authentication).
+
+Check the displayed account type before using the assistant. **Account default**, **Sonnet**, **Opus**, and **Haiku** are CLI aliases, not a live list of models granted to your account. **Check Connection** verifies the current connection. **Disconnect…** stops Tern's access without signing you out of Claude Code elsewhere.
+
+### OAuth availability
+
+The provider documentation was checked on November 3, 2026. Claude (CLI) uses the official binary's authentication, including its subscription OAuth flow. Tern does not register its own Claude OAuth client or handle Claude subscription tokens. Anthropic permits running its unmodified CLI in products under its hosting conditions, while restricting third-party collection or use of subscription credentials. See the [Claude Code hosting and credential rules](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products).
+
+**Claude API** remains a separate API-key connection. Anthropic's App Attest and workload-identity options do not provide Tern with a native subscription sign-in flow. [Claude API authentication](https://platform.claude.com/docs/en/manage-claude/authentication).
+
+DeepSeek documents API-key bearer authentication and does not publish a third-party OAuth registration and token-exchange flow for model access. Tern therefore offers DeepSeek through an API key. This finding concerns the public developer contract; it does not claim that no private integration exists. [DeepSeek API authentication](https://api-docs.deepseek.com/api/deepseek-api/).
+
+### Ask the assistant
+
+Choose a suggestion to ask immediately, or write a request such as “What needs my attention this week?” Suggestions respect the selected scope. Summary and draft suggestions require selected conversations; drafting requires one conversation. Open an email card or source to read the supporting conversation. **Review Draft** opens the normal Tern composer for editing and sending. A prepared draft stays on this Mac until you open it there, so mail the assistant reads can't place a draft in your Gmail account. After review it saves to Gmail Drafts like any other draft.
 
 The assistant can search mail, read threads, extract supported attachments, and prepare drafts. Search results are paginated and subject to request limits; a single request does not read an entire mailbox. The initial attachment reader supports plain text, CSV, Markdown, JSON, XML, and PDFs with selectable text. Files are limited to 5 MB; extraction is limited to 60,000 characters and 40 PDF pages. Scans need OCR, which is not included.
 
@@ -39,11 +69,13 @@ Drop files onto the AI bar or its conversation to use them as **AI context**. Th
 
 AI context accepts up to four files, each up to 5 MB: plain text, CSV, TSV, Markdown, JSON, XML, PDFs with selectable text, and supported images. Text excerpts are limited to 12 KB per file; PDF reading inspects up to 40 pages. Images use a reduced first-frame preview, so small text and fine details may be lost. Combined context is limited to 60 KB. Files that cannot be read show a reason and Retry/Remove controls. Removing a context file starts a new chat to clear its contents from the conversation. Adding files keeps the existing chat.
 
+Image context also requires a model that supports image input. If the selected model cannot use images, choose a compatible model or remove the image before asking. Tern does not silently discard image context.
+
 ## Conversation summaries
 
-Opening a conversation generates a short AI summary below its event cards when ChatGPT, a model, and the account’s assistant access are ready. The current assistant scope still applies. The summary sits in a subtle translucent card matching the events above it and shows up to three lines; **Details** reveals the full text, decisions, open tasks, and supporting messages. Source links expand and scroll to the original message. Tasks are extracted from the conversation and do not change mail or create reminders.
+Opening a conversation generates a short AI summary below its event cards when the selected AI connection, a model, and the account's assistant access are ready. The current assistant scope still applies. The summary sits in a subtle translucent card matching the events above it and shows up to three lines; **Details** reveals the full text, decisions, open tasks, and supporting messages. Source links expand and scroll to the original message. Tasks are extracted from the conversation and do not change mail or create reminders.
 
-Summaries automatically use GPT-6 Luna when the connected account lists it, then GPT-5.4 mini, then the selected chat model. This preference keeps summaries on a small, efficient model when one is available. Chat, calendar interpretation, and writing-style learning use the model selected in Assistant settings.
+With ChatGPT selected, summaries use GPT-6 Luna when the connected account lists it, then GPT-5.4 mini, then the selected chat model. Claude (CLI) and API connections use the model selected in Assistant settings for summaries. Chat, calendar interpretation, writing-style learning, and mail organization also use the selected model.
 
 Use **Summary Options → Refresh Summary** to generate it again, or **Retry** after a failure. New messages trigger a fresh summary. Reading, starring, labeling, and loading message bodies do not regenerate an unchanged conversation. Up to 16 summaries stay in memory for revisiting conversations; they are discarded on access loss, account replacement, connection or model changes, and app exit. Summaries do not enter chat history or persist to disk.
 
@@ -51,7 +83,7 @@ The reader shows a coverage note when the mail read omitted messages or content.
 
 ## Learn your writing style
 
-Once ChatGPT, a model, and mail access are ready, Tern learns a separate writing profile for each enabled mail account. It inspects up to 100 recent sent messages and sends bounded excerpts of your authored text to ChatGPT. Common quoted exchanges, forwarded messages, and signatures are removed first; this filtering is a heuristic and can miss unusual formats. Ordinary attachments are not used for learning.
+Once the selected AI connection, a model, and mail access are ready, Tern learns a separate writing profile for each enabled mail account. It inspects up to 100 recent sent messages and sends bounded excerpts of your authored text to the selected provider. Common quoted exchanges, forwarded messages, and signatures are removed first; this filtering is a heuristic and can miss unusual formats. Ordinary attachments are not used for learning.
 
 The profile records tone, length, greetings, closing patterns, formatting, and observed languages. It contains no saved excerpts or message facts. Profiles stay on this device and survive ordinary reconnection. A draft uses the profile for its sending account, follows the current conversation's language and recipient context, and gives your explicit instructions priority. Learning does not change the assistant's chat voice or send mail.
 
@@ -75,9 +107,15 @@ Email cards show verified sender details, dates, labels, unread/starred status, 
 
 **Stop response** cancels the current request. **Retry** repeats a failed reply while keeping email cards and drafts already created. Retrying cannot create another draft after one has succeeded; ask in a new message to prepare another. **New Chat** clears the conversation. Chat history stays in memory and is discarded when Tern quits. Scroll up to read earlier messages without following new output; **Jump to Latest** resumes following it.
 
-Mail access starts disabled. Relevant content from enabled accounts is sent to OpenAI for your requests, automatic summaries and event interpretation in permitted open conversations, and writing-style setup when learning is enabled. Changing the effective scope or removing access clears retained chat content and cancels active work. Reading mail through the assistant does not mark it read. Sending remains an action in the compose window.
+Mail access starts disabled. Relevant content from enabled accounts is sent to the selected provider: OpenAI for ChatGPT or OpenAI API, Anthropic for Claude API, DeepSeek for DeepSeek API, or the provider connected through Claude Code for Claude (CLI). This applies to your requests, automatic summaries and event interpretation in permitted open conversations, writing-style setup when enabled, and mail organization analysis. Calendar access remains separately controlled. Changing the effective scope or removing access clears retained chat content and cancels active work. Reading mail through the assistant does not mark it read. Sending remains an action in the compose window.
 
-Tern stores its own ChatGPT connection in macOS Keychain, separate from Gmail and other apps. **Disconnect…** asks first, then clears local authorization and requests remote revocation. If revocation fails, Tern reports it; local use remains disabled. **Manage Usage** opens ChatGPT's usage controls.
+Switching providers cancels active requests and clears retained chat, compose-assistant context, generated proposals, and summary caches before the new connection is used. Existing mail and calendar permissions remain in place, so permitted automatic features can run through the newly selected provider. Saved writing profiles remain local and can be used when drafting through the selected provider. Tern never transfers a provider's conversation history to another provider.
+
+Tern stores its own ChatGPT connection in macOS Keychain, separate from Gmail and other apps. ChatGPT's **Disconnect…** clears local authorization and requests remote revocation after confirmation. If revocation fails, Tern reports it; local use remains disabled. **Manage Usage** opens ChatGPT's usage controls.
+
+API keys have separate Keychain records for OpenAI, Claude, and DeepSeek. Removing a key disables that connection in Tern and removes its local credential. To revoke the key for all applications, delete or disable it in the provider's console. Switching providers leaves their saved credentials available for later use.
+
+Claude Code keeps control of its own credentials. Tern keeps its connection preference separately and uses a bundled helper to invoke the CLI. Tern's CLI requests disable built-in action tools and session persistence. Mail and calendar actions are returned as structured requests for Tern to validate under the same access controls and review steps as other connections. Disconnecting in Tern leaves the CLI's external sign-in intact.
 
 ## Calendar access
 
@@ -93,19 +131,34 @@ Ordinary dated emails can offer Add event with AI disabled. Optional AI interpre
 
 - **Keychain access unavailable:** Tern opens while saved connections load in the background. If access fails, open Settings → Assistant and choose **Retry Keychain Access**. This retries the saved connection without starting a new browser sign-in.
 - **Plan usage not enabled:** reconnect and grant plan usage. Availability depends on the ChatGPT account and the current Sign in with ChatGPT preview.
-- **No models or usage limit:** refresh the model list or open **Manage Usage**. Tern does not substitute an API-key connection.
-- **Sign-in interrupted or expired:** start sign-in again. Keep Tern open while the browser returns to the temporary local callback.
+- **No ChatGPT or API models:** refresh the model list and check the selected connection's model permissions. Tern shows models it supports from that provider's catalogue.
+- **Usage limit or insufficient balance:** check the selected provider's billing and usage controls. ChatGPT's **Manage Usage** applies only to ChatGPT. Tern does not substitute another connection.
+- **API key rejected:** check that the key belongs to the selected provider and has the required API permissions. Replace it in Assistant settings if it expired or was revoked.
+- **Claude Code not found:** follow the **Install Claude Code** link and install the official native binary, then choose **Check Again**. An npm installation or shell wrapper does not satisfy Tern's signature check. Installing the CLI does not enable Tern's connection; choose **Connect Claude Code** when ready.
+- **Claude Code version unsupported:** update the official CLI, then check again. Tern needs its safety and structured-output options to run requests.
+- **Claude account or billing changed:** use **Sign In…** to complete the official CLI flow, then **Check Connection**. The CLI's selected account determines usage and limits; choosing a model alias does not grant access to it.
+- **Claude helper unavailable:** use a complete Tern build that includes `ClaudeHelper.xpc`. For a source build, regenerate the project and build the Tern scheme as described below. Release builds also require matching Team ID signing for the app and helper.
+- **Image input unavailable:** choose a model that supports images or remove image context from the request.
+- **ChatGPT sign-in interrupted or expired:** start sign-in again. Keep Tern open while the browser returns to the temporary local callback.
 - **Mail access changed:** select the intended accounts and scope, then start a new request.
-- **Context or reading limit:** narrow the request or start a new chat. Completed drafts remain available in Drafts.
+- **Context or reading limit:** narrow the request or start a new chat. Open any finished draft with **Review Draft** first, because drafts reach Gmail Drafts only after review.
 
 ## Implementation references
 
-The independent Swift implementation follows the [official cookbook](https://developers.openai.com/cookbook/articles/sign-in-with-chatgpt), [devkit](https://github.com/openai/sign-in-with-chatgpt-devkit), and current [models and inference contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference). Gatekeeper's connection lifecycle was used as a local design reference. The devkit is not bundled.
+Tern's ChatGPT connection follows the [official cookbook](https://developers.openai.com/cookbook/articles/sign-in-with-chatgpt), [devkit](https://github.com/openai/sign-in-with-chatgpt-devkit), and current [models and inference contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference). Gatekeeper's connection lifecycle was used as a local design reference. The devkit is not bundled.
 
-The shared `TernAI` Core module handles authentication, model discovery, streaming Responses, namespaced tools, and structured output. The app supplies Keychain storage, browser sign-in, account permissions, attachment extraction, and conversation state. SyncEngine supplies bounded mail reads and queued draft creation. Reader summaries use a separate read-only tool session, validated structured output, and a memory cache independent of chat. `AssistantModel.summarize(thread:)` remains available for callers that need the structured result.
+The shared `TernAI` Core module handles authentication contracts, model discovery, provider request formats, streaming, tool calls, and structured output. ChatGPT, OpenAI API, and DeepSeek API use Responses adapters; Claude API uses the Messages API. Claude (CLI) uses a separate adapter for the official CLI's [noninteractive JSON output](https://code.claude.com/docs/en/headless). The app supplies Keychain storage, connection controls, provider selection, account permissions, attachment extraction, and conversation state. SyncEngine supplies bounded mail reads and creates assistant drafts locally; the composer queues the Gmail save once the user opens one. Reader summaries use a separate read-only tool session, validated structured output, and a memory cache independent of chat. `AssistantModel.summarize(thread:)` remains available for callers that need the structured result.
 
-For live testing with synthetic mail, launch a Debug build with `--ui-audit --ui-audit-live-chatgpt`. The second flag explicitly enables Tern's ordinary ChatGPT Keychain storage while mail remains synthetic. Without it, audit previews use a temporary connection that ends when the preview quits. Hosted tests always use isolated connection storage.
+For Claude (CLI), `project.yml` defines the `ClaudeHelper` XPC service and `ClaudeHelperTests`. Run `xcodegen generate` after project-spec changes, then build the **Tern** scheme. It embeds and signs `ClaudeHelper.xpc` at `Tern.app/Contents/XPCServices/ClaudeHelper.xpc` with service identifier `dev.tern.mail.ClaudeHelper`. The main app remains sandboxed; the helper runs outside that sandbox to launch the user's installed CLI. This is a direct-distribution design. Tern does not bundle Claude Code or copy its tokens into the helper.
+
+Release builds require the app and helper to be signed with the same Team ID. Set `TERN_CODE_SIGN_IDENTITY` and `TERN_DEVELOPMENT_TEAM` in `Config/Secrets.xcconfig` as described in the [development guide](development.md). Ad-hoc signing is accepted only in Debug and Debug-Testing builds, where the helper validates the host against its exact code hash.
+
+Run `python3 scripts/test-claude-cli.py` from the repository root for offline helper and connection regression checks. Add `--live` to opt in to hosted tests through the signed, sandboxed app and the CLI's existing subscription. Those requests contain synthetic prompts, tool results, and an in-memory image; they contain no real mail and consume the connected account's usage. Add `--ui` for the native Assistant settings check on an unlocked Mac. Use `--skip-build` only when the existing test build matches the current source. Logs and result bundles go to `build/claude-cli/validation/`.
+
+Run `python3 scripts/test-claude-cli.py --standalone-live-ui` separately to connect and send a synthetic prompt through the Debug-Testing app's UI. This also uses the existing CLI subscription. The script builds the UI test, then rebuilds the app to remove Xcode's injected test entitlements. It checks before and after the test that the app sandbox is enabled without temporary exceptions or `get-task-allow`. This option cannot be combined with `--live` or `--ui`; it requires an unlocked Mac.
+
+For live testing with synthetic mail, launch a Debug-Testing build with `--ui-audit --ui-audit-live-chatgpt`. The second flag explicitly enables Tern's ordinary ChatGPT Keychain storage while mail remains synthetic. That build has its own bundle ID, so it stores the connection under its own Keychain item names and never reads yours. Without it, audit previews use a temporary connection that ends when the preview quits. Hosted tests always use isolated connection storage.
 
 Add `--ui-audit-writing-style` for 100 synthetic sent messages per account, with informal English and formal German examples. Writing profiles in audit previews stay in memory. See the [writing-style plan](plans/assistant-writing-style.md) for limits and verification.
 
-See the [implementation plan](plans/chatgpt-integration.md) for verification targets and the [feature roadmap](plans/ai-and-features-roadmap.md) for later product features.
+See the [provider plan](plans/ai-providers.md) for API contracts and verification targets, the [ChatGPT implementation plan](plans/chatgpt-integration.md) for OAuth details, and the [feature roadmap](plans/ai-and-features-roadmap.md) for later product features.

@@ -13,9 +13,8 @@ struct TernApp: App {
         // One mailbox window: selection and undo live in the shared mailbox model.
         Window("Tern", id: RootView.sceneID) {
             Group {
-#if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--ui-audit-avatars"),
-                   ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+#if TERN_TEST_SUPPORT
+                if model.launchMode.audit.avatars {
                     AvatarAuditFixtures()
                 } else { RootView() }
 #else
@@ -25,6 +24,7 @@ struct TernApp: App {
                 .focusedSceneValue(\.isMainWindow, true)
                 .modifier(MailURLHandling())
                 .environment(model)
+                .modifier(MeetingPreparationOpening(app: model))
                 .modifier(AddressAvatarEnvironment(app: model))
                 .task { await model.start() }
         }
@@ -35,6 +35,7 @@ struct TernApp: App {
 
         WindowGroup("Conversation", id: ConversationWindow.sceneID, for: MailLink.self) { $link in
             ConversationWindow(link: link).environment(model)
+                .modifier(MeetingPreparationOpening(app: model))
                 .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
@@ -84,12 +85,20 @@ struct TernApp: App {
 
         Window("Assistant", id: AssistantWindow.sceneID) {
             AssistantWindow(model: model.assistant, onOpenSource: model.openAssistantSource)
+                .modifier(MeetingPreparationOpening(app: model))
                 .modifier(AddressAvatarEnvironment(app: model))
         }
         .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
         .windowResizability(.contentMinSize)
         // The catalog's shortcut goes on the scene's own Window ▸ Assistant item.
         .keyboardShortcut(ShortcutCatalog.assistant.shortcut)
+
+        Window("Meeting Preparation", id: MeetingPreparationWindow.sceneID) {
+            MeetingPreparationWindow().environment(model)
+                .modifier(AddressAvatarEnvironment(app: model))
+        }
+        .defaultSize(width: Tokens.Layout.readableWidth, height: Tokens.Layout.shortcutsHeight)
+        .windowResizability(.contentMinSize)
 
         Window("Keyboard Shortcuts", id: KeyboardShortcutsView.sceneID) {
             KeyboardShortcutsView()
@@ -104,7 +113,7 @@ struct TernApp: App {
 /// still waiting to go.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let model = AppModel()
+    let model = AppModel(launchMode: .current)
     /// The quit under way, so choosing Quit again meanwhile starts nothing new.
     private let quitRequests = QuitRequests()
 
@@ -181,16 +190,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.continueActivity(userActivity)
     }
 
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     /// Appearance checks affect only the synthetic audit app, never system preferences.
     func applicationWillFinishLaunching(_ notification: Notification) {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard arguments.contains("--ui-audit") else { return }
-        let highContrast = arguments.contains("--ui-audit-contrast")
-        if arguments.contains("--ui-audit-light") {
-            NSApp.appearance = NSAppearance(named: highContrast ? .accessibilityHighContrastAqua : .aqua)
-        } else if arguments.contains("--ui-audit-dark") {
-            NSApp.appearance = NSAppearance(named: highContrast ? .accessibilityHighContrastDarkAqua : .darkAqua)
+        let audit = model.launchMode.audit
+        switch audit.appearance {
+        case .light:
+            NSApp.appearance = NSAppearance(named: audit.highContrast ? .accessibilityHighContrastAqua : .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: audit.highContrast ? .accessibilityHighContrastDarkAqua : .darkAqua)
+        case nil:
+            break
         }
     }
     #endif
@@ -336,8 +346,11 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var windowPresentation = OnboardingWindowPresentation.Controller()
+    /// When Start New Mail Cache was clicked, while its confirmation shows.
+    @State private var recoveryDate: Date?
 
     var body: some View {
+        @Bindable var model = model
         content
             .background(OnboardingWindowPresentation(isPresented: model.onboarding.isPresented,
                                                      reduceMotion: reduceMotion, controller: windowPresentation,
@@ -347,6 +360,19 @@ struct RootView: View {
                     NSApp.activate()
                     openWindow(id: Self.sceneID)
                 }
+            }
+            // Outside the failure screen, so the report stays while the mail opens.
+            .alert(model.cacheRecovery.map(Self.recoveryTitle) ?? "", isPresented: $model.cacheRecovery.isPresent(),
+                   presenting: model.cacheRecovery) { recovery in
+                Button("OK") {}
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([recovery.folder]) }
+            } message: { recovery in
+                Text(Self.recoveryMessage(recovery))
+            }
+            .alert("Couldn't Start a New Mail Cache", isPresented: $model.cacheRecoveryError.isPresent()) {
+                Button("OK") {}
+            } message: {
+                Text(model.cacheRecoveryError ?? "")
             }
     }
 
@@ -372,12 +398,97 @@ struct RootView: View {
                 SignInView()
             }
         case .failed(let message):
-            TernEmptyState(
-                title: "Couldn't Open Your Mail",
-                systemImage: "exclamationmark.triangle",
-                message: message
-            )
+            if let failure = model.launchFailure {
+                launchFailureState(failure, error: message)
+            } else {
+                TernEmptyState(
+                    title: "Couldn't Open Your Mail",
+                    systemImage: "exclamationmark.triangle",
+                    message: message
+                )
+            }
         }
+    }
+
+    private func launchFailureState(_ failure: AppModel.LaunchFailure, error: String) -> some View {
+        VStack(spacing: Tokens.Space.s4) {
+            TernEmptyState(
+                title: failure == .signOut ? "Couldn't Finish Signing Out" : "Couldn't Open Your Mail",
+                systemImage: "exclamationmark.triangle",
+                message: Self.launchMessage(failure, error: error),
+                fillsSpace: false
+            )
+            HStack(spacing: Tokens.Space.s3) {
+                if case .cache = failure {
+                    Button("Start New Mail Cache…") { recoveryDate = .now }
+                        .buttonStyle(.bordered)
+                }
+                Button("Try Again") { Task { await model.retryLaunch() } }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .disabled(model.isRecoveringCache)
+            if model.isRecoveringCache {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Starting a new mail cache")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ternConfirm("Start a new mail cache?", item: $recoveryDate, actionTitle: "Start New Mail Cache",
+                     message: Self.recoveryConfirmation(settingAsideAt: recoveryDate ?? .now)) { date in
+            Task { await model.startNewMailCache(settingAsideAt: date) }
+        }
+    }
+
+    private static func launchMessage(_ failure: AppModel.LaunchFailure, error: String) -> String {
+        switch failure {
+        case .diskFull:
+            "Your Mac doesn't have enough free disk space to open your mail. Free up some space, then click Try Again."
+        case .cache(damaged: true):
+            "The mail cache on this Mac is damaged. Starting a new one downloads your mail from Gmail again."
+        case .cache(damaged: false):
+            "Tern couldn't open the mail cache on this Mac. \(error)"
+        case .inUse:
+            "Another copy of Tern, or another app, is using the mail cache on this Mac. Quit it, then click Try Again."
+        case .signOut:
+            "Tern couldn't sign out of every account on this Mac. \(error)"
+        case .other:
+            error
+        }
+    }
+
+    private static func recoveryConfirmation(settingAsideAt date: Date) -> String {
+        "Tern downloads your mail from Gmail again and keeps the unsent drafts and queued changes it can read "
+            + "from the current cache. The current cache file isn't deleted. It moves to a folder named "
+            + "“\(MailCache.setAsideFolderName(at: date))” in Tern's data folder."
+    }
+
+    private static func recoveryTitle(_ recovery: CacheRecovery) -> String {
+        switch recovery.outcome {
+        case .complete: "New Mail Cache Started"
+        case .partial: "Some Unsent Work Couldn't Be Read"
+        case .unreadable: "Old Mail Cache Couldn't Be Read"
+        }
+    }
+
+    private static func recoveryMessage(_ recovery: CacheRecovery) -> String {
+        let kept = [
+            recovery.draftCount == 0 ? nil : "\(recovery.draftCount) " + (recovery.draftCount == 1 ? "draft" : "drafts"),
+            recovery.changeCount == 0 ? nil
+                : "\(recovery.changeCount) " + (recovery.changeCount == 1 ? "queued change" : "queued changes"),
+        ].compactMap(\.self)
+        let keptSentence = kept.isEmpty ? nil : "Tern kept \(ListFormatter.localizedString(byJoining: kept))."
+        let outcome = switch recovery.outcome {
+        case .complete:
+            keptSentence ?? "There were no unsent drafts or queued changes to keep."
+        case .partial:
+            "Part of the old cache couldn't be read, so some drafts or queued changes may be missing."
+                + (keptSentence.map { " " + $0 } ?? "")
+        case .unreadable:
+            "Tern couldn't read the old cache, so none of its drafts or queued changes were kept."
+        }
+        return outcome + " Your mail downloads from Gmail again. The old cache file is in the folder “\(recovery.folder.lastPathComponent)”."
     }
 
     private var openingState: some View {

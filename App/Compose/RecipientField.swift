@@ -69,6 +69,7 @@ struct RecipientField: NSViewRepresentable {
         // semicolon that ends an entry.
         field.tokenizingCharacterSet = CharacterSet(charactersIn: String(entryTerminator))
         field.completionDelay = 0.1
+        field.tokenHelp = { ($0 as? Token)?.address.isolatedDisplayString }
         field.cell?.wraps = true
         field.cell?.isScrollable = false
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -442,10 +443,7 @@ struct RecipientField: NSViewRepresentable {
             // A list shows as its text until it becomes one token per entry.
             if object is TokenList { return self.tokenField(tokenField, editingStringForRepresentedObject: object) }
             guard let token = object as? Token else { return object as? String }
-            let display: String
-            if parent.showsFullAddresses { display = token.address.displayString }
-            else if let name = token.address.name, !name.isEmpty { display = name }
-            else { display = token.address.address }
+            let display = token.address.recipientTitle(full: parent.showsFullAddresses)
             return (tokenField is RecipientTokenField && token.address.isValid ? RecipientTokenField.avatarPrefix : "") + display
         }
 
@@ -626,15 +624,18 @@ struct RecipientField: NSViewRepresentable {
             if parent.addresses != addresses { parent.addresses = addresses }
         }
 
-        /// The tokens for typed or pasted text: one for each entry between
-        /// separators, leaving out blank ones.
+        /// The tokens for typed or pasted text: one for each address in each
+        /// entry between separators, so addresses separated only by spaces
+        /// each get one. An entry with no address is one token that isn't
+        /// valid, which stops Send. Blank entries are left out.
         private func tokens(for text: String) -> [NSObject] {
-            EmailAddress.splitList(text).compactMap { entry -> NSObject? in
+            EmailAddress.splitList(text).flatMap { entry -> [NSObject] in
                 let text = entry.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return nil }
-                if let group = groupCompletions[text] { return GroupToken(group) }
-                if let address = completions[text] { return Token(address) }
-                return Token(EmailAddress.parseList(text).first ?? EmailAddress(address: text))
+                guard !text.isEmpty else { return [] }
+                if let group = groupCompletions[text] { return [GroupToken(group)] }
+                if let address = completions[text] { return [Token(address)] }
+                let addresses = EmailAddress.parseList(text)
+                return addresses.isEmpty ? [Token(EmailAddress(address: text))] : addresses.map(Token.init)
             }
         }
 

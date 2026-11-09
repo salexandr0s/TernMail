@@ -78,7 +78,7 @@ extension CalendarModel {
     }
 
     func refreshNotifications() async {
-        guard !ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") else { return }
+        guard !launchMode.audit.calendar else { return }
         let revision = lifecycleRevision
         let reminderRevision = notificationRevision
         let start = Date()

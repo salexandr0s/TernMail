@@ -75,9 +75,10 @@ extension SyncEngine {
     func messageSnoozeStates() async throws -> [MessageSnoozeState] {
         let accountID = accountID
         return try await cache.read { tx in
-            try tx.messageSnoozeHolds(accountID: accountID).map { record in
-                MessageSnoozeState(record: record,
-                    labels: try tx.currentLabels(threadID: record.threadID, accountID: accountID)[record.messageID] ?? [])
+            let records = try tx.messageSnoozeHolds(accountID: accountID)
+            let current = try tx.currentLabels(threadIDs: records.map(\.threadID), accountID: accountID)
+            return records.map { record in
+                MessageSnoozeState(record: record, labels: current[record.threadID]?[record.messageID] ?? [])
             }
         }
     }

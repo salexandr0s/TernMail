@@ -111,7 +111,9 @@ extension MailboxModel {
         if !search.isActive, action == .trash || (action == .archive && selectedLabelID == SystemLabel.inbox) {
             selectRow(after: rows)
         }
-        return queueUndoable(actionName(action), for: keys, sound: MailSounds.event(for: action)) { owner, _ in
+        // Row menus, swipes and message mode confirm with Undo like the toolbar does.
+        let confirmation = Self.confirmation(action, count: rows.count, messages: rows.allSatisfy { $0.messageID != nil })
+        return queueUndoable(Self.undoName(action), confirmation: confirmation, for: keys, sound: MailSounds.event(for: action)) { owner, _ in
             guard let target = targets.first(where: { $0.accountID == owner.account.id })?.target else { return nil }
             return try await owner.engine.perform(action, target: target)
         }
@@ -159,17 +161,6 @@ extension MailboxModel {
         selectedMailbox = .account(accountID, SystemLabel.allMail)
         search.update("\(field):" + operand)
         search.submit()
-    }
-
-    private func actionName(_ action: MailAction) -> String {
-        switch action {
-        case .archive: "Archive"
-        case .trash: "Move to Trash"
-        case .markRead: "Mark as Read"
-        case .markUnread: "Mark as Unread"
-        case .star: "Star"
-        case .unstar: "Remove Star"
-        }
     }
 
     var currentMailboxMessageCount: Int {

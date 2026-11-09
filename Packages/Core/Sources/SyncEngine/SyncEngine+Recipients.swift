@@ -21,4 +21,18 @@ extension SyncEngine {
             try tx.rebuildThreads(threads, accountID: accountID)
         }
     }
+
+    /// Folds the addresses of the messages `address-search-v1` left empty,
+    /// 500 to a write so other writes run in between. Address completion
+    /// folds them as it reads until then, and a failure leaves the rest for
+    /// the next launch.
+    func foldPendingAddresses() async {
+        let accountID = accountID
+        var after: Int64 = 0
+        while let last = try? await write({ [after] tx in
+            try tx.foldPendingAddresses(accountID: accountID, after: after, limit: 500)
+        }) {
+            after = last
+        }
+    }
 }

@@ -38,7 +38,7 @@ struct AIKeychainStore: AIConnectionStore {
 
     nonisolated private static var query: [CFString: Any] {
         [kSecClass: kSecClassGenericPassword,
-         kSecAttrService: "dev.tern.mail.chatgpt",
+         kSecAttrService: AppIdentity.keychainService(.chatGPT),
          kSecAttrAccount: "connection"]
     }
 

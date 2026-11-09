@@ -21,21 +21,30 @@ final class ConversationPrintController: NSObject, WKNavigationDelegate {
         self.subject = subject; self.exportsPDF = exportsPDF; self.window = window; self.completion = completion
     }
 
-    static func show(subject: String, messages: [MessageDetail], exportsPDF: Bool = false,
+    static func show(subject: String, messages: [MessageDetail], cache: MailCache, exportsPDF: Bool = false,
                      completion: @escaping (String?) -> Void) {
         let controller = ConversationPrintController(subject: subject, exportsPDF: exportsPDF, window: NSApp.keyWindow, completion: completion)
         active[controller.id] = controller
-        let printable = messages.map {
-            PrintableMessage(subject: $0.record.subject, sender: $0.record.sender, recipients: $0.record.recipients,
-                date: $0.record.date.formatted(date: .abbreviated, time: .shortened),
-                body: .init(html: $0.body?.html, plainText: $0.body?.plainText))
-        }
         Task {
             guard let blocker = await RemoteContentBlocker.ruleList() else { controller.finish("Printing could not prepare a private message view."); return }
+            // Inline images come from the cache the reader fills when a message
+            // opens. Printing fetches nothing, so an unopened message's images stay unavailable.
+            var resources = PrintInlineResources()
+            var printable: [PrintableMessage] = []
+            for message in messages {
+                let records = (try? await cache.mimeResources(messageID: message.id, accountID: message.record.accountID)) ?? []
+                let inline = resources.add(records.map {
+                    InlineMIMEResource(contentID: $0.contentID, partID: $0.partID, mimeType: $0.mimeType, data: $0.data)
+                })
+                printable.append(PrintableMessage(subject: message.record.subject, sender: message.record.sender,
+                    recipients: message.record.recipients, date: message.record.date.formatted(date: .abbreviated, time: .shortened),
+                    body: .init(html: message.body?.html, plainText: message.body?.plainText), inlineResources: inline))
+            }
             let configuration = WKWebViewConfiguration()
             configuration.defaultWebpagePreferences.allowsContentJavaScript = false
             configuration.websiteDataStore = .nonPersistent()
             configuration.userContentController.add(blocker)
+            configuration.setURLSchemeHandler(PrintResourceHandler(resources: resources), forURLScheme: InlineResourceMap.scheme)
             let view = WKWebView(frame: NSRect(origin: .zero, size: NSPrintInfo.shared.paperSize), configuration: configuration)
             view.navigationDelegate = controller
             controller.webView = view
@@ -83,4 +92,26 @@ final class ConversationPrintController: NSObject, WKNavigationDelegate {
         webView?.navigationDelegate = nil; webView = nil
         Self.active[id] = nil
     }
+}
+
+/// Serves a print job's cached inline images from memory. Like the reader's
+/// `InlineResourceHandler`, it performs no file or network I/O, but it answers
+/// for every message in the job, each under its own scope.
+@MainActor
+private final class PrintResourceHandler: NSObject, WKURLSchemeHandler {
+    private let resources: PrintInlineResources
+    init(resources: PrintInlineResources) { self.resources = resources }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url, let resource = resources.resource(for: url) else {
+            urlSchemeTask.didFailWithError(URLError(.resourceUnavailable))
+            return
+        }
+        urlSchemeTask.didReceive(URLResponse(url: url, mimeType: resource.mimeType,
+            expectedContentLength: resource.data.count, textEncodingName: nil))
+        urlSchemeTask.didReceive(resource.data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {}
 }

@@ -85,8 +85,8 @@ final class AccountMailbox {
             accounts: snoozeStore,
             cache: cache,
             sendsAutomatically: syncEnabled,
-            indexesAttachmentsAutomatically: syncEnabled && (!ProcessInfo.processInfo.arguments.contains("--ui-audit")
-                || ProcessInfo.processInfo.arguments.contains("--ui-audit-attachments"))
+            indexesAttachmentsAutomatically: syncEnabled
+                && (!LaunchMode.current.isIsolated || LaunchMode.current.audit.attachments)
         )
         self.engine = engine
         snoozeKeeper = snoozeStore.map { SnoozeKeeper(engine: engine, accounts: $0) }

@@ -183,9 +183,63 @@ import Testing
         try AttachmentFileCache.prune(directory, keeping: otherURL, now: Date(), maximumBytes: 4)
         #expect(!FileManager.default.fileExists(atPath: url.path))
         #expect(FileManager.default.fileExists(atPath: otherURL.path))
-        #expect(SyncEngine.safeFilename(String(repeating: "🪶", count: 500) + ".pdf").utf8.count <= 220)
         await engine.stop()
         await #expect(throws: CancellationError.self) { try await engine.downloadAttachment(record, into: directory) }
+    }
+
+    /// A cut that dropped ".pdf" would save a Terminal script under a name that read as a PDF.
+    @Test(arguments: [
+        (String(repeating: "a", count: 212) + ".command.pdf", "pdf"),
+        // No extension, because the last part has spaces. The cut would end at ".command".
+        (String(repeating: "a", count: 212) + ".command.notes for review", ""),
+        ("invoice.command." + String(repeating: "x", count: 300), ""),
+    ])
+    func shortenedNamesKeepTheirExtensionOrHaveNone(name: String, ext: String) {
+        let saved = SyncEngine.safeFilename(name)
+        #expect(saved.utf8.count <= 220)
+        #expect((saved as NSString).pathExtension == ext)
+    }
+
+    @Test func shorteningKeepsEmojiSequencesWhole() {
+        let saved = SyncEngine.safeFilename(String(repeating: "👩\u{200D}💻", count: 40) + ".pdf")
+        #expect(saved.utf8.count <= 220)
+        #expect(saved.hasSuffix(".pdf"))
+        #expect(saved.dropLast(4).allSatisfy { $0 == "👩\u{200D}💻" })
+    }
+
+    /// "invoice", U+202E (right-to-left override), "fdp.command" displays as "invoicednammoc.pdf".
+    @Test(arguments: [
+        ("invoice\u{202E}fdp.command", "invoicefdp.command"),
+        ("\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{2066}\u{2067}\u{2068}\u{2069}\u{FEFF}re\u{AD}port\u{200B}.pdf",
+         "report.pdf"),
+        // A line separator would put ".command" on a second line that a one-line label hides.
+        ("invoice.pdf\u{2028}.command", "invoice.pdf .command"),
+        ("report.pdf\u{200D}", "report.pdf"),
+    ])
+    func savedNamesDropBidiAndFormatControls(name: String, saved: String) {
+        #expect(SyncEngine.safeFilename(name) == saved)
+    }
+
+    /// Persian words need U+200C and emoji sequences need U+200D.
+    @Test(arguments: ["می\u{200C}خواهم.pdf", "👩\u{200D}💻 notes.pdf", "Quarterly report.pdf"])
+    func savedNamesKeepJoiners(name: String) {
+        #expect(SyncEngine.safeFilename(name) == name)
+    }
+
+    /// String replacement skipped a "/" that a combining mark followed, which left a path separator in the name.
+    @Test func savedNamesReplacePathSeparatorsBeforeCombiningMarks() {
+        #expect(SyncEngine.safeFilename("a/\u{301}b:\u{301}c.pdf") == "a-\u{301}b-\u{301}c.pdf")
+    }
+
+    @Test(arguments: ["invoice.command", "setup.sh", "run.tool", "Tern.app", "Install.pkg", "Shell.terminal",
+                      "Folder.fileloc", "INVOICE.COMMAND"])
+    func openingCodeNeedsConfirmation(filename: String) {
+        #expect(SyncEngine.runsCodeWhenOpened(filename))
+    }
+
+    @Test(arguments: ["invoice.pdf", "photo.jpeg", "notes.txt", "README", "invoice.command pdf"])
+    func openingDocumentsNeedsNoConfirmation(filename: String) {
+        #expect(!SyncEngine.runsCodeWhenOpened(filename))
     }
 
     @Test func previewProtectionIsReadAfterTheDownloadAndAgainForCacheReuse() async throws {

@@ -201,6 +201,8 @@ import Testing
         #expect(drafts.count == 1)
         #expect(drafts.first?.state == .editing)
         #expect(drafts.first?.sendRequested == false)
+        // Nothing goes to Gmail Drafts until the user reviews the draft.
+        #expect(try await mailbox.cache.read { try $0.pendingActions(accountID: "first") }.isEmpty)
         tools.acknowledge(callID: regenerated.id)
         let later = AIToolCall(id: "later-draft-call", namespace: request.namespace, name: request.name, arguments: request.arguments)
         let distinct = try await tools.execute(later)

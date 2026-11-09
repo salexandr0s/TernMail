@@ -68,4 +68,17 @@ import Testing
         try await engine.backfillRecipientHeaders()
         #expect(await gmail.metadataRequests.count == requests)
     }
+
+    @Test func startFoldsTheAddressesOfMessagesCachedBeforeAddressSearch() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        try await seed(cache, [("old", "thread", [SystemLabel.inbox])], cursor: 100)
+        // What `address-search-v1` leaves in a message cached before it.
+        try await cache.write { tx in try tx.db.execute(sql: "UPDATE message SET addressSearch = ''") }
+        try await withEngineStopped(engine) {
+            await engine.start()
+            try await waitForSyncCondition {
+                try await cache.read { tx in try String.fetchOne(tx.db, sql: "SELECT addressSearch FROM message") } != ""
+            }
+        }
+    }
 }

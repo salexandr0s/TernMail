@@ -52,6 +52,7 @@ import Testing
             window.setContentSize(NSSize(width: width, height: 850))
             window.makeKeyAndOrderFront(nil)
             NSApp.activate()
+            // Lets the new window's appearance and list animations finish before the capture.
             try await Task.sleep(for: .milliseconds(300))
             controller.view.layoutSubtreeIfNeeded()
             let bitmap = try #require(controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds))
@@ -61,20 +62,28 @@ import Testing
             Attachment.record(Array(data), named: name + ".png")
             if day == 2, !hidden {
                 let table = try #require(self.table(in: controller.view))
-                for row in 0..<table.numberOfRows {
+                // The sidebar lists event rows last, so try rows from the bottom.
+                for row in (0..<table.numberOfRows).reversed() {
                     table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                    try await Task.sleep(for: .milliseconds(50))
-                    if model.selectedEventID != nil { break }
+                    // SwiftUI passes a row selection to the model in a later update.
+                    if try await reaches(within: .seconds(2), { model.selectedEventID != nil }) { break }
                 }
                 let selectedID = try #require(model.selectedEventID)
                 let selected = try #require(events.first { $0.id == selectedID })
                 #expect(model.calendar.isDate(model.date, inSameDayAs: selected.start))
+                // A deliberate window: moving to the event's day must not clear the selection afterward.
                 try await Task.sleep(for: .milliseconds(100))
                 #expect(model.selectedEventID == selectedID)
                 model.selectedEventID = nil
             }
             window.close()
         }
+    }
+
+    private func reaches(within limit: Duration, _ predicate: () -> Bool) async throws -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        return predicate()
     }
 
     private func table(in view: NSView) -> NSTableView? {

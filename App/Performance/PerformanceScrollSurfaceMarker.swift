@@ -1,13 +1,13 @@
 import SwiftUI
 
 /// Put this inside scrolling content, so AppKit supplies the actual enclosing
-/// scroll container. Production builds contain only an EmptyView.
+/// scroll container. Debug and Release builds contain only an EmptyView.
 struct PerformanceScrollSurfaceMarker: View {
     let name: String
     let isActive: Bool
 
     var body: some View {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         NativeMarker(name: name, isActive: isActive)
         #else
         EmptyView()
@@ -15,7 +15,7 @@ struct PerformanceScrollSurfaceMarker: View {
     }
 }
 
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import AppKit
 
 private struct NativeMarker: NSViewRepresentable {

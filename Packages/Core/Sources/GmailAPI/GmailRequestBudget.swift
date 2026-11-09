@@ -3,10 +3,11 @@ import Foundation
 /// One account's Gmail traffic shares this budget, including mail sync,
 /// attachments and settings. Calendar and People requests use their own APIs.
 ///
-/// Requests run in three lanes. Each lane runs one request at a time and
-/// leaves part of the quota to the lanes above it, so the open conversation
+/// Requests run in four lanes, one request at a time in each. The lower lanes
+/// leave part of the quota to the lanes above them, so the open conversation
 /// never queues behind a history page, and a history page never queues
-/// behind an attachment scan.
+/// behind an attachment scan. Uploads have a lane of their own, so a large
+/// draft doesn't hold up the reader.
 public actor GmailRequestBudget {
     /// 4,000 units per minute plus a 500-unit burst leaves room below the
     /// 6,000-unit per-user quota used by new Google Cloud projects.
@@ -23,20 +24,24 @@ public actor GmailRequestBudget {
         case background
         /// History and metadata passes.
         case sync
+        /// Drafts the user saves or sends, which can take minutes to go up.
+        case upload
         /// The open conversation, search, Load Older and the user's own changes.
         case interactive
 
         /// Units a request at this priority leaves for the lanes above it.
+        /// The user waits on an upload as on the reader, so it keeps none back.
         var reserve: Int {
             switch self {
             case .background: 250
             case .sync: 120
-            case .interactive: 0
+            case .upload, .interactive: 0
             }
         }
 
-        /// Dispatch order: the reader first, then sync, then everything else.
-        static let dispatchOrder: [Priority] = [.interactive, .sync, .background]
+        /// Dispatch order: the reader first, then uploads, then sync, then
+        /// everything else.
+        static let dispatchOrder: [Priority] = [.interactive, .upload, .sync, .background]
     }
 
     /// What a failed response asks the budget to wait for.

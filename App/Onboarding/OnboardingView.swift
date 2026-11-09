@@ -8,7 +8,7 @@ struct OnboardingView: View {
     @State private var preferenceDefaults: UserDefaults
 
     init(preferenceDefaults: UserDefaults? = nil) {
-        let isolated = ProcessInfo.processInfo.arguments.contains("--ui-audit") || AssistantRuntimeEnvironment.isTestHost
+        let isolated = LaunchMode.current.isIsolated
         _preferenceDefaults = State(initialValue: preferenceDefaults
             ?? (isolated ? UserDefaults(suiteName: "tern.onboarding.preview") ?? UserDefaults() : .standard))
     }
@@ -172,23 +172,23 @@ struct OnboardingView: View {
 
     private var assistantSummary: (title: String, detail: String) {
         let assistant = app.assistant
-        if assistant.connection.isRestoring {
-            return ("Opening your ChatGPT connection", "Checking the connection saved in your Keychain.")
+        if assistant.isRestoringConnection {
+            return ("Opening your assistant connection", "Checking your saved assistant connection.")
         }
-        if assistant.connection.needsStorageRetry {
-            return ("ChatGPT needs Keychain access", "Retry the saved connection in Settings → Assistant.")
+        if assistant.providerConnection.needsStorageRetry {
+            return ("The assistant needs Keychain access", "Retry the saved connection in Settings → Assistant.")
         }
-        guard assistant.connection.canUsePlan else {
-            return ("ChatGPT can wait", "Connect whenever you're ready in Settings → Assistant.")
+        guard assistant.canUseAssistant else {
+            return ("The assistant can wait", "Connect whenever you're ready in Settings → Assistant.")
         }
         if assistant.isLoadingModels {
-            return ("ChatGPT connected", "Available models are still loading. You can open Tern while they load.")
+            return ("\(assistant.providerDisplayName) connected", "Available models are still loading. You can open Tern while they load.")
         }
         if assistant.modelErrorMessage != nil || !assistant.models.contains(where: { $0.id == assistant.selectedModelID }) {
-            return ("ChatGPT connected", "Finish loading an available model in Settings → Assistant.")
+            return ("\(assistant.providerDisplayName) connected", "Finish loading an available model in Settings → Assistant.")
         }
         if assistant.enabledAccountIDs.isEmpty {
-            return ("ChatGPT connected", "Mail access is off. Choose accounts in Settings → Assistant when you're ready.")
+            return ("\(assistant.providerDisplayName) connected", "Mail access is off. Choose accounts in Settings → Assistant when you're ready.")
         }
         return ("Your assistant is ready", "Use the assistant for the mail accounts you allowed.")
     }

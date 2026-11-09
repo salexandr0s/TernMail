@@ -3,16 +3,6 @@ import Foundation
 import Observation
 import TernAI
 
-enum AssistantRuntimeEnvironment {
-    static var isTestHost: Bool {
-        let process = ProcessInfo.processInfo
-        return process.environment["XCTestConfigurationFilePath"] != nil
-            || process.environment["XCTestBundlePath"] != nil
-            || NSClassFromString("XCTestCase") != nil
-            || Bundle.allBundles.contains { $0.bundleURL.pathExtension == "xctest" }
-    }
-}
-
 @MainActor
 struct ChatGPTConnectionAuth {
     var exchange: (ChatGPTAuthorizationCode, ChatGPTAuthorizationAttempt) async throws -> ChatGPTPendingTokens
@@ -89,13 +79,12 @@ final class ChatGPTConnection {
     }
 
     private static func defaultStore() -> any AIConnectionStore {
-        let process = ProcessInfo.processInfo
-        if AssistantRuntimeEnvironment.isTestHost { return VolatileAIConnectionStore() }
-        guard process.arguments.contains("--ui-audit") else { return AIKeychainStore() }
-        #if DEBUG
+        let mode = LaunchMode.current
+        guard mode.isIsolated else { return AIKeychainStore() }
+        #if TERN_TEST_SUPPORT
         // Explicit live-auth audits retain synthetic mail while exercising the
         // app's own connection persistence across preview relaunches.
-        if process.arguments.contains("--ui-audit-live-chatgpt") { return AIKeychainStore() }
+        if mode.host == .audit, mode.audit.liveChatGPT { return AIKeychainStore() }
         #endif
         return VolatileAIConnectionStore()
     }

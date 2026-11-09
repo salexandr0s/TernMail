@@ -509,7 +509,9 @@ enum Schema {
             }
             // Existing provider bodies need one metadata enrichment when opened.
             // Background sync also fills headers in bounded batches, including analytics.
-            try db.execute(sql: "UPDATE messageBody SET enrichedAt = NULL WHERE messageID NOT LIKE 'local-send:%'")
+            // Updating a row rewrites its whole body, so rows already unmarked
+            // are left out. The result is the same.
+            try db.execute(sql: "UPDATE messageBody SET enrichedAt = NULL WHERE messageID NOT LIKE 'local-send:%' AND enrichedAt IS NOT NULL")
             try db.execute(sql: """
                 UPDATE mailAnalyticsState SET isComplete = 0, nextPageToken = NULL,
                 generation = lower(hex(randomblob(16))),
@@ -520,8 +522,83 @@ enum Schema {
         migrator.registerMigration("sender-image-authentication-v1") { db in
             try db.alter(table: "message") { $0.add(column: "verifiedImageSender", .text) }
             // Existing bodies need one receiver-evidence read before their
-            // sender's remembered image permission can apply again.
-            try db.execute(sql: "UPDATE messageBody SET enrichedAt = NULL WHERE messageID NOT LIKE 'local-send:%'")
+            // sender's remembered image permission can apply again. As above,
+            // rows already unmarked are left out.
+            try db.execute(sql: "UPDATE messageBody SET enrichedAt = NULL WHERE messageID NOT LIKE 'local-send:%' AND enrichedAt IS NOT NULL")
+        }
+        migrator.registerMigration("body-size-v1") { db in
+            // Each body's size in bytes, which measuring and trimming the
+            // cache sum instead of reading every body. The triggers keep it
+            // as bodies are saved, and a body's deletion takes its row. It
+            // sits beside `messageBody`, since SQLite reads through a long
+            // body to reach a column added after it.
+            try db.create(table: "messageBodySize") { t in
+                t.column("accountID", .text).notNull()
+                t.column("messageID", .text).notNull()
+                t.column("bytes", .integer).notNull()
+                t.primaryKey(["accountID", "messageID"])
+                t.foreignKey(["accountID", "messageID"], references: "messageBody", onDelete: .cascade)
+            }
+            let store = """
+                INSERT INTO messageBodySize (accountID, messageID, bytes)
+                VALUES (NEW.accountID, NEW.messageID, COALESCE(octet_length(NEW.html), 0) + COALESCE(octet_length(NEW.plainText), 0))
+                ON CONFLICT (accountID, messageID) DO UPDATE SET bytes = excluded.bytes;
+                """
+            // `octet_length` reads a stored value's size from its record
+            // header, so the backfill doesn't read the bodies either.
+            try db.execute(sql: """
+                CREATE TRIGGER message_body_size_insert AFTER INSERT ON messageBody BEGIN \(store) END;
+                CREATE TRIGGER message_body_size_update AFTER UPDATE OF html, plainText ON messageBody BEGIN \(store) END;
+                INSERT INTO messageBodySize (accountID, messageID, bytes)
+                SELECT accountID, messageID, COALESCE(octet_length(html), 0) + COALESCE(octet_length(plainText), 0)
+                FROM messageBody;
+                """)
+        }
+        migrator.registerMigration("address-search-v1") { db in
+            // Folded copies of what address completion matches, since
+            // SQLite's LIKE folds only ASCII. Saving a message or a contact
+            // keeps them current.
+            try db.alter(table: "message") { $0.add(column: "addressSearch", .text).notNull().defaults(to: "") }
+            try db.alter(table: "contact") { $0.add(column: "nameSearch", .text).notNull().defaults(to: "") }
+            try db.alter(table: "contactEmail") { $0.add(column: "addressSearch", .text).notNull().defaults(to: "") }
+            // Messages already cached keep an empty column until SyncEngine
+            // folds them in small writes (`foldPendingAddresses`). Folding
+            // them all here held the launch in one transaction whose log grew
+            // as large as the message table. Contacts are few enough to fold
+            // here. Each update is prepared once, since compiling one costs
+            // more than running it.
+            let contacts = try db.makeStatement(sql: "UPDATE contact SET nameSearch = ? WHERE rowid = ?")
+            for row in try Row.fetchAll(db, sql: "SELECT rowid, displayName FROM contact WHERE displayName IS NOT NULL") {
+                try contacts.execute(arguments: [SearchFolding.folded(row["displayName"]), row["rowid"]])
+            }
+            let emails = try db.makeStatement(sql: "UPDATE contactEmail SET addressSearch = ? WHERE rowid = ?")
+            for row in try Row.fetchAll(db, sql: "SELECT rowid, address FROM contactEmail") {
+                try emails.execute(arguments: [SearchFolding.folded(row["address"]), row["rowid"]])
+            }
+        }
+        migrator.registerMigration("body-enrichment-v1") { db in
+            // When each body's inline pictures and invitation were read from
+            // the full payload, moved out of `messageBody.enrichedAt`. Clearing
+            // that column rewrote each body it touched. Asking for every body
+            // to be read again now deletes small rows. The old column stays
+            // unused, since dropping it would rewrite every body.
+            try db.create(table: "messageBodyEnrichment") { t in
+                t.column("accountID", .text).notNull()
+                t.column("messageID", .text).notNull()
+                t.column("enrichedAt", .datetime).notNull()
+                t.primaryKey(["accountID", "messageID"])
+                t.foreignKey(["accountID", "messageID"], references: "messageBody", onDelete: .cascade)
+            }
+            try db.execute(sql: """
+                INSERT INTO messageBodyEnrichment (accountID, messageID, enrichedAt)
+                SELECT accountID, messageID, enrichedAt FROM messageBody WHERE enrichedAt IS NOT NULL
+                """)
+        }
+        migrator.registerMigration("address-search-pending-v1") { db in
+            // The messages `foldPendingAddresses` has yet to fold, by account
+            // and row. Folding one takes it out, so once none are left a
+            // launch's fold reads nothing.
+            try db.execute(sql: "CREATE INDEX message_address_pending ON message(accountID) WHERE addressSearch = ''")
         }
         return migrator
     }
@@ -591,6 +668,10 @@ enum Schema {
         Milestone5ConfigSchema.register(in: &migrator)
         MessageSnoozeSchema.registerConfig(in: &migrator)
         AccountRemovalSchema.register(in: &migrator)
+        CommitmentSchema.register(in: &migrator)
+        TodaySchema.register(in: &migrator)
+        AutomaticFollowUpSchema.register(in: &migrator)
+        MeetingPreparationSchema.register(in: &migrator)
         return migrator
     }
 }

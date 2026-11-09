@@ -115,26 +115,35 @@ extension MailCache {
     }
 
     /// Addresses in cached mail whose name or address contains `text`, for
-    /// completing a recipient. Prefix matches come first, then the addresses
-    /// seen most often, then the most recent.
+    /// completing a recipient. Case and accents don't matter. Prefix matches
+    /// come first, then the addresses seen most often, then the most recent.
     public func addressSuggestions(
         accountID: String, matching text: String, excluding excluded: Set<String> = [], limit: Int = 8
     ) async throws -> [EmailAddress] {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let query = SearchFolding.folded(text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !query.isEmpty else { return [] }
         let escaped = query
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "%", with: "\\%")
             .replacingOccurrences(of: "_", with: "\\_")
         let headerRows = try await writer.read { db -> [[String?]] in
-            try Row.fetchAll(db, sql: """
-                SELECT sender, recipients, cc FROM message
-                WHERE accountID = :account
-                  AND (sender LIKE :pattern ESCAPE '\\' OR recipients LIKE :pattern ESCAPE '\\' OR cc LIKE :pattern ESCAPE '\\')
+            // A message cached before `address-search-v1` has an empty column
+            // until SyncEngine folds it (`foldPendingAddresses`), so it's
+            // folded here until then.
+            let rows = try Row.fetchCursor(db, sql: """
+                SELECT sender, recipients, cc, addressSearch = '' AS pending FROM message
+                WHERE accountID = :account AND (addressSearch LIKE :pattern ESCAPE '\\' OR addressSearch = '')
                 ORDER BY date DESC
-                LIMIT 500
                 """, arguments: ["account": accountID, "pattern": "%\(escaped)%"])
-            .map { [$0["sender"], $0["recipients"], $0["cc"]] }
+            var headers: [[String?]] = []
+            while headers.count < 500, let row = try rows.next() {
+                let sender: String = row["sender"], recipients: String = row["recipients"], cc: String? = row["cc"]
+                if row["pending"], !SearchFolding.addresses(sender: sender, recipients: recipients, cc: cc).contains(query) {
+                    continue
+                }
+                headers.append([sender, recipients, cc])
+            }
+            return headers
         }
         struct Candidate {
             var address: EmailAddress
@@ -147,15 +156,16 @@ extension MailCache {
             for address in headers.compactMap({ $0 }).flatMap(EmailAddress.parseList) {
                 let key = address.normalized
                 guard address.isValid, !excluded.contains(key) else { continue }
-                let name = address.name?.lowercased() ?? ""
-                guard key.contains(query) || name.contains(query) else { continue }
+                let foldedKey = SearchFolding.folded(key)
+                let name = SearchFolding.folded(address.name ?? "")
+                guard foldedKey.contains(query) || name.contains(query) else { continue }
                 if var candidate = candidates[key] {
                     candidate.count += 1
                     if candidate.address.name == nil { candidate.address.name = address.name }
                     candidates[key] = candidate
                 } else {
                     let words = name.split(whereSeparator: { $0 == " " || $0 == "," || $0 == "." })
-                    let isPrefix = key.hasPrefix(query) || words.contains { $0.hasPrefix(query) }
+                    let isPrefix = foldedKey.hasPrefix(query) || words.contains { $0.hasPrefix(query) }
                     candidates[key] = Candidate(address: address, isPrefix: isPrefix, count: 1, firstSeen: index)
                 }
             }
@@ -249,7 +259,7 @@ public struct AccountStore: Sendable {
     let writer: any DatabaseWriter
 
     public static func open(at url: URL) throws -> AccountStore {
-        try AccountStore(writer: DatabaseQueue(path: url.path(percentEncoded: false)))
+        try AccountStore(writer: DatabaseQueue(path: url.path(percentEncoded: false), configuration: .sharedFile))
     }
 
     public static func inMemory() throws -> AccountStore {
@@ -329,5 +339,26 @@ extension CacheTransaction {
             rows: try composeRows(localDraftID: draft.id),
             attachments: try outgoingAttachments(localDraftID: draft.id)
         )
+    }
+
+    /// Folds the addresses of up to `limit` messages of the account that
+    /// were cached before `address-search-v1`, the first ones after row
+    /// `rowID`. Returns the last row folded, to continue after, or nil once
+    /// none are left. Folded text always holds the line breaks between the
+    /// headers, so an empty column marks a message still to fold.
+    public func foldPendingAddresses(accountID: String, after rowID: Int64, limit: Int) throws -> Int64? {
+        // `message_address_pending` holds only these messages, in row order,
+        // so a write reads the ones it folds and nothing else.
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT rowid, sender, recipients, cc FROM message
+            WHERE accountID = ? AND addressSearch = '' AND rowid > ?
+            ORDER BY rowid LIMIT ?
+            """, arguments: [accountID, rowID, limit])
+        let update = try db.cachedStatement(sql: "UPDATE message SET addressSearch = ? WHERE rowid = ?")
+        for row in rows {
+            let text = SearchFolding.addresses(sender: row["sender"], recipients: row["recipients"], cc: row["cc"])
+            try update.execute(arguments: [text, row["rowid"]])
+        }
+        return rows.last?["rowid"]
     }
 }

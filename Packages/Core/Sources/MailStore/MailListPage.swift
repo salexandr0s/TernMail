@@ -44,6 +44,8 @@ public struct MailListPageBuilder: Sendable {
     let query: SearchQuery?
     let includingMessageIDs: [String: Set<String>]
     let snoozedOnly: Bool
+    /// The moment the query's dates count from, the same on every read.
+    let now: Date
 
     /// The newest `limit` conversations under `labelID` across the accounts,
     /// a snoozed conversation that came back counting from its wake time.
@@ -52,25 +54,29 @@ public struct MailListPageBuilder: Sendable {
         MailListPageBuilder(
             conversations: .mailbox(accountIDs: accountIDs, labelID: labelID, limit: limit,
                                    retainingReadMessageIDs: retainingReadMessageIDs),
-            query: nil, includingMessageIDs: [:], snoozedOnly: false
+            query: nil, includingMessageIDs: [:], snoozedOnly: false, now: .now
         )
     }
 
     /// Search results in the order given. With a query that runs locally, a
     /// conversation shows the messages it matches here and those
     /// `includingMessageIDs` names for their account, which Gmail matched.
+    /// Pass the `now` the search used, so the messages agree with the
+    /// conversations it found.
     public static func searchResults(
-        _ threads: [ThreadRecord], matching query: SearchQuery?, includingMessageIDs: [String: Set<String>] = [:]
+        _ threads: [ThreadRecord], matching query: SearchQuery?, includingMessageIDs: [String: Set<String>] = [:],
+        now: Date = .now
     ) -> MailListPageBuilder {
         MailListPageBuilder(
-            conversations: .listed(threads), query: query, includingMessageIDs: includingMessageIDs, snoozedOnly: false
+            conversations: .listed(threads), query: query, includingMessageIDs: includingMessageIDs, snoozedOnly: false,
+            now: now
         )
     }
 
     /// Snoozed conversations in the order given, each showing its snoozed
     /// messages, or all of them when the whole conversation is snoozed.
     public static func snoozed(_ threads: [ThreadRecord]) -> MailListPageBuilder {
-        MailListPageBuilder(conversations: .listed(threads), query: nil, includingMessageIDs: [:], snoozedOnly: true)
+        MailListPageBuilder(conversations: .listed(threads), query: nil, includingMessageIDs: [:], snoozedOnly: true, now: .now)
     }
 
     /// Reads the page in one transaction.
@@ -88,7 +94,7 @@ public struct MailListPageBuilder: Sendable {
         let threadsByAccount = Dictionary(grouping: threads, by: \.accountID).mapValues { $0.map(\.id) }
         let entries = try tx.messageListEntries(
             threadsByAccount: threadsByAccount, matching: query,
-            includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly
+            includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly, now: now
         )
         return MailListPage(threads: threads, entries: entries)
     }

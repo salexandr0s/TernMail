@@ -1,0 +1,45 @@
+# Runs the Core package tests when Core changes. Not a required check.
+name: Core tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Packages/Core/**"
+      - ".github/workflows/core-tests.yml"
+  pull_request:
+    paths:
+      - "Packages/Core/**"
+      - ".github/workflows/core-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            Packages/Core/.build/repositories
+          key: spm-${{ runner.os }}-${{ hashFiles('Packages/Core/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Test
+        run: swift test --package-path Packages/Core

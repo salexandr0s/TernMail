@@ -21,6 +21,7 @@ extension SyncEngine {
     }
 
     /// A sent message becomes a new independent draft with copied files and a new Message-ID.
+    /// It goes from the address it went from unless the synced identities show that address can no longer send.
     public func startAgain(messageID: String) async throws -> OpenedDraft {
         if LocalSend.isProvisional(messageID) { throw ComposeError.stillSending }
         let fetched = try await fullMessage(messageID)
@@ -28,11 +29,17 @@ extension SyncEngine {
         let original = fetched.original
         let imported = original.body.html.map { HTMLImporter.importHTML($0, detachingQuote: false, preservingInlineImages: true) }
         let body = imported?.document ?? ComposeDocument(plainText: original.body.plainText ?? "")
+        let identities = try await accounts?.identities(accountID: accountID) ?? []
+        // Before the first identity sync, the send path decides whether the
+        // original sender still works. It refuses an alias it can't confirm.
+        let from = identities.isEmpty ? original.from.first?.address : original.from.first.flatMap { address in
+            identities.first { $0.canSend && $0.lowercasedAddress == address.normalized }?.address
+        }
         let draft = LocalDraft(
             accountID: accountID, kind: .new,
             content: DraftContent(to: original.to, cc: original.cc,
                                   bcc: message.header("Bcc").map(EmailAddress.parseList) ?? [],
-                                  subject: original.subject, body: body, fromAddress: sender.address),
+                                  subject: original.subject, body: body, fromAddress: from ?? sender.address),
             rfcMessageID: MIMEMessage.newMessageID(for: sender), now: now()
         )
         let referencedImages = Set(body.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })

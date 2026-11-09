@@ -40,6 +40,23 @@ import Testing
         #expect(labels["m1"]?.contains(SystemLabel.spam) == false)
         #expect(labels["m2"] == [SystemLabel.inbox, "Label_a", "Label_b"])
         #expect(try await cache.read { try $0.currentLabels(threadID: "other", accountID: "a")["m3"] } == [SystemLabel.inbox])
+        #expect(mailbox.notice?.message == "Message moved to the Inbox")
+    }
+
+    @Test func rowActionsConfirmWithUndoAndReportSpamMovesTheSelectionOn() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = false
+        let rows = mailbox.listItems.map(\.id)
+        try #require(rows.count == 3)
+        mailbox.selectListRows([rows[0]])
+        let spam = mailbox.triage.perform(.spam, targets: mailbox.actionTargets(forRows: [rows[0]]))
+        // The reader shows the next message instead of going empty.
+        #expect(mailbox.selectedListRowIDs == [rows[1]])
+        await spam?.value
+        await mailbox.performListAction(.archive, rows: [rows[1]])?.value
+        #expect(mailbox.notice?.message == "Message archived")
+        #expect(mailbox.notice?.undo != nil)
     }
 
     @Test func readerLabelAndMoveCommandsKeepTheirOwnMessageAndAccount() async throws {

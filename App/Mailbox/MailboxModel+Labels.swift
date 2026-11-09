@@ -301,6 +301,8 @@ extension MailboxModel {
     }
 
     /// Moves the conversations Move to opened for, out of the mailbox shown.
+    /// A move to a folder checks for snoozes first, so a refused move leaves
+    /// the selection where it was.
     @discardableResult
     func move(to labelID: String) -> Task<Void, Never>? {
         guard let targets = moveTargets else { return nil }
@@ -310,19 +312,17 @@ extension MailboxModel {
         moveTargets = nil
         moveMessageTargets = nil
         if from == Self.snoozedID, labelID != SystemLabel.inbox {
-            notice = Notice(message: "Move this mail to Inbox to end its snooze before moving it to a folder. Use Edit Labels to add a label while keeping the snooze.")
+            notice = Notice(message: Self.snoozedMoveNotice)
             return nil
         }
         let title = labelID == SystemLabel.inbox ? "Inbox" : labelName ?? "the label"
-        let subject = targets.count == 1 ? "Conversation" : "\(targets.count) conversations"
-        if !search.isActive, selectedLabelID == from {
-            if let messageIDs {
-                selectRow(after: selectedMessageRows.filter { targets.contains($0.threadKey) && messageIDs.contains($0.messageID ?? "") })
-            } else { selectThread(after: targets) }
-        }
+        let subject = Self.mailSubject(count: messageIDs?.count ?? targets.count, messages: messageIDs != nil)
         if from == Self.snoozedID {
             guard let accountID = targets.first?.accountID, let keeper = account(id: accountID)?.snoozeKeeper else { return nil }
             let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(Self.threadIDs(targets))
+            // Unsnoozed mail leaves Snoozed as soon as the keeper ends the
+            // snooze, so the selection has to move on before that.
+            selectAfterMove(targets, messageIDs: messageIDs, from: from)
             return Task {
                 do {
                     try await keeper.unsnooze(target: target)
@@ -330,23 +330,56 @@ extension MailboxModel {
                 } catch { notice = Notice(message: "Couldn't return this mail to the Inbox. Try again.", isError: true) }
             }
         }
-        return queueUndoable("Move", confirmation: "\(subject) moved to “\(title)”", for: targets) { owner, ids in
-            let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(ids)
-            if labelID != SystemLabel.inbox {
-                let accountID = owner.account.id
-                let snoozed = try await self.cache.read { tx in
-                    try Self.hasSnooze(target, accountID: accountID, in: tx)
+        let confirmation = "\(subject) moved to “\(title)”"
+        guard labelID != SystemLabel.inbox else {
+            return queueMove(targets, messageIDs: messageIDs, from: from, to: labelID, confirmation: confirmation)
+        }
+        // Search results and message snoozes don't name Snoozed as the source.
+        let checks = Dictionary(grouping: targets, by: \.accountID).map { accountID, keys -> (accountID: String, target: MailActionTarget) in
+            let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(Self.threadIDs(Set(keys)))
+            return (accountID, target)
+        }
+        let cache = cache
+        return Task {
+            do {
+                let snoozed = try await cache.read { tx in
+                    try checks.contains { try Self.hasSnooze($0.target, accountID: $0.accountID, in: tx) }
                 }
-                if snoozed {
-                    self.notice = Notice(message: "Move this mail to Inbox to end its snooze before moving it to a folder. Use Edit Labels to add a label while keeping the snooze.")
-                    return nil
+                guard !snoozed else {
+                    notice = Notice(message: Self.snoozedMoveNotice)
+                    return
                 }
+            } catch {
+                notice = Notice(message: Self.failureMessage(error), isError: true)
+                return
             }
-            let sourceLabel = owner.labels.first { $0.id == from && !$0.isSystem }?.id
+            await queueMove(targets, messageIDs: messageIDs, from: from, to: labelID, confirmation: confirmation)?.value
+        }
+    }
+
+    /// Queues Move to's change once it is accepted, after moving the
+    /// selection off the mail it takes away.
+    private func queueMove(_ targets: Set<ThreadKey>, messageIDs: [String]?, from source: String,
+                           to labelID: String, confirmation: String) -> Task<Void, Never>? {
+        selectAfterMove(targets, messageIDs: messageIDs, from: source)
+        return queueUndoable("Move", confirmation: confirmation, for: targets) { owner, ids in
+            let target: MailActionTarget = messageIDs.map { .messages($0) } ?? .threads(ids)
+            let sourceLabel = owner.labels.first { $0.id == source && !$0.isSystem }?.id
             let remove = [SystemLabel.inbox, SystemLabel.trash, SystemLabel.spam] + (sourceLabel.map { [$0] } ?? [])
             return try await owner.engine.editLabels(target: target, add: [labelID], remove: remove)
         }
     }
+
+    /// Mail that Move to takes out of the mailbox shown hands the selection
+    /// to the next row there.
+    private func selectAfterMove(_ targets: Set<ThreadKey>, messageIDs: [String]?, from source: String) {
+        guard !search.isActive, selectedLabelID == source else { return }
+        if let messageIDs {
+            selectRow(after: selectedMessageRows.filter { targets.contains($0.threadKey) && messageIDs.contains($0.messageID ?? "") })
+        } else { selectThread(after: targets) }
+    }
+
+    private static let snoozedMoveNotice = "Move this mail to Inbox to end its snooze before moving it to a folder. Use Edit Labels to add a label while keeping the snooze."
 
     nonisolated static func hasSnooze(_ target: MailActionTarget, accountID: String, in tx: CacheTransaction) throws -> Bool {
         let threads = try tx.snoozeHolds(accountID: accountID)

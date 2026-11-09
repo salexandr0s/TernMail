@@ -17,9 +17,7 @@ struct OnboardingPreferencesStep: View {
         app.accountPreferences?.orderedRecords ?? app.mailbox?.accounts.map(\.account) ?? []
     }
 
-    private var isPreview: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-audit") || AssistantRuntimeEnvironment.isTestHost
-    }
+    private var isPreview: Bool { LaunchMode.current.isIsolated }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {

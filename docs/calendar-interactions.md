@@ -39,6 +39,6 @@ On 30 October 2026, the integrated Debug app build and 40 hosted calendar tests 
 
 Native checks passed for timed drag creation and save, moving an existing event across both date and time, both timed resize handles, both all-day resize handles, all-day range creation, conversion in both directions, a backward month selection across rows, moving a continuation segment, release outside the calendar, recurrence scope review, guest notification review, read-only details, undo from the menu and keyboard, and Schedule date navigation. The active QWERTZ keyboard layout requires the automation's `super+y` input to produce Command-Z. Escape during a held drag and sustained edge autoscrolling were reviewed in code but not exercised by the native automation.
 
-Native interaction checks use `--ui-audit --ui-audit-calendar`, which supplies synthetic calendars and events through an in-memory service. It does not access a Google account. Real Google round trips and notification delivery require a connected account and are separate from these checks.
+Native interaction checks launch a Debug-Testing build with `--ui-audit --ui-audit-calendar`, which supplies synthetic calendars and events through an in-memory service. It does not access a Google account. Real Google round trips and notification delivery require a connected account and are separate from these checks.
 
 The running review app is `/tmp/Tern Calendar Drag Preview.app` (bundle ID `dev.tern.calendar.drag.preview`). Its events are disposable and do not persist after quitting.

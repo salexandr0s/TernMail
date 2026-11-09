@@ -18,6 +18,9 @@ final class AccountSession: AccessTokenProvider {
 
     private var authState: OIDAuthState?
     private var persistedAccessToken: String?
+    /// The token a caller last asked to replace after a server turned it
+    /// down. A failed refresh never falls back to it.
+    private var rejectedAccessToken: String?
     private var credentialWrite: Task<Void, any Error>?
     private var credentialWriteRevision = 0
 
@@ -59,6 +62,7 @@ final class AccountSession: AccessTokenProvider {
     func replace(with state: OIDAuthState) async throws {
         authState = state
         persistedAccessToken = nil
+        rejectedAccessToken = nil
         try await persist(state)
     }
 
@@ -71,6 +75,7 @@ final class AccountSession: AccessTokenProvider {
     func signOut() async {
         authState = nil
         persistedAccessToken = nil
+        rejectedAccessToken = nil
         let write = enqueueCredentialWrite(nil)
         try? await write.task.value
     }
@@ -80,7 +85,16 @@ final class AccountSession: AccessTokenProvider {
     func invalidateForRemoval() async {
         authState = nil
         persistedAccessToken = nil
+        rejectedAccessToken = nil
         _ = try? await credentialWrite?.value
+    }
+
+    /// Starts asking Google to revoke this session's grant. The request keeps
+    /// its own copy of the refresh token, so removal can delete the stored one
+    /// right away. Nil when the session holds no refresh token.
+    func startRevokingGrant(using revocation: GoogleTokenRevocation) -> Task<Bool, Never>? {
+        guard let token = authState?.refreshToken, !token.isEmpty else { return nil }
+        return Task { await revocation.revoke(refreshToken: token) }
     }
 
     // MARK: AccessTokenProvider
@@ -90,7 +104,10 @@ final class AccountSession: AccessTokenProvider {
         var retried = false
         while true {
             guard let state = authState else { throw GoogleAuth.AuthError.signInRequired }
-            if forceRefresh { state.setNeedsTokenRefresh() }
+            if forceRefresh {
+                rejectedAccessToken = state.lastTokenResponse?.accessToken
+                state.setNeedsTokenRefresh()
+            }
             let result: Result<String, any Error>
             do {
                 let token = try await freshToken(from: state)
@@ -136,18 +153,41 @@ final class AccountSession: AccessTokenProvider {
         }
     }
 
+    /// The token AppAuth's answer leaves usable. After a refresh fails with
+    /// anything but an OAuth error, such as a timeout or a 5xx, AppAuth
+    /// still hands back the old token. That token is used only while it is
+    /// unexpired and isn't the one a server just turned down. Otherwise the
+    /// failure becomes `GmailError.transport`, which callers retry. OAuth
+    /// errors such as `invalid_grant` concern the grant, and a missing
+    /// refresh token can't be retried, so both pass through.
+    nonisolated static func usableToken(
+        _ token: String?, error: (any Error)?, expiresAt: Date?, rejected: String?, now: Date
+    ) throws -> String {
+        guard let error else {
+            guard let token else { throw GoogleAuth.AuthError.signInRequired }
+            return token
+        }
+        let nsError = error as NSError
+        let missingRefreshToken = nsError.domain == OIDGeneralErrorDomain
+            && nsError.code == OIDErrorCode.tokenRefreshError.rawValue
+        guard nsError.domain != OIDOAuthTokenErrorDomain, !missingRefreshToken else { throw error }
+        if let token, token != rejected, let expiresAt, expiresAt > now { return token }
+        let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        let code = underlying.flatMap { $0.domain == NSURLErrorDomain ? URLError.Code(rawValue: $0.code) : nil }
+        throw GmailError.transport(code ?? .badServerResponse)
+    }
+
     // MARK: Private
 
     private func freshToken(from state: OIDAuthState) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        let answer: (token: String?, error: (any Error)?) = await withCheckedContinuation { continuation in
             state.performAction { accessToken, _, error in
-                if let accessToken {
-                    continuation.resume(returning: accessToken)
-                } else {
-                    continuation.resume(throwing: error ?? GoogleAuth.AuthError.signInRequired)
-                }
+                continuation.resume(returning: (accessToken, error))
             }
         }
+        if answer.error == nil { rejectedAccessToken = nil }
+        return try Self.usableToken(answer.token, error: answer.error,
+            expiresAt: state.lastTokenResponse?.accessTokenExpirationDate, rejected: rejectedAccessToken, now: .now)
     }
 
     private func persist(_ state: OIDAuthState) async throws {

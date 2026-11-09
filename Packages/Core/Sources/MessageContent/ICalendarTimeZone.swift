@@ -202,6 +202,11 @@ struct ICalendarTime: Equatable {
 
 /// A DURATION value: `[+-]P` with weeks, or days and a time part.
 struct ICalendarDuration: Equatable {
+    /// 10,000 years, the span of the years 0000 to 9999 a DATE can name. No
+    /// real duration is longer, and the cap keeps durations, alone or added
+    /// to a time, well inside `Int`.
+    static let maximumSeconds = 3_652_425 * 86_400
+
     var days: Int
     var seconds: Int
 
@@ -240,6 +245,9 @@ struct ICalendarDuration: Equatable {
             case ("S", true): seconds += value
             default: return nil
             }
+            // Parts can repeat, so the total needs its own cap. Checking after
+            // every part keeps the sum itself far from overflowing.
+            guard days * 86_400 + seconds <= Self.maximumSeconds else { return nil }
             number = nil
             sawComponent = true
         }
@@ -354,7 +362,9 @@ struct VTimeZone {
             }
             var lastYear = local.day.year
             if let until { lastYear = min(lastYear, until.day.year) }
-            if let count = rule.count { lastYear = min(lastYear, start.day.year + count - 1) }
+            // COUNT onsets, one a year, end count - 1 years after the first.
+            // Comparing before adding keeps any COUNT from overflowing.
+            if let count = rule.count, count - 1 < lastYear - start.day.year { lastYear = start.day.year + count - 1 }
             guard lastYear >= start.day.year else { return latest }
             for year in max(start.day.year, lastYear - 1)...lastYear {
                 for onset in rule.onsets(in: year, at: start) where onset >= start && until.map({ onset <= $0 }) ?? true {
@@ -444,11 +454,16 @@ struct YearlyRule {
         var weekday: Int
     }
 
-    var months: [Int] = []
-    var weekdays: [Weekday] = []
-    var monthDays: [Int] = []
-    var until: ICalendarTime?
-    var count: Int?
+    /// Distinct, in ascending order.
+    let months: [Int]
+    let weekdays: [Weekday]
+    /// Distinct, in ascending order. -1 is the last day of the month.
+    let monthDays: [Int]
+    let until: ICalendarTime?
+    let count: Int?
+    /// The days `monthDays` names in a month of each length from 28 to 31,
+    /// in ascending order.
+    private let daysByMonthLength: [Int: [Int]]
 
     private static let weekdayNames = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"]
 
@@ -460,16 +475,22 @@ struct YearlyRule {
         }
         guard parts["FREQ"] == "YEARLY" else { return nil }
         let list = { (key: String) in parts[key]?.split(separator: ",").map(String.init) ?? [] }
-        months = list("BYMONTH").compactMap(Int.init).filter { (1...12).contains($0) }
-        monthDays = list("BYMONTHDAY").compactMap(Int.init).filter { (1...31).contains(abs($0)) }
+        // Numbers outside RFC 5545's ranges drop out before any arithmetic,
+        // and repeats count once, so a long list costs no more than a short one.
+        months = Set(list("BYMONTH").compactMap(Int.init).filter { (1...12).contains($0) }).sorted()
+        let monthDays = Set(list("BYMONTHDAY").compactMap(Int.init).filter { (1...31).contains($0) || (-31 ... -1).contains($0) }).sorted()
+        self.monthDays = monthDays
         weekdays = list("BYDAY").compactMap { item in
             guard item.count >= 2, let index = Self.weekdayNames.firstIndex(of: String(item.suffix(2))) else { return nil }
             let prefix = item.dropLast(2)
-            guard let ordinal = prefix.isEmpty ? 0 : Int(prefix), abs(ordinal) <= 5 else { return nil }
+            guard let ordinal = prefix.isEmpty ? 0 : Int(prefix), (-5...5).contains(ordinal) else { return nil }
             return Weekday(ordinal: ordinal, weekday: index + 1)
         }
         until = parts["UNTIL"].flatMap { ICalendarTime(ICalendarProperty("UNTIL", value: $0)) }
         count = parts["COUNT"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
+        daysByMonthLength = Dictionary(uniqueKeysWithValues: (28...31).map { length in
+            (length, Set(monthDays.map { $0 > 0 ? $0 : length + 1 + $0 }.filter { (1...length).contains($0) }).sorted())
+        })
     }
 
     /// Onsets in `year`, at the time of day of `start`.
@@ -483,7 +504,7 @@ struct YearlyRule {
 
     private func day(in month: Int, of year: Int, defaultDay: Int) -> Int? {
         let length = CalendarDay.length(ofMonth: month, in: year)
-        let allowedDays = monthDays.map { $0 > 0 ? $0 : length + 1 + $0 }.filter { (1...length).contains($0) }.sorted()
+        let allowedDays = daysByMonthLength[length] ?? []
         // A time zone rule names one weekday.
         if let weekday = weekdays.first {
             let firstWeekday = CalendarDay(year: year, month: month, day: 1).weekday

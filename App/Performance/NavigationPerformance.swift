@@ -22,12 +22,8 @@ enum NavigationCacheTier: String, Codable, Sendable { case retained, prepared, l
 /// GPU presentation and missed frames are measured separately in Instruments.
 @MainActor
 final class NavigationPerformance {
-    nonisolated static let rowFeedbackDiagnosticsEnabled: Bool = {
-        let arguments = ProcessInfo.processInfo.arguments
-        return arguments.contains("--performance-audit") || arguments.contains {
-            $0.hasPrefix("--navigation-report=") && !$0.dropFirst("--navigation-report=".count).isEmpty
-        }
-    }()
+    nonisolated static let rowFeedbackDiagnosticsEnabled: Bool =
+        LaunchMode.current.performance.audit || LaunchMode.current.navigationReport != nil
     static let shared = NavigationPerformance(selectionFeedbackEnabled: rowFeedbackDiagnosticsEnabled)
 
     enum Outcome: String, Codable, Sendable { case visibleCommit, superseded, cancelled, timedOut }
@@ -162,12 +158,10 @@ final class NavigationPerformance {
 
     /// Captures timing only; neither keys, characters, locations nor targets are read.
     func installInputMonitoring() {
-        if reportExporter == nil,
-           let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--navigation-report=") }),
-           !argument.dropFirst("--navigation-report=".count).isEmpty {
-            configureReportExport(to: URL(fileURLWithPath: String(argument.dropFirst("--navigation-report=".count))))
+        if reportExporter == nil, let destination = LaunchMode.current.navigationReport {
+            configureReportExport(to: destination)
         }
-        guard inputMonitor == nil, !ProcessInfo.processInfo.arguments.contains("--performance-audit") else { return }
+        guard inputMonitor == nil, !LaunchMode.current.performance.audit else { return }
         inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .keyDown]) { [weak self] event in
             // AppKit calls local event monitors on its main event-dispatch thread.
             MainActor.assumeIsolated { self?.captureInput(timestamp: event.timestamp) }

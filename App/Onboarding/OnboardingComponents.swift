@@ -2,13 +2,10 @@ import SwiftUI
 
 /// Ordinary previews never open a provider sign-in or write credentials.
 enum OnboardingPreview {
-    static var isActive: Bool {
-        AssistantRuntimeEnvironment.isTestHost || ProcessInfo.processInfo.arguments.contains("--ui-audit")
-    }
+    static var isActive: Bool { LaunchMode.current.isIsolated }
 
     static var allowsChatGPTSignIn: Bool {
-        !isActive || (!AssistantRuntimeEnvironment.isTestHost
-            && ProcessInfo.processInfo.arguments.contains("--ui-audit-live-chatgpt"))
+        !isActive || (LaunchMode.current.host == .audit && LaunchMode.current.audit.liveChatGPT)
     }
 }
 

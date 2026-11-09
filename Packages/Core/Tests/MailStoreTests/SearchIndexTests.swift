@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SQLite3
 import Testing
 @testable import MailStore
 import MessageContent
@@ -176,6 +177,55 @@ private let acct = "acct"
         }
         #expect(latest == ["t2", "t1"])
     }
+
+    @Test func aSearchReadsOnlyItsMatchesAndThePageReadsThemOnce() async throws {
+        let cache = try MailCache.inMemory()
+        // Every message says "notes" and one also says "rare".
+        try await cache.write { tx in
+            try tx.db.execute(sql: """
+                WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 1199)
+                INSERT INTO message(accountID,id,threadID,historyID,date,snippet,sender,recipients,subject,sizeEstimate)
+                SELECT ?,'m'||i,'t'||(i/4),1,strftime('%Y-%m-%d %H:%M:%f', 1800000000 - i * 600, 'unixepoch'),
+                       CASE i WHEN 0 THEN 'rare notes' ELSE 'notes' END,'s@example.com','r@example.com','',1 FROM n
+                """, arguments: [acct])
+            try tx.rebuildThreads(Set((0..<300).map { "t\($0)" }), accountID: acct)
+        }
+        let costs = try await cache.read { tx in
+            let listed = try ThreadRecord.fetchAll(tx.db, sql: "SELECT * FROM thread ORDER BY id LIMIT 50")
+            let now = Date(timeIntervalSince1970: 1_900_000_000)
+            return try ["rare", "notes"].map { word in
+                let query = SearchQuery(word)
+                let threads = try instructions(tx.db) {
+                    _ = try tx.searchThreads(query, accountID: acct, timeZone: .gmt, now: now, limit: 50)
+                }
+                let page = try instructions(tx.db) {
+                    _ = try MailListPageBuilder.searchResults(listed, matching: query, now: now).page(in: tx)
+                }
+                return (threads: threads, page: page)
+            }
+        }
+        let (rare, notes) = (costs[0], costs[1])
+        // The search starts from the matches, so a word in one message costs
+        // a fraction of one in every message.
+        #expect(rare.threads * 5 < notes.threads)
+        // The page reads the matches once. Reading them all again for each
+        // message it checks costs about a hundred times more for "notes".
+        #expect(notes.page < rare.page * 4)
+    }
+}
+
+/// Roughly how many SQLite instructions `body` runs, in hundreds.
+func instructions(_ db: Database, _ body: () throws -> Void) throws -> Int {
+    let count = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+    count.initialize(to: 0)
+    defer { count.deallocate() }
+    sqlite3_progress_handler(db.sqliteConnection, 100, { context in
+        context?.assumingMemoryBound(to: Int.self).pointee += 1
+        return 0
+    }, count)
+    defer { sqlite3_progress_handler(db.sqliteConnection, 0, nil, nil) }
+    try body()
+    return count.pointee
 }
 
 // MARK: Helpers

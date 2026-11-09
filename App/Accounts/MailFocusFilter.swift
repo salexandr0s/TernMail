@@ -12,15 +12,20 @@ struct MailProfileEntity: AppEntity {
 }
 
 struct MailProfileEntityQuery: EntityQuery {
+    @Dependency private var app: AppModel
+
     func entities(for identifiers: [String]) async throws -> [MailProfileEntity] {
         try await suggestedEntities().filter { identifiers.contains($0.id) }
     }
     func suggestedEntities() async throws -> [MailProfileEntity] {
         let all = MailProfileEntity(id: MailProfileEntity.allID, name: "All accounts")
-        guard let store = try Self.store() else { return [all] }
+        guard let store = try await store() else { return [all] }
         return [all] + (try await store.mailProfiles()).map { MailProfileEntity(id: $0.id, name: $0.name) }
     }
-    private static func store() throws -> AccountStore? {
+    /// The app's own connection once it has opened the settings store, so a
+    /// read here doesn't add a second connection to the file.
+    private func store() async throws -> AccountStore? {
+        if let open = await app.settingsAccountStore { return open }
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: false)
         let url = support.appending(path: "Tern/config.sqlite")

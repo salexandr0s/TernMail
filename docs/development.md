@@ -38,13 +38,13 @@ xcodebuild -project Tern.xcodeproj -scheme Tern \
 
 # Run hosted app tests and UI tests.
 xcodebuild -project Tern.xcodeproj -scheme Tern \
-  -configuration Debug -derivedDataPath build test
+  -configuration Debug-Testing -derivedDataPath build test
 
 # Run Core tests last to restore package-only dependency pins.
 swift test --package-path Packages/Core
 ```
 
-The shared test scheme passes `--ui-audit` to use synthetic account data. UI tests need a logged-in macOS desktop and the system permissions requested by Xcode. These tests do not establish that live Google or ChatGPT authorization works for your configuration.
+Hosted and UI tests run in the Debug-Testing configuration, which the shared scheme's test action also uses. Its app has the bundle ID `dev.tern.mail.testing`, so it uses its own container and Keychain items instead of yours, and its placeholder Google client cannot sign in. The scheme passes `--ui-audit` to use synthetic account data. A Debug app stops at launch when XCTest hosts it or when it gets an audit or benchmark flag, so run tests and UI audits in Debug-Testing. UI tests need a logged-in macOS desktop and the system permissions requested by Xcode. These tests do not establish that live Google or ChatGPT authorization works for your configuration.
 
 Xcode adds the app's AppAuth dependency to `Packages/Core/Package.resolved`; SwiftPM removes it again. Commit that file as `swift test` leaves it. Build products live under the ignored `build/` directory.
 
@@ -67,7 +67,7 @@ On a logged-in, unlocked Mac, run:
 python3 scripts/capture-readme-screenshots.py
 ```
 
-The script builds a Debug test app and captures its native windows with fictional, in-memory mail, calendar, and task services. A local assistant provider supplies scripted responses to the production conversation and card views. It uses no live accounts and needs no Google or ChatGPT credentials; a blank local configuration works.
+The script builds the Debug-Testing app and captures its native windows with fictional, in-memory mail, calendar, and task services. A local assistant provider supplies scripted responses to the production conversation and card views. It uses no live accounts and needs no Google or ChatGPT credentials; a blank local configuration works.
 
 The seven images are written to `docs/screenshots/`: light and dark mail, Calendar, the assistant overview, follow-up emails, event suggestions, and Tasks. Build logs and capture results stay in `build/readme-demo/`. Review the images before committing them. Use `--section workspace` or `--section assistant` to update only that group, and `--skip-build` only when that directory already contains a current test build.
 
@@ -82,7 +82,7 @@ TERN_CODE_SIGN_IDENTITY = Developer ID Application: Your Name (TEAMID)
 TERN_DEVELOPMENT_TEAM = TEAMID
 ```
 
-The app and hosted tests use these values in Debug and Release. A team ID alone does not replace ad-hoc signing. When switching identities, macOS may ask you to approve access to existing saved connections.
+Every target uses these values in every configuration. A team ID alone does not replace ad-hoc signing. When switching identities, macOS may ask you to approve access to existing saved connections.
 
 UI tests may require a configured certificate and team on macOS systems that enforce library validation. If `TernUITests` reports different Team IDs for its runner and test bundle, set both matching signing values above and rebuild the test products before retrying.
 
@@ -91,11 +91,16 @@ UI tests may require a configured certificate and team on macOS systems that enf
 | Path | Responsibility |
 |---|---|
 | `App/` | SwiftUI and AppKit interface, Google authentication, Keychain access, and macOS integration. |
+| `ClaudeHelper/` | Unsandboxed XPC service that runs the official Claude CLI for the Claude (CLI) assistant route. |
+| `Shared/` | XPC request, reply, and status types used by both the app and `ClaudeHelper`. |
 | `Packages/Core/Sources/GmailAPI/` | Google mail, calendar, tasks, and contacts clients and models. |
 | `Packages/Core/Sources/MailStore/` | GRDB-backed persistence, queries, and migrations. |
 | `Packages/Core/Sources/MessageContent/` | MIME extraction, HTML sanitizing, and message rendering. |
 | `Packages/Core/Sources/SyncEngine/` | Mail synchronization, queued actions, attachment indexing, and local classification. |
-| `Packages/Core/Sources/TernAI/` | ChatGPT authentication, model discovery, streaming, and tool contracts. |
+| `Packages/Core/Sources/TernAI/` | Assistant providers (ChatGPT sign-in, the OpenAI, Claude, and DeepSeek APIs, and the Claude CLI), model discovery, streaming, and tool contracts. |
+| `Packages/Core/Sources/IMAPIdle/` | IMAP IDLE watcher for each account's INBOX. It only signals a possible change; history sync fetches the mail. |
+| `Packages/Core/Sources/Diagnostics/` | Signposts, recent span records, and loggers that carry names and numbers only. |
+| `Packages/Core/Sources/MailOrganization/` | Bounded message and sender evidence shared by the AI mail organization analysis and `SyncEngine`. |
 | `Tests/` | Hosted app tests, native visual audits, and UI tests. |
 | `project.yml` | XcodeGen project specification. |
 | `Config/` | Shared build settings and a blank local-configuration template. |

@@ -18,9 +18,8 @@ import Testing
         try writer.read { db in
             let record = try #require(try MessageRecord.fetchOne(db, key: ["accountID": "account", "id": "message"]))
             #expect(record.verifiedImageSender == nil)
-            let row = try #require(try Row.fetchOne(db, sql: "SELECT plainText,enrichedAt FROM messageBody"))
-            #expect(row["plainText"] as String == "cached mail")
-            #expect(row["enrichedAt"] as Date? == nil)
+            #expect(try String.fetchOne(db, sql: "SELECT plainText FROM messageBody") == "cached mail")
+            #expect(try CacheTransaction(db: db).bodyEnrichedAt(messageID: "message", accountID: "account") == nil)
         }
     }
 }

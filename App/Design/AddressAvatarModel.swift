@@ -22,6 +22,21 @@ struct AddressAvatarContext: Sendable {
     }
 }
 
+/// When an avatar without a photo may ask a website for its icon. Views set
+/// it with `logoLookup(_:)`, which can only make it stricter. An avatar that
+/// may not ask still shows an icon that is already cached, since showing one
+/// sends nothing.
+enum LogoLookup: Int, Comparable, Sendable {
+    /// Asks whenever no icon is cached. For addresses the user picks, such as compose recipients.
+    case always
+    /// Asks only for senders the account knows (`MailCache.isFamiliarSender`).
+    case familiarSenders
+    /// Never asks. For mail in Spam.
+    case never
+
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
 @MainActor @Observable
 final class AddressAvatarModel {
     typealias LogoLoader = @Sendable (String) async -> Data?
@@ -29,8 +44,11 @@ final class AddressAvatarModel {
     private(set) var isLogo = false
     @ObservationIgnored var onChange: (@MainActor () -> Void)?
     @ObservationIgnored private let logoLoader: LogoLoader
+    @ObservationIgnored private let cachedLogoLoader: LogoLoader
     @ObservationIgnored private let profilePhoto: @MainActor (String) -> NSImage?
     @ObservationIgnored private var request: Request?
+    /// Says whether a sender is known, for `LogoLookup.familiarSenders`.
+    @ObservationIgnored private var senders: MailCache?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var accessTask: Task<Void, Never>?
     @ObservationIgnored private var photoTask: Task<Void, Never>?
@@ -42,8 +60,10 @@ final class AddressAvatarModel {
     @ObservationIgnored private var logoAttempted = false
 
     init(logoLoader: @escaping LogoLoader = { await DomainLogoImages.shared.data(for: $0) },
+         cachedLogoLoader: @escaping LogoLoader = { await DomainLogoImages.shared.cachedData(for: $0) },
          profilePhoto: @escaping @MainActor (String) -> NSImage? = { AccountProfileImages.shared.image(for: $0) }) {
         self.logoLoader = logoLoader
+        self.cachedLogoLoader = cachedLogoLoader
         self.profilePhoto = profilePhoto
     }
 
@@ -54,13 +74,15 @@ final class AddressAvatarModel {
     }
 
     func configure(address: String, accountID: String?, context: AddressAvatarContext,
-                   showsLogos: Bool, preferredAccountID: String? = nil) {
+                   showsLogos: Bool, logoLookup: LogoLookup = .always, preferredAccountID: String? = nil) {
         let address = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let current = Request(address: address, accountID: accountID, contextID: context.identity,
-                              showsLogos: showsLogos, profileID: preferredAccountID ?? context.profileAccountIDs[address])
+                              showsLogos: showsLogos, logoLookup: logoLookup,
+                              profileID: preferredAccountID ?? context.profileAccountIDs[address])
         guard request != current else { return }
         stop()
         request = current
+        senders = context.cache
         let token = generation
         guard EmailAddress(address: address).isValid else { return }
         watchProfile(current.profileID, generation: token)
@@ -119,6 +141,7 @@ final class AddressAvatarModel {
     func stop() {
         generation = UUID()
         request = nil
+        senders = nil
         accessTask?.cancel(); accessTask = nil
         photoTask?.cancel(); photoTask = nil
         logoTask?.cancel(); logoTask = nil
@@ -155,9 +178,9 @@ final class AddressAvatarModel {
         publish(nil, isLogo: false)
         guard !logoAttempted else { return }
         logoAttempted = true
-        let load = logoLoader
+        let load = logoLoader, cached = cachedLogoLoader, senders = senders
         logoTask = Task { [weak self] in
-            let data = await load(request.address)
+            let data = await Self.logo(for: request, senders: senders, load: load, cached: cached)
             guard !Task.isCancelled, let self, self.generation == token else { return }
             self.logoTask = nil
             let image = if let data { await DomainLogoThumbnailCache.shared.image(for: request.address, data: data) } else { nil as NSImage? }
@@ -175,6 +198,24 @@ final class AddressAvatarModel {
         onChange?()
     }
 
+    /// Asks the website only when the request's `LogoLookup` allows it, and
+    /// otherwise reads only the icon cache.
+    nonisolated private static func logo(for request: Request, senders: MailCache?,
+                                         load: LogoLoader, cached: LogoLoader) async -> Data? {
+        let asks: Bool
+        switch request.logoLookup {
+        case .always: asks = true
+        case .never: asks = false
+        case .familiarSenders:
+            // A failed read, or no cache to read, makes the sender a first-time one.
+            if let owner = request.accountID, let senders {
+                asks = (try? await senders.isFamiliarSender(request.address, accountID: owner)) == true
+            } else { asks = false }
+        }
+        guard asks else { return await cached(request.address) }
+        return await load(request.address)
+    }
+
     deinit { accessTask?.cancel(); photoTask?.cancel(); logoTask?.cancel() }
 
     private struct Request: Equatable {
@@ -182,6 +223,7 @@ final class AddressAvatarModel {
         let accountID: String?
         let contextID: String
         let showsLogos: Bool
+        let logoLookup: LogoLookup
         let profileID: String?
     }
 }

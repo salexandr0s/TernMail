@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import MessageContent
 import Testing
 @testable import MailStore
 
@@ -66,6 +67,25 @@ private let account = "acct"
         #expect(page.threads.map(\.id) == ["t3", "t1"])
         #expect(page.threads.map(\.messageCount) == [1, 2])
         #expect(Set(page.entries.map(\.message.id)) == ["m1", "m3", "m4"])
+    }
+
+    @Test func searchResultsMatchTheirMessagesAtTheMomentTheSearchRan() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([
+                message("m1", thread: "t1"),
+                message("m2", thread: "t1", minutes: 24 * 60),
+            ]), accountID: account)
+        }
+        // A day and a half after m1, so m1 is older than a day and m2 isn't.
+        let ranAt = Date(timeIntervalSince1970: 1_800_000_000 + 36 * 3600)
+        let query = SearchQuery("newer_than:1d")
+        let page = try await cache.read { tx in
+            let found = try tx.searchThreads(query, accountID: account, timeZone: .current, now: ranAt, limit: 50)
+            return try MailListPageBuilder.searchResults(found, matching: query, now: ranAt).page(in: tx)
+        }
+        #expect(page.threads.map(\.id) == ["t1"])
+        #expect(page.entries.map(\.message.id) == ["m2"])
     }
 
     @Test func ownAddressesMarkMailAddressedToTheAccount() async throws {

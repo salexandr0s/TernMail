@@ -229,6 +229,25 @@ import Testing
         #expect(html.contains("<p>Hello</p>"))
     }
 
+    /// Printing showed every inline image as unavailable. Replies often reuse a
+    /// Content-ID such as "image001.png", so each message must print its own image.
+    @Test func printingShowsEachMessagesCachedInlineImage() throws {
+        var resources = PrintInlineResources()
+        let images = [Data("first".utf8), Data("second".utf8)]
+        var messages: [PrintableMessage] = []
+        for image in images {
+            let map = resources.add([.init(contentID: "image001.png", partID: "2", mimeType: "image/png", data: image)])
+            messages.append(.init(subject: "Photo", sender: "a@example.com", recipients: "b@example.com", date: "Today",
+                body: .init(html: "<img loading=\"lazy\" src=\"cid:image001.png\">"), inlineResources: map))
+        }
+        let html = PrintDocument.render(subject: "Photos", messages: messages)
+        let printed = try SwiftSoup.parse(html).select("img").array().map { image in
+            try #require(URL(string: try image.attr("src")).flatMap(resources.resource(for:))).data
+        }
+        #expect(printed == images)
+        #expect(!html.contains("loading="))
+    }
+
     @Test func authoredDarkStylesAndTextScaleSurviveSafeRendering() {
         let rendered = MessageDocument.render(html: "<style>@media(prefers-color-scheme: dark){body{color:white;background:black}}</style><p>Hello</p>",
             policy: .init(textScale: 1.5))

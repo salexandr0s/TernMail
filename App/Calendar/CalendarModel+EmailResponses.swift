@@ -106,6 +106,36 @@ extension CalendarModel {
         return stamp > updated
     }
 
+    /// Why an emailed cancellation must not remove `event`, or nil when it may.
+    /// Whoever writes a CANCEL chooses its UID and SEQUENCE, so they find the
+    /// event but prove nothing. Removal needs the event's own organizer to have
+    /// sent it from a From address that passed Gmail's DMARC check. An event the
+    /// user organizes is never removed because of an email.
+    static func cancellationRemovalNotice(for invitation: Invitation, message: MessageRecord?,
+                                          event: GoogleCalendarEvent, userAddresses: [String]) -> String? {
+        let organizer = event.organizer?.email
+        let userOrganizes = event.organizer?.isSelf == true
+            || event.attendees?.contains { $0.organizer == true && $0.isSelf == true } == true
+            || organizer.map { email in userAddresses.contains { $0.caseInsensitiveCompare(email) == .orderedSame } } == true
+        if userOrganizes { return "You organize this event, so an email cannot cancel it." }
+        guard let organizer, invitation.organizer?.matches(organizer) == true, let message,
+              let sender = SenderImagePolicy.verifiedAddress(from: message.sender, evidence: message.verifiedImageSender),
+              sender.caseInsensitiveCompare(organizer) == .orderedSame else {
+            return "The sender could not be confirmed as the event organizer. Check the event in Calendar."
+        }
+        return nil
+    }
+
+    /// The cancellation's own message shows who sent it. Reply addresses and
+    /// owned calendars show whether the user organizes the event.
+    func cancellationRemovalNotice(for invitation: Invitation, messageID: String, event: GoogleCalendarEvent,
+                                   accountID: String, addresses: [String]) async throws -> String? {
+        let message = try await app?.cache?.read { try $0.message(id: messageID, accountID: accountID) }
+        let ownedCalendars = calendars.filter { $0.accountID == accountID && $0.entry.isOwner }.map(\.calendarID)
+        return Self.cancellationRemovalNotice(for: invitation, message: message, event: event,
+            userAddresses: addresses + ownedCalendars)
+    }
+
     func validateEmailLifetime(_ revision: Int, accountID: String) throws {
         try Task.checkCancellation()
         guard revision == lifecycleRevision, app?.mailbox?.account(id: accountID) != nil else { throw CalendarModelError.unavailable }

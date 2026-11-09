@@ -201,8 +201,43 @@ extension SyncEngine {
     private func settingsAreEnabled() async -> Bool {
         guard let accounts else { return true }
         guard let stored = try? await accounts.accounts().first(where: { $0.id == accountID }) else { return false }
-        return stored.enabledFeatures.contains(AccountFeature.gmailSettings.rawValue)
-            && GoogleScopes.isCovered(.gmailSettings, by: stored.grantedScopes)
+        return Self.allowsSettings(stored)
+    }
+
+    /// Whether Gmail Settings is on for `account` and Google granted it.
+    private static func allowsSettings(_ account: AccountRecord) -> Bool {
+        account.enabledFeatures.contains(AccountFeature.gmailSettings.rawValue)
+            && GoogleScopes.isCovered(.gmailSettings, by: account.grantedScopes)
+    }
+
+    /// Whether `lane` waits for the user instead of for Gmail, as the
+    /// settings lane does while Gmail Settings is off or the account has no
+    /// stored record. Its rows stay queued, and `wakeSettingsWhenAllowed()`
+    /// wakes the lane when the feature comes on. A config read that fails
+    /// doesn't count, so the lane tries again.
+    func isPaused(_ lane: PendingAction.Lane) async -> Bool {
+        guard lane == .settings, let accounts, let stored = try? await accounts.accounts() else { return false }
+        guard let account = stored.first(where: { $0.id == accountID }) else { return true }
+        return !Self.allowsSettings(account)
+    }
+
+    /// Wakes the settings lane each time Gmail Settings comes on for the
+    /// account. Ends when the engine stops or the config store can't be
+    /// followed.
+    func wakeSettingsWhenAllowed() async {
+        guard sendsAutomatically, settings != nil, let accounts else { return }
+        // Until the first value, the feature counts as off: the lane may
+        // have paused just before it came on.
+        var wasAllowed = false
+        do {
+            for try await record in accounts.accountChanges(id: accountID) {
+                let allowed = record.map(Self.allowsSettings) ?? false
+                if allowed, !wasAllowed { scheduleSending() }
+                wasAllowed = allowed
+            }
+        } catch {
+            // Queued rows then go out with the next settings change or launch.
+        }
     }
 
     /// Writes what the row has learned into its payload, before the next

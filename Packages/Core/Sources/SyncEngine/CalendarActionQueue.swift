@@ -117,7 +117,7 @@ extension CalendarSyncEngine {
                 if operation.completedStep > 0 { operation.errorMessage = "Some changes were saved. " + (operation.errorMessage ?? "Retry to finish.") }
                 operation.updatedAt = .now
                 try await store.saveOperation(operation)
-                if Self.httpStatus(error) == 403 {
+                if Self.revokesAccess(error) {
                     accessEpoch += 1
                     try await store.resetRemoteCalendar(accountID: accountID, calendarID: operation.calendarID)
                     break
@@ -316,6 +316,9 @@ extension CalendarSyncEngine {
     static func message(for error: any Error) -> String {
         if let error = error as? CalendarEngineError { return error.localizedDescription }
         if Self.httpStatus(error) == 412 { return CalendarEngineError.conflict.localizedDescription }
+        // These wait in the queue like offline changes, but the connection is fine.
+        if case .rateLimited = error as? GmailError { return "Google is limiting calendar changes for now. Retry in a few minutes." }
+        if case .server = error as? GmailError { return "Google Calendar isn't responding right now. Retry in a few minutes." }
         if Self.isOffline(error) { return "Calendar changes are waiting for a connection. Retry when online." }
         if let error = error as? GmailError, error.isMissingScope || error == .unauthorized { return "Reconnect this Google account's calendar access." }
         return "Google could not save this calendar change. Review it and try again."

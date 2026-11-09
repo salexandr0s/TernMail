@@ -310,8 +310,10 @@ extension SyncEngine {
     func snoozeStates() async throws -> [SnoozeState] {
         let accountID = accountID
         return try await cache.read { tx in
-            try tx.snoozeHolds(accountID: accountID).sorted { $0.key < $1.key }.map { threadID, wakeAt in
-                let labels = try tx.currentLabels(threadID: threadID, accountID: accountID)
+            let holds = try tx.snoozeHolds(accountID: accountID)
+            let current = try tx.currentLabels(threadIDs: holds.keys, accountID: accountID)
+            return holds.sorted { $0.key < $1.key }.map { threadID, wakeAt in
+                let labels = current[threadID] ?? [:]
                 return SnoozeState(
                     threadID: threadID, wakeAt: wakeAt, isCached: !labels.isEmpty,
                     isInInbox: labels.values.contains { $0.contains(SystemLabel.inbox) }

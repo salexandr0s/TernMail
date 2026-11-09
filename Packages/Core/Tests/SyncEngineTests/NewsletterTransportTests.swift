@@ -63,12 +63,16 @@ import Testing
     }
 
     @Test func DNSDeadlineAndCancellationDoNotWaitForTheResolver() async throws {
+        // Each lookup hangs until the test ends, so only the deadline or the cancellation can finish the check.
+        let hang = DispatchGroup()
+        hang.enter()
+        defer { hang.leave() }
         do {
-            try await NewsletterDNSCheck.validate(timeout: 0.01) { Thread.sleep(forTimeInterval: 0.1); return true }
+            try await NewsletterDNSCheck.validate(timeout: 0.01) { hang.wait(); return true }
             Issue.record("Expected the DNS deadline")
         } catch { #expect((error as? URLError)?.code == .timedOut) }
         let resolving = Task {
-            try await NewsletterDNSCheck.validate { Thread.sleep(forTimeInterval: 0.1); return true }
+            try await NewsletterDNSCheck.validate { hang.wait(); return true }
         }
         resolving.cancel()
         await #expect(throws: CancellationError.self) { try await resolving.value }

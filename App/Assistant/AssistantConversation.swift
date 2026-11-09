@@ -176,13 +176,13 @@ enum AssistantError: Error, LocalizedError {
         switch self {
         case .noAccounts: "Enable a mail account or calendar for the assistant in settings."
         case .noSelection: "Select a conversation or choose a wider scope."
-        case .noModel: "Choose a ChatGPT model in AI settings."
+        case .noModel: "Choose an available model in Assistant Settings."
         case .accessChanged: "Assistant access changed. Start a new request with the current scope."
         case .historyLimit: "This chat has reached its context limit. Start a new chat to continue."
         case .toolLimit: "The assistant reached this request's reading limit. Ask it to narrow the search or continue in a new request."
         case .invalidTool: "The assistant requested an unsupported operation."
         case .invalidSource: "The assistant returned a source outside this conversation's scope."
-        case .emptyReply: "ChatGPT finished without an answer. Try again or start a new chat."
+        case .emptyReply: "The assistant finished without an answer. Try again or start a new chat."
         }
     }
 }

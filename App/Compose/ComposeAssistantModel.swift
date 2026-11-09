@@ -87,6 +87,9 @@ final class ComposeAssistantModel {
             guard request.utf8.count <= 32_768 else { throw AssistantError.historyLimit }
             guard let context = ComposeAssistantContext(compose) else { throw AssistantError.accessChanged }
             let active = try session ?? assistant.makeComposeSession(accountID: context.accountID)
+            guard assistant.selectedModelSupportsImages || contextContents.values.allSatisfy({ $0.imageInput == nil }) else {
+                throw AIProviderError.unsupportedImages
+            }
             session = active
             let id = UUID(), messageID = UUID()
             turnID = id; isRunning = true; errorMessage = nil; statusText = "Reading context…"

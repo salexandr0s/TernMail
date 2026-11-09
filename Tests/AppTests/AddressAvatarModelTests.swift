@@ -99,6 +99,55 @@ import Testing
         #expect(await requests.addresses.isEmpty)
     }
 
+    /// The website hears from Tern only for a sender the account knows, outside Spam.
+    @Test func spamAndFirstTimeSendersShowOnlyCachedLogos() async throws {
+        let cache = try MailCache.inMemory()
+        _ = try await cache.write { tx in
+            try tx.upsertMessages([CacheTransaction.MessageUpdate(record: MessageRecord(
+                accountID: "a", id: "sent", threadID: "t", historyID: 1, date: .now, snippet: "",
+                sender: "me@home.com", recipients: "known@brand.com", cc: nil, subject: "", sizeEstimate: 1
+            ), labelIDs: [SystemLabel.sent])])
+        }
+        let requests = AvatarLogoRequests(data: try png(width: 32))
+        let cachedLogos = CachedAvatarLogos(data: try png(width: 16), domain: "cached.com")
+        let context = AddressAvatarContext(cache: cache, identity: "familiarity")
+        let cases: [(address: String, lookup: LogoLookup, asks: Bool, shows: Bool)] = [
+            ("known@brand.com", .familiarSenders, true, true),
+            ("stranger@brand.com", .familiarSenders, false, false),
+            ("known@brand.com", .never, false, false),
+            ("stranger@cached.com", .familiarSenders, false, true),
+            ("spammer@cached.com", .never, false, true),
+        ]
+        for (address, lookup, asks, shows) in cases {
+            let model = AddressAvatarModel(logoLoader: { await requests.load($0) },
+                                           cachedLogoLoader: { await cachedLogos.load($0) })
+            defer { model.stop() }
+            let asked = await requests.addresses.count, checked = cachedLogos.addresses.count
+            model.configure(address: address, accountID: "a", context: context, showsLogos: true, logoLookup: lookup)
+            if asks { try await wait { model.isLogo } }
+            // Reading the icon cache comes after the decision not to ask, so nothing can ask later.
+            else { try await wait { cachedLogos.addresses.count == checked + 1 } }
+            #expect(await requests.addresses.count == asked + (asks ? 1 : 0), "\(address) \(lookup)")
+            if shows { try await wait { model.isLogo } } else { #expect(model.image == nil, "\(address) \(lookup)") }
+        }
+    }
+
+    /// A correspondent's avatar asks for `.familiarSenders` inside a Spam row that says `.never`.
+    @Test func anInnerLogoLimitCannotLiftAnOuterOne() {
+        let seen = SeenLogoLookup()
+        let views: [(AnyView, LogoLookup)] = [
+            (AnyView(LogoLookupProbe(seen: seen)), .always),
+            (AnyView(LogoLookupProbe(seen: seen).logoLookup(.familiarSenders)), .familiarSenders),
+            (AnyView(LogoLookupProbe(seen: seen).logoLookup(.familiarSenders).logoLookup(.never)), .never),
+            (AnyView(LogoLookupProbe(seen: seen).logoLookup(.never).logoLookup(.familiarSenders)), .never),
+        ]
+        for (view, expected) in views {
+            seen.value = nil
+            _ = ImageRenderer(content: view).nsImage
+            #expect(seen.value == expected)
+        }
+    }
+
     @Test func nativeDisappearanceKeepsLoadedPixelsAndDoesNotRestartLookup() async throws {
         let requests = AvatarLogoRequests(data: try png(width: 32))
         let model = AddressAvatarModel(logoLoader: { await requests.load($0) })
@@ -179,7 +228,7 @@ import Testing
         #expect(cache.cost == 0)
     }
 
-    @Test func firstLogoRenderReusesWarmPixelsAndHonorsLookupPreference() async throws {
+    @Test func firstLogoRenderReusesWarmPixelsAndHonorsTheLogoSetting() async throws {
         let address = "sender@\(UUID().uuidString.lowercased()).com"
         let photo = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { bounds in
             NSColor.red.setFill(); bounds.fill(); return true
@@ -190,10 +239,10 @@ import Testing
         #expect(await DomainLogoThumbnailCache.shared.image(for: address, data: data) != nil)
         let suite = "Tern.AvatarWarmLogoTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defaults.set(true, forKey: DomainLogoImages.preferenceKey)
         defer { defaults.removePersistentDomain(forName: suite) }
         for enabled in [true, false] {
-            let renderer = ImageRenderer(content: DomainLogoAvatar(address: address, size: 24, allowsLookup: enabled, load: { _ in nil }) {
+            defaults.set(enabled, forKey: DomainLogoImages.preferenceKey)
+            let renderer = ImageRenderer(content: DomainLogoAvatar(address: address, size: 24, cached: { _ in nil }) {
                 Color.blue.frame(width: 24, height: 24)
             }.defaultAppStorage(defaults))
             let rendered = try #require(renderer.nsImage)
@@ -244,6 +293,30 @@ private struct AvatarLifecycleHost: View {
 }
 
 @MainActor @Observable private final class AvatarProfiles { var images: [String: NSImage] = [:] }
+
+/// The icon cache, holding one domain's icon.
+@MainActor private final class CachedAvatarLogos {
+    let data: Data
+    let domain: String
+    private(set) var addresses: [String] = []
+    init(data: Data, domain: String) { self.data = data; self.domain = domain }
+    func load(_ address: String) -> Data? {
+        addresses.append(address)
+        return address.hasSuffix("@" + domain) ? data : nil
+    }
+}
+
+@MainActor private final class SeenLogoLookup { var value: LogoLookup? }
+
+private struct LogoLookupProbe: View {
+    let seen: SeenLogoLookup
+    @Environment(\.logoLookup) private var lookup
+
+    var body: some View {
+        let _ = (seen.value = lookup)
+        Color.clear.frame(width: 1, height: 1)
+    }
+}
 
 private actor AvatarLogoRequests {
     let data: Data

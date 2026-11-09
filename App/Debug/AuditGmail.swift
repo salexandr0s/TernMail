@@ -1,4 +1,4 @@
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import Foundation
 import CoreGraphics
 import ImageIO
@@ -68,7 +68,8 @@ actor AuditGmail: GmailService {
     init(_ account: Account = .first, performanceTransport: PerformanceAuditTransport? = nil,
          performanceFixtureCount: Int? = nil,
          beforeFullThread: (@Sendable (String) async throws -> Void)? = nil) {
-        let performance = ProcessInfo.processInfo.arguments.contains("--performance-audit")
+        let mode = LaunchMode.current
+        let performance = mode.performance.audit
         self.performanceTransport = performanceTransport ?? (performance ? .shared : nil)
         self.beforeFullThread = beforeFullThread
         performanceAccountID = account == .first ? "ui-audit" : "ui-audit-2"
@@ -97,7 +98,7 @@ actor AuditGmail: GmailService {
             mail = Self.secondMail
             userLabels = [UserLabel(id: "Label_1", name: "Projects")]
         }
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-list") {
+        if mode.audit.list {
             userLabels += [
                 UserLabel(id: "Label_2", name: "Field research"),
                 UserLabel(id: "Label_3", name: "Equipment planning"),
@@ -112,7 +113,7 @@ actor AuditGmail: GmailService {
                 Message(id: "list6", thread: "list5", subject: "A quick update", text: "Everything is ready for tomorrow.", html: false, labels: ["INBOX"], from: "Casey <casey@example.invalid>"),
             ]
         }
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-attachments") {
+        if mode.audit.attachments {
             mail += (0..<125).map { index in
                 Message(id: "attachment-\(index)", thread: "attachment-thread-\(index)",
                     subject: index == 124 ? "Your October 2024 invoice" : "Project documents \(index + 1)",
@@ -123,7 +124,7 @@ actor AuditGmail: GmailService {
                     ageDays: index == 124 ? 730 : index)
             }
         }
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-attachment-categories") {
+        if mode.audit.attachmentCategories {
             mail += [
                 Message(id: "category-ticket", thread: "category-ticket", subject: "Your journey",
                     text: "Synthetic travel document.", html: false, labels: ["INBOX"], attachment: "Fahrkarte-4821.txt"),
@@ -133,7 +134,7 @@ actor AuditGmail: GmailService {
                     text: "Synthetic document with a generic filename.", html: false, labels: ["INBOX"], attachment: "Document-4821.pdf"),
             ]
         }
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-writing-style") {
+        if mode.audit.writingStyle {
             mail += (0..<100).map { index in
                 Message(id: "writing-\(index)", thread: "writing-thread-\(index)",
                     subject: "Synthetic sent reply \(index + 1)",
@@ -145,8 +146,7 @@ actor AuditGmail: GmailService {
     }
 
     private static func performanceMail(countOverride: Int?) -> [Message] {
-        let argument = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-mails=") }
-        let count = min(60_000, max(200, countOverride ?? argument.flatMap { Int($0.split(separator: "=").last ?? "") } ?? 1_000))
+        let count = min(60_000, max(200, countOverride ?? LaunchMode.current.performance.mails))
         var result = (0..<count).map { index in
             Message(id: "performance-\(index)", thread: "performance-thread-\(index)",
                     subject: "Synthetic performance message \(index)",

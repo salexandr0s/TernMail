@@ -1,4 +1,4 @@
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import Foundation
 
 /// Synthetic transport controls. Never supplied to a real account or client.

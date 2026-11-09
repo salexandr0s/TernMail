@@ -84,6 +84,56 @@ import Testing
         #expect(labels["m2"]?.contains(SystemLabel.inbox) == true)
     }
 
+    @Test func replyAndForwardAnswerTheMessageTheReaderShows() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = false
+        let older = try #require(mailbox.listItems.first { $0.id.messageID == "m2" })
+        let newer = try #require(mailbox.listItems.first { $0.id.messageID == "m1" })
+        mailbox.selectListRows([older.id])
+        #expect(mailbox.replyTarget == MailLink(accountID: "a", threadID: "t", messageID: "m2"))
+        for kind in [ReplyKind.reply, .replyAll, .forward] {
+            #expect(await mailbox.replyStart(kind) == MailboxModel.ComposeStart.reply(kind, messageID: "m2", accountID: "a"))
+        }
+
+        // Two messages of one conversation leave no single message to answer.
+        mailbox.selectListRows([older.id, newer.id])
+        #expect(mailbox.selectedThreadIDs.count == 1)
+        #expect(!mailbox.canReply)
+        #expect(await mailbox.replyStart(.reply) == nil)
+
+        // A mail link selects the conversation without a row, and the reader shows all of it.
+        mailbox.selectedMessageRows = []
+        #expect(mailbox.replyTarget == MailLink(accountID: "a", threadID: "t"))
+        #expect(await mailbox.replyStart(.reply) == MailboxModel.ComposeStart.reply(.reply, messageID: "m1", accountID: "a"))
+
+        mailbox.listPreferences.conversations = true
+        mailbox.selectListRows([MailListRowID(accountID: "a", threadID: "t")])
+        #expect(mailbox.replyTarget == MailLink(accountID: "a", threadID: "t"))
+        #expect(await mailbox.replyStart(.forward) == MailboxModel.ComposeStart.reply(.forward, messageID: "m1", accountID: "a"))
+    }
+
+    @Test func groupingChangedWithoutTheListMovesTheSearchToGmailsMessages() async throws {
+        let (mailbox, _) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        // No list view is mounted, as when Settings changes the grouping while Calendar is in front.
+        mailbox.selectListRows([MailListRowID(accountID: "a", threadID: "t")])
+        mailbox.search.update("has:attachment")
+        try #require(mailbox.selectedThreadIDs.count == 1)
+        mailbox.listPreferences.conversations = false
+        // Rows chosen under one grouping aren't rows of the other.
+        #expect(mailbox.selectedThreadIDs.isEmpty)
+        try await awaitListState("message mode", details: { "usesMessageMode=\(mailbox.search.usesMessageMode)" }) {
+            mailbox.search.usesMessageMode
+        }
+        mailbox.search.submit()
+        try await awaitListState("Gmail's messages", details: { "gmail=\(mailbox.search.gmailState)" }) {
+            mailbox.search.gmailState == .finished
+        }
+        // Only messages.list says which message of the conversation has the attachment.
+        #expect(mailbox.search.matchingMessageIDs == ["a": ["m3"]])
+    }
+
     @Test func quickFiltersAndCategoryTabsApplyToEachMessageWithoutRemovingItsSibling() async throws {
         let (mailbox, _) = try await fixture()
         defer { Task { await mailbox.stop() } }
@@ -274,11 +324,15 @@ import Testing
         ], fallback: "Original participants")
         #expect(names.compact == "Doe, Jane, Sam, +2 more")
         #expect(names.full == "\"Doe, Jane\" <jane@example.com>, Sam <sam@example.com>, Rowan <rowan@example.com>, Casey <casey@example.com>")
-        for malformed in ["Sam <sam@example.com>, missing address", "alex@work.example alex@personal.example"] {
-            let presentation = MessageListParticipants(headers: [malformed], fallback: "Original participants")
-            #expect(presentation.compact == "Original participants")
-            #expect(presentation.full == malformed)
-        }
+        let malformed = "Sam <sam@example.com>, missing address"
+        let presentation = MessageListParticipants(headers: [malformed], fallback: "Original participants")
+        #expect(presentation.compact == "Original participants")
+        #expect(presentation.full == malformed)
+        // Addresses with only a space between them are two participants, as in compose.
+        let spaced = "alex@work.example alex@personal.example"
+        let separated = MessageListParticipants(headers: [spaced], fallback: "Original participants")
+        #expect(separated.compact == "alex@work.example, alex@personal.example")
+        #expect(separated.full == spaced)
         let namedAddress = "\"Team @ Work\" <team@work.example>"
         let conservative = MessageListParticipants(headers: [namedAddress], fallback: "Team @ Work")
         #expect(conservative.compact == "Team @ Work")
@@ -450,7 +504,7 @@ import Testing
         #expect(mailbox.listProjection.preparationCount > preparations)
     }
 
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     @Test func nativeSelectionUpdatesRealizedRowsWithoutRebuildingTheListContent() async throws {
         let (mailbox, cache) = try await fixture()
         defer { Task { await mailbox.stop() } }
@@ -1195,7 +1249,7 @@ import Testing
     }
 }
 
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 private struct SelectionMailColumns: View {
     let mailbox: MailboxModel
     @State private var columnVisibility = NavigationSplitViewVisibility.all

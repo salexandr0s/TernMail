@@ -24,9 +24,15 @@ extension CalendarModel {
         get { workingHours.weekdays }
         set { workingHours.weekdays = newValue.intersection(1...7) }
     }
+    /// The zone the calendar shows. Setting it chooses that zone.
     var timeZoneID: String {
-        get { workingHours.timeZoneIdentifier }
-        set { workingHours.timeZoneIdentifier = newValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+        get { calendar.timeZone.identifier }
+        set { workingHours.timeZoneOverride = newValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+    /// Turning this off keeps the Mac's current zone until another is chosen.
+    var usesSystemTimeZone: Bool {
+        get { workingHours.timeZoneOverride == nil }
+        set { workingHours.timeZoneOverride = newValue ? nil : systemTimeZone.identifier }
     }
 
     func createCalendar(accountID: String, title: String) async throws {
@@ -59,8 +65,8 @@ extension CalendarModel {
 
     private func managementClient(accountID: String) throws -> CalendarManagementClient {
         guard let service = services[accountID] else { throw CalendarModelError.unavailable }
-#if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar"), service is CalendarAuditService {
+#if TERN_TEST_SUPPORT
+        if launchMode.audit.calendar, service is CalendarAuditService {
             return CalendarManagementClient(service: service, requireAccess: { _ in })
         }
 #endif

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The section switcher after the sidebar button, in the same place in Mail,
-/// Calendar and Attachments, with all sections visible at every window width.
+/// Calendar, Attachments, Waiting for and Today, with all sections visible at every window width.
 struct WorkspaceSectionToolbar: CustomizableToolbarContent {
     let section: WorkspaceSection
     let onSelect: (WorkspaceSection) -> Void
@@ -22,8 +22,8 @@ struct WorkspaceSectionToolbar: CustomizableToolbarContent {
         }
         .pickerStyle(.segmented)
         .labelStyle(.iconOnly)
-        .help("Show Mail (\(ShortcutCatalog.goMail.label)), Calendar (\(ShortcutCatalog.goCalendar.label)) "
-            + "or Attachments (\(ShortcutCatalog.goAttachments.label))")
+        .help("Show Mail (\(ShortcutCatalog.goMail.label)), Calendar (\(ShortcutCatalog.goCalendar.label)), "
+            + "Attachments (\(ShortcutCatalog.goAttachments.label)), Waiting for, or Today")
         .accessibilityLabel("Section")
         .accessibilityValue(section.title)
     }

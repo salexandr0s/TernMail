@@ -45,7 +45,11 @@ persistence and identify that earlier origin separately in the report.
 Run `bash scripts/benchmark-navigation.sh 100`, then repeat with `1000`. This builds
 an optimized app with the separate identifier `dev.tern.performance`, an opt-in
 `TERN_PERFORMANCE` compilation condition, synthetic accounts, and in-memory stores.
-Normal Release builds contain no synthetic audit entry point. The script reports
+The script passes the identifier as `TERN_APP_BUNDLE_IDENTIFIER`, which also
+sets the host ID that the embedded Claude helper accepts. A `TERN_PERFORMANCE`
+build stops at launch if its bundle ID is `dev.tern.mail`. Debug and Release
+builds contain no synthetic audit entry point: a Debug app stops when it gets an
+audit or benchmark flag, and Release ignores those flags. The script reports
 the JSON output path. It requests normal termination, then uses a bounded fallback
 only for the synthetic process it launched if termination hangs. The process
 report records whether graceful exit succeeded. This does not verify the normal
@@ -56,7 +60,7 @@ locally stored message selection, and sustained scrolling. Reports retain failur
 timeouts separately from successful percentiles. A scenario with missing content
 or missing visibility probes must not be reported as passing.
 
-For a normal Release launch, `--navigation-report=<absolute-path>` enables a
+For a normal Debug or Release launch, `--navigation-report=<absolute-path>` enables a
 local JSON report. Use a writable location in the app's container, such as
 `~/Library/Containers/dev.tern.mail/Data/tmp/navigation.json` (expand `~` before
 passing it). Reports are bounded and written at most once per second; normal

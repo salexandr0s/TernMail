@@ -126,7 +126,7 @@ final class AssistantWritingStyleModel {
                 text = "Not enough usable writing in \(count ?? 0) sent messages."
                 if record != nil { text += " The previous profile is still available." }
             } else if let record { state = .ready; text = "Learned from \(record.profile.sampleCount) sent messages." }
-            else if modelID == nil { state = .waiting; text = "Connect ChatGPT and choose a model to learn this style." }
+            else if modelID == nil { state = .waiting; text = "Connect an AI provider and choose a model to learn this style." }
             else { state = .queued; text = "Waiting to learn this account's style…" }
             return AssistantWritingStyleEntry(id: account.id, email: account.email, displayName: account.displayName,
                 state: state, statusText: text, sampleCount: count, learnedAt: record?.profile.profiledAt,
@@ -181,7 +181,7 @@ final class AssistantWritingStyleModel {
         startIfNeeded()
     }
 
-    /// Nil model means ChatGPT is unavailable. That cancels work while retaining
+    /// Nil model means inference is unavailable. That cancels work while retaining
     /// local profiles; an unready account list never prunes stored preferences.
     func refresh(accounts: [AssistantWritingStyleAccount], accountListReady: Bool,
                  connectionRevision: Int, modelID: String?) {

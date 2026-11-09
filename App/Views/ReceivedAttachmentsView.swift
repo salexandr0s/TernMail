@@ -2,6 +2,7 @@ import AppKit
 import MailStore
 import QuickLook
 import SwiftUI
+import SyncEngine
 import UniformTypeIdentifiers
 
 /// A received message's files. Clicking one opens it in Quick Look, where the
@@ -37,8 +38,10 @@ struct ReceivedAttachmentsView: View {
             }
             FlowLayout(spacing: Tokens.Space.s2) {
                 ForEach(attachments) { attachment in
+                    // The name the file gets on disk, which can't hide its real extension.
+                    let name = SyncEngine.safeFilename(attachment.filename)
                     AttachmentChip(
-                        filename: attachment.filename,
+                        filename: name,
                         size: attachment.size,
                         isLoading: downloads.isRunning(attachment.id),
                         open: { preview(attachment) }
@@ -52,8 +55,8 @@ struct ReceivedAttachmentsView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
-                        .help("Save \(attachment.filename)")
-                        .accessibilityLabel("Save \(attachment.filename)")
+                        .help("Save \(name)")
+                        .accessibilityLabel("Save \(name)")
                     }
                     .overlay {
                         if attachment.partID == selectedPartID {
@@ -76,7 +79,7 @@ struct ReceivedAttachmentsView: View {
                             Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([saved]) }
                         }
                         Button("Copy", systemImage: "doc.on.doc") { act(attachment) { AttachmentActions.copy($0) } }
-                        ShareLink(item: AttachmentFileItem(attachment: attachment, mailbox: mailbox), preview: SharePreview(attachment.filename))
+                        ShareLink(item: AttachmentFileItem(attachment: attachment, mailbox: mailbox), preview: SharePreview(name))
                     }
                     .disabled(downloads.isRunning(attachment.id))
                 }
@@ -120,7 +123,11 @@ struct ReceivedAttachmentsView: View {
         Task {
             guard let file = await download(attachment) else { return }
             do { try await operation(file) }
-            catch { mailbox.notice = MailboxModel.Notice(message: "Couldn't open or save “\(attachment.filename)”. Try again.", isError: true) }
+            catch is CancellationError {}
+            catch {
+                let name = SyncEngine.safeFilename(attachment.filename)
+                mailbox.notice = MailboxModel.Notice(message: "Couldn't open or save “\(name)”. Try again.", isError: true)
+            }
         }
     }
 
@@ -161,6 +168,6 @@ struct AttachmentFileItem: Transferable {
             guard let file = await item.mailbox.download(item.attachment) else { throw CocoaError(.fileNoSuchFile) }
             return SentTransferredFile(file)
         }
-        .suggestedFileName { $0.attachment.filename }
+        .suggestedFileName { SyncEngine.safeFilename($0.attachment.filename) }
     }
 }

@@ -2,6 +2,7 @@ import AppAuth
 import AppAuthCore
 import Foundation
 import GmailAPI
+import MailStore
 import Testing
 @testable import Tern
 
@@ -149,6 +150,68 @@ import Testing
         }
     }
 
+    @Test func addAccountKeepsAnAddedAccountsSessionUnlessTheGrantKeepsItsFeatures() {
+        func account(_ features: Set<AccountFeature>, isWorkspace: Bool) -> AccountRecord {
+            AccountRecord(id: "synthetic-subject", email: "synthetic@example.com", displayName: nil,
+                grantedScopes: GoogleScopes.request(features: features, isWorkspace: isWorkspace),
+                addedAt: Date(timeIntervalSince1970: 1_700_000_000), hostedDomain: isWorkspace ? "example.com" : nil,
+                enabledFeatures: AccountFeature.names(of: features))
+        }
+        // What Add Account asks for, since it doesn't know the account yet.
+        let addAccountGrant = GoogleScopes.request(features: GoogleScopes.initialFeatures, isWorkspace: false)
+        #expect(AppModel.addAccountReplacesSession(of: account([.contacts], isWorkspace: false), granted: addAccountGrant))
+        let calendar = account([.contacts, .calendar], isWorkspace: false)
+        #expect(!AppModel.addAccountReplacesSession(of: calendar, granted: addAccountGrant))
+        #expect(AppModel.addAccountReplacesSession(of: calendar, granted: calendar.grantedScopes))
+        // Contacts is covered without the directory, but the account would stop searching it.
+        let workspace = account([.contacts], isWorkspace: true)
+        #expect(!AppModel.addAccountReplacesSession(of: workspace, granted: addAccountGrant))
+        #expect(AppModel.addAccountReplacesSession(of: workspace, granted: workspace.grantedScopes))
+    }
+
+    @Test func aFailedRefreshReusesTheOldTokenOnlyWhileItIsUnexpiredAndNotRejected() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let valid = now.addingTimeInterval(600)
+        let timedOut = NSError(domain: OIDGeneralErrorDomain, code: OIDErrorCode.networkError.rawValue,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)])
+        let unavailable = NSError(domain: OIDGeneralErrorDomain, code: OIDErrorCode.serverError.rawValue,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: OIDHTTPErrorDomain, code: 503)])
+        #expect(try AccountSession.usableToken("new", error: nil, expiresAt: valid, rejected: "old", now: now) == "new")
+        #expect(try AccountSession.usableToken("old", error: timedOut, expiresAt: valid, rejected: nil, now: now) == "old")
+        #expect(throws: GmailError.transport(.timedOut)) {
+            try AccountSession.usableToken("old", error: timedOut, expiresAt: now, rejected: nil, now: now)
+        }
+        #expect(throws: GmailError.transport(.badServerResponse)) {
+            try AccountSession.usableToken("old", error: unavailable, expiresAt: valid, rejected: "old", now: now)
+        }
+    }
+
+    @Test func grantFailuresPassThroughAFailedRefresh() {
+        let invalidGrant = NSError(domain: OIDOAuthTokenErrorDomain, code: OIDErrorCodeOAuth.invalidGrant.rawValue)
+        let noRefreshToken = NSError(domain: OIDGeneralErrorDomain, code: OIDErrorCode.tokenRefreshError.rawValue)
+        for error in [invalidGrant, noRefreshToken] {
+            let thrown = #expect(throws: (any Error).self) {
+                try AccountSession.usableToken("old", error: error, expiresAt: .distantFuture, rejected: nil, now: .now)
+            }
+            #expect(thrown.map { $0 as NSError } == error)
+        }
+    }
+
+    @Test func revocationSendsTheTokenInAFormBodyAndNeverInTheURL() async throws {
+        let token = "1//synthetic+token/=&"
+        let transport = RevocationTransport()
+        #expect(await GoogleTokenRevocation(transport: transport).revoke(refreshToken: token))
+        let request = try #require(await transport.requests.first)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.absoluteString == "https://oauth2.googleapis.com/revoke")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded")
+        let body = try #require(request.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+        #expect(body == "token=1%2F%2Fsynthetic%2Btoken%2F%3D%26")
+        var form = URLComponents()
+        form.percentEncodedQuery = body
+        #expect(form.queryItems == [URLQueryItem(name: "token", value: token)])
+    }
+
     @Test(arguments: ["http://accounts.google.com/auth", "https://attacker.invalid/auth", "https://accounts.google.com.attacker.invalid/auth", "https://user@accounts.google.com/auth"])
     func browserAdapterRejectsUntrustedAuthorizationEndpoints(_ address: String) throws {
         var opened = false
@@ -176,5 +239,17 @@ import Testing
         if duplicateState, let state { items.append(.init(name: "state", value: state)) }
         components.queryItems = items
         return try #require(components.url)
+    }
+}
+
+/// Keeps each request and answers 200, so nothing reaches Google.
+private actor RevocationTransport: HTTPTransport {
+    private(set) var requests: [URLRequest] = []
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        let url = try #require(request.url)
+        let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (Data(), response)
     }
 }

@@ -9,6 +9,7 @@ import Testing
         #expect(parsed.to.map(\.address) == ["one+tag@example.com"])
         #expect(parsed.cc.map(\.address) == ["two@example.com"])
         #expect(parsed.bcc.map(\.address) == ["three@example.com"])
+        #expect((parsed.to + parsed.cc + parsed.bcc).allSatisfy { $0.origin == .link })
         #expect(parsed.subject == "Grüße+heute")
         #expect(parsed.body == "First\nSecond")
     }

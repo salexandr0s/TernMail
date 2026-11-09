@@ -11,6 +11,8 @@ import Testing
     private let mailOwner = NSObject()
     private let calendarOwner = NSObject()
     private let attachmentOwner = NSObject()
+    private let followUpsOwner = NSObject()
+    private let todayOwner = NSObject()
 
     @Test
     func switchingSourcesPreservesFieldWithoutRequestingFocus() async throws {
@@ -48,9 +50,25 @@ import Testing
         await settle(host)
         #expect(window.searchFocusRequests > calendarRequests)
         let attachmentRequests = window.searchFocusRequests
-        host.rootView = item(section: .mail, request: 1, text: "mail query")
+        host.rootView = item(section: .followUps, request: 0, text: "follow-up query")
         await settle(host)
         #expect(window.searchFocusRequests == attachmentRequests)
+        #expect(field.stringValue == "follow-up query")
+        host.rootView = item(section: .followUps, request: 1, text: "follow-up query")
+        await settle(host)
+        #expect(window.searchFocusRequests > attachmentRequests)
+        let followUpsRequests = window.searchFocusRequests
+        host.rootView = item(section: .today, request: 0, text: "today query")
+        await settle(host)
+        #expect(window.searchFocusRequests == followUpsRequests)
+        #expect(field.stringValue == "today query")
+        host.rootView = item(section: .today, request: 1, text: "today query")
+        await settle(host)
+        #expect(window.searchFocusRequests > followUpsRequests)
+        let todayRequests = window.searchFocusRequests
+        host.rootView = item(section: .mail, request: 1, text: "mail query")
+        await settle(host)
+        #expect(window.searchFocusRequests == todayRequests)
         #expect(searchFields(in: host).first === field)
         #expect(field.stringValue == "mail query")
         #expect(!window.isVisible && !window.isKeyWindow)
@@ -119,16 +137,20 @@ import Testing
             listPreferences: MessageListPreferences(defaults: defaults))
         let calendar = CalendarModel(app: nil, defaults: defaults)
         let library = AttachmentLibraryToolbarState()
+        let followUps = FollowUpsModel(app: nil)
+        let today = TodayModel(app: nil)
         for section in WorkspaceSection.allCases {
             let toolbar = WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar,
-                libraryToolbar: library, section: section)
+                libraryToolbar: library, followUps: followUps, today: today, section: section)
             let content = WorkspaceSearchContent(mailbox: mailbox, calendar: calendar,
-                libraryToolbar: library, section: section)
+                libraryToolbar: library, followUps: followUps, today: today, section: section)
             let textCount = invalidations(parent: { _ = toolbar.body }, leaf: { _ = content.body }) {
                 switch section {
                 case .mail: mailbox.search.update("synthetic")
                 case .calendar: calendar.searchText = "synthetic"
                 case .attachments: library.searchText = "synthetic"
+                case .followUps: followUps.searchText = "synthetic"
+                case .today: today.searchText = "synthetic"
                 }
             }
             #expect(textCount.parent == 0)
@@ -138,6 +160,8 @@ import Testing
                 case .mail: mailbox.search.focusField()
                 case .calendar: calendar.searchFocusRequest += 1
                 case .attachments: library.searchFocusRequest += 1
+                case .followUps: followUps.searchFocusRequest += 1
+                case .today: today.searchFocusRequest += 1
                 }
             }
             #expect(focusCount.parent == 0)
@@ -155,6 +179,8 @@ import Testing
         case .mail: mailOwner
         case .calendar: calendarOwner
         case .attachments: attachmentOwner
+        case .followUps: followUpsOwner
+        case .today: todayOwner
         }
         return WorkspaceSearchItem(placeholder: "Search \(section.rawValue)", text: text,
             focusRequest: .init(section: section, owner: owner ?? defaultOwner, generation: request),

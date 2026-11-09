@@ -213,7 +213,9 @@ enum MIMEReader {
                 }
                 bytes += percentDecoded(value)
             }
-            result[name] = MIMEParts.decode(bytes, charset: charset ?? "utf-8")
+            // A blank charset declares nothing, so bytes that aren't valid
+            // UTF-8 read as Windows-1252 rather than as U+FFFD.
+            result[name] = MIMEParts.decode(bytes, charset: charset)
         }
         return result
     }

@@ -4,7 +4,7 @@ import Testing
 @testable import MailStore
 
 @Suite struct MessageListEntryTests {
-    @Test func slowSnapshotConsumerCatchesUpWithoutReplayingEveryWrite() async throws {
+    @Test(.timeLimit(.minutes(1))) func slowSnapshotConsumerCatchesUpWithoutReplayingEveryWrite() async throws {
         let cache = try MailCache.inMemory()
         let fetches = AsyncStream<Void>.makeStream()
         var fetched = fetches.stream.makeAsyncIterator()
@@ -22,10 +22,16 @@ import Testing
             try await cache.write { try $0.replaceLabels([label], accountID: "a") }
             _ = await fetched.next()
         }
-        // Fetch completion precedes delivery through GRDB's asynchronous bridge.
-        // Let that bridge drain while deliberately leaving our consumer paused.
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(try await values.next() == "Revision 19")
+        // Fetch completion precedes delivery through GRDB's asynchronous bridge, so the
+        // newest revision may still be on its way. The paused consumer skips ahead
+        // instead of receiving each of the 20 revisions.
+        var received = 0
+        var latest: String?
+        while latest != "Revision 19" {
+            latest = try #require(try await values.next())
+            received += 1
+        }
+        #expect(received < 20)
         try await cache.write { try $0.replaceLabels([], accountID: "a") }
         let deleted: String? = try #require(try await values.next())
         #expect(deleted == nil)

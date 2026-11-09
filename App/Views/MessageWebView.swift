@@ -64,7 +64,7 @@ struct MessageWebView: NSViewRepresentable {
             configuration.userContentController.add(blocker)
         }
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         ReaderLayoutDiagnostics.shared?.register(view)
         #endif
         NavigationPerformance.shared.increment(.webViewCreated)
@@ -106,7 +106,7 @@ struct MessageWebView: NSViewRepresentable {
     static func dismantleNSView(_ view: ContentSizedWebView, coordinator: Coordinator) {
         NavigationPerformance.shared.increment(.webViewDestroyed)
         coordinator.setActive(false, in: view)
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .dismantle)
         #endif
         coordinator.onDismantle(view)
@@ -211,7 +211,7 @@ struct MessageWebView: NSViewRepresentable {
             (view.configuration.urlSchemeHandler(forURLScheme: RemoteImageResourceURL.scheme) as? RemoteImageHandler)?
                 .setActive(active)
             (view as? ContentSizedWebView)?.setReaderActive(active)
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             if let view = view as? ContentSizedWebView {
                 ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .activation,
                     documentRevision: revision, active: active, readable: reportedReadable,
@@ -266,7 +266,7 @@ struct MessageWebView: NSViewRepresentable {
             revision += 1
             reportedReadable = false
             needsHeightReport = true
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             if let view = view as? ContentSizedWebView {
                 ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .load,
                     documentRevision: revision, active: isActive, readable: false)
@@ -353,7 +353,7 @@ struct MessageWebView: NSViewRepresentable {
                   let value = message.body as? [String: Any],
                   (value["revision"] as? NSNumber)?.intValue == revision,
                   let measured = (value["height"] as? NSNumber)?.doubleValue else { return }
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             acceptHeightWithDiagnostics(measured, in: message.webView, source: .script, requestEpoch: nil)
             #else
             acceptHeight(measured)
@@ -375,7 +375,7 @@ struct MessageWebView: NSViewRepresentable {
             return (previous, published)
         }
 
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         private func acceptHeightWithDiagnostics(_ measured: Double, in webView: WKWebView?,
                                                  source: ReaderLayoutDiagnostics.HeightSource,
                                                  requestEpoch: ReaderLayoutDiagnostics.Epoch?) {
@@ -395,7 +395,7 @@ struct MessageWebView: NSViewRepresentable {
 /// reflow the message and change its height, and gives links their own
 /// context menu.
 final class ContentSizedWebView: WKWebView {
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     var readerLayoutState: ReaderLayoutDiagnostics.RendererState?
     #endif
     var onWidthChange: (() -> Void)?
@@ -532,13 +532,13 @@ final class ContentSizedWebView: WKWebView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         let oldSize = frame.size
         #endif
         let scale = window?.backingScaleFactor ?? 2
         let widthChanged = (newSize.width * scale).rounded() != (frame.width * scale).rounded()
         super.setFrameSize(newSize)
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         ReaderLayoutDiagnostics.shared?.recordRenderer(self, phase: .frame, widthChanged: widthChanged,
                                                        oldFrame: oldSize, proposedFrame: newSize)
         #endif

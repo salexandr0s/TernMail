@@ -13,7 +13,7 @@ GOOGLE_CLIENT_ID = $(GOOGLE_CLIENT_ID_PREFIX).apps.googleusercontent.com
 GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.$(GOOGLE_CLIENT_ID_PREFIX)
 
 // Local builds fall back to ad-hoc signing when no certificate is configured.
-// Both the app and hosted tests use these values in Debug and Release.
+// Every target uses these values in every configuration.
 TERN_CODE_SIGN_IDENTITY = -
 TERN_DEVELOPMENT_TEAM =
 

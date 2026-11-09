@@ -26,16 +26,23 @@ import Testing
         defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
         app.destination = .calendar
 
-        func calendarSplit() throws -> NSSplitView {
-            let splits = descendants(in: controller.view).compactMap { $0 as? NSSplitView }.filter { split in
+        func calendarSplits() -> [NSSplitView] {
+            descendants(in: controller.view).compactMap { $0 as? NSSplitView }.filter { split in
                 split.isVertical && !descendants(in: split).contains { $0 is MailColumnProbe.ProbeView }
             }
+        }
+
+        func calendarSplit() throws -> NSSplitView {
+            let splits = calendarSplits()
             try #require(splits.count == 1)
             return try #require(splits.first)
         }
 
         func expectBoundary() async throws {
-            try await settle()
+            try await settleSidebar(panes: window.frame.width < Tokens.Calendar.compactWidth ? 1 : 2) {
+                let splits = calendarSplits()
+                return splits.count == 1 ? splits.first : nil
+            }
             let split = try calendarSplit()
             if window.frame.width < Tokens.Calendar.compactWidth {
                 #expect(split.arrangedSubviews.count == 1)
@@ -107,7 +114,7 @@ import Testing
         }
 
         func expectBoundary(_ split: NSSplitView, showsSidebar: Bool = true) async throws {
-            try await settle()
+            try await settleSidebar(panes: showsSidebar ? 2 : 1) { split }
             #expect(split.window === window)
             try #require(split.arrangedSubviews.count == (showsSidebar ? 2 : 1))
             let firstPane = try #require(split.arrangedSubviews.first)
@@ -875,5 +882,22 @@ import Testing
     private func settle() async throws {
         // Include the sidebar's presentation duration before checking final native columns.
         try await Task.sleep(for: .seconds(Tokens.Motion.slow + Tokens.Motion.fast))
+    }
+
+    /// Settles until the split shows `panes` panes at the window's leading edge and
+    /// keeps the same layout for one more settle, for up to 3 s. Under load a
+    /// sidebar's slide can outlast one settle, and a sidebar that slides back in
+    /// briefly takes extra width when the slide ends, until it gets its saved width back.
+    private func settleSidebar(panes: Int, in split: () -> NSSplitView?) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        var previous: [CGFloat] = []
+        while ContinuousClock.now < deadline {
+            try await settle()
+            guard let split = split() else { previous = []; continue }
+            let layout = [CGFloat(split.arrangedSubviews.count), split.convert(split.bounds, to: nil).minX,
+                          split.arrangedSubviews.first?.frame.width ?? 0]
+            if layout[0] == CGFloat(panes), abs(layout[1]) <= 1, layout == previous { return }
+            previous = layout
+        }
     }
 }

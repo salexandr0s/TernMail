@@ -40,9 +40,7 @@ final class LabelAppearance {
         .init(systemImage: "tray", name: "Inbox")
     ]
 
-    static let shared = LabelAppearance(
-        persists: !ProcessInfo.processInfo.arguments.contains("--ui-audit")
-    )
+    static let shared = LabelAppearance(persists: !LaunchMode.current.isIsolated)
     static let storageKey = "labelIcons"
 
     private struct Preference: Codable, Equatable, Sendable {

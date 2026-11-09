@@ -202,7 +202,7 @@ import Testing
         #expect(objects.compactMap { ($0 as? RecipientField.Token)?.address } == expected)
     }
 
-    @Test func pastedRecipientsKeepQuotedNamesAndSplitAtNewLines() throws {
+    @Test func pastedRecipientsKeepQuotedNamesAndSplitAtNewLinesAndSpaces() throws {
         var addresses: [EmailAddress] = []
         let recipient = RecipientField(label: "To", addresses: .init(get: { addresses }, set: { addresses = $0 }),
                                        requestsFocus: .constant(false), isEditable: true) { _ in [] }
@@ -221,10 +221,14 @@ import Testing
         paste("carol@example.com\ndan@example.com")
         let lines = [EmailAddress(address: "carol@example.com"), EmailAddress(address: "dan@example.com")]
         #expect(addresses == pasted + lines)
+        // Addresses with only a space or tab between them are each a recipient.
+        paste("gus@example.com hal@example.com\tivy@example.com")
+        let spaced = ["gus", "hal", "ivy"].map { EmailAddress(address: "\($0)@example.com") }
+        #expect(addresses == pasted + lines + spaced)
         // Text that skipped the tokenizer still splits when editing ends.
         editor.insertText("erin@example.com, fay@example.com", replacementRange: editor.selectedRange())
         window.makeFirstResponder(nil)
-        let expected = pasted + lines + [EmailAddress(address: "erin@example.com"), EmailAddress(address: "fay@example.com")]
+        let expected = pasted + lines + spaced + [EmailAddress(address: "erin@example.com"), EmailAddress(address: "fay@example.com")]
         #expect(addresses == expected)
         let objects = try #require(field.objectValue as? [Any])
         #expect(objects.count == expected.count)
@@ -261,6 +265,25 @@ import Testing
         #expect(addresses == [named, plain])
         let objects = try #require(field.objectValue as? [Any])
         #expect(objects.compactMap { ($0 as? RecipientField.Token)?.address } == [named, plain])
+    }
+
+    @Test func tokensShowAndHelpWithTheAddressBehindANameThatLooksLikeOne() throws {
+        let spoof = EmailAddress(name: "support@bank.example", address: "attacker@evil.example")
+        let plain = EmailAddress(address: "sam@company.invalid")
+        let recipient = RecipientField(label: "To", addresses: .constant([spoof, plain]), requestsFocus: .constant(false), isEditable: true) { _ in [] }
+        let coordinator = recipient.makeCoordinator()
+        let (field, editor, window) = try editingField(coordinator, showing: [spoof, plain])
+        defer { coordinator.cancelRequests(); window.close() }
+        let layout = try #require(editor.layoutManager)
+        let container = try #require(editor.textContainer)
+        layout.ensureLayout(for: container)
+        let tokens = try [0, 1].map { index in
+            let frame = layout.boundingRect(forGlyphRange: NSRange(location: index, length: 1), in: container)
+                .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+            return try #require(field.token(at: field.convert(NSPoint(x: frame.midX, y: frame.midY), from: editor)) as? RecipientField.Token)
+        }
+        #expect(tokens.map { field.tokenHelp?($0) } == ["\u{2068}support@bank.example\u{2069} <attacker@evil.example>", "sam@company.invalid"])
+        #expect(coordinator.tokenField(field, displayStringForRepresentedObject: tokens[0])?.contains("attacker@evil.example") == true)
     }
 
     /// A field in a window with the cursor in it. `addresses` are its tokens

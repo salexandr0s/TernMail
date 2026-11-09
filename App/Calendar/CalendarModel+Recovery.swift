@@ -46,10 +46,7 @@ extension CalendarModel {
             var occurrence = master
             occurrence.recurringEventId = master.id; occurrence.originalStartTime = start
             occurrence.start = start
-            if let from = master.start?.resolvedDate(), let to = master.end?.resolvedDate(), let date = start.resolvedDate() {
-                occurrence.end = CalendarDateTime(date: date.addingTimeInterval(to.timeIntervalSince(from)),
-                    timeZone: TimeZone(identifier: start.timeZone ?? "") ?? calendar.timeZone, allDay: start.isAllDay)
-            }
+            if let end = occurrenceEnd(startingAt: start, master: master) { occurrence.end = end }
             let source = CalendarDisplayEvent(event: occurrence, accountID: owner.accountID, calendarID: owner.calendarID,
                 canEdit: owner.canWrite, fallbackTimeZoneID: calendar.timeZone.identifier)
             draft = CalendarEditorDraft(event: following, calendarKey: owner.id, source: source)
@@ -60,5 +57,20 @@ extension CalendarModel {
         draft.additionalNotificationRecipients = review.currentEvents.flatMap { ($0.attendees ?? []).map(\.email) }
         draft.operationID = review.id; draft.recovery = review
         return draft
+    }
+
+    /// The occurrence at `start` lasts as long as the series' first event. An
+    /// all-day length counts whole days in the calendar's zone, where the end is
+    /// written, so it neither shifts by a day nor shrinks across a DST change.
+    func occurrenceEnd(startingAt start: CalendarDateTime, master: GoogleCalendarEvent) -> CalendarDateTime? {
+        let zone = calendar.timeZone
+        guard let from = master.start?.resolvedDate(fallbackTimeZone: zone), let to = master.end?.resolvedDate(fallbackTimeZone: zone),
+              let date = start.resolvedDate(fallbackTimeZone: zone) else { return nil }
+        guard start.isAllDay else {
+            return CalendarDateTime(date: date.addingTimeInterval(to.timeIntervalSince(from)),
+                timeZone: TimeZone(identifier: start.timeZone ?? "") ?? zone)
+        }
+        let days = max(1, calendar.dateComponents([.day], from: from, to: to).day ?? 1)
+        return calendar.date(byAdding: .day, value: days, to: date).map { CalendarDateTime(date: $0, timeZone: zone, allDay: true) }
     }
 }

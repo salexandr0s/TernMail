@@ -24,13 +24,17 @@ extension CalendarModel {
         return try await engine.availability(calendarIDs: calendarIDs, start: start, end: end, hours: hours)
     }
 
+    /// Whether `error` means the account can no longer read the calendar. A
+    /// 403 that refuses one request, such as a write that needs more access
+    /// than the calendar grants, leaves it readable.
+    nonisolated static func losesReadAccess(_ error: any Error) -> Bool {
+        if CalendarSyncEngine.revokesAccess(error) { return true }
+        if let google = error as? GmailError { return google == .unauthorized }
+        return error as? CalendarEngineError == .permissionDenied
+    }
+
     func handleCalendarAccessFailure(_ error: any Error, accountID: String, calendarID: String) {
-        let denied: Bool
-        if let google = error as? GmailError {
-            if case .http(status: 403, reason: _) = google { denied = true }
-            else { denied = google == .unauthorized }
-        } else { denied = error as? CalendarEngineError == .permissionDenied }
-        guard denied else { return }
+        guard Self.losesReadAccess(error) else { return }
         let key = CalendarDisplayCalendar.key(accountID: accountID, calendarID: calendarID)
         calendars.removeAll { $0.id == key }
         events.removeAll { $0.calendarKey == key }

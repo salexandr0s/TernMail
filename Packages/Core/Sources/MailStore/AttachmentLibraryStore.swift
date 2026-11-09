@@ -142,10 +142,10 @@ extension CacheTransaction {
             predicates.append(predicate)
             arguments += StatementArguments([argument])
         }
-        for term in AttachmentLibraryItem.searchNormalized(query.search).split(whereSeparator: \.isWhitespace) {
+        for term in SearchFolding.folded(query.search).split(whereSeparator: \.isWhitespace) {
             add("a.searchText LIKE ? ESCAPE '\\'", "%\(Self.libraryLike(String(term)))%")
         }
-        let sender = AttachmentLibraryItem.searchNormalized(query.sender.trimmingCharacters(in: .whitespacesAndNewlines))
+        let sender = SearchFolding.folded(query.sender.trimmingCharacters(in: .whitespacesAndNewlines))
         if !sender.isEmpty { add("a.senderSearch LIKE ? ESCAPE '\\'", "%\(Self.libraryLike(sender))%") }
         if let start = query.startDate { add("a.date >= ?", start) }
         if let end = query.endDate { add("a.date < ?", end) }

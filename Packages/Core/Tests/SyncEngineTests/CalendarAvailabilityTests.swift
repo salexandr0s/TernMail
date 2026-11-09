@@ -31,4 +31,29 @@ import Testing
         #expect(CalendarAvailability.findSlots(start: start, end: end, busy: [], hours: .init(timeZoneIdentifier: "invalid")).isEmpty)
         #expect(CalendarAvailability.findSlots(start: end, end: start, busy: [], hours: .init()).isEmpty)
     }
+
+    @Test func hoursSavedByEarlierVersionsFollowTheMacUnlessTheySavedAnotherZone() throws {
+        let current = TimeZone.current.identifier
+        let other = current == "Pacific/Kiritimati" ? "Europe/Vienna" : "Pacific/Kiritimati"
+        func saved(zone: String) throws -> CalendarWorkingHours {
+            try JSONDecoder().decode(CalendarWorkingHours.self, from: Data(#"""
+                {"weekdays":[2,4],"startMinute":480,"endMinute":960,"durationMinutes":45,"stepMinutes":15,"timeZoneIdentifier":"\#(zone)"}
+                """#.utf8))
+        }
+        let following = try saved(zone: current)
+        #expect(following == CalendarWorkingHours(weekdays: [2, 4], startMinute: 480, endMinute: 960, durationMinutes: 45))
+        #expect(following.timeZoneOverride == nil)
+        #expect(try saved(zone: other).timeZoneOverride == other)
+        #expect(try saved(zone: "Invalid/Zone").timeZoneOverride == nil)
+    }
+
+    @Test func followingTheMacAndAChosenZoneSurviveSaving() throws {
+        let following = CalendarWorkingHours()
+        #expect(following.timeZoneIdentifier == TimeZone.current.identifier)
+        // A chosen zone stays chosen even when it is also the Mac's zone.
+        for hours in [following, CalendarWorkingHours(timeZoneIdentifier: "Europe/Vienna"),
+                      CalendarWorkingHours(timeZoneIdentifier: TimeZone.current.identifier)] {
+            #expect(try JSONDecoder().decode(CalendarWorkingHours.self, from: JSONEncoder().encode(hours)) == hours)
+        }
+    }
 }

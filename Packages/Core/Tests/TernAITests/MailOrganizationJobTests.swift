@@ -62,6 +62,12 @@ import Testing
         #expect(catalogue.filter { $0["type"] == .string("rule") }.count == 1)
         #expect(requests.allSatisfy { !$0.instructions.contains("IGNORE ALL RULES") && $0.tools.isEmpty })
         #expect(try requests.allSatisfy { try ChatGPTProvider.requestBody($0).count <= ChatGPTProvider.maximumRequestBytes })
+        // Jobs run on whichever assistant provider is selected, so each request must encode for Claude too.
+        for request in requests {
+            _ = try AnthropicRequest.encode(request)
+            _ = try ClaudeCLIRequestEncoder.encode(AIRequest(model: "sonnet", input: request.input,
+                instructions: request.instructions, tools: request.tools, responseSchema: request.responseSchema))
+        }
     }
 
     @Test(arguments: ["mixed", "correspondence", "unavailableRules"])

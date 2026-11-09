@@ -27,7 +27,7 @@ struct MailColumnProbe: NSViewRepresentable {
         weak var toolbarInset: ClippedSplitToolbarInset?
         var pane = AssistantMailPaneSizing.Pane.navigation
         var isPresented = false
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT
         private(set) var windowAttachmentCount = 0
         private(set) var windowDetachmentCount = 0
         private(set) var superviewMoveCount = 0
@@ -35,12 +35,12 @@ struct MailColumnProbe: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT
             if window == nil { windowDetachmentCount += 1 } else { windowAttachmentCount += 1 }
             #endif
             attach()
         }
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT
         override func viewDidMoveToSuperview() {
             super.viewDidMoveToSuperview()
             superviewMoveCount += 1

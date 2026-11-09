@@ -144,6 +144,44 @@ import Testing
         #expect(mailbox.notice?.message.contains("snooze") == true)
     }
 
+    @Test func refusedDropsAndMovesKeepTheSelectionAndSayWhy() async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = false
+        mailbox.selectedMailbox = .account("a", "source")
+        let row = MailListRowID(accountID: "a", threadID: "t", messageID: "m1")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !mailbox.isListPresentationReady || !mailbox.listItems.contains(where: { $0.id == row }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        mailbox.selectListRows([row])
+        try #require(mailbox.selectedListRowIDs == [row])
+        try await cache.write { tx in
+            try tx.holdMessageSnooze(.init(accountID: "a", messageID: "m1", threadID: "t",
+                                          wakeAt: .now.addingTimeInterval(3600), createdAt: .now))
+        }
+
+        // Only the cache knows this message is snoozed, so the check refuses the drop.
+        let drop = mailbox.queueDrop(mailbox.dragItems(for: [row]), on: .account("a", "target"))
+        #expect(mailbox.selectedListRowIDs == [row])
+        await drop?.value
+        #expect(mailbox.selectedListRowIDs == [row])
+        #expect(mailbox.notice?.message.contains("snooze") == true)
+
+        mailbox.notice = nil
+        mailbox.showMoveTo(forRows: [row])
+        await mailbox.move(to: "target")?.value
+        #expect(mailbox.selectedListRowIDs == [row])
+        #expect(mailbox.notice?.message.contains("snooze") == true)
+        #expect(try await cache.read { try $0.pendingActions(accountID: "a").isEmpty })
+
+        // A drop of mail the cache no longer has says so.
+        await mailbox.queueDrop([drag(account: "a", message: "gone", source: "source")], on: .account("a", "target"))?.value
+        #expect(mailbox.notice?.isError == true)
+        #expect(mailbox.notice?.message == "This mail is no longer available.")
+    }
+
     private func drag(account: String, message: String, source: String) -> ConversationDragItem {
         ConversationDragItem(MailLink(accountID: account, threadID: "t", messageID: message), sourceLabelID: source)
     }

@@ -31,7 +31,7 @@ struct CalendarTimeGrid: View {
     /// scroll replaces the point, so the grid is never pulled back to it.
     @State private var hourScroll: ScrollPosition
 
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT
     static var onBodyEvaluation: ((CalendarTimeGrid) -> Void)?
     #endif
 
@@ -65,7 +65,7 @@ struct CalendarTimeGrid: View {
     }
 
     var body: some View {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT
         let _ = Self.onBodyEvaluation?(self)
         #endif
         let axis = timeAxis

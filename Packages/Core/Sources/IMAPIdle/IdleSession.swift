@@ -23,7 +23,8 @@ public struct IdleSession: Sendable {
         case reconnect(Reconnect)
         /// The server lacks XOAUTH2 or IDLE, so trying again won't help.
         case unsupported
-        /// Sign-in failed twice, the second time with a refreshed token.
+        /// The server rejected the credentials twice, the second time with a
+        /// refreshed token.
         case authenticationFailed
     }
 
@@ -207,8 +208,14 @@ public struct IdleSession: Sendable {
             let next = nextTag()
             state = .postAuthCapability(tag: next)
             return [.send(Self.line("\(next) CAPABILITY")), .startTimer(.reply, after: Self.replyTimeout)]
-        case (.authenticating(let expected, let attempt, _), .tagged(let tag, _, _)) where tag == expected:
+        case (.authenticating(let expected, let attempt, _), .tagged(let tag, let status, let code)) where tag == expected:
             pendingCredentials = nil
+            // Only a NO without a code, or with RFC 5530's AUTHENTICATIONFAILED,
+            // rejects the credentials. Other refusals, such as [UNAVAILABLE] or
+            // [LIMIT], can pass, so the session backs off and tries again.
+            guard status == .no, code == nil || code?.name == "AUTHENTICATIONFAILED" else {
+                return close(.reconnect(afterBackoff(at: now)))
+            }
             guard attempt == 1 else { return close(.authenticationFailed) }
             // The token may have been revoked or about to expire.
             state = .waitingForToken(attempt: 2)

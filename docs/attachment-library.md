@@ -69,7 +69,7 @@ Coverage is per account. The footer distinguishes preparation, historical backfi
 
 Preview uses macOS Quick Look. PDF, common image, and text previews use the system's support; other document and media formats depend on the running macOS version and installed preview extensions. Quick Look can show a generic file view when it cannot render contents. The context menu also offers Open, Open With…, Save…, Copy, Share, Open Conversation in New Window, and Show in Finder for copies Tern saved. Files drag out to Finder, Compose, and other apps; a drag that starts on a selected file carries the whole selection, and each file downloads only when the receiver asks for it. A missing default application produces an error with a save-to-Finder fallback.
 
-Space previews the selected file, and Quick Look pages through the selection; Return and double-click open it. List selection follows native macOS behavior. Cards support arrows, Command-click, Shift-click, and select-all within the current page. Named accessibility actions expose Open, Quick Look, Save, Show in Finder for saved copies, and Open Conversation in New Window. Multiple selected files can be saved to one chosen folder. Exports append numeric suffixes on collisions and preserve separate email occurrences. A single-file save uses the native replacement confirmation and an atomic write. Failed bulk exports retain failed items for retry.
+Space previews the selected file, and Quick Look pages through the selection; Return and double-click open it. Opening an app, script or other file that runs code asks first. List selection follows native macOS behavior. Cards support arrows, Command-click, Shift-click, and select-all within the current page. Named accessibility actions expose Open, Quick Look, Save, Show in Finder for saved copies, and Open Conversation in New Window. Multiple selected files can be saved to one chosen folder. Exports append numeric suffixes on collisions and preserve separate email occurrences. A single-file save uses the native replacement confirmation and an atomic write. Failed bulk exports retain failed items for retry.
 
 Open Conversation in New Window loads the complete originating conversation and opens it in the standard conversation window with the message selected. It works for an old thread outside the current list page and for Spam or Trash, without changing the library's filters. Source hydration uses the existing cache hold so regular cache pruning cannot discard it during opening.
 
@@ -110,15 +110,15 @@ Run from the repository root:
 swift test --package-path Packages/Core --filter Attachment
 swift test --package-path Packages/Core
 xcodegen generate
-xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug -derivedDataPath build build
-xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug -derivedDataPath build test -only-testing:TernTests/AttachmentLibraryModelTests
+xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug-Testing -derivedDataPath build build
+xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug-Testing -derivedDataPath build test -only-testing:TernTests/AttachmentLibraryModelTests
 ```
 
-The debug UI fixture adds 125 files per account, including `Invoice-2024-1042.pdf` from Mira Chen in archived mail roughly two years old. It supplies a valid synthetic PDF and paginated provider results without OAuth or real Gmail requests. Launch the built app separately for each appearance:
+The Debug-Testing UI fixture adds 125 files per account, including `Invoice-2024-1042.pdf` from Mira Chen in archived mail roughly two years old. It supplies a valid synthetic PDF and paginated provider results without OAuth or real Gmail requests. Launch the built app separately for each appearance:
 
 ```sh
-open -n build/Build/Products/Debug/Tern.app --args --ui-audit --ui-audit-attachments --ui-audit-light
-open -n build/Build/Products/Debug/Tern.app --args --ui-audit --ui-audit-attachments --ui-audit-dark
+open -n build/Build/Products/Debug-Testing/Tern.app --args --ui-audit --ui-audit-attachments --ui-audit-light
+open -n build/Build/Products/Debug-Testing/Tern.app --args --ui-audit --ui-audit-attachments --ui-audit-dark
 ```
 
 Open Attachments and check both layouts at the normal and minimum window widths. Search for the invoice, filter its sender and account, assign the Invoice category, preview or save the PDF, and use Show Email. Also check keyboard selection, multi-file export with duplicate names, individual filter removal, Clear all, pagination, and the partial-to-complete indexing status. Add `--ui-audit-reauth` to inspect a known expired-account state. The native audit complements the synthetic tests; it does not validate provider behavior against a live Gmail account.

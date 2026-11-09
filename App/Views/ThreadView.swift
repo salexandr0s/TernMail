@@ -96,6 +96,13 @@ struct ThreadView: View {
         return detail
     }
 
+    /// A conversation with a message in Spam never asks a website for an
+    /// icon. This reads the conversation's labels, not the selected mailbox,
+    /// because a reader kept in the background can belong to another mailbox.
+    private var logoLookup: LogoLookup {
+        detail?.messages.contains { $0.labels.contains(SystemLabel.spam) } == true ? .never : .familiarSenders
+    }
+
     /// What the View and File menus can do with the open conversation.
     private var readerActions: ReaderActions? {
         guard let detail = readingDetail else { return nil }
@@ -107,7 +114,8 @@ struct ThreadView: View {
             expandAll: { expanded.formUnion(ids) },
             collapseAll: { expanded.subtract(ids) },
             print: { asPDF in
-                ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, exportsPDF: asPDF) { error in
+                ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, cache: mailbox.cache,
+                                                 exportsPDF: asPDF) { error in
                     if let error { mailbox.notice = .init(message: error, isError: true) }
                 }
             },
@@ -352,6 +360,7 @@ struct ThreadView: View {
 
     private var readerSceneContent: some View {
         conversationContent
+        .logoLookup(logoLookup)
         .disabled(!isReaderActive)
         .background(Tokens.Surface.canvas)
         .background {
@@ -678,7 +687,8 @@ private struct ThreadHeading: View {
     }
 
     private func printConversation(pdf: Bool = false) {
-        ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, exportsPDF: pdf) { error in
+        ConversationPrintController.show(subject: detail.thread.subject, messages: detail.messages, cache: mailbox.cache,
+                                         exportsPDF: pdf) { error in
             if let error { mailbox.notice = .init(message: error, isError: true) }
         }
     }

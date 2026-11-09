@@ -28,11 +28,14 @@ if [ "${TERN_PERFORMANCE_REUSE_BUILD:-0}" = 1 ]; then
     echo 'Reused an existing audit binary; current worktree revision is not asserted as its source revision.' > "$run_dir/build-mode.txt"
 else
     echo 'Built from the recorded current worktree revision and modified paths.' > "$run_dir/build-mode.txt"
+    # TERN_APP_BUNDLE_IDENTIFIER sets the app's bundle ID and the host ID its
+    # helper accepts. A PRODUCT_BUNDLE_IDENTIFIER override would rename the
+    # helper too.
     xcodebuild -project "$task_root/Tern.xcodeproj" -scheme Tern -configuration Release \
     -derivedDataPath "$build_root" \
     -clonedSourcePackagesDirPath "${TERN_SOURCE_PACKAGES_DIR:-$task_root/build/SourcePackages}" \
     -disableAutomaticPackageResolution \
-    "PRODUCT_BUNDLE_IDENTIFIER=$audit_bundle_id" "TERN_BUILD_REVISION=$build_revision" \
+    "TERN_APP_BUNDLE_IDENTIFIER=$audit_bundle_id" "TERN_BUILD_REVISION=$build_revision" \
     'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) TERN_PERFORMANCE' \
     ONLY_ACTIVE_ARCH=YES build > "$build_root/build.log" 2>&1
 fi

@@ -39,7 +39,7 @@ struct ThreadSummaryView: View {
         // Keep task and disclosure ownership stable across loading, source
         // revisions, and availability changes within this conversation.
         VStack(alignment: .leading, spacing: 0) {
-            if Self.isOffered(availability, isRestoring: assistant.connection.isRestoring) {
+            if Self.isOffered(availability, isRestoring: assistant.isRestoringConnection) {
                 if availability == .ready, isActive, let report = displayed?.report(for: identity.source) {
                     ThreadSummaryContent(report: report, detail: detail,
                         isExpanded: $summaryIsExpanded,
@@ -51,6 +51,9 @@ struct ThreadSummaryView: View {
                         onAddTask: { request in
                             app.showTasks()
                             Task { await app.tasks.add(request) }
+                        }, onTrackFollowUp: { suggestion in
+                            guard loadedIdentity == identity, assistant.summaryAvailability(for: key) == .ready else { return }
+                            app.requestFollowUp(suggestion)
                         })
                         .id(identity.source)
                 } else {
@@ -122,6 +125,7 @@ struct ThreadSummaryContent: View {
     var tasks: GoogleTasksModel? = nil
     var taskAccountEmail: String? = nil
     var onAddTask: ((TaskCreationRequest) -> Void)? = nil
+    var onTrackFollowUp: ((FollowUpSuggestionRequest) -> Void)? = nil
 
     private enum Section: String, Hashable { case tasks, decisions }
 
@@ -402,6 +406,19 @@ struct ThreadSummaryContent: View {
                     EmailTaskAddButton(request: EmailTaskRequest.suggestion(task, report: report,
                         detail: detail, accountEmail: taskAccountEmail), model: tasks, onAdd: onAddTask, isCompact: true)
                         .accessibilityIdentifier("summary-task-add-\(index)")
+                }
+                if let onTrackFollowUp,
+                   let request = FollowUpSuggestionRequest.make(task, report: report, detail: detail) {
+                    Button { onTrackFollowUp(request) } label: {
+                        Image(systemName: "clock.badge.checkmark")
+                            .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isRefreshing)
+                    .help("Track Follow-up")
+                    .accessibilityLabel("Track follow-up: \(task.description)")
+                    .accessibilityIdentifier("summary-task-follow-up-\(index)")
                 }
             }
         }

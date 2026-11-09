@@ -28,10 +28,14 @@ import Testing
     }
 
     @Test(.timeLimit(.minutes(1))) func workspaceResizesTasksAndAssistantWithoutLosingInputOrCalendarSpace() async throws {
-        let app = AppModel()
+        // In the calendar audit launch every refresh syncs the sample account. After a regular start,
+        // a refresh on a network change, an account change or app activation would delete the sample
+        // calendars, whose account isn't one of the app's accounts.
+        var launchMode = LaunchMode.current
+        launchMode.audit.calendar = true
+        let app = AppModel(launchMode: launchMode)
         await app.start()
         await app.calendar.start()
-        await app.calendar.seedCalendarAudit()
         let mailbox = try #require(app.mailbox)
         let suite = "DesignCalendarWorkspace-" + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))

@@ -1,13 +1,10 @@
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import Foundation
 
 /// Fictional content for the opt-in README capture. The audit runtime supplies
 /// in-memory stores and services; this flag alone never replaces a live account.
 enum ReadmeDemoFixtures {
-    static var isEnabled: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-audit")
-            && ProcessInfo.processInfo.environment["TERN_README_SCREENSHOTS"] == "1"
-    }
+    static var isEnabled: Bool { LaunchMode.current.audit.readmeDemo }
 
     static let date = Date(timeIntervalSince1970: 1_793_696_400)
 

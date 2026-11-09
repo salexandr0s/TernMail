@@ -10,15 +10,17 @@ struct ThreadListView: View {
     @Namespace private var dragNamespace
     @State private var previewURL: URL?
 
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     /// Scoped by the test to its mailbox; measures row construction, not projection reuse.
     static var onRowContentBuild: ((MailboxModel, MailListRowID) -> Void)?
+    #endif
+    #if TERN_TEST_SUPPORT
     enum BodyPhase { case list, dragSelection }
     static var onBodyBuild: ((MailboxModel, BodyPhase) -> Void)?
     #endif
 
     var body: some View {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT
         let _ = Self.onBodyBuild?(mailbox, .list)
         #endif
         list
@@ -49,14 +51,19 @@ struct ThreadListView: View {
                 listFocused = mailbox.selectedLabelID != MailboxModel.outboxID || mailbox.search.isActive
             }
             .task(id: mailbox.accounts.map(\.account.id)) { await observeAddresses() }
-            .task(id: mailbox.emptyMailboxLoadRequest) { mailbox.loadMoreForEmptyMailbox() }
-            .onChange(of: mailbox.listPreferences.conversations) { _, _ in
-                mailbox.search.setMessageMode(!mailbox.listPreferences.conversations)
-                mailbox.selectedMessageRows = []
-                mailbox.selectedThreadIDs = []
+            // Observations reports the latest request after any burst of changes.
+            // .task(id:) skips a request that changes twice in one frame, which can
+            // leave an empty mailbox waiting for a Gmail page nothing asks for.
+            .task(id: ObjectIdentifier(mailbox)) {
+                for await _ in Observations({ [mailbox] in mailbox.emptyMailboxLoadRequest }) {
+                    mailbox.loadMoreForEmptyMailbox()
+                }
             }
             .onChange(of: mailbox.listProjectionKey) { _, _ in
-                mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(mailbox.listItems.map(\.id)))
+                // A search on its way shows no page yet, so the selection waits for one.
+                if mailbox.isListPresentationReady {
+                    mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(mailbox.listItems.map(\.id)))
+                }
                 if mailbox.listItems.isEmpty, mailbox.search.isActive {
                     mailbox.search.loadMoreResults()
                 }
@@ -253,7 +260,7 @@ private struct MessageListRows: View, Equatable {
         let snoozeAnchor = snoozeDateAnchor(in: rows)
         // Keyed by account too, since thread IDs repeat across accounts.
         ForEach(rows) { row in
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             let _ = ThreadListView.onRowContentBuild?(mailbox, row.id)
             #endif
             MessageListRow(
@@ -354,7 +361,7 @@ private struct MessageListDragSelection: ViewModifier {
     let namespace: Namespace.ID
 
     func body(content: Content) -> some View {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT
         let _ = ThreadListView.onBodyBuild?(mailbox, .dragSelection)
         #endif
         content.dragContainerSelection(Array(mailbox.selectedListRowIDs), containerNamespace: namespace)

@@ -53,6 +53,7 @@ struct MainView: View {
 
     /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
     private var sidebarToggle: SidebarToggle? {
+        guard app.destination != .followUps, app.destination != .today else { return nil }
         guard isActive else { return isCalendarUtilityCompact ? nil : calendarSidebarState?.sidebarToggle }
         if showsLibrary { return libraryToolbar.sidebarToggle }
         return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
@@ -92,6 +93,8 @@ struct MainView: View {
     }
 
     private var section: WorkspaceSection {
+        if app.destination == .today { return .today }
+        if app.destination == .followUps { return .followUps }
         guard isActive else { return .calendar }
         return showsLibrary ? .attachments : .mail
     }
@@ -106,6 +109,10 @@ struct MainView: View {
         case .attachments:
             app.destination = .mail
             mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+        case .followUps:
+            app.destination = .followUps
+        case .today:
+            app.destination = .today
         }
     }
 
@@ -193,8 +200,12 @@ struct MainView: View {
         .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
         .focusedSceneValue(\.mailboxModel, focusedMailbox)
         .focusedSceneValue(\.attachmentLibraryToolbar, focusedLibraryToolbar)
+        .focusedSceneValue(\.followUpsModel,
+            app.destination == .followUps && !isCalendarUtilityCompact ? app.followUps : nil)
+        .focusedSceneValue(\.todayModel,
+            app.destination == .today && !isCalendarUtilityCompact ? app.today : nil)
         .focusedSceneValue(\.sidebarToggle, sidebarToggle)
-        .focusedValue(\.calendarWorkspaceHasFocus, !isActive)
+        .focusedValue(\.calendarWorkspaceHasFocus, app.destination == .calendar)
     }
 
     private var workspaceLifecycle: some View {
@@ -242,6 +253,7 @@ struct MainView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { workspaceWidth = $0 }
         .toolbar(id: toolbarIdentifier) {
             WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
+                followUps: app.followUps, today: app.today,
                 accounts: app.accountPreferences, section: section, width: workspaceWidth, sidebar: sidebarToggle,
                 onSelect: show, onNewMessage: newMessage, onReply: reply,
                 isAssistantPresented: section == .attachments ? false : (isActive ? utilityPanel : calendarPanel) == .assistant,
@@ -253,13 +265,14 @@ struct MainView: View {
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar(removing: workspaceWidth < Tokens.Layout.toolbarTitleFoldWidth ? .title : nil)
-        .navigationTitle(section == .calendar ? "Calendar" : showsLibrary ? "Attachments" : mailbox.selectedLabelTitle)
+        .navigationTitle(section == .mail ? mailbox.selectedLabelTitle : section.title)
         .navigationSubtitle(section == .mail ? mailbox.selectedMailboxSubtitle : "")
     }
 
     /// The retained Mail split owns the shared toolbar. Each visible destination
     /// supplies its sidebar geometry without changing Mail's saved layout.
     private var toolbarSidebarWidth: CGFloat? {
+        if app.destination == .followUps || app.destination == .today { return 0 }
         if !isActive { return isCalendarUtilityCompact ? 0 : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 } }
         if showsLibrary { return libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0 }
         return nil
@@ -394,15 +407,7 @@ struct MainView: View {
 
     private func reply(_ kind: ReplyKind, quote selectedQuote: SelectedMailQuote?) {
         Task {
-            if let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1,
-               let quote = selectedQuote, quote.belongsTo(accountID: key.accountID, threadID: key.threadID,
-                messageID: mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID) {
-                guard let id = await mailbox.requestReply(kind, messageID: quote.messageID,
-                    accountID: quote.accountID, selectedText: quote.text) else { return }
-                openWindow(id: ComposeWindow.sceneID, value: id)
-                return
-            }
-            guard let start = await mailbox.replyStart(kind), let id = await mailbox.startCompose(start) else { return }
+            guard let id = await mailbox.startReply(kind, quote: selectedQuote) else { return }
             openWindow(id: ComposeWindow.sceneID, value: id)
         }
     }
@@ -440,7 +445,7 @@ private struct AssistantAccessRefresh: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task { await app.assistant.refreshConnection() }
-            .onChange(of: app.assistant.connection.connectionRevision) { _, _ in app.assistant.refreshAccess() }
+            .onChange(of: app.assistant.connectionRevision) { _, _ in app.assistant.refreshAccess() }
             .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in app.assistant.refreshAccess() }
             .onChange(of: app.accountsNeedingSignIn) { _, _ in app.assistant.refreshAccess() }
             .onChange(of: mailbox.selectedMailbox) { _, _ in app.assistant.refreshAccess() }

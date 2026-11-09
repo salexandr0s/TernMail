@@ -31,10 +31,7 @@ final class OnboardingState {
     }
 
     static func appState() -> OnboardingState {
-        let arguments = ProcessInfo.processInfo.arguments
-        let isolated = AssistantRuntimeEnvironment.isTestHost
-            || arguments.contains("--ui-audit") || arguments.contains("--ui-audit-calendar")
-        return OnboardingState(defaults: isolated ? nil : .standard)
+        OnboardingState(defaults: LaunchMode.current.isIsolated ? nil : .standard)
     }
 
     /// Resolve only after the account store has opened successfully. The

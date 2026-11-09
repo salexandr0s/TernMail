@@ -60,7 +60,20 @@ extension GmailClient {
 
     // MARK: Uploads
 
+    /// Runs in the budget's upload lane, so the reader and the user's other
+    /// changes don't wait for the upload's slot.
     private func upload<T: Decodable>(
+        _ message: OutgoingMessage,
+        method: String,
+        path: String,
+        metadata: some Encodable
+    ) async throws -> T {
+        try await GmailRequestBudget.$priority.withValue(.upload) {
+            try await uploadInCurrentLane(message, method: method, path: path, metadata: metadata)
+        }
+    }
+
+    private func uploadInCurrentLane<T: Decodable>(
         _ message: OutgoingMessage,
         method: String,
         path: String,

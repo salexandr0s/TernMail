@@ -38,9 +38,11 @@ public enum GmailError: Error, Sendable, Equatable {
 
     static let missingScopeReasons: Set<String> = ["insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"]
 
-    /// The 403 reasons Gmail gives in `errors[]` for a usage limit, which a
-    /// later retry can pass.
-    static let usageLimitReasons: Set<String> = ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"]
+    /// The 403 reasons Google gives in `errors[]` for a usage limit, which a
+    /// later retry can pass. Calendar names its own usage limits
+    /// `quotaExceeded`. Gmail's `dailyLimitExceeded` is a project limit, not
+    /// a throttle, so it stays out; `GoogleCalendarClient` maps Calendar's.
+    static let usageLimitReasons: Set<String> = ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED", "quotaExceeded"]
 
     init(status: Int, body: Data) {
         let error = (try? JSONDecoder().decode(ErrorEnvelope.self, from: body))?.error

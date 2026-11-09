@@ -60,7 +60,7 @@ struct MailOrganizationIntroduction: View {
             .ternSurface()
 
             Label {
-                Text("Analysis shares message headers, short previews, labels, and rule settings with your connected ChatGPT account. Nothing changes in Gmail until you review and apply the plan.")
+                Text("Analysis shares message headers, short previews, labels, and rule settings with your selected assistant provider. Nothing changes in Gmail until you review and apply the plan.")
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "hand.raised")

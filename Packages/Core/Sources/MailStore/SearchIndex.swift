@@ -30,13 +30,32 @@ extension CacheTransaction {
         var arguments: StatementArguments = [accountID]
         if query.runsLocally, let root = query.root {
             var compiler = SearchCompiler(labelIDs: try labelIDsByName(accountID: accountID), timeZone: timeZone, now: now)
-            let predicate = compiler.sql(root)
-            var sql = """
-                thread.id IN (
-                    SELECT m.threadID FROM message m
-                    JOIN messageText mt ON mt.accountID = m.accountID AND mt.messageID = m.id
-                    WHERE m.accountID = ? AND \(predicate)
-                """
+            let required = SearchCompiler.requiredMatch(root)
+            let predicate = compiler.sql(root, matched: required != nil)
+            var sql: String
+            if let required {
+                // The matches come first, each finding its message by key,
+                // so a search reads what it matches rather than every
+                // message of the account.
+                sql = """
+                    thread.id IN (
+                        SELECT m.threadID FROM messageSearch
+                        CROSS JOIN messageText mt ON mt.id = messageSearch.rowid
+                        CROSS JOIN message m ON m.accountID = mt.accountID AND m.id = mt.messageID
+                        WHERE messageSearch MATCH ? AND mt.accountID = ? AND \(predicate)
+                    """
+                arguments += [required, accountID]
+            } else {
+                // With no text that every match has, as with a label alone,
+                // an OR or a NOT, each message of the account is checked.
+                sql = """
+                    thread.id IN (
+                        SELECT m.threadID FROM message m
+                        JOIN messageText mt ON mt.accountID = m.accountID AND mt.messageID = m.id
+                        WHERE m.accountID = ? AND \(predicate)
+                    """
+                arguments += [accountID]
+            }
             if !query.includesSpamAndTrash {
                 sql += """
                      AND NOT EXISTS (
@@ -46,7 +65,6 @@ extension CacheTransaction {
                 compiler.arguments += [SystemLabel.spam, SystemLabel.trash]
             }
             conditions.append(sql + ")")
-            arguments += [accountID]
             arguments += compiler.arguments
         }
         if !included.isEmpty {
@@ -65,7 +83,7 @@ extension CacheTransaction {
 
     /// Label IDs by name as `label:` writes it: any case, with spaces and
     /// slashes typed as hyphens.
-    private func labelIDsByName(accountID: String) throws -> [String: [String]] {
+    func labelIDsByName(accountID: String) throws -> [String: [String]] {
         var result: [String: [String]] = [:]
         for label in try labels(accountID: accountID) {
             result[SearchCompiler.normalizedLabelName(label.name), default: []].append(label.id)
@@ -106,16 +124,18 @@ struct SearchCompiler {
         self.now = now
     }
 
-    mutating func sql(_ node: SearchQuery.Node) -> String {
+    /// With `matched`, the rows are matches of `requiredMatch(node)`
+    /// already, so the text terms it reads become `1`.
+    mutating func sql(_ node: SearchQuery.Node, matched: Bool = false) -> String {
         switch node {
         case .all(let nodes):
-            nodes.isEmpty ? "1" : "(" + nodes.map { sql($0) }.joined(separator: " AND ") + ")"
+            nodes.isEmpty ? "1" : "(" + nodes.map { sql($0, matched: matched) }.joined(separator: " AND ") + ")"
         case .any(let nodes):
             nodes.isEmpty ? "0" : "(" + nodes.map { sql($0) }.joined(separator: " OR ") + ")"
         case .not(let node):
             "(NOT \(sql(node)))"
         case .term(let term):
-            sql(term)
+            matched && Self.requiredMatch(node) != nil ? "1" : sql(term)
         }
     }
 
@@ -151,10 +171,38 @@ struct SearchCompiler {
 
     /// Text with nothing the tokenizer keeps can't match anything.
     private mutating func match(_ text: String, column: String?, isPrefix: Bool) -> String {
-        guard text.contains(where: { $0.isLetter || $0.isNumber }) else { return "0" }
-        let phrase = Self.ftsPhrase(text, isPrefix: isPrefix)
-        arguments += [column.map { "\($0) : \(phrase)" } ?? phrase]
-        return "mt.id IN (SELECT rowid FROM messageSearch WHERE messageSearch MATCH ?)"
+        guard let match = Self.ftsQuery(text, column: column, isPrefix: isPrefix) else { return "0" }
+        arguments += [match]
+        // The `+` keeps SQLite from looping over every match for each message
+        // it checks. With it, SQLite reads the matches once and looks each
+        // message up in them.
+        return "+mt.id IN (SELECT rowid FROM messageSearch WHERE messageSearch MATCH ?)"
+    }
+
+    /// An FTS5 query that every message `node` matches also matches, or nil
+    /// when there's none, as with a label alone or an `OR`.
+    static func requiredMatch(_ node: SearchQuery.Node) -> String? {
+        switch node {
+        case .all(let nodes):
+            let parts = nodes.compactMap(requiredMatch)
+            return parts.isEmpty ? nil : parts.map { "(\($0))" }.joined(separator: " AND ")
+        case .term(.word(let text, let isPrefix)):
+            return ftsQuery(text, column: nil, isPrefix: isPrefix)
+        case .term(.phrase(let text)):
+            return ftsQuery(text, column: nil, isPrefix: false)
+        case .term(.field(let field, let text)):
+            return ftsQuery(text, column: column(for: field), isPrefix: false)
+        case .term, .any, .not:
+            return nil
+        }
+    }
+
+    /// The FTS5 query for `text` in `column`, or in every column. Nil when
+    /// the text has nothing the tokenizer keeps.
+    static func ftsQuery(_ text: String, column: String?, isPrefix: Bool) -> String? {
+        guard text.contains(where: { $0.isLetter || $0.isNumber }) else { return nil }
+        let phrase = ftsPhrase(text, isPrefix: isPrefix)
+        return column.map { "\($0) : \(phrase)" } ?? phrase
     }
 
     private mutating func hasLabel(_ ids: [String]) -> String {

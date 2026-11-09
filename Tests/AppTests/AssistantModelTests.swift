@@ -35,6 +35,8 @@ import TernAI
         try #require(fixture.model.messages.last?.text.isEmpty == false)
         await Task.yield()
 
+        // Starts at once, so it holds the turn before stopping clears the model's reference.
+        let stoppedTurn = Task.immediate { await fixture.model.waitForCurrentTurn() }
         if revokeAccess { fixture.model.setAccountEnabled("a", enabled: false) }
         else { fixture.model.stop() }
         if revokeAccess { #expect(fixture.model.messages.isEmpty) }
@@ -43,7 +45,8 @@ import TernAI
             #expect(fixture.model.messages.last?.state == .cancelled)
         }
         await provider.release(Self.answer("Late private answer"))
-        try await Task.sleep(for: .milliseconds(80))
+        // Only the stopped turn reads the provider's stream, so nothing can apply the late answer after it ends.
+        await stoppedTurn.value
         if revokeAccess { #expect(fixture.model.messages.isEmpty) }
         else { #expect(fixture.model.messages.last?.text == "First tail") }
     }
@@ -302,7 +305,7 @@ import TernAI
     }
 
     @Test func defaultHostedPreferencesCannotChangeStandardDefaults() throws {
-        try #require(AssistantRuntimeEnvironment.isTestHost)
+        try #require(LaunchMode.current.isIsolated)
         let standard = UserDefaults.standard
         let originalAccounts = standard.stringArray(forKey: "assistant.enabledAccounts")
         let originalModel = standard.string(forKey: "assistant.selectedModel")

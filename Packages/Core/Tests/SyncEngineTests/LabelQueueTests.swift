@@ -131,7 +131,26 @@ import Testing
         while await engine.sendDueActions() > 0 {}
         #expect(await gmail.labelCalls == ["create trips"])
         #expect(try await gmail.labels().map(\.id) == ["Label_7"])
-        #expect(await events(engine) == [.actionFailed("“trips” already existed in Gmail and wasn't deleted.")])
+        #expect(await events(engine) == [.actionFailed("Tern didn't delete “trips” from Gmail, because it may have been there before.")])
+    }
+
+    @Test func undoingARetriedCreateLeavesALabelMadeMeanwhileInGmail() async throws {
+        let (engine, _, gmail, clock) = try await makeEngine()
+        let create = try await engine.createLabel(named: "trips", color: nil)
+        await gmail.failNextLabelCall("create", with: .transport(.timedOut))
+        clock.advance(3)
+        await engine.sendDueActions()
+        // Made in another app before the retry. The retry can't tell it from
+        // a label its first request made.
+        await gmail.setLabels([try gmailLabel("Label_7", "Trips")])
+        clock.advance(3)
+
+        while await engine.sendDueActions() > 0 {}
+        try await engine.undo(create)
+        while await engine.sendDueActions() > 0 {}
+        #expect(await gmail.labelCalls == ["create trips"])
+        #expect(try await gmail.labels().map(\.id) == ["Label_7"])
+        #expect(await events(engine) == [.actionFailed("Tern didn't delete “trips” from Gmail, because it may have been there before.")])
     }
 
     @Test func aRateLimitedCreateRetriesWithItsChangesKept() async throws {

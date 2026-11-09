@@ -39,7 +39,7 @@ final class ReaderSessionStore {
     private var selected: ReaderSessionID?
     private var isVisible = false
     private var discardedSources: Set<ReaderSessionID> = []
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     /// Shares the existing state owner's lifetime without adding observation.
     let layoutAuditOwnerToken = ReaderLayoutDiagnostics.allocateToken()
     #endif
@@ -149,7 +149,7 @@ struct ReaderSessionContainer: View {
 
     private var windowVisibility: ReaderWindowVisibility {
         var observer = ReaderWindowVisibility(didChange: { isWindowVisible = $0 })
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         if ReaderLayoutDiagnostics.shared != nil {
             let owner = store
             let visibility = $isWindowVisible

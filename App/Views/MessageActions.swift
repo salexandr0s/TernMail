@@ -90,6 +90,7 @@ private struct MessageActionIcon: View {
 
 /// One message's commands, shared by More and the header's context menu.
 struct MessageMenuItems: View {
+    @Environment(AppModel.self) private var app
     let message: MessageDetail
     let mailbox: MailboxModel
     let selectedText: String
@@ -103,6 +104,10 @@ struct MessageMenuItems: View {
             Button("Edit Draft", systemImage: "pencil") { editDraft() }
         } else {
             replyItems
+            Button("Track Follow-up…", systemImage: "clock.badge.checkmark") {
+                Task { await app.requestFollowUp(accountID: message.record.accountID,
+                    threadID: message.record.threadID, messageID: message.id) }
+            }
             Divider()
             Button(message.isUnread ? "Mark as Read" : "Mark as Unread",
                    systemImage: message.isUnread ? "envelope.open" : "envelope.badge") {
@@ -220,7 +225,8 @@ struct MessageMenuItems: View {
     }
 
     private func printMessage(pdf: Bool = false) {
-        ConversationPrintController.show(subject: message.record.subject, messages: [message], exportsPDF: pdf) { error in
+        ConversationPrintController.show(subject: message.record.subject, messages: [message], cache: mailbox.cache,
+                                         exportsPDF: pdf) { error in
             if let error { mailbox.notice = .init(message: error, isError: true) }
         }
     }

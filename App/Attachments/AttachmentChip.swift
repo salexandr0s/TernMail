@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 struct AttachmentChip<Accessory: View>: View {
     static var width: CGFloat { Tokens.Layout.attachmentWidth }
 
+    /// The file's name on disk. Its extension picks the icon, so the chip shows
+    /// how the file opens. For a received file, pass `SyncEngine.safeFilename`.
     let filename: String
     let size: Int
     let isLoading: Bool

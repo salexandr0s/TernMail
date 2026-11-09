@@ -36,6 +36,7 @@ import Testing
         let attempts = await transport.pageTokens.count
         mailbox.listPreferences.filters = [.unread]
         mailbox.listPreferences.filters = []
+        // A bounded window: a filter change must not retry the failed page on its own.
         try await Task.sleep(for: .milliseconds(100))
         #expect(await transport.pageTokens.count == attempts)
         mailbox.loadOlderConversations()
@@ -57,6 +58,7 @@ import Testing
         }
         mailbox.listPreferences.filters = [.unread]
         mailbox.listPreferences.filters = []
+        // A bounded window: a filter change must not ask a finished or paused mailbox for another page.
         try await Task.sleep(for: .milliseconds(100))
         #expect(await transport.pageTokens.count == (syncEnabled ? 1 : 0))
         #expect(mailbox.listItems.isEmpty)
@@ -150,9 +152,41 @@ import Testing
         #expect(visible !== scoped)
         try await settled { visible.state == .finished }
         #expect(visible.threadIDs(in: "b").isEmpty)
+        // A search doesn't end the visit, so Escape returns to the same coverage.
         mailbox.search.update("x")
-        try await settled { mailbox.older == nil }
         #expect(!mailbox.offersOlderConversations)
+        mailbox.search.cancel()
+        #expect(mailbox.older === visible)
+        #expect(!mailbox.offersOlderConversations)
+        await mailbox.stop()
+    }
+
+    @Test func searchingKeepsTheMailboxPagesLoadedForEscape() async throws {
+        let transport = MailPaginationTransport(isEmpty: true)
+        let mailbox = try await emptyMailbox(transport: transport, syncEnabled: false)
+        let pageSize = MailboxModel.pageSize
+        try await mailbox.cache.write { tx in
+            let updates = (0...2 * pageSize).map { index in
+                let message = MessageRecord(accountID: "a", id: "m\(index)", threadID: "t\(index)", historyID: 200,
+                    date: Date(timeIntervalSince1970: 1_790_000_000 - Double(index)), snippet: "", sender: "",
+                    recipients: "", cc: nil, subject: "Cached mail", sizeEstimate: 0)
+                return CacheTransaction.MessageUpdate(record: message, labelIDs: [SystemLabel.inbox])
+            }
+            try tx.rebuildThreads(try tx.upsertMessages(updates), accountID: "a")
+        }
+        await mailbox.start()
+        try await settled { mailbox.threads.count == pageSize }
+        mailbox.loadMoreThreads()
+        try await settled { mailbox.threads.count == 2 * pageSize }
+
+        // Two letters stay on this Mac.
+        mailbox.search.update("ca")
+        try await settled { mailbox.search.hasLocalAnswer && mailbox.isListPresentationReady }
+        mailbox.search.cancel()
+        try await settled { mailbox.isListPresentationReady && mailbox.listItems.count == 2 * pageSize }
+        // The next page follows the loaded ones rather than starting over.
+        mailbox.loadMoreThreads()
+        try await settled { mailbox.threads.count == 2 * pageSize + 1 }
         await mailbox.stop()
     }
 

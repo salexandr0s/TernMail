@@ -101,13 +101,8 @@ public struct AttachmentLibraryItem: Codable, Sendable, Equatable, Identifiable,
         self.historyID = historyID
         self.generation = generation
         fileExtension = Self.normalizedExtension(filename: attachment.filename, mimeType: attachment.mimeType)
-        searchText = Self.searchNormalized([attachment.filename, sender, subject].joined(separator: "\n"))
-        senderSearch = Self.searchNormalized(sender)
-    }
-
-    static func searchNormalized(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-            .lowercased()
+        searchText = SearchFolding.folded([attachment.filename, sender, subject].joined(separator: "\n"))
+        senderSearch = SearchFolding.folded(sender)
     }
 
     private static func normalizedExtension(filename: String, mimeType: String) -> String {

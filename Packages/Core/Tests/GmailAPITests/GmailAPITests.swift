@@ -91,7 +91,7 @@ import Testing
         ])
     }
 
-    @Test(arguments: ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"])
+    @Test(arguments: ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED", "quotaExceeded"])
     func rateLimitReasonsAreRetryable(_ reason: String) {
         let rateLimited = Data(#"{"error":{"code":403,"errors":[{"reason":"\#(reason)"}]}}"#.utf8)
         let forbidden = Data(#"{"error":{"code":403,"errors":[{"reason":"insufficientPermissions"}]}}"#.utf8)

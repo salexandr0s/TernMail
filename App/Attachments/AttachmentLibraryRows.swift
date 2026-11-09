@@ -2,7 +2,14 @@ import AppKit
 import MailStore
 import MessageContent
 import SwiftUI
+import SyncEngine
 import UniformTypeIdentifiers
+
+extension AttachmentLibraryItem {
+    /// The name the file has on disk, without the bidi controls that could
+    /// make the sender's name show a different extension.
+    var shownFilename: String { SyncEngine.safeFilename(filename) }
+}
 
 struct AttachmentLibraryRow: View, Equatable {
     let item: AttachmentLibraryItem
@@ -21,8 +28,8 @@ struct AttachmentLibraryRow: View, Equatable {
                 .background(AttachmentPresentation.tint(item).opacity(Tokens.Opacity.wash),
                             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(item.filename).font(.body.weight(.semibold)).lineLimit(1)
-                    .truncationMode(.middle).help(item.filename)
+                Text(item.shownFilename).font(.body.weight(.semibold)).lineLimit(1)
+                    .truncationMode(.middle).help(item.shownFilename)
                 Text(item.subject.isEmpty ? "(No subject)" : item.subject)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .help(item.subject)
@@ -96,8 +103,8 @@ struct AttachmentLibraryCard: View, Equatable {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             fileTile
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text(item.filename).font(.body.weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle).help(item.filename)
+                Text(item.shownFilename).font(.body.weight(.semibold))
+                    .lineLimit(1).truncationMode(.middle).help(item.shownFilename)
                 Text(item.subject.isEmpty ? "(No subject)" : item.subject)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).help(item.subject)
             }
@@ -296,6 +303,6 @@ private struct AttachmentSenderAvatar: View {
     }
 
     static func accessibilityLabel(_ item: AttachmentLibraryItem, account: String) -> String {
-        "\(item.filename), \(format(item)), \(size(item.size)), from \(item.sender), \(item.date.formatted(date: .abbreviated, time: .omitted)), \(account), email \(item.subject), \(item.category.title)"
+        "\(item.shownFilename), \(format(item)), \(size(item.size)), from \(item.sender), \(item.date.formatted(date: .abbreviated, time: .omitted)), \(account), email \(item.subject), \(item.category.title)"
     }
 }

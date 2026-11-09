@@ -40,6 +40,18 @@ import Testing
         #expect(firstQuery == secondQuery)
     }
 
+    @Test func aSyncStopsWhenPageTokensCycleOrNeverEnd() async throws {
+        let cycle = ["a", "b", "a"].map { RecordingTransport.Response(status: 200, body: #"{"nextPageToken": "\#($0)"}"#) }
+        let (cycling, cycleTransport, _) = client(cycle)
+        await #expect(throws: GmailError.decoding("ContactPage.nextPageToken")) { try await cycling.sync(.connections) }
+        #expect(await cycleTransport.requests.count == 3)
+
+        let endless = (0..<PeopleClient.maxSyncPages).map { RecordingTransport.Response(status: 200, body: #"{"nextPageToken": "p\#($0)"}"#) }
+        let (paging, endlessTransport, _) = client(endless)
+        await #expect(throws: GmailError.decoding("ContactPage.nextPageToken")) { try await paging.sync(.connections) }
+        #expect(await endlessTransport.requests.count == PeopleClient.maxSyncPages)
+    }
+
     @Test(arguments: [false, true])
     func otherContactSyncIncludesProfilesAndKeepsItsParametersAcrossPages(incremental: Bool) async throws {
         let first = #"{"otherContacts": [{"resourceName": "otherContacts/c1", "metadata": {"deleted": true}}], "nextPageToken": "p2"}"#

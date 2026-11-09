@@ -22,6 +22,45 @@ import Testing
         #expect(try await store.syncState(accountID: "a", calendarID: "c").syncToken == "new-token")
     }
 
+    @Test(arguments: [
+        (GmailError.http(status: 403, reason: "requiredAccessLevel"), false),
+        (GmailError.http(status: 403, reason: "insufficientPermissions"), true),
+        (GmailError.http(status: 403, reason: nil), true),
+    ])
+    func onlyA403ThatEndsReadAccessClearsTheCache(error: GmailError, clears: Bool) async throws {
+        let store = try CalendarStore.inMemory()
+        let api = CalendarTestService()
+        let engine = CalendarSyncEngine(accountID: "a", service: api, store: store)
+        _ = try await engine.syncCalendars()
+        let cached = CalendarTestService.event(id: "cached")
+        try await store.applyEventSync([cached], accountID: "a", calendarID: "c", token: "cached-token",
+                                      replacing: true, expected: .init())
+        await api.failEvents(with: error)
+        await #expect(throws: error) { try await engine.syncEvents(calendarID: "c") }
+        #expect(try await store.events(accountID: "a", calendarID: "c") == (clears ? [] : [cached]))
+        #expect(try await store.syncState(accountID: "a", calendarID: "c").syncToken == (clears ? nil : "cached-token"))
+    }
+
+    @Test func aRefusedChangeFailsAloneAndKeepsTheCache() async throws {
+        let store = try CalendarStore.inMemory()
+        let api = CalendarTestService()
+        let engine = CalendarSyncEngine(accountID: "a", service: api, store: store)
+        _ = try await engine.syncCalendars()
+        let events = [CalendarTestService.event(id: "a"), CalendarTestService.event(id: "b")]
+        try await store.applyEventSync(events, accountID: "a", calendarID: "c", token: "cached-token",
+                                      replacing: true, expected: .init())
+        for event in events { await api.put(event) }
+        await api.failPatch(of: "a", with: GmailError.http(status: 403, reason: "forbiddenForNonOrganizer"))
+        let change: [String: CalendarJSON] = ["summary": .string("Changed")]
+        let refused = try await engine.enqueue(.update(eventID: "a", fields: change, etag: "v1"), calendarID: "c")
+        let allowed = try await engine.enqueue(.update(eventID: "b", fields: change, etag: "v1"), calendarID: "c")
+        try await engine.flush()
+        #expect(try await store.operation(id: refused.id)?.status == .failed)
+        #expect(try await store.operation(id: allowed.id)?.status == .completed)
+        #expect(try await store.events(accountID: "a", calendarID: "c").map(\.id).sorted() == ["a", "b"])
+        #expect(try await store.syncState(accountID: "a", calendarID: "c").syncToken == "cached-token")
+    }
+
     @Test func aLostCreateResponseIsReconciledWithoutCreatingTwice() async throws {
         let store = try CalendarStore.inMemory()
         let api = CalendarTestService()
@@ -255,6 +294,8 @@ import Testing
 private actor CalendarTestService: CalendarService {
     var remote: [String: GoogleCalendarEvent] = [:]
     var pageFailure: Bool?
+    var eventsFailure: (any Error)?
+    var patchFailures: [String: any Error] = [:]
     var loseInsert = false
     var losePatch = false
     var insertCount = 0
@@ -279,6 +320,8 @@ private actor CalendarTestService: CalendarService {
     }
     func put(_ event: GoogleCalendarEvent) { remote[event.id] = event }
     func configurePageFailure(_ value: Bool) { pageFailure = value }
+    func failEvents(with error: any Error) { eventsFailure = error }
+    func failPatch(of eventID: String, with error: any Error) { patchFailures[eventID] = error }
     func configureInsertLoss() { loseInsert = true }
     func configurePatchLoss() { losePatch = true }
     func holdNextRead() { holdRead = true }
@@ -315,6 +358,7 @@ private actor CalendarTestService: CalendarService {
         return CalendarListPage(items: [GoogleCalendarEntry(rawValue: ["id": .string("c"), "summary": .string("Calendar"), "accessRole": .string("owner")])])
     }
     func events(calendarID: String, query: CalendarEventQuery) async throws -> CalendarEventPage {
+        if let eventsFailure { throw eventsFailure }
         if let result = nextHeldEvents {
             nextHeldEvents = nil
             await withCheckedContinuation { continuation in
@@ -361,6 +405,7 @@ private actor CalendarTestService: CalendarService {
     }
     func patchEvent(calendarID: String, eventID: String, fields: [String: CalendarJSON], etag: String?, sendUpdates: String) async throws -> GoogleCalendarEvent {
         guard var event = remote[eventID] else { throw GmailError.notFound }
+        if let failure = patchFailures[eventID] { throw failure }
         guard etag == event.etag else { throw GmailError.http(status: 412, reason: "conditionNotMet") }
         patchCount += 1
         for (key, value) in fields {

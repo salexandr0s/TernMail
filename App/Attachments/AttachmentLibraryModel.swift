@@ -399,7 +399,8 @@ final class AttachmentLibraryModel {
         await openFiles([item])
     }
 
-    /// Opens each file in turn and stops at the first one that fails.
+    /// Opens each file in turn and stops at the first one that fails. An app
+    /// or script the person declines to open is skipped, not a failure.
     func openFiles(_ items: [AttachmentLibraryItem]) async {
         guard !items.isEmpty else { return }
         await perform(.open(items)) {
@@ -407,8 +408,12 @@ final class AttachmentLibraryModel {
                 // Retry starts at the failed file, without reopening completed files.
                 lastAction = .open(Array(items[index...]))
                 let url = try await file(for: item)
-                let opened = try await AttachmentActions.open(url)
-                if opened != url { savedFiles[item.id] = opened }
+                do {
+                    let opened = try await AttachmentActions.open(url)
+                    if opened != url { savedFiles[item.id] = opened }
+                } catch is CancellationError where !Task.isCancelled {
+                    continue
+                }
             }
         }
     }

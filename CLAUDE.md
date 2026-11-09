@@ -13,11 +13,18 @@ Native macOS Gmail client, codename Tern. It is built clean-room from Google's p
 - `project.yml`: XcodeGen spec for the app.
 - `Config/`: xcconfig files. `Secrets.xcconfig` is local and git-ignored.
 - `App/`: the app target (SwiftUI views, auth glue, Info.plist, entitlements).
+- `ClaudeHelper/`: unsandboxed XPC service that runs the official Claude CLI. It checks the caller's and the CLI's code signatures.
+- `Shared/`: XPC types used by both the app and `ClaudeHelper`.
 - `Packages/Core/`: logic, testable without the app.
   - `GmailAPI`: REST client and models. Imports only Foundation.
   - `MailStore`: GRDB schema, migrations and queries.
   - `MessageContent`: MIME part extraction, HTML sanitizing and the message page with its CSP.
   - `SyncEngine`: initial sync, history sync and the action queue.
+  - `TernAI`: assistant providers, streaming, summaries and tool contracts.
+  - `IMAPIdle`: IMAP IDLE watcher that only signals INBOX changes. History sync fetches the mail.
+  - `Diagnostics`: signposts, span records and loggers.
+  - `MailOrganization`: message and sender evidence shared by `TernAI` and `SyncEngine`.
+- `Tests/`: hosted app tests, helper tests and UI tests.
 - `docs/plans/`: milestone plans.
 
 ## Commands
@@ -26,9 +33,12 @@ Native macOS Gmail client, codename Tern. It is built clean-room from Google's p
 xcodegen generate
 swift test --package-path Packages/Core
 xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug -derivedDataPath build build
+xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug-Testing -derivedDataPath build test -only-testing:TernTests
 ```
 
 Run `xcodegen generate` after editing `project.yml` and commit the regenerated `Tern.xcodeproj`.
+
+Hosted and UI tests run in the Debug-Testing configuration. Its app, `dev.tern.mail.testing`, has its own container and Keychain items and can't sign in to Google, so tests can't reach the mail cache or sign-ins of the `dev.tern.mail` app. A Debug app stops at launch when XCTest hosts it or when it gets an audit or benchmark flag.
 
 `xcodebuild` adds the app's AppAuth pin to `Packages/Core/Package.resolved` and `swift test` removes it again. Commit the file only as `swift test` leaves it.
 
@@ -39,6 +49,7 @@ Run `xcodegen generate` after editing `project.yml` and commit the regenerated `
 - Auth stays in the app target behind the `AccessTokenProvider` protocol, so `Packages/Core` never imports AppAuth.
 - Every change to Gmail state goes through the action queue in `SyncEngine`.
 - Never log message bodies, tokens or email addresses.
+- Test and audit code compiles under `TERN_TEST_SUPPORT`, or `TERN_TEST_SUPPORT || TERN_PERFORMANCE` when the benchmark build needs it.
 
 ## Local setup
 

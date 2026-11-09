@@ -169,6 +169,48 @@ import Testing
         await engine.stop()
     }
 
+    @Test(.timeLimit(.minutes(1))) func pausedSettingsLeaveTheLaneIdleUntilTheFeatureComesOn() async throws {
+        let accounts = try AccountStore.inMemory()
+        try await accounts.save(AccountRecord(
+            id: account, email: "me@example.com", displayName: "Me",
+            grantedScopes: GoogleScopes.base + [GoogleScopes.gmailSettings], addedAt: .now, enabledFeatures: []
+        ))
+        let (engine, cache, settings, clock) = try await makeSettingsEngine(accounts: accounts, sendsAutomatically: true)
+        try await withEngineStopped(engine) {
+            await engine.start()
+            _ = try await engine.createFilter(news)
+            clock.advance(3)
+            // The due row waits without the lane checking it again every second.
+            try await waitForSyncCondition { await engine.drainTasks[.settings] == nil }
+            #expect(await settings.calls.isEmpty)
+
+            try await accounts.updateAccount(id: account) { $0.enabledFeatures = [AccountFeature.gmailSettings.rawValue] }
+            try await waitForSyncCondition { try await rows(cache).first?.state == .sent }
+            #expect(await settings.calls == ["list", "create"])
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aMissingAccountRecordLeavesTheLaneIdleUntilTheRecordIsSaved() async throws {
+        let accounts = try AccountStore.inMemory()
+        let (engine, cache, settings, clock) = try await makeSettingsEngine(accounts: accounts, sendsAutomatically: true)
+        try await withEngineStopped(engine) {
+            await engine.start()
+            _ = try await engine.createFilter(news)
+            clock.advance(3)
+            // With no record, Gmail Settings counts as off, so the lane waits instead of checking every second.
+            try await waitForSyncCondition { await engine.drainTasks[.settings] == nil }
+            #expect(await settings.calls.isEmpty)
+
+            try await accounts.save(AccountRecord(
+                id: account, email: "me@example.com", displayName: "Me",
+                grantedScopes: GoogleScopes.base + [GoogleScopes.gmailSettings], addedAt: .now,
+                enabledFeatures: [AccountFeature.gmailSettings.rawValue]
+            ))
+            try await waitForSyncCondition { try await rows(cache).first?.state == .sent }
+            #expect(await settings.calls == ["list", "create"])
+        }
+    }
+
     @Test func retryingACompensatedFilterEditRecreatesTheNewFilterBeforeDeletingTheOld() async throws {
         let (engine, cache, settings, clock) = try await makeSettingsEngine(filters: [mine])
         let edited = GmailFilter(criteria: mine.criteria, action: .init(addLabelIds: [SystemLabel.important]))
@@ -277,7 +319,8 @@ actor FakeSettings: SettingsService {
 }
 
 func makeSettingsEngine(
-    filters: [GmailFilter] = [], vacation: VacationSettings = VacationSettings(), accounts: AccountStore? = nil
+    filters: [GmailFilter] = [], vacation: VacationSettings = VacationSettings(), accounts: AccountStore? = nil,
+    sendsAutomatically: Bool = false
 ) async throws -> (SyncEngine, MailCache, FakeSettings, TestClock) {
     let cache = try MailCache.inMemory()
     let settings = FakeSettings(filters: filters, vacation: vacation)
@@ -290,7 +333,7 @@ func makeSettingsEngine(
         settings: settings,
         accounts: accounts,
         cache: cache,
-        sendsAutomatically: false,
+        sendsAutomatically: sendsAutomatically,
         now: clock.now
     )
     return (engine, cache, settings, clock)

@@ -73,8 +73,13 @@ struct EmailCalendarItem: Identifiable, Sendable, Equatable, Codable {
     var previousAnswer: Invitation.ParticipationStatus?
     var calendarAnswer: Invitation.ParticipationStatus?
     var authenticityWarning: String?
+    /// Why a cancellation is shown without offering to remove its event.
+    var removalNotice: String?
 
-    var canReview: Bool { kind != .response && !isOutdated && !hasAmbiguousMatch && (kind != .cancelled || existingEventID != nil) }
+    var canReview: Bool {
+        kind != .response && !isOutdated && !hasAmbiguousMatch
+            && (kind != .cancelled || (existingEventID != nil && removalNotice == nil))
+    }
 }
 
 @MainActor @Observable
@@ -293,11 +298,12 @@ final class EmailCalendarModel {
     }
 
     func markExisting(itemID: String, calendarID: String, eventID: String, hasNewerInvitation: Bool = false,
-                      calendarAnswer: Invitation.ParticipationStatus? = nil) {
+                      calendarAnswer: Invitation.ParticipationStatus? = nil, removalNotice: String? = nil) {
         guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
         items[index].existingCalendarID = calendarID
         items[index].existingEventID = eventID
         items[index].calendarAnswer = calendarAnswer
+        items[index].removalNotice = removalNotice
         if hasNewerInvitation, items[index].kind != .cancelled, items[index].kind != .response { items[index].kind = .updated }
     }
 

@@ -111,8 +111,14 @@ final class AccountCleanupCoordinator {
 
     /// Startup cleanup also covers a calendar cache whose model was never opened.
     /// An absent cache is complete; do not create a new database just to erase it.
-    static func removeCalendarCache(accountID: String, at url: URL) async throws {
+    /// `openStore` is the app's own connection to `url`. When there is one the
+    /// delete goes through it and queues behind the app's other writes.
+    static func removeCalendarCache(accountID: String, at url: URL, openStore: CalendarStore? = nil) async throws {
         guard url.isFileURL, PendingAccountRemoval.validPathComponent(accountID) else { throw AccountRemovalError.invalidRecord }
+        if let openStore {
+            try await openStore.deleteAccountData(accountID: accountID)
+            return
+        }
         let values: URLResourceValues
         do { values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) }
         catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile { return }

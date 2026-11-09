@@ -91,6 +91,16 @@ actor DomainLogoImages {
         }
     }
 
+    /// The icon `data(for:)` would return from its cache, without asking the
+    /// website when there is none. Showing it sends nothing. It never suspends.
+    /// It is `async` because Swift 6.2 wrongly warns about `await` on a
+    /// synchronous actor method called from a default argument, which is
+    /// where the avatar loaders call it.
+    func cachedData(for address: String) async -> Data? {
+        guard let domain = Self.domain(for: address), let entry = cached(domain), entry.expiresAt > now() else { return nil }
+        return entry.data
+    }
+
     /// Cancels queued loads and makes ignored-cancellation completions obsolete.
     func removeAll() async {
         let tasks = pending.values.map(\.task)
@@ -101,7 +111,7 @@ actor DomainLogoImages {
         if self === Self.shared { await MainActor.run { DomainLogoThumbnailCache.shared.removeAll() } }
     }
 
-#if DEBUG
+#if TERN_TEST_SUPPORT
     func pendingWaiterCount(for address: String) -> Int {
         guard let domain = Self.domain(for: address) else { return 0 }
         return pending[domain]?.waiters.count ?? 0

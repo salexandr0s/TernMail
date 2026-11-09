@@ -26,6 +26,30 @@ import Testing
         try await page.value
     }
 
+    @Test func aReadRunsWhileADraftUploads() async throws {
+        let clock = PriorityClock()
+        let budget = GmailRequestBudget(now: { clock.instant }, sleep: { clock.advance($0) })
+        let uploading = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        defer { release.continuation.finish() }
+        let transport = HeldUploadTransport(uploading: uploading.continuation, release: release.stream)
+        let client = GmailClient(tokens: CountingTokens(), transport: transport, gmailRequestBudget: budget)
+        let upload = Task {
+            try await GmailRequestBudget.$priority.withValue(.interactive) {
+                try await client.createDraft(OutgoingMessage(raw: Data("Subject: Hi\r\n\r\nBody\r\n".utf8)))
+            }
+        }
+        var iterator = uploading.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        // The upload holds a lane of its own, and its quota stays charged.
+        let snapshot = await budget.snapshot()
+        try #require(!snapshot.executing.contains(.interactive))
+        #expect(snapshot.availableUnits == GmailRequestBudget.maximumRequestUnits - 10)
+        _ = try await GmailRequestBudget.$priority.withValue(.interactive) { try await client.labels() }
+        release.continuation.finish()
+        #expect(try await upload.value.id == "d1")
+    }
+
     @Test func interactiveReadOvertakesASyncQuotaWait() async throws {
         let sleeping = AsyncStream<Void>.makeStream()
         let budget = GmailRequestBudget(sleep: { _ in
@@ -186,6 +210,22 @@ import Testing
         #expect(GmailRequestBudget.cooldown(for: .server(status: 503), retryAfter: nil, attempt: 1) == .lane(2))
         #expect(GmailRequestBudget.cooldown(for: .transport(.timedOut), retryAfter: nil, attempt: 5) == .lane(8))
         #expect(GmailRequestBudget.cooldown(for: .notFound, retryAfter: "30", attempt: 0) == nil)
+    }
+}
+
+/// Answers other Gmail requests at once, but holds an upload until `release` ends.
+private struct HeldUploadTransport: HTTPTransport {
+    let uploading: AsyncStream<Void>.Continuation
+    let release: AsyncStream<Void>
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)
+        else { throw URLError(.badServerResponse) }
+        guard url.path.hasPrefix("/upload/") else { return (Data("{}".utf8), response) }
+        uploading.yield(())
+        for await _ in release {}
+        return (Data(#"{"id":"d1","message":{"id":"m1","threadId":"t1"}}"#.utf8), response)
     }
 }
 

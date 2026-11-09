@@ -69,15 +69,16 @@ private struct MailOrganizationAccountView: View {
             await model.refreshDelivery()
             await model.watchDelivery()
         }
-        .onChange(of: app.assistant.connection.connectionRevision) {
+        .onChange(of: app.assistant.connectionRevision) {
+            app.assistant.refreshAccess()
             Task { await app.assistant.refreshConnection() }
         }
     }
 
     private var requirement: MailOrganizationRequirement? {
         guard !access.canAnalyze else { return nil }
-        if !app.assistant.connection.canUsePlan {
-            return .init(message: "Connect ChatGPT to find labels that fit your mail.", destination: .assistant)
+        if !app.assistant.canUseAssistant {
+            return .init(message: "Connect an assistant provider to find labels that fit your mail.", destination: .assistant)
         }
         if !access.mailAccessEnabled {
             return .init(message: "Allow assistant access to this Google account to analyze its mail.", destination: .assistant)
@@ -85,6 +86,6 @@ private struct MailOrganizationAccountView: View {
         if access.instanceID == nil {
             return .init(message: "Sign in to this Google account to read recent mail.", destination: .connections)
         }
-        return .init(message: "Choose an available ChatGPT model before starting.", destination: .assistant)
+        return .init(message: "Choose an available assistant model before starting.", destination: .assistant)
     }
 }

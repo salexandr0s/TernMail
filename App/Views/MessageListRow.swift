@@ -2,6 +2,8 @@ import AppKit
 import MailStore
 import MessageContent
 import SwiftUI
+import SyncEngine
+import UniformTypeIdentifiers
 
 struct MessageListRow: View {
     let item: MessageListItem
@@ -9,7 +11,7 @@ struct MessageListRow: View {
     let accountMark: String?
     let accountColor: Color
 
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     struct RenderState: Equatable {
         let selected: Bool
         let unread: Bool
@@ -29,7 +31,7 @@ struct MessageListRow: View {
     }
 
     var body: some View {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         let _ = Self.onSelectionObserverEvaluation?(mailbox, item.id)
         #endif
         MessageListVisualRow(item: item, mailbox: mailbox, selected: isSelected,
@@ -154,7 +156,7 @@ private struct MessageListVisualRow: View, Equatable {
         let labels = displayedLabels
         let lineHeight = senderLineHeight
         let date = dateKey
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         let _ = MessageListRow.onBodyEvaluation?(mailbox, item.id,
             MessageListRow.RenderState(selected: selected, unread: thread.isUnread, starred: thread.isStarred,
                                        textScale: scale, compact: compact))
@@ -211,6 +213,9 @@ private struct MessageListVisualRow: View, Equatable {
                 SenderProfilePopover(accountID: item.id.accountID, address: sender.address,
                                      name: sender.name ?? sender.address, mailbox: mailbox)
             }
+            // Spam never asks the sender's website for an icon.
+            .logoLookup(item.labels.contains(SystemLabel.spam) || mailbox.selectedLabelID == SystemLabel.spam
+                ? .never : .familiarSenders)
         } else {
             TernAvatar(name: "", size: avatarSize)
         }
@@ -299,9 +304,11 @@ private struct MessageListVisualRow: View, Equatable {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else if let attachment = item.attachments.first {
-                Label(attachment.filename, systemImage: attachmentSymbol(attachment.mimeType))
+                let name = SyncEngine.safeFilename(attachment.filename)
+                // Middle truncation keeps the extension that decides how the file opens.
+                Label(name, systemImage: attachmentSymbol(name))
                     .font(scaledFont(.caption1))
-                    .lineLimit(1).help(attachment.filename)
+                    .lineLimit(1).truncationMode(.middle).help(name)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if item.attachments.count > 1 {
                     Text("+\(item.attachments.count - 1)")
@@ -314,8 +321,8 @@ private struct MessageListVisualRow: View, Equatable {
                 Label("\(item.attachments.count)", systemImage: "paperclip")
                     .font(labelFont.monospacedDigit())
                     .fixedSize()
-                    .help(item.attachments.map(\.filename).joined(separator: "\n"))
-                    .accessibilityLabel(item.attachments.map(\.filename).joined(separator: ", "))
+                    .help(item.attachments.map { SyncEngine.safeFilename($0.filename) }.joined(separator: "\n"))
+                    .accessibilityLabel(item.attachments.map { SyncEngine.safeFilename($0.filename) }.joined(separator: ", "))
             }
             if showsAccount, let accountMark {
                 HStack(spacing: Tokens.Space.s0_5) {
@@ -368,11 +375,14 @@ private struct MessageListVisualRow: View, Equatable {
             labels: labels.map(\.title), attachments: item.attachments.count, account: account)
     }
 
-    private func attachmentSymbol(_ type: String) -> String {
-        if type.hasPrefix("image/") { return "photo" }
-        if type == "application/pdf" { return "doc.richtext" }
-        if type.hasPrefix("video/") { return "film" }
-        if type.hasPrefix("audio/") { return "waveform" }
+    /// Follows the saved name's extension, which decides how the file opens,
+    /// not the type the sender declared.
+    private func attachmentSymbol(_ filename: String) -> String {
+        guard let type = UTType(filenameExtension: (filename as NSString).pathExtension) else { return "paperclip" }
+        if type.conforms(to: .image) { return "photo" }
+        if type.conforms(to: .pdf) { return "doc.richtext" }
+        if type.conforms(to: .movie) { return "film" }
+        if type.conforms(to: .audio) { return "waveform" }
         return "paperclip"
     }
 }
@@ -425,6 +435,7 @@ private enum MessageListFontMetrics {
 }
 
 struct MessageListMenu: View {
+    @Environment(AppModel.self) private var app
     let mailbox: MailboxModel
     let rows: Set<MailListRowID>
     @Environment(\.openWindow) private var openWindow
@@ -497,6 +508,9 @@ struct MessageListMenu: View {
     @ViewBuilder private func linkItems(for row: MailListRowID) -> some View {
         let link = mailbox.conversationLink(for: row)
         Button("Open in New Window", systemImage: "macwindow.badge.plus") { mailbox.requestConversationWindow(for: row) }
+        Button("Track Follow-up…", systemImage: "clock.badge.checkmark") {
+            Task { await app.requestFollowUp(accountID: row.accountID, threadID: row.threadID, messageID: row.messageID) }
+        }
         if let url = link.ternURL {
             Button("Copy Link", systemImage: "link") { NSPasteboard.general.replaceContents(with: url.absoluteString) }
         }

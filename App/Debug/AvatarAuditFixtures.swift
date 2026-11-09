@@ -1,4 +1,4 @@
-#if DEBUG
+#if TERN_TEST_SUPPORT
 import GmailAPI
 import MailStore
 import MessageContent

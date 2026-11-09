@@ -22,7 +22,7 @@ struct AssistantWritingStyleSettingsSection: View {
         } header: {
             Text("Writing style")
         } footer: {
-            SettingsNote("Excerpts are sent to ChatGPT during setup. Only the learned preferences are saved on this device. Turning learning off deletes the profile.", systemImage: "lock")
+            SettingsNote("Excerpts are sent to your selected assistant provider during setup. Only the learned preferences are saved on this device. Turning learning off deletes the profile.", systemImage: "lock")
         }
     }
 

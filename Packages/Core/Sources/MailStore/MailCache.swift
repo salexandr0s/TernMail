@@ -6,10 +6,26 @@ import MessageContent
 /// but not local drafts or pending actions: resyncs keep those, and deleting
 /// the file loses unsent work.
 public struct MailCache: Sendable {
+    // Stored properties stay types whose size the compiler knows. With a
+    // `CacheRecovery?` field, which holds a URL that Foundation sizes at run
+    // time, the Swift 6.2.4 test build aborted in `swift_task_dealloc`
+    // ("freed pointer was not the last allocation") in SettingsQueueTests.
     let writer: any DatabaseWriter
 
+    /// What SQLite cuts the write-ahead log back to each time a checkpoint
+    /// lets it start over. Without a limit the file keeps the size of the
+    /// largest write it ever held, such as a VACUUM.
+    static let logSizeLimit = 8 * 1024 * 1024
+
     public static func open(at url: URL) throws -> MailCache {
-        try MailCache(writer: DatabasePool(path: url.path(percentEncoded: false)))
+        // A recovery Tern quit partway through finishes before SQLite sees
+        // the files (`CacheRecoveryJournal`).
+        _ = try finishRecovery(at: url)
+        var configuration = Configuration()
+        configuration.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA journal_size_limit = \(MailCache.logSizeLimit)")
+        }
+        return try MailCache(writer: DatabasePool(path: url.path(percentEncoded: false), configuration: configuration))
     }
 
     public static func inMemory() throws -> MailCache {
@@ -153,14 +169,22 @@ public struct CacheTransaction {
             record.addressedToMe = Self.names(own, recipients: record.recipients, cc: record.cc)
             let labelIDs = Set(update.labelIDs)
             var storedLabels = Set<String>()
+            var addressesChanged = true
             if let stored = try MessageRecord.fetchOne(db, key: ["accountID": record.accountID, "id": record.id]) {
                 guard stored.historyID <= record.historyID else { continue }
                 if record.bcc == nil { record.bcc = stored.bcc }
                 storedLabels = try messageLabelIDs(messageID: record.id, accountID: record.accountID)
                 if record.databaseEquals(stored), storedLabels == labelIDs { continue }
                 threads.insert(stored.threadID)
+                addressesChanged = (stored.sender, stored.recipients, stored.cc) != (record.sender, record.recipients, record.cc)
             }
             try record.upsert(db)
+            if addressesChanged {
+                // Not part of the record, so the upsert leaves it alone.
+                let text = SearchFolding.addresses(sender: record.sender, recipients: record.recipients, cc: record.cc)
+                try db.cachedStatement(sql: "UPDATE message SET addressSearch = ? WHERE accountID = ? AND id = ?")
+                    .execute(arguments: [text, record.accountID, record.id])
+            }
             try updateLibraryMetadata(record, labelIDs: update.labelIDs)
             for labelID in storedLabels.subtracting(labelIDs) {
                 try db.execute(
@@ -349,20 +373,30 @@ public struct CacheTransaction {
             SELECT message.id
             FROM message
             JOIN messageBody ON messageBody.accountID = message.accountID AND messageBody.messageID = message.id
-            WHERE message.accountID = ? AND message.threadID = ? AND messageBody.enrichedAt IS NULL
+            LEFT JOIN messageBodyEnrichment ON messageBodyEnrichment.accountID = messageBody.accountID
+                AND messageBodyEnrichment.messageID = messageBody.messageID
+            WHERE message.accountID = ? AND message.threadID = ? AND messageBodyEnrichment.messageID IS NULL
             """, arguments: [accountID, threadID])
     }
 
-    /// Records when a body's inline pictures and invitation were read from the
-    /// full payload. The column is not part of `MessageBodyRecord`, so saving
-    /// the body again leaves it alone. Nil asks the next open to read them again.
+    /// Records when a cached body's inline pictures and invitation were read
+    /// from the full payload. The mark has its own row, so saving the body
+    /// again leaves it alone. Nil asks the next open to read them again.
     public func setBodyEnrichedAt(_ date: Date?, messageID: String, accountID: String) throws {
-        try db.execute(sql: "UPDATE messageBody SET enrichedAt = ? WHERE accountID = ? AND messageID = ?",
-                       arguments: [date, accountID, messageID])
+        guard let date else {
+            try db.execute(sql: "DELETE FROM messageBodyEnrichment WHERE accountID = ? AND messageID = ?",
+                           arguments: [accountID, messageID])
+            return
+        }
+        try db.execute(sql: """
+            INSERT INTO messageBodyEnrichment (accountID, messageID, enrichedAt)
+            SELECT accountID, messageID, ? FROM messageBody WHERE accountID = ? AND messageID = ?
+            ON CONFLICT (accountID, messageID) DO UPDATE SET enrichedAt = excluded.enrichedAt
+            """, arguments: [date, accountID, messageID])
     }
 
     public func bodyEnrichedAt(messageID: String, accountID: String) throws -> Date? {
-        try Date.fetchOne(db, sql: "SELECT enrichedAt FROM messageBody WHERE accountID = ? AND messageID = ?",
+        try Date.fetchOne(db, sql: "SELECT enrichedAt FROM messageBodyEnrichment WHERE accountID = ? AND messageID = ?",
                           arguments: [accountID, messageID])
     }
 

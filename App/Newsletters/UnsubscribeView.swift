@@ -82,6 +82,8 @@ struct UnsubscribeView: View {
                 .hidden()
                 .accessibilityHidden(true)
         }
+        // The rows and sheets show senders of received mail.
+        .logoLookup(.familiarSenders)
     }
 
     private var header: some View {

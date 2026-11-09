@@ -8,7 +8,7 @@ public struct CalendarStore: Sendable {
     let writer: any DatabaseWriter
 
     public static func open(at url: URL) throws -> CalendarStore {
-        try CalendarStore(writer: DatabasePool(path: url.path(percentEncoded: false)))
+        try CalendarStore(writer: DatabasePool(path: url.path(percentEncoded: false), configuration: .sharedFile))
     }
     public static func inMemory() throws -> CalendarStore { try CalendarStore(writer: DatabaseQueue()) }
 

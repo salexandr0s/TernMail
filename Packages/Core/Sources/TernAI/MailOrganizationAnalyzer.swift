@@ -7,7 +7,7 @@ public struct MailOrganizationAnalyzer: Sendable {
     public static let maximumCategories = 12
     public static let maximumRuleSenders = maximumMessages / 2
     public static let maximumResponseBytes = 64 * 1_024
-    public static let maximumInputBytes = ChatGPTProvider.maximumRequestBytes
+    public static let maximumInputBytes = 512 * 1_024
     private let provider: any AIProvider
 
     public init(provider: any AIProvider) { self.provider = provider }
@@ -71,7 +71,8 @@ public struct MailOrganizationAnalyzer: Sendable {
     }
 
     /// Reduce excerpts and optional context before dropping any sampled message.
-    /// Measure the actual provider envelope, including JSON escaping and schema.
+    /// Budget the common content with room for each provider's wire envelope.
+    /// Every adapter also validates its final encoded request before dispatch.
     private static func request(messages: [OrganizationEmail], labels: [String], model: String) throws -> AIRequest {
         let evidence = OrganizationEvidence(messages: messages.map(\.evidence))
         let labelPositions = Dictionary(uniqueKeysWithValues: labels.enumerated().map { (labelKey($0.element), $0.offset) })
@@ -101,12 +102,11 @@ public struct MailOrganizationAnalyzer: Sendable {
             let content = try input.jsonString()
             let request = AIRequest(model: model, input: [.object(["role": .string("user"), "content": .string(content)])],
                                     instructions: instructions, tools: [], responseSchema: schema)
-            do {
-                _ = try ChatGPTProvider.requestBody(request)
-                return request
-            } catch AIProviderError.invalidRequest {
-                continue
-            }
+            let commonEnvelope = AIJSON.object([
+                "model": .string(model), "input": .array(request.input),
+                "instructions": .string(instructions), "schema": schema,
+            ])
+            if try commonEnvelope.encoded().count <= maximumInputBytes - 16 * 1_024 { return request }
         }
         throw MailOrganizationError.invalidInput
     }

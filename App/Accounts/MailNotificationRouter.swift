@@ -36,7 +36,7 @@ enum MailNotificationCategories {
     }
 }
 
-/// One system delegate routes both mail and Calendar notifications.
+/// One system delegate routes mail, Calendar, and follow-up notifications.
 @MainActor final class MailNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = MailNotificationRouter()
     enum Response: Sendable, Equatable {
@@ -52,6 +52,12 @@ enum MailNotificationCategories {
     }
     private var pending: [Target] = []
     private var handler: ((Target) async -> Void)?
+    struct FollowUpTarget: Sendable, Equatable {
+        var accountID: String
+        var commitmentID: String
+    }
+    private var pendingFollowUps: [FollowUpTarget] = []
+    private var followUpHandler: ((FollowUpTarget) async -> Void)?
     /// Set by the app model: whether a window shows the conversation.
     var isOnScreen: ((ThreadKey) -> Bool)?
 
@@ -64,7 +70,7 @@ enum MailNotificationCategories {
             center.setNotificationCategories(others.union(MailNotificationCategories.all))
         }
     }
-    func unbind() { handler = nil }
+    func unbind() { handler = nil; followUpHandler = nil }
     func bind(_ handler: @escaping (Target) async -> Void) {
         self.handler = handler
         let targets = pending; pending = []
@@ -75,12 +81,35 @@ enum MailNotificationCategories {
         await handler(target)
     }
 
+    func bindFollowUps(_ handler: @escaping (FollowUpTarget) async -> Void) {
+        followUpHandler = handler
+        let targets = pendingFollowUps; pendingFollowUps = []
+        Task { [weak self] in for target in targets { await self?.routeFollowUp(target) } }
+    }
+
+    private func routeFollowUp(_ target: FollowUpTarget) async {
+        guard let followUpHandler else {
+            if !pendingFollowUps.contains(target), pendingFollowUps.count < 20 { pendingFollowUps.append(target) }
+            return
+        }
+        await followUpHandler(target)
+    }
+
     /// Tern is frontmost and a window shows the conversation, so new mail in it needs no alert.
     func isShowing(accountID: String, threadID: String) -> Bool {
         NSApp.isActive && isOnScreen?(ThreadKey(accountID: accountID, threadID: threadID)) == true
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        if response.notification.request.identifier.hasPrefix("tern.followup.") {
+            let values = response.notification.request.content.userInfo
+            guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+                  let account = values["followUpAccountID"] as? String,
+                  let commitment = values["followUpCommitmentID"] as? String,
+                  [account, commitment].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { return }
+            await routeFollowUp(FollowUpTarget(accountID: account, commitmentID: commitment))
+            return
+        }
         if response.notification.request.identifier.hasPrefix("tern.calendar.") {
             await CalendarNotificationRouter.shared.userNotificationCenter(center, didReceive: response)
             return
@@ -96,6 +125,7 @@ enum MailNotificationCategories {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let request = notification.request
+        if request.identifier.hasPrefix("tern.followup.") { return [.banner, .list, .sound] }
         if request.identifier.hasPrefix("tern.calendar.") {
             return await CalendarNotificationRouter.shared.userNotificationCenter(center, willPresent: notification)
         }

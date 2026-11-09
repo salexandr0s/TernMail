@@ -32,6 +32,8 @@ struct MailCommands: Commands {
     @FocusedValue(\.readerActions) private var reader
     @FocusedValue(\.assistantModel) private var assistant
     @FocusedValue(\.attachmentLibraryToolbar) private var libraryToolbar
+    @FocusedValue(\.followUpsModel) private var followUps
+    @FocusedValue(\.todayModel) private var today
 
     var body: some Commands {
         ComposeFeatureCommands()
@@ -85,7 +87,7 @@ struct MailCommands: Commands {
             Button("Open Conversation", systemImage: "envelope.open") { openConversationWindow() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.openConversation.shortcut)
-                .disabled(focusedMailbox?.selectedThreadIDs.count != 1)
+                .disabled(focusedMailbox?.replyTarget == nil)
             Button("Attach Files…", systemImage: "paperclip") { compose?.isChoosingFiles = true }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.attachFiles.shortcut)
@@ -114,7 +116,7 @@ struct MailCommands: Commands {
             Button("Find…", systemImage: "magnifyingglass") { find() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.find.shortcut)
-                .disabled(reader == nil && calendarActions == nil && libraryToolbar == nil)
+                .disabled(reader == nil && calendarActions == nil && libraryToolbar == nil && followUps == nil && today == nil)
             Button("Search Mail", systemImage: "magnifyingglass") { focusedMailbox?.search.focusField() }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.searchMail.shortcut)
@@ -341,6 +343,12 @@ struct MailCommands: Commands {
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.goAttachments.shortcut)
                 .disabled(!isMainWindowFocused)
+            Button("Waiting for", systemImage: "clock.badge.checkmark") { app.destination = .followUps }
+                .labelStyle(.titleAndIcon)
+                .disabled(!isMainWindowFocused)
+            Button("Today", systemImage: "sun.max") { app.destination = .today }
+                .labelStyle(.titleAndIcon)
+                .disabled(!isMainWindowFocused)
             Divider()
             Button("Go to Label…", systemImage: "tag") { focusedMailbox?.navigation.isShowingSwitcher = true }
                 .labelStyle(.titleAndIcon)
@@ -372,7 +380,7 @@ struct MailCommands: Commands {
         compose?.isEditable ?? false
     }
 
-    /// Reply needs one conversation selected in the mailbox window, which is in front.
+    /// Reply needs one conversation or message selected in the mailbox window, which is in front.
     private var canReply: Bool {
         if let conversationLink { return app.mailbox?.account(id: conversationLink.accountID) != nil }
         return focusedMailbox?.canReply ?? false
@@ -413,12 +421,10 @@ struct MailCommands: Commands {
         return title
     }
 
-    /// The one selected conversation, or the open conversation window's.
+    /// The open conversation window's link, or what the mailbox reader shows:
+    /// one conversation, or in message mode its one selected message.
     private var selectedLink: MailLink? {
-        if let conversationLink { return conversationLink }
-        guard let mailbox = focusedMailbox, mailbox.selectedThreadIDs.count == 1, let key = mailbox.selectedThreadIDs.first else { return nil }
-        let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
-        return MailLink(accountID: key.accountID, threadID: key.threadID, messageID: messageID)
+        conversationLink ?? focusedMailbox?.replyTarget
     }
 
     private var gmailURL: URL? {
@@ -432,9 +438,8 @@ struct MailCommands: Commands {
     }
 
     private func openConversationWindow() {
-        guard let mailbox = focusedMailbox, let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1 else { return }
-        let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
-        openWindow(id: ConversationWindow.sceneID, value: MailLink(accountID: key.accountID, threadID: key.threadID, messageID: messageID))
+        guard let link = focusedMailbox?.replyTarget else { return }
+        openWindow(id: ConversationWindow.sceneID, value: link)
     }
 
     private func printFocusedContent(asPDF: Bool) {
@@ -452,6 +457,10 @@ struct MailCommands: Commands {
             reader.find()
         } else if let libraryToolbar {
             libraryToolbar.searchFocusRequest += 1
+        } else if let followUps {
+            followUps.searchFocusRequest += 1
+        } else if let today {
+            today.searchFocusRequest += 1
         } else {
             calendarActions?.find()
         }
@@ -469,20 +478,12 @@ struct MailCommands: Commands {
                 openWindow(id: ComposeWindow.sceneID, value: id)
                 return
             }
-            if let key = mailbox.selectedThreadIDs.first, mailbox.selectedThreadIDs.count == 1,
-               let quote = selectedQuote, quote.belongsTo(accountID: key.accountID, threadID: key.threadID,
-                messageID: mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID) {
-                guard let id = await mailbox.requestReply(kind, messageID: quote.messageID,
-                    accountID: quote.accountID, selectedText: quote.text) else { return }
-                openWindow(id: ComposeWindow.sceneID, value: id)
-                return
-            }
-            guard let start = await mailbox.replyStart(kind) else { return }
-            open(start)
+            guard let id = await mailbox.startReply(kind, quote: selectedQuote) else { return }
+            openWindow(id: ComposeWindow.sceneID, value: id)
         }
     }
 
-    /// Forwards the newest message of the selected conversation as a file.
+    /// Forwards the message Reply would answer as a file.
     private func forwardAsAttachment() {
         guard let mailbox = focusedMailbox ?? (conversationLink == nil ? nil : app.mailbox) else { return }
         Task {

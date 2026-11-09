@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Testing
 @testable import MailStore
 
@@ -43,6 +44,42 @@ import Testing
             }
             #expect(try await cache.mimeResources(messageID: "m", accountID: "a") == [original])
         }
+    }
+
+    @Test func upgradeKeepsEnrichmentMarksInTheirOwnRows() async throws {
+        let writer = try DatabaseQueue()
+        try Schema.cacheMigrator.migrate(writer, upTo: "address-search-v1")
+        let date = Date(timeIntervalSince1970: 1_900_000_000)
+        let sent = LocalSend.messageID(localDraftID: "sent")
+        try await writer.write { db in
+            for id in ["opened", "unopened", sent] {
+                try db.execute(sql: """
+                    INSERT INTO message(accountID,id,threadID,historyID,date,snippet,sender,recipients,subject,sizeEstimate)
+                    VALUES ('a',?,'t',1,0,'','sender@example.test','me@example.test','',0)
+                    """, arguments: [id])
+                try db.execute(sql: "INSERT INTO messageBody(accountID,messageID,plainText,fetchedAt,enrichedAt) VALUES ('a',?,'Body',0,?)",
+                               arguments: [id, id == "unopened" ? nil : date])
+            }
+            try LocalDraft(id: "draft", accountID: "a", kind: .new, rfcMessageID: "<draft@example.test>", now: date).insert(db)
+            _ = try CacheTransaction(db: db).enqueue(.modifyMessages, accountID: "a", messageIDs: ["opened"], add: [SystemLabel.starred],
+                                                     now: date, notBefore: date)
+        }
+        let cache = try MailCache(writer: writer)
+        #expect(try await cache.read { try $0.bodyEnrichedAt(messageID: "opened", accountID: "a") } == date)
+        #expect(try await cache.read { try $0.bodyEnrichedAt(messageID: sent, accountID: "a") } == date)
+        #expect(try await cache.read { try $0.unenrichedBodyMessageIDs(threadID: "t", accountID: "a") } == ["unopened"])
+        #expect(try await cache.cacheResetReadiness() == CacheResetReadiness(localDraftCount: 1, activeActionCount: 1, failedActionCount: 0))
+        try await cache.write { tx in
+            // Saving a body again keeps its mark, and a missing body can't get one.
+            try tx.saveBodies([.init(accountID: "a", messageID: "opened", html: "<p>Body</p>", plainText: nil, fetchedAt: date)])
+            try tx.setBodyEnrichedAt(date, messageID: "missing", accountID: "a")
+            try tx.setBodyEnrichedAt(nil, messageID: sent, accountID: "a")
+        }
+        #expect(try await cache.read { try $0.bodyEnrichedAt(messageID: "opened", accountID: "a") } == date)
+        #expect(try await cache.read { try $0.bodyEnrichedAt(messageID: "missing", accountID: "a") } == nil)
+        #expect(Set(try await cache.read { try $0.unenrichedBodyMessageIDs(threadID: "t", accountID: "a") }) == ["unopened", sent])
+        try await cache.write { tx in _ = try tx.deleteMessages(ids: ["opened"], accountID: "a") }
+        #expect(try await cache.read { try Int.fetchOne($0.db, sql: "SELECT COUNT(*) FROM messageBodyEnrichment") } == 0)
     }
 
     private func message(_ account: String) -> MessageRecord {

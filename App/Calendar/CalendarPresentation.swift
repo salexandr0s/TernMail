@@ -20,14 +20,11 @@ enum CalendarDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// Where the calendar keeps its view preferences. The UI audit uses its own
-/// suite so a preview run never changes the user's settings.
+/// Where the calendar keeps its view preferences. Isolated launches use their
+/// own suite, so an audit or test run never changes the user's settings.
 enum CalendarDefaults {
-    @MainActor static let store: UserDefaults = {
-        let arguments = ProcessInfo.processInfo.arguments
-        let isAudit = arguments.contains("--ui-audit") || arguments.contains("--ui-audit-calendar")
-        return isAudit ? UserDefaults(suiteName: "tern.calendar.audit") ?? .standard : .standard
-    }()
+    @MainActor static let store: UserDefaults = LaunchMode.current.isIsolated
+        ? UserDefaults(suiteName: "tern.calendar.audit") ?? .standard : .standard
 }
 
 enum CalendarAIAccess: String, CaseIterable, Identifiable {

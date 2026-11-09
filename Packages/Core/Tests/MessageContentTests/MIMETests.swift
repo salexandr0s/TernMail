@@ -77,6 +77,22 @@ import Testing
         #expect(parsed.headers.filter { $0.name == "Subject" }.count == 1)
     }
 
+    @Test func headerTextKeepsJoinersAndReplacesControls() {
+        // A zero-width non-joiner inside a Persian word, and a family emoji built with zero-width joiners.
+        let text = "می\u{200C}خواهم 👨\u{200D}👩\u{200D}👧"
+        var message = MIMEMessage(from: EmailAddress(name: text, address: "a@example.com"))
+        message.subject = text
+        message.to = [EmailAddress(address: "b\u{200B}@example.com")]
+
+        let parsed = MIMEReader.parse(message.encoded())
+
+        #expect(parsed.header("Subject").map(MIMEReader.decodeEncodedWords) == text)
+        #expect(parsed.header("From").map(EmailAddress.parseList) == [message.from])
+        // A pasted address loses the zero-width space it carried.
+        #expect(parsed.header("To") == "b@example.com")
+        #expect(MIMEWriter.headerSafe("a\u{07}b\r\nc\u{85}d\u{2029}e\u{200C}\u{200D}") == "a b  c d e\u{200C}\u{200D}")
+    }
+
     @Test(arguments: [false, true])
     func invitationRepliesAreInlineAlternativesWithOptionalHTMLAndAttachments(includeExtras: Bool) throws {
         let invitation = try Invitation(data: Data(calendar(["METHOD:REQUEST"]).utf8))
@@ -187,6 +203,51 @@ import Testing
         ])
         // A quote left open ends with its line, so the next line is still its own entry.
         #expect(EmailAddress.splitList("\"Doe, Jane\nbob@example.com") == ["\"Doe, Jane", "bob@example.com"])
+    }
+
+    @Test func everyAddressInAnEntryIsKeptAndQuotedLocalPartsStayWhole() {
+        let pair = [EmailAddress(address: "alice@example.com"), EmailAddress(address: "bob@example.com")]
+        #expect(EmailAddress.parseList("alice@example.com bob@example.com") == pair)
+        #expect(EmailAddress.parseList("alice@example.com\tbob@example.com") == pair)
+        // A local part that needs its quotes stays whole and isn't valid, so Send stops.
+        let quoted = EmailAddress.parseList(#""john doe"@example.com"#)
+        #expect(quoted == [EmailAddress(address: #""john doe"@example.com"#)])
+        #expect(quoted.allSatisfy { !$0.isValid })
+        #expect(EmailAddress.parseList(#""john.doe"@example.com"#) == [EmailAddress(address: "john.doe@example.com")])
+        // Without a comma between them, named addresses are each kept too.
+        #expect(EmailAddress.parseList("Jane <jane@example.com> Bob <bob@example.com> carol@example.com") == [
+            EmailAddress(name: "Jane", address: "jane@example.com"),
+            EmailAddress(name: "Bob", address: "bob@example.com"),
+            EmailAddress(address: "carol@example.com"),
+        ])
+        // Words before an angle address are its name, even one with an "@".
+        #expect(EmailAddress.parseList("support@bank.example <other@example.com>") == [
+            EmailAddress(name: "support@bank.example", address: "other@example.com"),
+        ])
+        // A pasted list can quote whole addresses.
+        #expect(EmailAddress.parseList(#""jane@example.com""#) == [EmailAddress(address: "jane@example.com")])
+    }
+
+    @Test func recipientTitlesShowTheAddressWhenTheNameCouldMislead() {
+        let address = "attacker@evil.example"
+        let lookalikes = ["support@bank.example", "support＠bank", "bank．example", "bank。example", "bank.\u{200B}example",
+                          "\u{202E}elpmaxe.knab", "Help (bank.example)"]
+        for name in lookalikes {
+            #expect(EmailAddress(name: name, address: address).recipientTitle(full: false) == address)
+        }
+        for name in ["Bank Support", "J. R. R. Tolkien", "Acme Inc.", "Version 2.0"] {
+            #expect(EmailAddress(name: name, address: address).recipientTitle(full: false) == name)
+        }
+        // From a link or a Reply-To, the name shows with the address.
+        let both = "\u{2068}Bank Support\u{2069} <attacker@evil.example>"
+        for origin in [EmailAddress.Origin.link, .replyTo] {
+            #expect(EmailAddress(name: "Bank Support", address: address, origin: origin).recipientTitle(full: false) == both)
+        }
+        #expect(EmailAddress(name: "Bank Support", address: address).recipientTitle(full: true) == both)
+        // Direction controls in a name can't move the address.
+        let reversed = EmailAddress(name: "Bank \u{202E}troppuS", address: address, origin: .link)
+        #expect(reversed.recipientTitle(full: false).hasSuffix("\u{2069} <attacker@evil.example>"))
+        #expect(EmailAddress(address: address).recipientTitle(full: true) == address)
     }
 
     @Test func encodedWordsSplitInsideACharacterDecodeTogether() {

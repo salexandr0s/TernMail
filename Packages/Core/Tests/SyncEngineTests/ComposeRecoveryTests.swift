@@ -46,7 +46,8 @@ import Testing
         #expect(try await cache.read { try $0.outgoingAttachments(localDraftID: draft.id).isEmpty })
     }
 
-    @Test func failedPreSendUploadRemainsCancellableButUncertainDeliveryDoesNot() async throws {
+    @Test(arguments: [GmailError.transport(.networkConnectionLost), .transport(.notConnectedToInternet)])
+    func failedPreSendUploadRemainsCancellableButUncertainDeliveryDoesNot(lostConnection: GmailError) async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         let draft = LocalDraft(accountID: account, kind: .new,
             content: DraftContent(to: [.init(address: "pat@example.com")]),
@@ -63,8 +64,33 @@ import Testing
         #expect(try await cache.read { try $0.localDraft(id: draft.id)?.state } == .editing)
 
         try await engine.sendDraft(draft.id, delay: 0)
-        await gmail.failNextDraftCall("send", with: .transport(.networkConnectionLost), afterApplying: true)
+        await gmail.failNextDraftCall("send", with: lostConnection, afterApplying: true)
         await engine.sendDueDrafts()
+        #expect(try await cache.read { try $0.localDraft(id: draft.id)?.sendRequested } == true)
+        #expect(try await engine.undoSend(draft.id) == false)
+    }
+
+    @Test(arguments: [GmailError.rateLimited, .transport(.cannotConnectToHost)])
+    func aSendThatProvablyDidNotGoOutRemainsCancellable(failure: GmailError) async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = LocalDraft(accountID: account, kind: .new,
+            content: DraftContent(to: [.init(address: "pat@example.com")]),
+            rfcMessageID: "<unreceived-send@example.com>", now: baseDate)
+        try await engine.createDraft(draft)
+        await gmail.failNextDraftCall("send", with: failure)
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+        #expect(try await cache.read { try $0.localDraft(id: draft.id)?.sendRequested } == false)
+        #expect(try await engine.undoSend(draft.id))
+
+        // A refusal proves nothing about an earlier request that may have gone out.
+        try await engine.sendDraft(draft.id, delay: 0)
+        await gmail.failNextDraftCall("send", with: .transport(.timedOut))
+        await engine.sendDueDrafts()
+        clock.advance(10)
+        await gmail.failNextDraftCall("send", with: failure)
+        await engine.sendDueDrafts()
+        #expect(await gmail.draftCalls == ["create", "send D1", "send D1", "send D1"])
         #expect(try await cache.read { try $0.localDraft(id: draft.id)?.sendRequested } == true)
         #expect(try await engine.undoSend(draft.id) == false)
     }

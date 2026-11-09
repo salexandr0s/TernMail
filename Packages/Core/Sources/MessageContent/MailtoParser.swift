@@ -51,7 +51,8 @@ public enum MailtoParser {
         guard !value.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
         let parsed = EmailAddress.parseList(value)
         guard !parsed.isEmpty, parsed.allSatisfy(\.isValid) else { throw Failure.invalidAddress }
-        return parsed
+        // Whoever wrote the link chose the names, so the addresses show too.
+        return parsed.map { EmailAddress(name: $0.name, address: $0.address, origin: .link) }
     }
 
     private static func unique(_ values: [EmailAddress]) -> [EmailAddress] {

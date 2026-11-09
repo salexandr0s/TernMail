@@ -803,8 +803,6 @@ final class ComposeModel {
             // A restored or moved draft already has a chosen sender snapshot.
             choseRecipientAccount = draft.fromAddress != nil
             replaceContent(with: draft.content)
-            showsCc = !draft.cc.isEmpty
-            showsBcc = !draft.bcc.isEmpty
             knownUpdate = draft.updatedAt
             await loadSenders()
             await loadComposeFeatures()
@@ -892,10 +890,14 @@ final class ComposeModel {
         }
     }
 
+    /// Shows the stored draft. Its Cc and Bcc rows open when they have
+    /// recipients, as after an update from Gmail, so none go out unseen.
     private func replaceContent(with stored: DraftContent) {
         isApplyingStoredContent = true
         content = stored
         isApplyingStoredContent = false
+        if !stored.cc.isEmpty { showsCc = true }
+        if !stored.bcc.isEmpty { showsBcc = true }
     }
 
     private func markChanged() {

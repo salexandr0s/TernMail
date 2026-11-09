@@ -718,6 +718,52 @@ import Testing
         }
     }
 
+    @Test func undoWithdrawsItsOwnQueuedChangeNotTheNewestOne() async throws {
+        try await withFixture { fixture in
+            await fixture.service.setOffline(true)
+            let original = Self.event(id: "event")
+            await fixture.service.put(original)
+            var edited = original
+            edited.summary = "Changed in Tern"
+            try await fixture.model.save(CalendarEditorDraft(event: edited, calendarKey: fixture.owner.id,
+                source: fixture.display(original)))
+            // A newer queued change without an undo entry, such as a reply to an invitation.
+            let newer = try await fixture.engine.enqueue(.create(Self.event()), calendarID: "work")
+            await fixture.model.reloadOperations()
+
+            await fixture.model.undo()
+
+            let operations = try await fixture.store.operations(accountID: fixture.accountID)
+            #expect(operations.first { $0.id == newer.id }?.status == .queued)
+            #expect(operations.first { $0.id != newer.id }?.status == .cancelled)
+            #expect(fixture.model.undoActions.isEmpty)
+        }
+    }
+
+    @Test func undoReversesAChangeThatFinishedSyncingInTheBackground() async throws {
+        try await withFixture { fixture in
+            await fixture.service.setOffline(true)
+            let original = Self.event(id: "event")
+            await fixture.service.put(original)
+            var edited = original
+            edited.summary = "Changed in Tern"
+            try await fixture.model.save(CalendarEditorDraft(event: edited, calendarKey: fixture.owner.id,
+                source: fixture.display(original)))
+            #expect(fixture.model.operations.first?.status == .queued)
+            // The queue sends it before the model next reads the queue.
+            await fixture.service.setOffline(false)
+            try await fixture.engine.flush()
+
+            await fixture.model.undo()
+
+            let operations = try await fixture.store.operations(accountID: fixture.accountID)
+            #expect(operations.count == 2)
+            #expect(operations.allSatisfy { $0.status == .completed })
+            #expect(try await fixture.service.event(calendarID: "work", eventID: "event").summary == original.summary)
+            #expect(fixture.model.undoActions.isEmpty)
+        }
+    }
+
     @Test func movingAnAllDayEventAcrossAutumnDSTPreservesItsTwoCivilDays() async throws {
         try await withFixture { fixture in
             var original = Self.event(id: "trip")
@@ -766,6 +812,55 @@ import Testing
             #expect(await fixture.service.patchETags.isEmpty)
             #expect(try await fixture.service.event(calendarID: "work", eventID: master.id).summary == "Concurrent change")
         }
+    }
+
+    @Test func movingAnAllDayOccurrenceMovesItsSeriesByThatDayInTheCalendarZone() async throws {
+        try await withFixture { fixture in
+            // Pago Pago is west of almost every Mac's zone, so midnight in the
+            // Mac's zone falls on the previous day there.
+            fixture.model.workingHours = CalendarWorkingHours(timeZoneIdentifier: "Pacific/Pago_Pago")
+            var master = Self.event(id: "series")
+            master.start = CalendarDateTime(date: "2031-07-01")
+            master.end = CalendarDateTime(date: "2031-07-02")
+            master.recurrence = ["RRULE:FREQ=WEEKLY"]
+            await fixture.service.put(master)
+            var occurrence = master
+            occurrence.id = "occurrence"
+            occurrence.recurringEventId = master.id
+            occurrence.start = CalendarDateTime(date: "2031-07-15")
+            occurrence.end = CalendarDateTime(date: "2031-07-16")
+            occurrence.originalStartTime = occurrence.start
+            var draft = CalendarEditorDraft(event: occurrence, calendarKey: fixture.owner.id,
+                source: fixture.display(occurrence), editScope: .series)
+            draft.seriesMaster = master
+            draft.event.start = CalendarDateTime(date: "2031-07-16")
+            draft.event.end = CalendarDateTime(date: "2031-07-17")
+            fixture.model.editor = draft
+
+            try await fixture.model.save(draft)
+
+            let saved = try await fixture.service.event(calendarID: "work", eventID: master.id)
+            #expect(saved.start?.date == "2031-07-02")
+            #expect(saved.end?.date == "2031-07-03")
+        }
+    }
+
+    /// Vienna leaves summer time on 26 October 2031, and Pago Pago is west of
+    /// almost every Mac's zone.
+    @Test(arguments: ["Europe/Vienna", "Pacific/Pago_Pago", "Pacific/Kiritimati"])
+    func aReviewedSeriesSplitKeepsWholeAllDayOccurrences(_ identifier: String) throws {
+        let suite = "CalendarModelTests.recovery." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CalendarModel(app: nil, defaults: defaults)
+        model.workingHours = CalendarWorkingHours(timeZoneIdentifier: identifier)
+        var master = Self.event(id: "series")
+        master.start = CalendarDateTime(date: "2031-07-01")
+        master.end = CalendarDateTime(date: "2031-07-03")
+
+        let end = model.occurrenceEnd(startingAt: CalendarDateTime(date: "2031-10-25"), master: master)
+
+        #expect(end == CalendarDateTime(date: "2031-10-27"))
     }
 
     private static func event(id: String = "") -> GoogleCalendarEvent {

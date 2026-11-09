@@ -22,7 +22,7 @@ enum KeychainIO {
 /// This uses the file-based keychain on purpose: the data protection keychain
 /// requires a team-signed build, and local builds are signed ad hoc.
 enum KeychainStore {
-    private static let service = "dev.tern.mail.oauth"
+    private static let service = AppIdentity.keychainService(.oauth)
 
     struct Failure: Error {
         let status: OSStatus

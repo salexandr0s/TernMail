@@ -28,7 +28,8 @@ final class SearchModel {
     private(set) var restriction: String?
     /// The one account the scope bar picked, or nil for every account searched.
     private(set) var accountID: String?
-    /// Local matches plus Gmail's conversations, newest first.
+    /// Local matches plus Gmail's conversations, newest first. Until the
+    /// current query has a local answer, they're the previous query's.
     private(set) var results: [ThreadRecord] = []
     /// The query's words, for the rows to show in bold.
     private(set) var highlights = SearchHighlights()
@@ -37,6 +38,10 @@ final class SearchModel {
     /// Whether every account searched has answered the current query from
     /// this Mac.
     private(set) var hasLocalAnswer = false
+    /// When the current query started. Relative dates such as `newer_than:2d`
+    /// count from here, both in the conversations found and in the messages
+    /// the list shows for them, so the two agree.
+    @ObservationIgnored private(set) var startedAt = Date.now
     /// Set while Gmail waits for typing to pause before it's asked.
     private var isGmailScheduled = false
     /// Reading the cache failed for an account being searched.
@@ -92,10 +97,12 @@ final class SearchModel {
         isGmailScheduled ? .loading : gmail?.state ?? .ready
     }
 
+    /// Message mode asks Gmail for matching messages, not conversations. A
+    /// search under way asks again. Otherwise the next search uses the mode.
     func setMessageMode(_ enabled: Bool) {
         guard usesMessageMode != enabled else { return }
         usesMessageMode = enabled
-        restart()
+        if isActive { restart() }
     }
 
     var isActive: Bool { !trimmedText.isEmpty }
@@ -208,6 +215,7 @@ final class SearchModel {
 
     private func restart() {
         query = SearchQuery(text, scope: restriction)
+        startedAt = .now
         highlights = SearchHighlights(query)
         limit = Self.pageSize
         delayTask?.cancel()
@@ -218,8 +226,6 @@ final class SearchModel {
         found = [:]
         failedAccountIDs = []
         hasLocalAnswer = false
-        results = []
-        onResultsChange?()
         guard isActive else {
             resultsTasks.forEach { $0.cancel() }
             resultsTasks = []
@@ -227,6 +233,10 @@ final class SearchModel {
             onResultsChange?()
             return
         }
+        // The list keeps showing earlier results, and the selection among
+        // them, until this query has a local answer. With none to keep, it
+        // shows that the search is under way.
+        if results.isEmpty { onResultsChange?() }
         let query = query
         let messageMode = usesMessageMode
         gmail = GmailPager(sources: Dictionary(uniqueKeysWithValues: activeSources.map { source in
@@ -256,7 +266,7 @@ final class SearchModel {
             let accountID = source.accountID
             let stream = cache.searchResults(
                 query, including: gmail?.threadIDs(in: accountID) ?? [], accountID: accountID,
-                timeZone: .current, now: .now, limit: limit
+                timeZone: .current, now: startedAt, limit: limit
             )
             return Task { [weak self] in
                 do {

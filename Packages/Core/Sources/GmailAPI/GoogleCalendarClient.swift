@@ -270,7 +270,7 @@ public struct GoogleCalendarClient: CalendarService, Sendable {
     private func resource<Value: Decodable>(_ segments: [String], method: String = "GET", query: [URLQueryItem] = [],
                                            body: [String: CalendarJSON]? = nil, etag: String? = nil, syncRequest: Bool = false) async throws -> Value {
         do {
-            let result: Value = try session.decode(try await session.send(request(segments, method: method, query: query, body: body, etag: etag)).data)
+            let result: Value = try session.decode(try await send(request(segments, method: method, query: query, body: body, etag: etag)))
             let identities: [String]
             switch result {
             case let event as GoogleCalendarEvent: identities = [event.id]
@@ -287,6 +287,14 @@ public struct GoogleCalendarClient: CalendarService, Sendable {
     }
 
     private func empty(_ segments: [String], method: String, query: [URLQueryItem] = [], etag: String? = nil) async throws {
-        _ = try await session.send(request(segments, method: method, query: query, body: nil, etag: etag))
+        _ = try await send(request(segments, method: method, query: query, body: nil, etag: etag))
+    }
+
+    /// Calendar requests aren't retried in place, so Calendar's daily limit
+    /// can count as a rate limit: cached events and queued changes stay until
+    /// a later sync.
+    private func send(_ request: URLRequest) async throws -> Data {
+        do { return try await session.send(request).data }
+        catch GmailError.http(status: 403, reason: "dailyLimitExceeded") { throw GmailError.rateLimited }
     }
 }

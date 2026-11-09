@@ -1,6 +1,7 @@
 import AppKit
 import MailStore
 import SwiftUI
+import SyncEngine
 import UniformTypeIdentifiers
 
 enum AttachmentOpenLocation: String, CaseIterable {
@@ -21,11 +22,30 @@ enum AttachmentActions {
     }
 
     /// Returns the file that opened: the source, or its copy in Downloads.
+    /// An app, installer or script opens only after the person confirms, and
+    /// declining throws `CancellationError`.
     @discardableResult
     static func open(_ source: URL) async throws -> URL {
+        // The name on disk decides how the file opens. A Downloads copy keeps its extension.
+        let filename = source.lastPathComponent
+        if SyncEngine.runsCodeWhenOpened(filename) {
+            guard await confirmOpening(filename) else { throw CancellationError() }
+        }
         let file = try await openingURL(source)
         guard NSWorkspace.shared.open(file) else { throw CocoaError(.fileReadUnknown) }
         return file
+    }
+
+    /// Cancel comes first and answers Escape, so Return alone never opens the file.
+    private static func confirmOpening(_ filename: String) async -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Open “\(filename)”?"
+        alert.informativeText = "Opening this file can run software on your Mac. Open it only if you trust the sender."
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        alert.addButton(withTitle: "Open")
+        let response = if let window = NSApp.keyWindow { await alert.beginSheetModal(for: window) } else { alert.runModal() }
+        return response == .alertSecondButtonReturn
     }
 
     static func openWith(_ source: URL) async throws {

@@ -3,6 +3,17 @@ import SwiftUI
 
 extension EnvironmentValues {
     @Entry var addressAvatarContext = AddressAvatarContext.empty
+    /// Set with `logoLookup(_:)`.
+    @Entry var logoLookup = LogoLookup.always
+}
+
+extension View {
+    /// Limits when the avatars inside may ask a website for an icon. The
+    /// limit only tightens what the view inherits, so a correspondent's avatar
+    /// can't lift the limit of the Spam mailbox around it.
+    func logoLookup(_ limit: LogoLookup) -> some View {
+        transformEnvironment(\.logoLookup) { $0 = max($0, limit) }
+    }
 }
 
 /// Scene roots supply photo access without making standalone avatars depend on AppModel.
@@ -27,6 +38,7 @@ struct AddressAvatar<Placeholder: View>: View {
     private let contextOverride: AddressAvatarContext?
     private let placeholder: Placeholder
     @Environment(\.addressAvatarContext) private var environmentContext
+    @Environment(\.logoLookup) private var logoLookup
     @AppStorage(DomainLogoImages.preferenceKey) private var showsLogos = DomainLogoPreferences.defaultEnabled
     @State private var model: AddressAvatarModel
     @State private var configuredIdentity: String?
@@ -40,7 +52,9 @@ struct AddressAvatar<Placeholder: View>: View {
     }
 
     private var context: AddressAvatarContext { contextOverride ?? environmentContext }
-    private var identity: String { "\(accountID ?? "")|\(address.lowercased())|\(context.identity)|\(showsLogos)" }
+    private var identity: String {
+        "\(accountID ?? "")|\(address.lowercased())|\(context.identity)|\(showsLogos)|\(logoLookup)"
+    }
 
     private var displayedImage: NSImage? {
         if configuredIdentity == identity {
@@ -67,7 +81,8 @@ struct AddressAvatar<Placeholder: View>: View {
 
     private func configure() {
         configuredIdentity = identity
-        model.configure(address: address, accountID: accountID, context: context, showsLogos: showsLogos)
+        model.configure(address: address, accountID: accountID, context: context, showsLogos: showsLogos,
+                        logoLookup: logoLookup)
     }
 }
 

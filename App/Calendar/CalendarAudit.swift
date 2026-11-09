@@ -1,4 +1,4 @@
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import Foundation
 import GmailAPI
 import MailStore
@@ -54,7 +54,8 @@ actor CalendarAuditService: CalendarService {
     private let performanceTransport: PerformanceAuditTransport?
 
     init(now: Date, performanceTransport: PerformanceAuditTransport? = nil) {
-        self.performanceTransport = performanceTransport ?? (ProcessInfo.processInfo.arguments.contains("--performance-audit") ? .shared : nil)
+        let performance = LaunchMode.current.performance
+        self.performanceTransport = performanceTransport ?? (performance.audit ? .shared : nil)
         var personal = GoogleCalendarEntry(id: "personal", summary: "Personal", timeZone: "Europe/Vienna", accessRole: "owner", backgroundColor: "#0b8043")
         personal.primary = true
         personal.rawValue["conferenceProperties"] = .object(["allowedConferenceSolutionTypes": .array([.string("hangoutsMeet")])])
@@ -94,10 +95,8 @@ actor CalendarAuditService: CalendarService {
         rows = ["personal": [breakfast.id: breakfast, trip.id: trip],
                 "work": [review.id: review, overlap.id: overlap, planning.id: planning],
                 "shared": [focus.id: focus]]
-        if ProcessInfo.processInfo.arguments.contains("--performance-audit") {
-            let argument = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-events=") }
-            let count = min(1_000, max(100, argument.flatMap { Int($0.split(separator: "=").last ?? "") } ?? 100))
-            for index in 0..<count {
+        if performance.audit {
+            for index in 0..<performance.events {
                 let value = event("performance-\(index)", "Synthetic event \(index)", day: index % 7,
                                   hour: 8 + (index / 7) % 10, minutes: 15 + (index % 4) * 15)
                 rows["work", default: [:]][value.id] = value
@@ -136,7 +135,8 @@ actor CalendarAuditService: CalendarService {
         throw GmailError.notFound
     }
     func insertEvent(calendarID: String, event: GoogleCalendarEvent, sendUpdates: String) async throws -> GoogleCalendarEvent {
-        guard entries[calendarID]?.canWrite == true else { throw GmailError.http(status: 403, reason: "forbidden") }
+        // Google refuses a write to a calendar shared read-only with this reason.
+        guard entries[calendarID]?.canWrite == true else { throw GmailError.http(status: 403, reason: "requiredAccessLevel") }
         var value = event
         if value.id.isEmpty { value.id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
         if rows[calendarID]?[value.id] != nil { throw GmailError.http(status: 409, reason: "duplicate") }
@@ -157,7 +157,7 @@ actor CalendarAuditService: CalendarService {
     }
     func moveEvent(calendarID: String, eventID: String, destination: String, etag: String?, sendUpdates: String) async throws -> GoogleCalendarEvent {
         let value = try await event(calendarID: calendarID, eventID: eventID)
-        guard entries[destination]?.canWrite == true else { throw GmailError.http(status: 403, reason: "forbidden") }
+        guard entries[destination]?.canWrite == true else { throw GmailError.http(status: 403, reason: "requiredAccessLevel") }
         if let etag, value.etag != etag { throw GmailError.http(status: 412, reason: "conditionNotMet") }
         rows[calendarID]?[eventID] = nil
         return store(value, in: destination)

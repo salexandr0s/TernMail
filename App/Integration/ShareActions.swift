@@ -85,6 +85,7 @@ struct MessageFileItem: Transferable {
 
 /// Files handed to a share service. Each goes in a folder of its own, so two
 /// items with the same name never replace each other while a service reads one.
+/// All of those folders sit in `directory`, which launch and account removal clear.
 enum TemporaryShareFile {
     /// Longest name kept, in UTF-8 bytes. File names can have 255, which
     /// leaves room for the extension.
@@ -103,11 +104,24 @@ enum TemporaryShareFile {
         return trimmed.isEmpty ? fallback : trimmed
     }
 
+    /// The app's own folder for shared files, inside its temporary directory.
+    static var directory: URL {
+        FileManager.default.temporaryDirectory.appending(path: "Tern Share", directoryHint: .isDirectory)
+    }
+
     static func write(_ data: Data, named name: String, pathExtension: String) throws -> URL {
-        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let folder = directory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appending(path: name, directoryHint: .notDirectory).appendingPathExtension(pathExtension)
         try data.write(to: file, options: .atomic)
         return file
+    }
+
+    /// Deletes every file written for Share. A share service gets its own copy
+    /// of a file, so this doesn't take one away from a service that received it.
+    static func removeAll() async {
+        await Task.detached(priority: .utility) {
+            _ = try? FileManager.default.removeItem(at: Self.directory)
+        }.value
     }
 }

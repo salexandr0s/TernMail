@@ -98,6 +98,32 @@ import Testing
         #expect(String(decoding: try #require(await gmail.uploads.last).raw, as: UTF8.self).contains("filename=\"agenda.txt\""))
     }
 
+    @Test func sendAgainKeepsTheOriginalSenderUnlessItCanNoLongerSend() async throws {
+        let cache = try MailCache.inMemory()
+        let store = try AccountStore.inMemory()
+        try await store.save(AccountRecord(id: account, email: "me@example.com", displayName: nil, grantedScopes: [], addedAt: baseDate))
+        let gmail = FakeGmail()
+        for (id, from) in [("fromAlias", "ALIAS@example.com"), ("fromPending", "pending@example.com")] {
+            await gmail.add(try decode(GmailMessage.self, #"""
+                {"id":"\#(id)","threadId":"\#(id)","labelIds":["SENT"],"payload":{"mimeType":"text/plain","body":{"data":"SGk"},
+                "headers":[{"name":"From","value":"\#(from)"},{"name":"To","value":"pat@example.com"}]}}
+                """#))
+        }
+        let engine = SyncEngine(accountID: account, sender: .init(address: "me@example.com"),
+                                outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString),
+                                gmail: gmail, accounts: store, cache: cache, sendsAutomatically: false)
+        // Before the first identity sync, the alias stays for the send path to confirm or refuse.
+        #expect(try await engine.startAgain(messageID: "fromAlias").draft.fromAddress == "ALIAS@example.com")
+
+        try await store.replaceIdentities(try decode([SendAsIdentity].self, #"""
+            [{"sendAsEmail":"alias@example.com","verificationStatus":"accepted"},
+            {"sendAsEmail":"pending@example.com","verificationStatus":"pending"}]
+            """#), accountID: account, fetchedAt: baseDate)
+        #expect(try await engine.startAgain(messageID: "fromAlias").draft.fromAddress == "alias@example.com")
+        // An alias that can't send yet gives way to the account's address.
+        #expect(try await engine.startAgain(messageID: "fromPending").draft.fromAddress == "me@example.com")
+    }
+
     @Test func replyAllExcludesEveryVerifiedOwnAlias() async throws {
         let cache = try MailCache.inMemory()
         let store = try AccountStore.inMemory()

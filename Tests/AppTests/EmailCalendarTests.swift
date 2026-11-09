@@ -2,6 +2,7 @@ import Foundation
 import GmailAPI
 import MailStore
 import MessageContent
+import SyncEngine
 import Testing
 import TernAI
 @testable import Tern
@@ -33,6 +34,19 @@ import TernAI
             try await model.openEventEditor(accountID: "account", calendarID: "calendar", eventID: "event", isAuthorized: { false })
         }
         #expect(model.errorMessage == "An earlier calendar notice")
+    }
+
+    /// Pago Pago is west of almost every Mac's zone, so midnight in the Mac's
+    /// zone falls on the previous day there.
+    @Test(arguments: ["Pacific/Pago_Pago", "Europe/Vienna", "Pacific/Kiritimati"])
+    func anAllDayEmailEventWithoutAnEndLastsOneDayInTheCalendarZone(_ identifier: String) throws {
+        let suite = "tern.email-calendar.default-end." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CalendarModel(app: nil, defaults: defaults)
+        model.workingHours = CalendarWorkingHours(timeZoneIdentifier: identifier)
+
+        #expect(model.defaultEnd(after: CalendarDateTime(date: "2031-07-15")) == CalendarDateTime(date: "2031-07-16"))
     }
 
     @Test func simultaneousInterpretationsShareInferenceWhenOneReaderCancels() async throws {

@@ -53,6 +53,14 @@ import Testing
         #expect(await transport.requests.count == 2)
     }
 
+    @Test func calendarsDailyLimitIsARateLimitForReadsAndWrites() async throws {
+        let daily = #"{"error":{"code":403,"errors":[{"reason":"dailyLimitExceeded"}]}}"#
+        let transport = RecordingTransport([.init(status: 403, body: daily), .init(status: 403, body: daily)])
+        let client = GoogleCalendarClient(tokens: CountingTokens(), transport: transport)
+        await #expect(throws: GmailError.rateLimited) { try await client.event(calendarID: "primary", eventID: "event") }
+        await #expect(throws: GmailError.rateLimited) { try await client.deleteEvent(calendarID: "primary", eventID: "event") }
+    }
+
     @Test func partialAvailabilityDoesNotDisappearDuringDecoding() async throws {
         let transport = RecordingTransport([.init(status: 200, body: #"{"timeMin":"2026-10-30T00:00:00Z","timeMax":"2026-10-31T00:00:00Z","calendars":{"work":{"busy":[{"start":"2026-10-30T10:00:00+01:00","end":"2026-10-30T11:00:00+01:00"}]},"private":{"errors":[{"domain":"global","reason":"notFound"}]}}}"#)])
         let client = GoogleCalendarClient(tokens: CountingTokens(), transport: transport)

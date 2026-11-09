@@ -1,4 +1,4 @@
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import AppKit
 import Foundation
 
@@ -6,12 +6,13 @@ import Foundation
 @MainActor
 final class ReaderLayoutDiagnostics {
     static let capacity = 4_096
-    static let shared: ReaderLayoutDiagnostics? = destination(in: ProcessInfo.processInfo.arguments)
+    static let shared: ReaderLayoutDiagnostics? = LaunchMode.current.performance.readerLayoutReport
         .map { ReaderLayoutDiagnostics(destination: $0) }
 
     static func allocateToken() -> UInt64 { shared?.nextToken() ?? 0 }
 
-    static func destination(in arguments: [String]) -> URL? {
+    /// Nonisolated so `LaunchMode` can parse the option off the main actor.
+    nonisolated static func destination(in arguments: [String]) -> URL? {
         let prefix = "--reader-layout-report="
         let options = arguments.filter { $0.hasPrefix(prefix) }
         guard options.count == 1, let option = options.first else { return nil }

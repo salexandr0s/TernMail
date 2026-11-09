@@ -46,9 +46,9 @@ final class MessagePrefetchController {
     }
 
     private static var defaultDelay: Duration {
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         // Fixed diagnostic comparison; cleanup and foreground behavior are identical.
-        if ProcessInfo.processInfo.arguments.contains("--reader-prefetch-immediate") { return .zero }
+        if LaunchMode.current.performance.readerPrefetchImmediate { return .zero }
         #endif
         return .milliseconds(90)
     }

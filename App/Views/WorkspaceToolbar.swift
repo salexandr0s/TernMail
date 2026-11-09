@@ -12,6 +12,8 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     let mailbox: MailboxModel
     let calendar: CalendarModel
     let library: AttachmentLibraryToolbarState
+    let followUps: FollowUpsModel
+    let today: TodayModel
     let accounts: AccountPreferencesModel?
     let section: WorkspaceSection
     let width: CGFloat
@@ -26,7 +28,9 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     var onToggleTasks: () -> Void = {}
     var isCalendarUtilityCompact = false
 
-    private var showsProfile: Bool { section == .mail && accounts?.profiles.isEmpty == false }
+    private var showsProfile: Bool {
+        (section == .mail || section == .followUps || section == .today) && accounts?.profiles.isEmpty == false
+    }
     private var compactActions: Bool {
         let reservedWidth = Tokens.Layout.toolbarMenuWidth * (showsProfile ? 2 : 1)
         return width - reservedWidth < Tokens.Layout.compactToolbarWidth
@@ -49,7 +53,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
             .disabled(section == .calendar && !calendar.calendars.contains(where: \.canWrite))
         }
         .customizationBehavior(.disabled)
-        .mailToolbarVisible(!isCalendarUtilityCompact)
+        .mailToolbarVisible(!isCalendarUtilityCompact && section != .followUps && section != .today)
 
         ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(id: "mail.profile", placement: .primaryAction) {
@@ -64,7 +68,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
         CalendarToolbar(model: calendar, isCompact: compactActions)
             .mailToolbarVisible(section == .calendar && !isCalendarUtilityCompact)
         AttachmentLibraryToolbar(state: library, isCompact: compactActions, isVisible: section == .attachments)
-        WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar, libraryToolbar: library,
+        WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar, libraryToolbar: library, followUps: followUps, today: today,
             section: section, isFolded: width < Tokens.Layout.searchFoldWidth)
             .mailToolbarVisible(!isCalendarUtilityCompact)
         WorkspaceAssistantToolbar(isAssistantPresented: isAssistantPresented,
@@ -89,9 +93,10 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
                 }
             }
             .customizationBehavior(.disabled)
-            .mailToolbarVisible(!isCalendarUtilityCompact)
+            .mailToolbarVisible(!isCalendarUtilityCompact && section != .followUps && section != .today)
             ToolbarItem(id: "workspace.refresh", placement: .navigation) {
-                WorkspaceRefreshButton(mailbox: mailbox, calendar: calendar, library: library, section: section)
+                WorkspaceRefreshButton(mailbox: mailbox, calendar: calendar, library: library,
+                    followUps: followUps, today: today, section: section)
             }
             .customizationBehavior(.disabled)
         }
@@ -103,10 +108,14 @@ private struct WorkspaceRefreshButton: View {
     let mailbox: MailboxModel
     let calendar: CalendarModel
     let library: AttachmentLibraryToolbarState
+    let followUps: FollowUpsModel
+    let today: TodayModel
     let section: WorkspaceSection
 
     private var isRefreshing: Bool {
         if section == .calendar { return calendar.isLoading }
+        if section == .followUps { return followUps.isLoading }
+        if section == .today { return today.isLoading }
         return (section == .attachments && library.isRefreshing) || mailbox.accounts.contains { $0.syncStatus == .syncing }
     }
 
@@ -116,12 +125,16 @@ private struct WorkspaceRefreshButton: View {
         case .mail: return "Refresh mail (\(ShortcutCatalog.checkForNewMail.label))"
         case .calendar: return "Refresh calendars"
         case .attachments: return "Refresh attachments"
+        case .followUps: return "Refresh follow-ups"
+        case .today: return "Refresh Today"
         }
     }
 
     var body: some View {
         Button("Refresh", systemImage: "arrow.clockwise") {
             if section == .calendar { Task { await calendar.refresh() } }
+            else if section == .followUps { Task { await followUps.refresh() } }
+            else if section == .today { Task { await today.refresh() } }
             else if section == .attachments { library.refreshRequest += 1 }
             else { mailbox.syncNow() }
         }

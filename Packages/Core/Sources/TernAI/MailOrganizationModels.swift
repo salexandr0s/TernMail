@@ -66,9 +66,9 @@ public enum MailOrganizationError: Error, Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidInput: "Tern could not prepare these messages for analysis. Refresh and try again."
-        case .invalidResponse: "ChatGPT returned categories Tern could not validate. Try the analysis again."
+        case .invalidResponse: "The assistant returned categories Tern could not validate. Try the analysis again."
         case .responseLimit: "The category suggestions exceeded Tern's size limit. Try the analysis again."
-        case .interrupted: "The analysis stopped before ChatGPT finished. Try again."
+        case .interrupted: "The analysis stopped before the assistant finished. Try again."
         }
     }
 }

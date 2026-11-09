@@ -64,6 +64,36 @@ import Testing
         #expect(body.html == "<p>Café</p>")
     }
 
+    @Test func declaredUTF8KeepsTheTextAroundABadByte() {
+        let text = "Καλημέρα, привет, 你好 😀"
+        let data = Data([0xEF, 0xBB, 0xBF]) + Data(text.utf8) + Data([0xFF]) + Data(" end".utf8)
+
+        // The byte order mark goes, and the bad byte becomes one replacement character.
+        #expect(MIMEParts.decode(data, charset: "UTF-8") == text + "\u{FFFD} end")
+    }
+
+    @Test(arguments: ["ISO-8859-1", "latin1", "windows-1252", "x-cp1252"])
+    func latin1LabelsReadAsWindows1252(label: String) {
+        // Curly quotes and a euro sign, which Latin-1 lacks, then 0x81, which Windows leaves undefined.
+        let data = Data([0x93, 0x48, 0x69, 0x94, 0x20, 0x80, 0x35, 0x81])
+        #expect(MIMEParts.decode(data, charset: label) == "\u{201C}Hi\u{201D} \u{20AC}5\u{0081}")
+    }
+
+    // Each character is outside the charset the label names but inside its
+    // Windows superset, which the sender actually used.
+    @Test(arguments: [("gb2312", [0x86, 0xB4], "喆"), ("euc-kr", [0x8C, 0x63], "똠"), ("shift_jis", [0x87, 0x40], "①")])
+    func legacyCJKLabelsReadAsTheirWindowsSuperset(label: String, bytes: [UInt8], expected: String) {
+        #expect(MIMEParts.decode(Data(bytes), charset: label) == expected)
+    }
+
+    @Test(arguments: ["us-ascii", nil] as [String?])
+    func asciiAndMissingLabelsReadUTF8ThenWindows1252(label: String?) {
+        #expect(MIMEParts.decode(Data("Café".utf8), charset: label) == "Café")
+        #expect(MIMEParts.decode(Data([0x93, 0x43, 0x61, 0x66, 0xE9, 0x94, 0x81]), charset: label) == "\u{201C}Café\u{201D}\u{0081}")
+        // An RFC 2231 value can leave its charset blank.
+        #expect(MIMEReader.parameters(of: "attachment; filename*=\(label ?? "")''caf%E9.txt")["filename"] == "café.txt")
+    }
+
     @Test func plainTextIsEscapedAndLinked() {
         let text = "  <b>hi</b>\n\tsee https://example.com/a?b=1&c=2\n\n  Final line."
         let rendered = MessageDocument.render(plainText: text)

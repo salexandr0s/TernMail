@@ -114,10 +114,7 @@ struct RichTextEditor: NSViewRepresentable {
             textView.composeFont = font
             textView.onFocusChange = onFocusChange
         }
-        if document != context.coordinator.lastDocument || font != context.coordinator.loadedFont
-            || inlineImages != context.coordinator.loadedImages {
-            context.coordinator.load(document)
-        }
+        context.coordinator.update(document)
     }
 
     @MainActor
@@ -127,8 +124,9 @@ struct RichTextEditor: NSViewRepresentable {
         /// The document the text view shows, so updates that come back from
         /// the binding don't reset the text and selection.
         private(set) var lastDocument = ComposeDocument()
-        private(set) var loadedFont: ComposeFont = .sansSerif
-        private(set) var loadedImages: [String: Data] = [:]
+        private var loadedFont: ComposeFont = .sansSerif
+        /// Image data, by content ID, that the text view is up to date with.
+        private var loadedImages: [String: Data] = [:]
         /// Replacing the text moves the selection, which mustn't update the
         /// format during the view update that loads it.
         private var isLoading = false
@@ -153,6 +151,21 @@ struct RichTextEditor: NSViewRepresentable {
             textView.undoManager?.removeAllActions(withTarget: storage)
             // Loading happens while SwiftUI updates views, which mustn't change state.
             Task { @MainActor [weak self] in self?.updateFormat() }
+        }
+
+        /// Loads `document` unless the text view shows it already, with the
+        /// same font and the same data for each image in it. Loading clears
+        /// Undo, so data for an image the editor inserted itself, or one the
+        /// document doesn't show, is only recorded.
+        func update(_ document: ComposeDocument) {
+            let images = parent.inlineImages
+            let shown = Set(document.blocks.flatMap(\.runs).compactMap { $0.image?.contentID })
+            if document != lastDocument || parent.font != loadedFont
+                || shown.contains(where: { images[$0] != loadedImages[$0] }) {
+                load(document)
+            } else {
+                loadedImages = images
+            }
         }
 
         // MARK: NSTextViewDelegate
@@ -257,6 +270,8 @@ struct RichTextEditor: NSViewRepresentable {
             let value = NSAttributedString(attachment: ComposeImageAttachment(reference: reference, data: data))
             guard textView.shouldChangeText(in: selected, replacementString: value.string) else { return }
             storage.replaceCharacters(in: selected, with: value)
+            // The text shows this data, so the same data from the model needs no reload.
+            loadedImages[reference.contentID] = data
             textView.didChangeText()
             textView.setSelectedRange(NSRange(location: selected.location + value.length, length: 0))
         }

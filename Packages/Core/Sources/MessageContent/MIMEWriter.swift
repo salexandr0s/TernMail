@@ -201,8 +201,12 @@ enum MIMEWriter {
 
     static func addressHeader(_ name: String, _ addresses: [EmailAddress]) -> String {
         let values = addresses.map { address in
-            EmailAddress(name: address.name.map(headerSafe), address: headerSafe(address.address).filter { !$0.isWhitespace })
-                .headerValue
+            // Spaces and format characters are dropped from the address, since
+            // a pasted one sometimes carries an invisible character along.
+            let bare = String(headerSafe(address.address).unicodeScalars.filter {
+                !$0.properties.isWhitespace && $0.properties.generalCategory != .format
+            })
+            return EmailAddress(name: address.name.map(headerSafe), address: bare).headerValue
         }
         return fold(name, values, separator: ",")
     }
@@ -292,12 +296,13 @@ enum MIMEWriter {
         "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 
-    /// Removes line breaks and other control characters, so a value can't end
-    /// its header and start another.
+    /// Replaces line breaks and other control characters with spaces, so a
+    /// value can't end its header and start another. Format characters stay,
+    /// such as the joiners inside emoji sequences and Persian words.
     static func headerSafe(_ value: String) -> String {
-        String(value.unicodeScalars.map { scalar in
-            CharacterSet.controlCharacters.contains(scalar) || scalar == "\u{2028}" || scalar == "\u{2029}" ? " " : Character(scalar)
-        })
+        String(String.UnicodeScalarView(value.unicodeScalars.map { scalar in
+            scalar.properties.generalCategory == .control || scalar == "\u{2028}" || scalar == "\u{2029}" ? " " : scalar
+        }))
     }
 
     /// The IDs that have the `<left@right>` shape, without whitespace or controls.

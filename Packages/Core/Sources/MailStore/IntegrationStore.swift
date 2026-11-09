@@ -125,6 +125,8 @@ struct ContactRecord: Codable, Equatable, FetchableRecord, PersistableRecord {
     var resourceName: String
     var displayName: String?
     var updatedAt: Date
+    /// `displayName` folded for completing recipients, or empty.
+    var nameSearch: String
 }
 
 struct ContactEmailRecord: Codable, Equatable, FetchableRecord, PersistableRecord {
@@ -136,6 +138,8 @@ struct ContactEmailRecord: Codable, Equatable, FetchableRecord, PersistableRecor
     var lowercasedAddress: String
     var address: String
     var isPrimary: Bool
+    /// `address` folded for completing recipients.
+    var addressSearch: String
 }
 
 /// How far one source's contacts are synced.
@@ -176,13 +180,14 @@ extension CacheTransaction {
             guard !person.isDeleted, !addresses.isEmpty else { continue }
             try ContactRecord(
                 accountID: accountID, source: source, resourceName: person.resourceName,
-                displayName: person.displayName, updatedAt: now
+                displayName: person.displayName, updatedAt: now, nameSearch: SearchFolding.folded(person.displayName ?? "")
             ).insert(db)
             for (index, address) in addresses.enumerated() {
                 // `addresses` puts the primary first and lists each once.
                 try ContactEmailRecord(
                     accountID: accountID, source: source, resourceName: person.resourceName,
-                    lowercasedAddress: address.lowercased(), address: address, isPrimary: index == 0
+                    lowercasedAddress: address.lowercased(), address: address, isPrimary: index == 0,
+                    addressSearch: SearchFolding.folded(address)
                 ).insert(db)
             }
         }

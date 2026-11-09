@@ -43,7 +43,7 @@ interactive verification with a real account.
 
 ```sh
 xcodegen generate
-xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug \
+xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug-Testing \
   -derivedDataPath build test \
   -only-testing:TernTests/OnboardingStateTests \
   -only-testing:TernTests/OnboardingFlowTests \
@@ -53,7 +53,7 @@ xcodebuild -project Tern.xcodeproj -scheme Tern -configuration Debug \
   -only-testing:TernUITests/OnboardingUITests
 ```
 
-Debug previews use `--ui-audit --ui-audit-onboarding` for an empty first run or
+Debug-Testing previews use `--ui-audit --ui-audit-onboarding` for an empty first run or
 `--ui-audit --ui-audit-onboarding-connected` for two sample accounts. Add
 `--ui-audit-onboarding-step=welcome` (or `google`, `chatGPT`, `preferences`, `ready`)
 to choose a screen. Ordinary previews disable provider sign-in and permission

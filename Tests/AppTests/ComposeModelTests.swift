@@ -104,6 +104,30 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func closingAnUnreviewedAssistantDraftSavesItInsteadOfRemovingIt() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        // The assistant leaves its draft on this Mac, so only this save puts it in Gmail Drafts.
+        var generated = LocalDraft(accountID: "audit", kind: .new,
+            content: DraftContent(to: [.init(address: "pat@example.invalid")], subject: "Proposal",
+                body: ComposeDocument(plainText: "Generated reply")),
+            rfcMessageID: "<assistant-draft@example.invalid>", now: .now)
+        generated.revision = 1
+        let draft = generated
+        try await mailbox.cache.write { try $0.insertLocalDraft(draft) }
+        let model = ComposeModel(localDraftID: draft.id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        await model.requestClose()
+        #expect(model.phase == .closed && model.alert == nil)
+        let (stored, queued) = try await cache.read { tx in
+            (try tx.localDraft(id: draft.id), try tx.pendingActions(accountID: "audit").contains { $0.kind == .saveDraft })
+        }
+        let kept = try #require(stored)
+        #expect(kept.state == .editing && kept.body.plainText() == "Generated reply")
+        #expect(queued || kept.gmailDraftID != nil)
+        await mailbox.stop()
+    }
+
     @Test func closingWaitsForTheStoreAndStaysOpenWhenItFails() async throws {
         let file = CacheFile()
         let (mailbox, cache) = try await makeMailbox(in: file)
@@ -470,6 +494,85 @@ import Testing
         try await waitUntil { model.progressText == nil }
         #expect(model.failedAttachments.isEmpty)
         #expect(model.attachments.count == 2)
+        await model.requestClose()
+        await mailbox.stop()
+    }
+
+    @Test func anUpdateFromGmailShowsTheCcAndBccRowsItFills() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        #expect(!model.showsCc && !model.showsBcc)
+        // Stored as DraftImport stores a draft another app changed.
+        var content = model.content
+        content.cc = [EmailAddress(address: "cc@example.invalid")]
+        content.bcc = [EmailAddress(address: "bcc@example.invalid")]
+        let changed = content
+        try await cache.write { _ = try $0.updateLocalDraft(id: id, content: changed, now: .now.addingTimeInterval(60)) }
+        try await waitUntil { model.content.cc == changed.cc }
+        #expect(model.showsCc && model.showsBcc)
+        await model.requestClose()
+        await mailbox.stop()
+    }
+
+    @Test func insertingAnInlineImageDoesNotReloadTheEditor() async throws {
+        let (mailbox, _) = try await makeMailbox()
+        let id = try #require(await mailbox.startCompose(.newMessage))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open }
+        // SwiftUI hands the coordinator a new editor, with the model's images, on each update.
+        func editor(images: [String: Data]) -> RichTextEditor {
+            RichTextEditor(
+                document: Binding(get: { model.content.body }, set: { model.content.body = $0 }),
+                format: Binding(get: { model.format }, set: { model.format = $0 }),
+                isEditable: true, inlineImages: images, onReady: { _ in }, onAttach: { _ in }, onFocusChange: { _ in }
+            )
+        }
+        let coordinator = editor(images: model.inlineImageData).makeCoordinator()
+        let textView = ComposeTextView(usingTextLayoutManager: false)
+        textView.isEditable = true
+        textView.delegate = coordinator
+        textView.textStorage?.delegate = coordinator
+        coordinator.textView = textView
+        coordinator.load(model.content.body)
+        model.editor = coordinator
+        let storage = try #require(textView.textStorage)
+        func attachments() -> [NSTextAttachment] {
+            var found: [NSTextAttachment] = []
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                if let attachment = value as? NSTextAttachment { found.append(attachment) }
+            }
+            return found
+        }
+
+        let bytes = Data(repeating: 7, count: 64)
+        model.attach([.data(bytes, filename: "dot.png", mimeType: "image/png")], inlineImages: true)
+        try await waitUntil { model.content.body.blocks.flatMap(\.runs).contains { $0.image != nil } }
+        let inserted = try #require(attachments().first)
+        // Reloading would replace the text, and Undo with it.
+        coordinator.parent = editor(images: model.inlineImageData)
+        coordinator.update(model.content.body)
+        #expect(attachments().count == 1 && attachments().first === inserted)
+
+        // Data that arrives for an image shown without it still loads. An
+        // attachment drops its data once it has a preview, so the preview's
+        // size shows whether the data loaded.
+        let later = InlineImageReference(contentID: "later@example.invalid", altText: "Later")
+        let pixels = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 40, pixelsHigh: 30,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try #require(pixels.representation(using: .png, properties: [:]))
+        let imageSize = CGSize(width: 40, height: 30)
+        var document = model.content.body
+        document.blocks.append(.init(runs: [.init("", image: later)]))
+        coordinator.update(document)
+        #expect(attachments().last?.bounds.size != imageSize)
+        coordinator.parent = editor(images: model.inlineImageData.merging([later.contentID: png]) { $1 })
+        coordinator.update(document)
+        #expect(attachments().last?.bounds.size == imageSize)
         await model.requestClose()
         await mailbox.stop()
     }

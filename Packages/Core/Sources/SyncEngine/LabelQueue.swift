@@ -319,9 +319,11 @@ extension SyncEngine {
             switch row.kind {
             case .createLabel:
                 guard let name = change.newName else { return await refuseLabelChange(row) }
-                // An earlier attempt may have created it without Tern hearing back.
+                // An earlier attempt may have created it without Tern hearing
+                // back, or someone may have made it since. Tern can't tell which,
+                // so undo leaves the label in Gmail.
                 if row.attempts > 1, let existing = try await existingLabelID(named: name) {
-                    return await recordCreated(row, realID: existing)
+                    return await recordCreated(row, realID: existing, adopted: true)
                 }
                 let label = try await gmail.createLabel(name: name, color: Self.labelColor(change.newColor))
                 await recordCreated(row, realID: label.id)
@@ -426,9 +428,10 @@ extension SyncEngine {
         }
     }
 
-    /// For undoing a create that took a label Gmail had already.
+    /// For undoing a create that took a label Gmail had already. After a
+    /// lost response it may be the one Tern made, so the notice doesn't say which.
     static func adoptedLabelNotice(named name: String?) -> String {
-        "“\(name ?? "")” already existed in Gmail and wasn't deleted."
+        "Tern didn't delete “\(name ?? "")” from Gmail, because it may have been there before."
     }
 
     /// Marks a delete sent and takes the label out of the cache.

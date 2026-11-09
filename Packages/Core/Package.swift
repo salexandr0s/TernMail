@@ -14,7 +14,7 @@ let package = Package(
         .library(name: "Diagnostics", targets: ["Diagnostics"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift", exact: "7.11.1"),
+        .package(url: "https://github.com/groue/GRDB.swift", exact: "7.12.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup", exact: "2.14.3"),
     ],
     targets: [

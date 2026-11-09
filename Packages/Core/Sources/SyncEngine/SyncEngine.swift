@@ -111,6 +111,9 @@ public actor SyncEngine {
     private var labelRefreshGeneration = UUID()
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
+    private var addressFoldTask: Task<Void, Never>?
+    /// Wakes the settings lane when Gmail Settings comes on.
+    private var settingsAccessTask: Task<Void, Never>?
     /// What the user is doing, from the app. Sets the poll interval.
     private(set) var activity: SyncActivity = .active
     /// Whether IMAP reports Inbox changes as they happen, from the app.
@@ -158,6 +161,10 @@ public actor SyncEngine {
     /// may take a label row still marked as going out for one that lost its
     /// outcome.
     var labelSendsInFlight = 0
+    /// Calls of `sendDueDrafts()` under way. Only a call with none beside it
+    /// may take a draft row still marked as going out for one that lost its
+    /// outcome.
+    var composeSendsInFlight = 0
     /// Set when Gmail rejected the account's sign-in during a send. The send
     /// loops wait until `resumeAfterSignIn()`; a direct `sendDueActions()`
     /// still tries.
@@ -238,25 +245,63 @@ public actor SyncEngine {
 
     /// Resumes interrupted sends, syncs now and then on `SyncSchedule`'s
     /// interval for the current activity, and refreshes identities and
-    /// contacts now and every 6 hours.
+    /// contacts now and every 6 hours. If the write that resumes the sends
+    /// fails, it's tried again in the background, and the rest begins once
+    /// it lands.
     public func start() async {
         guard !hasStarted, !isStopped else { return }
         hasStarted = true
+        let resumed = await resumeInterruptedActions()
+        guard !isStopped else { return }
+        if resumed {
+            beginBackgroundWork()
+            pollTask = Task { await runPolling() }
+        } else {
+            pollTask = Task { await retryStart() }
+        }
+    }
+
+    /// Puts back the rows a quit left mid-send and clears old label aliases.
+    /// A failure shows in the window.
+    private func resumeInterruptedActions() async -> Bool {
         let accountID = accountID
         do {
             try await write { tx in
                 try tx.requeueInterruptedActions(accountID: accountID)
                 try tx.clearLabelAliases(accountID: accountID)
             }
+            return true
         } catch {
-            hasStarted = false
-            if !isStopped { continuation.yield(.syncFailed(Self.message(for: error))) }
-            return
+            if !isStopped, !(error is CancellationError) { continuation.yield(.syncFailed(Self.message(for: error))) }
+            return false
         }
-        guard !isStopped else { return }
+    }
+
+    /// Tries the startup write again after a growing pause until it lands,
+    /// then sends and polls. Until then the account sends and syncs nothing
+    /// on its own.
+    private func retryStart() async {
+        var failures = 1
+        while !isStopped, !Task.isCancelled {
+            // Polling hasn't begun, so the pause takes its sleeper: `stop()`
+            // ends it, and a pass's end or an activity change tries again now.
+            _ = await sleep(.seconds(min(pow(2, Double(failures)), 60)), as: .poll)
+            guard !isStopped, !Task.isCancelled else { return }
+            if await resumeInterruptedActions() {
+                guard !isStopped else { return }
+                beginBackgroundWork()
+                await runPolling()
+                return
+            }
+            failures += 1
+        }
+    }
+
+    private func beginBackgroundWork() {
         scheduleSending()
         requestSync(reason: .poll)
-        pollTask = Task { await runPolling() }
+        settingsAccessTask = Task { await wakeSettingsWhenAllowed() }
+        addressFoldTask = Task { await foldPendingAddresses() }
         peopleTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshPeople()
@@ -286,7 +331,7 @@ public actor SyncEngine {
         isStopped = true
         let newsletterRequests = Array(newsletterRequestTasks.values)
         newsletterRequests.forEach { $0.cancel() }
-        let background = [pollTask, peopleTask, requestedPasses, afterActionTask, attachmentIndexTask, prefetchTask].compactMap { $0 }
+        let background = [pollTask, peopleTask, settingsAccessTask, addressFoldTask, requestedPasses, afterActionTask, attachmentIndexTask, prefetchTask].compactMap { $0 }
         for sleeper in sleepers.values { sleeper.cancel() }
         prefetchTargets = []
         let reading = Array(readingLoads.values.map(\.task)) + Array(retiredReadingLoads.values)
@@ -321,6 +366,8 @@ public actor SyncEngine {
         pollTask = nil
         prefetchTask = nil
         peopleTask = nil
+        settingsAccessTask = nil
+        addressFoldTask = nil
         attachmentIndexTask = nil
         drainTasks = [:]
         newsletterRequestTasks = [:]

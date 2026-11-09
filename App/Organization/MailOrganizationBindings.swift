@@ -20,7 +20,7 @@ enum MailOrganizationBindings {
     }
 
     static func make(app: AppModel, accountID: String, connection: SettingsAccountState) -> MailOrganizationModel {
-        let chatGPT = app.assistant.connection
+        let connections = app.assistant.providerConnection
         let readSamples: MailOrganizationModel.ReadJobSamples = { [weak app] expected, maximumMessages, isAuthorized, progress in
             guard let app, let owner = app.mailbox?.account(id: accountID),
                   String(describing: ObjectIdentifier(owner)) == expected.instanceID,
@@ -28,8 +28,9 @@ enum MailOrganizationBindings {
             return try await owner.engine.organizationSamples(maximumMessages: maximumMessages,
                                                               isAuthorized: isAuthorized, progress: progress)
         }
-        let analyzeJob: MailOrganizationModel.AnalyzeJob = { [weak app, weak chatGPT] samples, modelID, checkpoint, isAuthorized, progress, didCheckpoint in
+        let analyzeJob: MailOrganizationModel.AnalyzeJob = { [weak app, weak connections] samples, modelID, checkpoint, isAuthorized, progress, didCheckpoint in
             guard await isAuthorized() else { throw AssistantMailError.accessChanged }
+            guard let connections else { throw AIProviderError.signInRequired }
             let retention = OrganizationSampleRetention()
             let renewSamples: @Sendable () async throws -> Void = { [weak app] in
                 guard let app, await isAuthorized() else { throw AssistantMailError.accessChanged }
@@ -45,10 +46,8 @@ enum MailOrganizationBindings {
                 }
             }
             try await renewSamples()
-            let provider = scopedProvider(accessToken: { [weak chatGPT] in
-                guard let chatGPT else { throw AIProviderError.signInRequired }
-                return try await chatGPT.accessToken()
-            }, isAuthorized: isAuthorized)
+            let provider = await connections.routedProvider(
+                transport: scopedTransport(isAuthorized: isAuthorized), isAuthorized: isAuthorized)
             let labels = samples.existingLabels.filter { !$0.isSystem }
             let names = Dictionary(labels.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
             let messages = samples.messages.map {
@@ -104,21 +103,13 @@ enum MailOrganizationBindings {
 
     /// Authorization belongs to this review, including across an asynchronous
     /// credential refresh. UI observation is not the network permission gate.
-    nonisolated static func scopedProvider(accessToken: @escaping @Sendable () async throws -> String,
-        isAuthorized: @escaping MailOrganizationModel.Authorized,
-        transport: AIHTTPTransport = .live) -> ChatGPTProvider {
-        ChatGPTProvider(accessToken: {
-            try Task.checkCancellation()
-            guard await isAuthorized() else { throw AssistantMailError.accessChanged }
-            let token = try await accessToken()
-            try Task.checkCancellation()
-            guard await isAuthorized() else { throw AssistantMailError.accessChanged }
-            return token
-        }, transport: AIHTTPTransport { request in
+    nonisolated static func scopedTransport(isAuthorized: @escaping MailOrganizationModel.Authorized,
+        transport: AIHTTPTransport = .live) -> AIHTTPTransport {
+        AIHTTPTransport { request in
             try Task.checkCancellation()
             guard await isAuthorized() else { throw AssistantMailError.accessChanged }
             return try await transport.send(request)
-        })
+        }
     }
 }
 

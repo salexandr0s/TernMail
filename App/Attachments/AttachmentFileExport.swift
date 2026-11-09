@@ -1,18 +1,11 @@
 import Foundation
+import SyncEngine
 
 enum AttachmentFileExport {
+    /// The rules for received files on disk, so an exported copy keeps the
+    /// name and type that Tern shows.
     static func safeFilename(_ name: String) -> String {
-        let value = name.components(separatedBy: .controlCharacters).joined()
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
-        guard !value.isEmpty else { return "Attachment" }
-        var bounded = ""
-        for character in value {
-            guard bounded.utf8.count + String(character).utf8.count <= 220 else { break }
-            bounded.append(character)
-        }
-        return bounded.isEmpty ? "Attachment" : bounded
+        SyncEngine.safeFilename(name)
     }
 
     /// NSSavePanel has confirmed replacement. An atomic write preserves an

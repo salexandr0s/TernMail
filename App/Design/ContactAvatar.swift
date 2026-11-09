@@ -3,6 +3,8 @@ import MailStore
 import SwiftUI
 
 /// Contact photos take precedence over website icons and stable initials.
+/// It shows the people mail comes from, so it asks a website for an icon only
+/// for senders the account knows.
 struct ContactAvatar: View {
     let accountID: String
     let address: String
@@ -31,6 +33,7 @@ struct ContactAvatar: View {
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+        .logoLookup(.familiarSenders)
     }
 
     /// Initials on the tinted fallback disc, or "?" when neither the name nor the address has a word.

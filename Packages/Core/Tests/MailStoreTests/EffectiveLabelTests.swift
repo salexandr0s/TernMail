@@ -87,7 +87,7 @@ private let now = Date(timeIntervalSince1970: 1_800_000_000)
         // Neither observation reads the queue, only the labels it produces.
         let stateChange = DatabaseEventKind.update(tableName: "pendingAction", columnNames: ["state", "sentAt", "confirmedHistoryID"])
         let reader = try await trackedRegion(cache) { tx in try tx.threadDetail(threadID: "t1", accountID: account) }
-        let list = try await trackedRegion(cache) { tx in try tx.messageListEntries(threadsByAccount: [account: ["t1"]]) }
+        let list = try await trackedRegion(cache) { tx in try tx.messageListEntries(threadsByAccount: [account: ["t1"]], now: now) }
         for region in [reader, list] {
             #expect(!region.isModified(byEventsOfKind: stateChange))
             #expect(region.isModified(byEventsOfKind: .insert(tableName: "effectiveLabel")))

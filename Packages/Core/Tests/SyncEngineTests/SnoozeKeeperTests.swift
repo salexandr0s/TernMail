@@ -200,6 +200,18 @@ private let hour: TimeInterval = 60 * 60
         #expect(try await holds(cache) == ["t1": baseDate + hour, "t2": baseDate + 2 * hour])
         #expect(try await first(cache.snoozedThreads(accountID: account)).map(\.id) == ["t1", "t2"])
     }
+
+    @Test func aCheckKeepsWhenASnoozeWasMade() async throws {
+        let (engine, cache, _, clock) = try await makeEngine()
+        let (keeper, accounts) = try await makeKeeper(engine)
+        try await seed(cache, [("m1", "t1", [SystemLabel.inbox])])
+        _ = try await keeper.snooze(threadIDs: ["t1"], until: baseDate + 2 * hour)
+        clock.advance(hour)
+
+        await keeper.check()
+        #expect(try await accounts.snoozes(accountID: account).map(\.createdAt) == [baseDate])
+        #expect(try await holds(cache) == ["t1": baseDate + 2 * hour])
+    }
 }
 
 private extension SnoozeKeeper {

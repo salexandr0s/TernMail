@@ -67,6 +67,8 @@ extension SnoozeKeeper {
 
     /// Working holds win after a crash between cache and config writes. Each
     /// conversion saves every replacement before removing its old records.
+    /// A record that matches its hold isn't written again, so it keeps the
+    /// time its snooze was made.
     private func synchronizeSnoozeRecords() async throws {
         guard !isStopped else { throw CancellationError() }
         let accountID = engine.accountID
@@ -74,12 +76,17 @@ extension SnoozeKeeper {
         let messageHolds = try await engine.messageSnoozeHolds()
         let threads = try await accounts.snoozes(accountID: accountID)
         let messages = try await accounts.messageSnoozes(accountID: accountID)
-        let threadRecords = threadHolds.map { SnoozeRecord(accountID: accountID, threadID: $0.key, wakeAt: $0.value, createdAt: engine.now()) }
+        let recordedWakes = Dictionary(uniqueKeysWithValues: threads.map { ($0.threadID, $0.wakeAt) })
+        let recordedMessages = Dictionary(uniqueKeysWithValues: messages.map { ($0.messageID, $0) })
+        let threadRecords = threadHolds.filter { recordedWakes[$0.key] != $0.value }
+            .map { SnoozeRecord(accountID: accountID, threadID: $0.key, wakeAt: $0.value, createdAt: engine.now()) }
         let supersededMessages = messages.filter { threadHolds[$0.threadID] != nil }
         let independent = messageHolds.filter { threadHolds[$0.threadID] == nil }
+        let unrecorded = independent.filter { recordedMessages[$0.messageID] != $0 }
         let splitIDs = Set(independent.map(\.threadID))
         let supersededThreads = Dictionary(uniqueKeysWithValues: threads.filter { threadHolds[$0.threadID] == nil && splitIDs.contains($0.threadID) }.map { ($0.threadID, $0.wakeAt) })
-        try await accounts.applySnoozeChanges(threads: threadRecords, messages: independent,
+        guard !threadRecords.isEmpty || !unrecorded.isEmpty || !supersededThreads.isEmpty || !supersededMessages.isEmpty else { return }
+        try await accounts.applySnoozeChanges(threads: threadRecords, messages: unrecorded,
             removingThreads: supersededThreads, removingMessages: supersededMessages, accountID: accountID)
     }
 
@@ -88,16 +95,17 @@ extension SnoozeKeeper {
         let accountID = engine.accountID
         // Hydrate only held/recorded targets. These reads bypass new-mail
         // notification emission and never promote a message into its thread.
-        for record in try await accounts.snoozes(accountID: accountID) {
-            let state = try await engine.snoozeStates().first { $0.threadID == record.threadID }
-            guard state?.isCached != true else { continue }
+        // Each restore checks the records and holds again before it writes,
+        // so one read of the holds serves every record.
+        let cached = Set(try await engine.snoozeStates().filter(\.isCached).map(\.threadID))
+        for record in try await accounts.snoozes(accountID: accountID) where !cached.contains(record.threadID) {
             let fetched = try await engine.fetchThreadMetadata([record.threadID])
             try await operations.perform { [self] in
                 try await restoreThreadRecord(record, updates: fetched.updates, missing: fetched.missing.contains(record.threadID))
             }
         }
-        for record in try await accounts.messageSnoozes(accountID: accountID) {
-            guard try await !engine.messageSnoozeHolds().contains(where: { $0.messageID == record.messageID }) else { continue }
+        let held = Set(try await engine.messageSnoozeHolds().map(\.messageID))
+        for record in try await accounts.messageSnoozes(accountID: accountID) where !held.contains(record.messageID) {
             let fetched = try await engine.fetchMetadata([record.messageID])
             try await operations.perform { [self] in
                 try await restoreMessageRecord(record, update: fetched.updates.first, missing: fetched.missing.contains(record.messageID))

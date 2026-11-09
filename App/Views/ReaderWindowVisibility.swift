@@ -5,21 +5,21 @@ import SwiftUI
 /// fully occluded. A visible background window can still be read.
 struct ReaderWindowVisibility: NSViewRepresentable {
     var didChange: (Bool) -> Void
-    #if DEBUG || TERN_PERFORMANCE
+    #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     var auditSnapshot: (@MainActor () -> (ownerToken: UInt64, ownerVisible: Bool))? = nil
     #endif
 
     func makeNSView(context: Context) -> ObserverView {
         let view = ObserverView()
         view.didChange = didChange
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         view.configureAudit(snapshot: auditSnapshot)
         #endif
         return view
     }
     func updateNSView(_ view: ObserverView, context: Context) {
         view.didChange = didChange
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         view.configureAudit(snapshot: auditSnapshot)
         #endif
         view.scheduleUpdate()
@@ -32,7 +32,7 @@ struct ReaderWindowVisibility: NSViewRepresentable {
         private var reported: Bool?
         private var scheduled = false
         private var stopped = false
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         private let auditObserverToken = ReaderLayoutDiagnostics.allocateToken()
         private var auditOwnerToken: UInt64 = 0
         private var auditOwnerVisible = false
@@ -73,7 +73,7 @@ struct ReaderWindowVisibility: NSViewRepresentable {
                     })
                 }
             }
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             recordAudit(.attach, reasonBits: 2)
             #endif
             scheduleUpdate(reasonBits: 2)
@@ -81,13 +81,13 @@ struct ReaderWindowVisibility: NSViewRepresentable {
         /// Audit reasons: callback update=1, attachment=2, occlusion=4,
         /// miniaturize=8, deminiaturize=16. Existing notifications are unchanged.
         func scheduleUpdate(reasonBits: UInt32 = 1) {
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             auditPendingReasons |= reasonBits
             if scheduled || stopped { recordAudit(.coalesce) }
             #endif
             guard !scheduled, !stopped else { return }
             scheduled = true
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             auditQueuedOwnerToken = auditOwnerToken
             auditQueuedCallbackGeneration = auditCallbackGeneration
             recordAudit(.schedule)
@@ -97,7 +97,7 @@ struct ReaderWindowVisibility: NSViewRepresentable {
                 guard let self, !self.stopped else { return }
                 self.scheduled = false
                 let visible = self.window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
-                #if DEBUG || TERN_PERFORMANCE
+                #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
                 self.recordAudit(self.reported == visible ? .deduplicate : .deliver, sampledVisible: visible)
                 self.auditPendingReasons = 0
                 self.auditQueuedOwnerToken = nil
@@ -110,7 +110,7 @@ struct ReaderWindowVisibility: NSViewRepresentable {
         }
         func stop() {
             stopped = true
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             recordAudit(.stop)
             #endif
             removeObservations()

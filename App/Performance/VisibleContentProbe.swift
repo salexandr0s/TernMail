@@ -65,7 +65,7 @@ struct VisibleContentProbe: NSViewRepresentable {
         private weak var observedTable: NSTableView?
         private var tableSelectionObserver: NSObjectProtocol?
         private var isStopped = false
-        #if DEBUG || TERN_PERFORMANCE
+        #if TERN_TEST_SUPPORT
         private(set) var windowAttachmentCount = 0
         private(set) var windowDetachmentCount = 0
         private(set) var superviewMoveCount = 0
@@ -114,7 +114,7 @@ struct VisibleContentProbe: NSViewRepresentable {
             // One selected probe can invalidate itself. A selection event must
             // not deliberately dirty every realized row's native diagnostic view.
             if currentSelectionPermitsDisplay {
-                #if DEBUG || TERN_PERFORMANCE
+                #if TERN_TEST_SUPPORT
                 displayRequestCount &+= 1
                 #endif
                 needsDisplay = true
@@ -205,7 +205,7 @@ struct VisibleContentProbe: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT
             if window == nil { windowDetachmentCount += 1 } else { windowAttachmentCount += 1 }
             #endif
             guard !isStopped else { return }
@@ -222,7 +222,7 @@ struct VisibleContentProbe: NSViewRepresentable {
 
         override func viewDidMoveToSuperview() {
             super.viewDidMoveToSuperview()
-            #if DEBUG || TERN_PERFORMANCE
+            #if TERN_TEST_SUPPORT
             superviewMoveCount += 1
             #endif
             guard !isStopped else { return }

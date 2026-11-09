@@ -59,16 +59,14 @@ final class CalendarModel {
     var firstWeekday: Int {
         didSet { defaults.set(firstWeekday, forKey: "calendarFirstWeekday") }
     }
+    /// The Mac's time zone, updated when it changes so views showing the
+    /// calendar redraw in the new zone.
+    private(set) var systemTimeZone = TimeZone.current
     var calendar: Calendar {
         var value = Calendar.autoupdatingCurrent
-        value.timeZone = TimeZone(identifier: workingHours.timeZoneIdentifier) ?? .autoupdatingCurrent
+        value.timeZone = workingHours.timeZoneOverride.flatMap(TimeZone.init(identifier:)) ?? systemTimeZone
         value.firstWeekday = (1...7).contains(firstWeekday) ? firstWeekday : value.firstWeekday
         return value
-    }
-    var canUndo: Bool {
-        !isUndoing && (operations.contains { $0.status == .queued && $0.attempts == 0 }
-            || undoActions.last.map { action in operations.contains { $0.id == action.operationID && $0.status == .completed } } == true
-        )
     }
     var isUndoing = false
 
@@ -83,6 +81,8 @@ final class CalendarModel {
     @ObservationIgnored var preferences: [String: CalendarPreferences] = [:]
     @ObservationIgnored var proposedEditors: [UUID: CalendarEditorDraft] = [:]
     @ObservationIgnored var undoActions: [CalendarUndoAction] = []
+    /// The undo entry that `undoConfirmation` asks about.
+    @ObservationIgnored var undoAwaitingConfirmation: CalendarUndoAction?
     @ObservationIgnored var savedDraftOperations: [UUID: String] = [:]
     @ObservationIgnored var savingDrafts = Set<UUID>()
     @ObservationIgnored var savingEvents = Set<String>()
@@ -90,10 +90,12 @@ final class CalendarModel {
     @ObservationIgnored var emailResponsesInFlight = Set<String>()
     @ObservationIgnored var proposalTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var stoppingEngines: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored var lifecycleRevision = 0
+    /// Captured meeting sessions observe runtime replacement as well as consent changes.
+    var lifecycleRevision = 0
     @ObservationIgnored var notificationRevision = 0
     @ObservationIgnored var editRevision = 0
     @ObservationIgnored let defaults: UserDefaults
+    @ObservationIgnored let launchMode: LaunchMode
     @ObservationIgnored let notifications = CalendarNotifications()
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var monitor: NWPathMonitor?
@@ -107,6 +109,7 @@ final class CalendarModel {
     @ObservationIgnored var completedSearch: CalendarSearchIdentity?
     @ObservationIgnored var searchCompletedAt: Date?
     @ObservationIgnored private var rangeMemoryPressure: CalendarRangeMemoryPressure?
+    @ObservationIgnored private var systemTimeZoneObserver: CalendarSystemTimeZoneObserver?
     @ObservationIgnored private var isStarted = false
     @ObservationIgnored var isStopped = false
     @ObservationIgnored private var startGeneration = 0
@@ -117,6 +120,8 @@ final class CalendarModel {
     init(app: AppModel?, defaults: UserDefaults? = nil,
          storeLoader: (@MainActor () async throws -> CalendarStore)? = nil) {
         self.app = app
+        // Tests build the model without an app.
+        launchMode = app?.launchMode ?? .current
         self.storeLoader = storeLoader
         let defaults = defaults ?? CalendarDefaults.store
         self.defaults = defaults
@@ -126,6 +131,12 @@ final class CalendarModel {
         rangeMemoryPressure = CalendarRangeMemoryPressure { [weak self] in
             Task { @MainActor in self?.invalidateRangeSnapshots() }
         }
+        systemTimeZoneObserver = CalendarSystemTimeZoneObserver { [weak self] in self?.systemTimeZoneDidChange() }
+    }
+
+    /// Without a chosen zone the calendar follows the Mac to `zone`.
+    func systemTimeZoneDidChange(to zone: TimeZone = .current) {
+        if zone != systemTimeZone { systemTimeZone = zone }
     }
 
     func start() async {
@@ -137,8 +148,8 @@ final class CalendarModel {
         guard generation == startGeneration else { return }
         stopping = nil
         isStopped = false
-#if DEBUG || TERN_PERFORMANCE
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        if launchMode.audit.calendar {
             await seedCalendarAudit(); return
         }
 #endif
@@ -147,7 +158,7 @@ final class CalendarModel {
             let openedStore: CalendarStore?
             if let storeLoader {
                 openedStore = try await storeLoader()
-            } else if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+            } else if launchMode.isIsolated {
                 openedStore = try CalendarStore.inMemory()
             } else if let app {
                 let url = try app.calendarStoreURL()
@@ -185,7 +196,7 @@ final class CalendarModel {
     }
 
     private func schedulePolling() {
-        guard isStarted, !ProcessInfo.processInfo.arguments.contains("--ui-audit") else { return }
+        guard isStarted, !launchMode.isIsolated else { return }
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -265,8 +276,8 @@ final class CalendarModel {
 
     func refresh() async {
         guard !isStopped, !Task.isCancelled else { return }
-#if DEBUG || TERN_PERFORMANCE
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        if launchMode.audit.calendar {
             await refreshCalendarAudit(); return
         }
 #endif
@@ -470,8 +481,8 @@ final class CalendarModel {
             defer { proposalTasks[taskID] = nil }
             do {
                 guard revision == lifecycleRevision else { return }
-#if DEBUG || TERN_PERFORMANCE
-                if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+                if launchMode.audit.calendar {
                     try await store?.savePreferences(preference); return
                 }
 #endif
@@ -542,10 +553,27 @@ enum CalendarConnectionIssue: Equatable {
     }
 }
 
+/// Owns the notification observer outside actor isolation so `deinit` can
+/// remove it. The callback runs on the main queue.
+final class CalendarSystemTimeZoneObserver {
+    private let observer: any NSObjectProtocol
+
+    init(onChange: @escaping @MainActor @Sendable () -> Void) {
+        observer = NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { _ in
+            // Delivered on the main queue, as requested above.
+            MainActor.assumeIsolated { onChange() }
+        }
+    }
+
+    deinit { NotificationCenter.default.removeObserver(observer) }
+}
+
 struct CalendarUndoAction {
     var operationID: String
     var accountID: String
     var calendarID: String
+    /// The Edit menu's name for the change, such as "Change Event".
+    var name: String
     var before: GoogleCalendarEvent? = nil
 }
 

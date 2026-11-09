@@ -4,6 +4,7 @@ import SwiftUI
 
 struct CalendarEventEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.prepareForMeeting) private var prepareForMeeting
     @State private var draft: CalendarEditorDraft
     let calendars: [CalendarDisplayCalendar]
     let calendar: Calendar
@@ -196,6 +197,8 @@ struct CalendarEventEditor: View {
                     .disabled(draft.isDeletion)
                     Divider()
                 }
+                // An event someone else made lists the guests they chose.
+                .logoLookup(.familiarSenders)
                 if attendees.isEmpty {
                     HStack(spacing: Tokens.Space.s3) {
                         Image(systemName: "person.crop.circle.badge.plus").font(.title2).foregroundStyle(.secondary)
@@ -319,6 +322,17 @@ struct CalendarEventEditor: View {
     private var footer: some View {
         VStack(spacing: Tokens.Space.s3) {
             if let error { CalendarInlineError(message: error).ternTransition(.disclosure) }
+            if let prepareForMeeting, !draft.isDeletion {
+                HStack {
+                    Button("Prepare for Meeting", systemImage: "list.bullet.clipboard") {
+                        if let source = draft.source { prepareForMeeting(source) }
+                    }
+                    .disabled(draft.source == nil || draft.source?.isPending == true || isSaving)
+                    .help(draft.source == nil ? "Save the event before preparing." : "Prepare from the saved event; your edits stay here.")
+                    .accessibilityIdentifier("calendar.prepare-meeting")
+                    Spacer(minLength: 0)
+                }
+            }
             HStack(spacing: Tokens.Space.s3) {
                 if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving event") }
                 if !editable, let link = draft.event.htmlLink, let url = URL(string: link), url.scheme == "https" {

@@ -382,12 +382,8 @@ extension CalendarModel {
                             start: interval.start, end: interval.end, refresh: refresh)
                         return CalendarOwnerRange(owner: source.0, result: result)
                     } catch {
-                        let denied: Bool
-                        if let google = error as? GmailError {
-                            if case .http(status: 403, reason: _) = google { denied = true }
-                            else { denied = google == .unauthorized }
-                        } else { denied = error as? CalendarEngineError == .permissionDenied }
-                        return CalendarOwnerRange(owner: source.0, result: nil, accessDenied: denied)
+                        return CalendarOwnerRange(owner: source.0, result: nil,
+                                                  accessDenied: CalendarModel.losesReadAccess(error))
                     }
                 }
             }

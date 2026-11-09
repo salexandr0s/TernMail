@@ -106,6 +106,39 @@ import Testing
         #expect(restored.workingWeekdays == [2, 4])
     }
 
+    @Test func withoutAChosenZoneTheCalendarFollowsTheMac() throws {
+        let suite = "CalendarManagementTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CalendarModel(app: nil, defaults: defaults)
+        #expect(model.usesSystemTimeZone)
+        model.systemTimeZoneDidChange(to: try #require(TimeZone(identifier: "Pacific/Kiritimati")))
+        // Saving other working hours must not pin the zone in effect.
+        model.workingStartHour = 8
+        model.systemTimeZoneDidChange(to: try #require(TimeZone(identifier: "Pacific/Pago_Pago")))
+        #expect(model.calendar.timeZone.identifier == "Pacific/Pago_Pago")
+        #expect(model.timeZoneID == "Pacific/Pago_Pago")
+        let restored = CalendarModel(app: nil, defaults: defaults)
+        #expect(restored.usesSystemTimeZone)
+        #expect(restored.workingHours == model.workingHours)
+    }
+
+    @Test func aChosenZoneStaysWhenTheMacChangesZone() throws {
+        let suite = "CalendarManagementTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CalendarModel(app: nil, defaults: defaults)
+        model.systemTimeZoneDidChange(to: try #require(TimeZone(identifier: "Pacific/Kiritimati")))
+        model.usesSystemTimeZone = false
+        #expect(model.timeZoneID == "Pacific/Kiritimati")
+        model.timeZoneID = "Europe/Vienna"
+        model.systemTimeZoneDidChange(to: try #require(TimeZone(identifier: "Pacific/Pago_Pago")))
+        #expect(model.calendar.timeZone.identifier == "Europe/Vienna")
+        #expect(CalendarModel(app: nil, defaults: defaults).calendar.timeZone.identifier == "Europe/Vienna")
+        model.usesSystemTimeZone = true
+        #expect(model.calendar.timeZone.identifier == "Pacific/Pago_Pago")
+    }
+
     @Test(arguments: [false, true])
     func lateSharingReadForAFormerSelectionIsDropped(fails: Bool) async throws {
         let first = Self.ownedCalendar("first"), second = Self.ownedCalendar("second")

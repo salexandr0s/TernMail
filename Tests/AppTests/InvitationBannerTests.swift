@@ -90,6 +90,77 @@ import Testing
         #expect(presentation.recurrenceNote != nil)
     }
 
+    @Test func forgedCancellationIsShownWithoutOfferingRemoval() throws {
+        // A matching UID and a higher SEQUENCE are all a forger has to write.
+        let cancel = try invitation(method: "CANCEL", sequence: 9)
+        let event = Self.storedEvent()
+        for message in [Self.message(from: "Organizer <organizer@example.com>", verified: nil),
+                        Self.message(from: "Organizer <organizer@example.com>", verified: "other@example.com"),
+                        Self.message(from: "Mallory <mallory@example.net>", verified: "mallory@example.net")] {
+            #expect(CalendarModel.cancellationRemovalNotice(for: cancel, message: message, event: event,
+                userAddresses: ["me@example.com"]) != nil)
+        }
+        // The stored event's organizer decides who may cancel it, not the email's ORGANIZER line.
+        var hosted = event
+        hosted.organizer = CalendarPerson(email: "host@example.com")
+        let organizerMessage = Self.message(from: "organizer@example.com", verified: "organizer@example.com")
+        #expect(CalendarModel.cancellationRemovalNotice(for: cancel, message: organizerMessage, event: hosted,
+            userAddresses: []) != nil)
+
+        let notice = try #require(CalendarModel.cancellationRemovalNotice(for: cancel, message: nil, event: event,
+            userAddresses: []))
+        let model = cancellationModel(cancel)
+        let item = try #require(model.items.first)
+        #expect(item.kind == .cancelled)
+        model.markExisting(itemID: item.id, calendarID: "primary", eventID: "event", removalNotice: notice)
+        let shown = try #require(model.items.first)
+        #expect(shown.existingEventID == "event")
+        #expect(!shown.canReview)
+        #expect(EmailCalendarPresentation(item: shown, calendar: .current).badge.text == notice)
+    }
+
+    @Test func genuineOrganizerCancellationOffersRemoval() throws {
+        let cancel = try invitation(method: "CANCEL", sequence: 2)
+        let message = Self.message(from: "Organizer <ORGANIZER@example.com>", verified: "organizer@example.com")
+        #expect(CalendarModel.cancellationRemovalNotice(for: cancel, message: message, event: Self.storedEvent(),
+            userAddresses: ["me@example.com"]) == nil)
+        let model = cancellationModel(cancel)
+        let item = try #require(model.items.first)
+        model.markExisting(itemID: item.id, calendarID: "primary", eventID: "event")
+        #expect(model.items.first?.canReview == true)
+    }
+
+    @Test func emailedCancellationNeverRemovesAnEventTheUserOrganizes() throws {
+        let cancel = try invitation(method: "CANCEL", sequence: 2)
+        let message = Self.message(from: "organizer@example.com", verified: "organizer@example.com")
+        var organized = Self.storedEvent()
+        organized.organizer?.isSelf = true
+        #expect(CalendarModel.cancellationRemovalNotice(for: cancel, message: message, event: organized,
+            userAddresses: []) != nil)
+        // The user's own addresses count even when Google leaves out `self`.
+        #expect(CalendarModel.cancellationRemovalNotice(for: cancel, message: message, event: Self.storedEvent(),
+            userAddresses: ["Organizer@Example.com"]) != nil)
+    }
+
+    private static func storedEvent() -> GoogleCalendarEvent {
+        var event = GoogleCalendarEvent(summary: "Planning")
+        event.organizer = CalendarPerson(email: "organizer@example.com")
+        return event
+    }
+
+    private static func message(from sender: String, verified: String?) -> MessageRecord {
+        MessageRecord(accountID: "a", id: "cancel", threadID: "thread", historyID: 1, date: .now, snippet: "",
+            sender: sender, recipients: "me@example.com", cc: nil, subject: "Planning", sizeEstimate: 1,
+            verifiedImageSender: verified)
+    }
+
+    private func cancellationModel(_ cancel: Invitation) -> EmailCalendarModel {
+        let model = EmailCalendarModel()
+        model.update(messages: [EmailCalendarMessage(id: "cancel", subject: "Planning", date: .now, text: "",
+            invitations: [cancel], sender: "organizer@example.com")], addresses: ["me@example.com"])
+        return model
+    }
+
     private func invitation(method: String = "REQUEST", sequence: Int = 1, stamp: String = "20310701T090000Z",
                             recurrence: String = "", start: String = "DTSTART:20310715T140000Z") throws -> Invitation {
         try Invitation(data: Data(("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Tern Test//EN\r\nMETHOD:\(method)\r\n" +

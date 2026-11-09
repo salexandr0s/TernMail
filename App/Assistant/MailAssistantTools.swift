@@ -452,7 +452,7 @@ final class MailAssistantTools {
         )
         var data: [String: AIJSON] = [
             "draft_id": .string(draft.id), "account_id": .string(accountID),
-            "status": .string("Editable draft created; Gmail draft save queued. Nothing was sent."),
+            "status": .string("Editable draft created in Tern. It is saved to Gmail Drafts after the user reviews it with Review Draft. Nothing was sent."),
             "subject": .string(draft.subject), "to": .array(draft.to.map { .string($0.address) })
         ]
         if let styleDecision {

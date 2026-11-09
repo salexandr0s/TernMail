@@ -126,7 +126,7 @@ public actor CalendarSyncEngine {
                 state = try await store.syncState(accountID: accountID, calendarID: calendarID)
             } catch {
                 try checkpoint(epoch)
-                if Self.httpStatus(error) == 403 {
+                if Self.revokesAccess(error) {
                     accessEpoch += 1
                     try await store.resetRemoteCalendar(accountID: accountID, calendarID: calendarID)
                 }
@@ -171,7 +171,7 @@ public actor CalendarSyncEngine {
             return CalendarOccurrenceResult(events: events.filter { !$0.isCancelled }, fetchedAt: now, isStale: false, isComplete: true)
         } catch {
             try checkpoint(epoch)
-            if Self.httpStatus(error) == 403 || error as? CalendarEngineError == .permissionDenied {
+            if Self.revokesAccess(error) || error as? CalendarEngineError == .permissionDenied {
                 accessEpoch += 1
                 try await store.resetRemoteCalendar(accountID: accountID, calendarID: calendarID)
             }
@@ -197,7 +197,7 @@ public actor CalendarSyncEngine {
         do { event = try await service.event(calendarID: calendarID, eventID: eventID) }
         catch {
             try checkpoint(epoch)
-            if Self.httpStatus(error) == 403 {
+            if Self.revokesAccess(error) {
                 accessEpoch += 1
                 try await store.resetRemoteCalendar(accountID: accountID, calendarID: calendarID)
             }
@@ -340,5 +340,16 @@ public actor CalendarSyncEngine {
     static func isOffline(_ error: any Error) -> Bool {
         if let error = error as? GmailError { return error.isRetryable }
         return error is URLError
+    }
+
+    /// 403 reasons that refuse one request while the calendar stays readable.
+    /// Usage limits arrive as `GmailError.rateLimited` instead.
+    static let operationRefusalReasons: Set<String> = ["forbiddenForNonOrganizer", "requiredAccessLevel"]
+
+    /// Whether `error` means this account can no longer read the calendar,
+    /// so its cached events have to go.
+    public static func revokesAccess(_ error: any Error) -> Bool {
+        guard case .http(status: 403, let reason) = error as? GmailError else { return false }
+        return reason.map { !operationRefusalReasons.contains($0) } ?? true
     }
 }

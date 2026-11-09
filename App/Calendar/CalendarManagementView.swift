@@ -367,7 +367,10 @@ struct CalendarManagementView: View {
             }
         }
         Section("Display") {
+            SettingsToggleRow("Use system time zone", detail: "Calendar times follow your Mac when its time zone changes.",
+                              isOn: $model.usesSystemTimeZone)
             CalendarTimeZonePicker(title: "Time Zone", identifier: $model.timeZoneID)
+                .disabled(model.usesSystemTimeZone)
             Picker("Week Starts", selection: $model.firstWeekday) {
                 ForEach(1...7, id: \.self) { day in Text(model.calendar.weekdaySymbols[day - 1]).tag(day) }
             }

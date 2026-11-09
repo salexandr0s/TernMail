@@ -19,7 +19,9 @@ public enum HTMLImporter {
     public static func importHTML(_ html: String, detachingQuote: Bool = true, preservingInlineImages: Bool = false) -> Result {
         // Browsers turn CR LF and lone CR into LF before parsing HTML. SwiftSoup doesn't.
         let html = html.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        guard let document = try? SwiftSoup.parse(html), let body = document.body() else {
+        // `Document.body()` searches by recursion, which deeply nested framesets
+        // with no body overflow. The tag lookup walks the tree in a loop.
+        guard let document = try? SwiftSoup.parse(html), let body = try? document.getElementsByTag("body").first() else {
             return Result(document: ComposeDocument(plainText: html), quotedTail: nil, droppedFormatting: true)
         }
         let quotedTail = detachingQuote ? (try? detachQuote(from: body)) ?? nil : nil
@@ -117,7 +119,46 @@ public enum HTMLImporter {
             "sub", "sup", "hr", "blockquote", "video", "audio", "picture", "canvas",
         ]
 
-        mutating func walk(_ node: Node) {
+        /// An element whose children are being walked.
+        private struct OpenElement {
+            /// What closing the element does before its formatting ends.
+            enum Ending {
+                /// Leaves the list level of a `ul` or `ol` and ends the line.
+                case list
+                /// Ends the line, as a block or list item does.
+                case line
+                case none
+            }
+
+            var ending: Ending
+            var children: [Node]
+            var nextChild = 0
+            /// The formatting and list item in force around the element.
+            var outerStyle: Style
+            var outerListItem: ComposeDocument.BlockKind?
+        }
+
+        /// Walks `root` and everything in it in document order. Open elements
+        /// wait on a stack instead of in nested calls, so no depth of nesting
+        /// can overflow the thread's stack.
+        mutating func walk(_ root: Node) {
+            var open: [OpenElement] = []
+            if let element = enter(root) { open.append(element) }
+            while var element = open.popLast() {
+                guard element.nextChild < element.children.count else {
+                    leave(element)
+                    continue
+                }
+                let child = element.children[element.nextChild]
+                element.nextChild += 1
+                open.append(element)
+                if let opened = enter(child) { open.append(opened) }
+            }
+        }
+
+        /// Handles `node` up to its children. Returns the element when its
+        /// children come next, or nil when the node is done.
+        private mutating func enter(_ node: Node) -> OpenElement? {
             if let text = node as? TextNode {
                 var raw = text.getWholeText()
                 // An HTML parser drops a newline right after `<pre>`, but SwiftSoup keeps it.
@@ -125,57 +166,61 @@ public enum HTMLImporter {
                     raw.removeFirst()
                 }
                 append(raw)
-                return
+                return nil
             }
-            guard let element = node as? Element else { return }
+            guard let element = node as? Element else { return nil }
             let tag = element.tagName().lowercased()
             if preservingInlineImages, tag == "img", let source = try? element.attr("src"), source.lowercased().hasPrefix("cid:") {
                 let reference = InlineImageReference(contentID: String(source.dropFirst(4)).removingPercentEncoding ?? "", altText: (try? element.attr("alt")) ?? "")
-                if reference.isValid { runs.append(.init("", image: reference)); return }
+                if reference.isValid { runs.append(.init("", image: reference)); return nil }
             }
             if Self.ignored.contains(tag) {
                 if tag == "svg" || tag == "math" { dropped = true }
-                return
+                return nil
             }
             if Self.unsupported.contains(tag) { dropped = true }
 
-            let saved = style
-            let savedListItem = listItem
-            defer {
-                style = saved
-                listItem = savedListItem
-            }
+            let outerStyle = style
+            let outerListItem = listItem
             applyStyle(of: element, tag: tag)
 
+            var ending = OpenElement.Ending.none
             switch tag {
             case "br":
                 endBlock(keepingEmpty: true)
-                return
+                // Nothing inside a line break is walked.
+                return OpenElement(ending: .none, children: [], outerStyle: outerStyle, outerListItem: outerListItem)
             case "ul", "ol":
                 endBlock()
                 let level = lists.count
                 lists.append(tag == "ul" ? .bulleted(level: level) : .numbered(level: level))
-                walkChildren(of: element)
-                lists.removeLast()
-                endBlock()
-                return
+                ending = .list
             case "li":
                 endBlock()
                 listItem = lists.last ?? .bulleted(level: 0)
-                walkChildren(of: element)
-                endBlock()
-                return
+                ending = .line
             default:
-                break
+                if Self.blockLevel.contains(tag) {
+                    endBlock()
+                    ending = .line
+                }
             }
-            let isBlock = Self.blockLevel.contains(tag)
-            if isBlock { endBlock() }
-            walkChildren(of: element)
-            if isBlock { endBlock() }
+            return OpenElement(ending: ending, children: element.getChildNodes(), outerStyle: outerStyle, outerListItem: outerListItem)
         }
 
-        private mutating func walkChildren(of element: Element) {
-            for child in element.getChildNodes() { walk(child) }
+        /// Finishes an element after its children.
+        private mutating func leave(_ element: OpenElement) {
+            switch element.ending {
+            case .list:
+                lists.removeLast()
+                endBlock()
+            case .line:
+                endBlock()
+            case .none:
+                break
+            }
+            style = element.outerStyle
+            listItem = element.outerListItem
         }
 
         private mutating func applyStyle(of element: Element, tag: String) {

@@ -289,10 +289,11 @@ extension SyncEngine {
                 await sleepUntilWoken(lane, limit: nil)
                 continue
             }
-            // With no label send under way, a label row still marked as going
-            // out lost its outcome. It counts as due, and `sendDueActions()`
-            // puts it back in the queue behind a backoff.
-            let recovers = lane == .labels && labelSendsInFlight == 0
+            // With no send under way in its lane, a label or draft row still
+            // marked as going out lost its outcome. It counts as due, and
+            // `sendDueActions()` or `sendDueDrafts()` puts it back in the
+            // queue behind a backoff.
+            let recovers = (lane == .labels && labelSendsInFlight == 0) || (lane == .compose && composeSendsInFlight == 0)
             let dueTimes: [Date]
             do {
                 dueTimes = try await cache.read { tx in
@@ -312,8 +313,11 @@ extension SyncEngine {
                 await sleepUntilWoken(lane, limit: min(pow(2, Double(failedReads)), 60))
                 continue
             }
-            guard let next = dueTimes.min() else {
-                // A row queued while the read was in flight sets the flag again.
+            // The settings lane also stops while Gmail Settings is off, and
+            // `wakeSettingsWhenAllowed()` wakes it when the feature comes on.
+            guard let next = dueTimes.min(), await !isPaused(lane) else {
+                // A row queued, or Gmail Settings turned on, while the reads
+                // were in flight sets the flag again.
                 if wakeRequests.contains(lane) { continue }
                 break
             }
@@ -606,9 +610,9 @@ extension SyncEngine {
 
     /// Tries a failed write twice more after a short pause. A row whose
     /// outcome isn't written stays marked as going out, holding back later
-    /// changes to its conversations, until the next `sendDueActions()` puts
-    /// a label row back in the queue, or the next launch any row. Nil when
-    /// no try landed.
+    /// changes to its conversations or draft, until the next `sendDueActions()`
+    /// or `sendDueDrafts()` puts a label or draft row back in the queue, or
+    /// the next launch any row. Nil when no try landed.
     func recordOutcome<T: Sendable>(_ updates: @escaping @Sendable (CacheTransaction) throws -> T) async -> T? {
         for attempt in 1...3 {
             do {

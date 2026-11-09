@@ -1,4 +1,4 @@
-#if DEBUG || TERN_PERFORMANCE
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import AppKit
 import Foundation
 import MailStore
@@ -63,12 +63,10 @@ enum PerformanceAudit {
     }
 
     static func runIfRequested(app: AppModel) async {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard !hasRun, arguments.contains("--performance-audit"), arguments.contains("--ui-audit") else { return }
+        let options = LaunchMode.current.performance
+        guard !hasRun, LaunchMode.current.isIsolated, options.audit else { return }
         hasRun = true
-        let scopeName = arguments.first { $0.hasPrefix("--performance-scenario=") }
-            .map { String($0.dropFirst("--performance-scenario=".count)) } ?? "all"
-        guard let scope = Scope(rawValue: scopeName) else {
+        guard let scope = Scope(rawValue: options.scenario) else {
             writeFailure("Unsupported performance scenario; no benchmark actions were performed.")
             return
         }
@@ -92,11 +90,10 @@ enum PerformanceAudit {
         auditCache = mailbox.cache
         let originalKeyViewLoop = window.autorecalculatesKeyViewLoop
         keyViewLoopBeforeAudit = originalKeyViewLoop
-        if arguments.contains("--performance-fixed-key-loop") { window.autorecalculatesKeyViewLoop = false }
+        if options.fixedKeyLoop { window.autorecalculatesKeyViewLoop = false }
         keyViewLoopDuringAudit = window.autorecalculatesKeyViewLoop
         defer { window.autorecalculatesKeyViewLoop = originalKeyViewLoop }
-        if let startArgument = arguments.first(where: { $0.hasPrefix("--performance-start-file=") }) {
-            let startPath = String(startArgument.dropFirst("--performance-start-file=".count))
+        if let startPath = options.startFile {
             let readinessURL = outputURL.appendingPathExtension("setup.json")
             guard (startPath as NSString).isAbsolutePath,
                   URL(fileURLWithPath: startPath).standardizedFileURL.resolvingSymlinksInPath()
@@ -158,7 +155,7 @@ enum PerformanceAudit {
         }
         let heartbeat = PerformanceMainThreadAudit()
         let initialMemory = NavigationPerformance.physicalFootprint()
-        let count = max(100, min(1_000, argumentInteger("--performance-iterations=") ?? 100))
+        let count = options.iterations
         await PerformanceAuditTransport.shared.configure(.idle)
         var scenarios: [Scenario] = []
         func record(_ scenario: Scenario) {
@@ -387,7 +384,7 @@ enum PerformanceAudit {
                             automaticKeyViewLoopDuringAudit: keyViewLoopDuringAudit,
                             isOptimizedBuild: optimized, syntheticAccountCount: mailbox.accounts.count,
                             fixtureVisibleThreadCount: visibleRows,
-                            fixtureConfiguredMessagesPerAccount: min(60_000, max(200, argumentInteger("--performance-mails=") ?? 1_000)) + 822,
+                            fixtureConfiguredMessagesPerAccount: LaunchMode.current.performance.mails + 822,
                             fixtureEventCount: app.calendar.events.count, imageCorpora: AuditGmail.performanceImageCorpora,
                             scenarios: scenarios, scrolling: scrolling,
                             mainActorResponsiveness: responsiveness,
@@ -578,15 +575,10 @@ enum PerformanceAudit {
         return false
     }
 
-    private static func argumentInteger(_ prefix: String) -> Int? {
-        ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }.flatMap { Int($0.dropFirst(prefix.count)) }
-    }
-
     private static func writeFailure(_ reason: String) { write(["error": reason]) }
 
     private static var outputURL: URL {
-        ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--performance-output=") }
-            .map { URL(fileURLWithPath: String($0.dropFirst("--performance-output=".count))) }
+        LaunchMode.current.performance.output
             ?? FileManager.default.temporaryDirectory.appending(path: "Tern-performance-audit.json")
     }
 
@@ -608,8 +600,9 @@ enum PerformanceAudit {
 
     private static func write(_ value: some Encodable) {
         defer {
-            if ProcessInfo.processInfo.arguments.contains("--performance-exit") {
-                let pause = min(30, max(0, argumentInteger("--performance-memory-pause=") ?? 0))
+            let options = LaunchMode.current.performance
+            if options.exitsAfterReport {
+                let pause = options.memoryPause
                 Task {
                     if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
                     // Leave the Swift task before AppKit enters its termination

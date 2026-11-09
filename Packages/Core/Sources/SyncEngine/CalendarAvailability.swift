@@ -8,11 +8,19 @@ public struct CalendarWorkingHours: Codable, Sendable, Equatable {
     public var endMinute: Int
     public var durationMinutes: Int
     public var stepMinutes: Int
-    public var timeZoneIdentifier: String
+    /// The zone the user chose. Nil follows the Mac's time zone, also after it changes.
+    public var timeZoneOverride: String?
 
-    public init(timeZoneIdentifier: String = TimeZone.current.identifier, weekdays: Set<Int> = [2, 3, 4, 5, 6],
+    /// The chosen zone, or else the Mac's current one. Setting it chooses a zone.
+    public var timeZoneIdentifier: String {
+        get { timeZoneOverride ?? TimeZone.current.identifier }
+        set { timeZoneOverride = newValue }
+    }
+
+    /// Without a `timeZoneIdentifier`, the hours follow the Mac's time zone.
+    public init(timeZoneIdentifier: String? = nil, weekdays: Set<Int> = [2, 3, 4, 5, 6],
                 startMinute: Int = 540, endMinute: Int = 1020, durationMinutes: Int = 30, stepMinutes: Int = 15) {
-        self.timeZoneIdentifier = timeZoneIdentifier; self.weekdays = weekdays
+        timeZoneOverride = timeZoneIdentifier; self.weekdays = weekdays
         self.startMinute = startMinute; self.endMinute = endMinute
         self.durationMinutes = durationMinutes; self.stepMinutes = stepMinutes
     }
@@ -21,6 +29,43 @@ public struct CalendarWorkingHours: Codable, Sendable, Equatable {
         TimeZone(identifier: timeZoneIdentifier) != nil && !weekdays.isEmpty && weekdays.allSatisfy { (1...7).contains($0) }
             && (0..<1440).contains(startMinute) && (1...1440).contains(endMinute) && startMinute < endMinute
             && (1...1440).contains(durationMinutes) && (1...1440).contains(stepMinutes)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case weekdays, startMinute, endMinute, durationMinutes, stepMinutes, timeZoneOverride
+        /// Earlier versions saved this zone instead of an override.
+        case timeZoneIdentifier
+    }
+
+    /// Earlier versions saved a zone even when nobody chose one, usually the
+    /// Mac's zone when the hours were last edited. A saved zone that matches
+    /// the Mac's current zone, or that no longer exists, becomes nil so the hours
+    /// follow the Mac again. A different zone may have been chosen, so it stays.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        weekdays = try container.decode(Set<Int>.self, forKey: .weekdays)
+        startMinute = try container.decode(Int.self, forKey: .startMinute)
+        endMinute = try container.decode(Int.self, forKey: .endMinute)
+        durationMinutes = try container.decode(Int.self, forKey: .durationMinutes)
+        stepMinutes = try container.decode(Int.self, forKey: .stepMinutes)
+        if let chosen = try container.decodeIfPresent(String.self, forKey: .timeZoneOverride) {
+            timeZoneOverride = chosen
+        } else if let saved = try container.decodeIfPresent(String.self, forKey: .timeZoneIdentifier),
+                  saved != TimeZone.current.identifier, TimeZone(identifier: saved) != nil {
+            timeZoneOverride = saved
+        } else {
+            timeZoneOverride = nil
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(weekdays, forKey: .weekdays)
+        try container.encode(startMinute, forKey: .startMinute)
+        try container.encode(endMinute, forKey: .endMinute)
+        try container.encode(durationMinutes, forKey: .durationMinutes)
+        try container.encode(stepMinutes, forKey: .stepMinutes)
+        try container.encodeIfPresent(timeZoneOverride, forKey: .timeZoneOverride)
     }
 }
 

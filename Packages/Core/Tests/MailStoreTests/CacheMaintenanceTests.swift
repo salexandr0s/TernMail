@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import MessageContent
+import os
 import Testing
 @testable import MailStore
 
@@ -156,6 +157,173 @@ import Testing
         #expect(try await cache.read { try $0.calendarInvitations(accountID: "a").isEmpty })
     }
 
+    @Test func evictionChecksOnlyTheThreadsItIsGiven() async throws {
+        // A trim pass lists candidates once and evicts them in batches, so a
+        // batch must not grow with the cache by listing every thread again.
+        let small = try await evictionStatements(cachedThreads: 2)
+        let large = try await evictionStatements(cachedThreads: 30)
+        #expect(small == large)
+    }
+
+    @Test func evictionSkipsThreadsThatGainedADraftOrAChangeAfterTheyWereListed() async throws {
+        let cache = try MailCache.inMemory()
+        for id in ["forwarded", "changed", "free"] { try await seed(cache, id: id, thread: id) }
+        let listed = try await cache.evictionCandidates(keeping: [], now: date).map(\.thread)
+        #expect(Set(listed.map(\.threadID)) == ["forwarded", "changed", "free"])
+        try await cache.write { tx in
+            try tx.insertLocalDraft(LocalDraft(id: "forward", accountID: "a", kind: .forward, rfcMessageID: "<forward@example.test>",
+                sourceMessageID: "forwarded", now: date))
+            _ = try tx.enqueue(.modifyMessages, accountID: "a", messageIDs: ["changed"], add: [SystemLabel.starred], now: date, notBefore: date)
+        }
+        let free = CacheThreadReference(accountID: "a", threadID: "free")
+        #expect(try await cache.evictContent(for: listed, keeping: [], now: date).evictedThreads == [free])
+        #expect(try await cache.evictMetadata(for: listed, keeping: [], now: date).evictedThreads == [free])
+        for id in ["forwarded", "changed"] {
+            #expect(try await cache.read { try $0.body(messageID: id, accountID: "a") } != nil)
+        }
+    }
+
+    @Test func storedBodySizesFollowEverySaveAndRemoval() async throws {
+        let cache = try MailCache.inMemory()
+        let html = "<p>Γιώργος</p>", text = "Élodie 👋"
+        try await seed(cache, id: "m", thread: "t", html: html, plainText: text)
+        try await seed(cache, id: "other", thread: "other")
+        #expect(try await bodySizes(cache)["m"] == html.utf8.count + text.utf8.count)
+        let thread = CacheThreadReference(accountID: "a", threadID: "t")
+        let listed = try await cache.evictionCandidates(keeping: [], now: date).first { $0.thread == thread }
+        #expect(listed?.disposableBytes == Int64(html.utf8.count + text.utf8.count))
+        try await cache.write { try $0.saveBodies([.init(accountID: "a", messageID: "m", html: nil, plainText: text + text, fetchedAt: date)]) }
+        #expect(try await bodySizes(cache)["m"] == 2 * text.utf8.count)
+        try await cache.write { try $0.saveBodies([.init(accountID: "a", messageID: "m", html: nil, plainText: nil, fetchedAt: date)]) }
+        #expect(try await bodySizes(cache)["m"] == 0)
+        let total = try await bodySizes(cache).values.reduce(0, +)
+        #expect(try await cache.disposableContentUsage().bodyBytes == Int64(total))
+        try await cache.write { tx in _ = try tx.deleteMessages(ids: ["other"], accountID: "a") }
+        #expect(try await bodySizes(cache) == ["m": 0])
+        #expect(try await cache.evictContent(for: [thread], keeping: [], now: date).evictedThreads == [thread])
+        #expect(try await bodySizes(cache).isEmpty)
+        try await cache.write { try $0.saveBodies([.init(accountID: "a", messageID: "m", html: html, plainText: nil, fetchedAt: date)]) }
+        #expect(try await bodySizes(cache) == ["m": html.utf8.count])
+        try await cache.resetDisposableCache()
+        #expect(try await bodySizes(cache).isEmpty)
+    }
+
+    @Test func upgradeMeasuresBodiesAlreadyCached() async throws {
+        let writer = try DatabaseQueue()
+        try Schema.cacheMigrator.migrate(writer, upTo: "sender-image-authentication-v1")
+        let bodies: [(id: String, html: String?, text: String?)] = [
+            ("both", "<p>Γιώργος</p>", "Élodie 👋"), ("text", nil, "plain"), ("none", nil, nil),
+        ]
+        try await writer.write { db in
+            for body in bodies {
+                try db.execute(sql: """
+                    INSERT INTO message(accountID,id,threadID,historyID,date,snippet,sender,recipients,subject,sizeEstimate)
+                    VALUES ('a',?,?,1,0,'','sender@example.test','me@example.test','',0)
+                    """, arguments: [body.id, body.id])
+                try db.execute(sql: "INSERT INTO messageBody(accountID,messageID,html,plainText,fetchedAt) VALUES ('a',?,?,?,0)",
+                               arguments: [body.id, body.html, body.text])
+            }
+        }
+        let cache = try MailCache(writer: writer)
+        let expected = Dictionary(uniqueKeysWithValues: bodies.map { ($0.id, ($0.html?.utf8.count ?? 0) + ($0.text?.utf8.count ?? 0)) })
+        #expect(try await bodySizes(cache) == expected)
+        #expect(try await cache.disposableContentUsage().bodyBytes == Int64(expected.values.reduce(0, +)))
+    }
+
+    @Test func usageLeavesOutFreePagesAndCompactionEmptiesTheLog() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "cache.sqlite")
+        let cache = try MailCache.open(at: url)
+        #expect(try await cache.read { try Int.fetchOne($0.db, sql: "PRAGMA journal_size_limit") } == MailCache.logSizeLimit)
+        #expect(try await cache.write { try Int.fetchOne($0.db, sql: "PRAGMA journal_size_limit") } == MailCache.logSizeLimit)
+        func fileSize(_ suffix: String = "") throws -> Int64 {
+            try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false) + suffix)[.size] as? Int64 ?? 0
+        }
+        let text = String(repeating: "Cached mail ", count: 200_000)
+        try await seed(cache, id: "m", thread: "t", plainText: text)
+        try await cache.writer.writeWithoutTransaction { _ = try $0.checkpoint(.truncate) }
+        let full = try await cache.disposableContentUsage()
+        _ = try await cache.evictContent(for: [.init(accountID: "a", threadID: "t")], keeping: [], now: date)
+        try await cache.writer.writeWithoutTransaction { _ = try $0.checkpoint(.truncate) }
+        // The file keeps the freed pages until compaction, but they don't count.
+        let fileBeforeCompaction = try fileSize()
+        #expect(fileBeforeCompaction >= full.databaseBytes)
+        #expect(try await full.databaseBytes - cache.disposableContentUsage().databaseBytes > Int64(text.utf8.count) / 2)
+        try await cache.compactDisposableCache()
+        #expect(try fileSize("-wal") == 0)
+        #expect(try fileSize() < fileBeforeCompaction)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aReadDuringCompactionDoesNotPutTheTrimmedCacheOverBudgetAgain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "cache.sqlite")
+        let cache = try MailCache.open(at: url)
+        let text = String(repeating: "Cached mail ", count: 200_000)
+        for id in ["old", "kept"] { try await seed(cache, id: id, thread: id, plainText: text) }
+        _ = try await cache.evictContent(for: [.init(accountID: "a", threadID: "old")], keeping: [], now: date)
+        try await cache.writer.writeWithoutTransaction { _ = try $0.checkpoint(.truncate) }
+        let trimmed = try await cache.disposableContentUsage().databaseBytes
+        // A read that began before the VACUUM keeps its snapshot through it,
+        // so the truncating checkpoint can't empty the log.
+        let (reading, started) = AsyncStream.makeStream(of: Void.self)
+        let release = DispatchSemaphore(value: 0)
+        async let read: Void = cache.writer.read { db in
+            _ = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM message")
+            started.yield()
+            release.wait()
+        }
+        for await _ in reading { break }
+        do {
+            defer { release.signal() }
+            try await cache.compactDisposableCache()
+        }
+        try await read
+        let log = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false) + "-wal")[.size] as? Int64 ?? 0
+        #expect(log > trimmed / 2)
+        // A trim pass measures again after compacting, and one that ends over
+        // its budget evicts more on the next pass.
+        #expect(try await cache.disposableContentUsage().databaseBytes <= trimmed)
+    }
+
+    /// Statements one content and one metadata eviction run, each of a
+    /// single thread. Only those MailStore runs count: the search index's own
+    /// statements, which SQLite reports with a leading `--` like other nested
+    /// ones, depend on how its segments happen to be merged.
+    private func evictionStatements(cachedThreads: Int) async throws -> [Int] {
+        let cache = try MailCache.inMemory()
+        for index in 0..<cachedThreads { try await seed(cache, id: "m\(index)", thread: "t\(index)") }
+        let listed = try await cache.evictionCandidates(keeping: [], now: date).map(\.thread)
+        try #require(listed.count == cachedThreads)
+        let statements = OSAllocatedUnfairLock(initialState: 0)
+        try await cache.writer.write { db in
+            db.trace { event in
+                guard case let .statement(statement) = event, !statement.sql.hasPrefix("--") else { return }
+                statements.withLock { $0 += 1 }
+            }
+        }
+        statements.withLock { $0 = 0 }
+        #expect(try await cache.evictContent(for: [listed[0]], keeping: [], now: date).evictedThreads == [listed[0]])
+        let content = statements.withLock { $0 }
+        statements.withLock { $0 = 0 }
+        #expect(try await cache.evictMetadata(for: [listed[1]], keeping: [], now: date).evictedThreads == [listed[1]])
+        return [content, statements.withLock { $0 }]
+    }
+
+    /// Stored body sizes in account "a", by message.
+    private func bodySizes(_ cache: MailCache) async throws -> [String: Int] {
+        try await cache.read { tx in
+            var sizes: [String: Int] = [:]
+            for row in try Row.fetchAll(tx.db, sql: "SELECT messageID, bytes FROM messageBodySize WHERE accountID = 'a'") {
+                sizes[row["messageID"]] = row["bytes"]
+            }
+            return sizes
+        }
+    }
+
     private func invitation(uid: String, method: String = "REQUEST", sequence: Int, stamp: String = "20310101T120000Z", recurrence: String? = nil) throws -> Invitation {
         let recurrenceLine = recurrence.map { "RECURRENCE-ID:\($0)\r\n" } ?? ""
         return try Invitation(data: Data(("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:\(method)\r\n" +
@@ -163,14 +331,15 @@ import Testing
             recurrenceLine + "DTSTART:20310715T140000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n").utf8))
     }
 
-    private func seed(_ cache: MailCache, id: String, thread: String, account: String = "a", recent: Bool = false, inbox: Bool = false) async throws {
+    private func seed(_ cache: MailCache, id: String, thread: String, account: String = "a", recent: Bool = false, inbox: Bool = false,
+                      html: String? = "<b>Resource</b>", plainText: String? = "Resource") async throws {
         let timestamp = recent ? date : date.addingTimeInterval(-60 * 86400)
         let message = MessageRecord(accountID: account, id: id, threadID: thread, historyID: 1, date: timestamp,
             snippet: "", sender: "sender@example.test", recipients: "me@example.test", cc: nil, subject: "Mail", sizeEstimate: 1)
         try await cache.write { tx in
             try tx.upsertMessages([.init(record: message, labelIDs: inbox ? [SystemLabel.inbox] : [])])
             try tx.rebuildThreads([thread], accountID: account)
-            try tx.saveBodies([.init(accountID: account, messageID: id, html: "<b>Resource</b>", plainText: "Resource", fetchedAt: date)])
+            try tx.saveBodies([.init(accountID: account, messageID: id, html: html, plainText: plainText, fetchedAt: date)])
         }
     }
 }

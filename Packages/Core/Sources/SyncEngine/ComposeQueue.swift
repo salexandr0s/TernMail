@@ -267,12 +267,24 @@ extension SyncEngine {
 
     // MARK: Sending
 
-    /// Uploads every due draft row, one at a time, and returns how many it claimed.
+    /// Uploads every due draft row, one at a time, and returns how many it
+    /// claimed. With no other call under way, a row an earlier call left
+    /// marked as going out lost its outcome, as when the write recording it
+    /// failed. It goes back in the queue to go again after a backoff, and a
+    /// send then first checks whether its earlier request went out.
     @discardableResult
     public func sendDueDrafts() async -> Int {
         let accountID = accountID
         let now = now()
-        guard let due = try? await write({ tx in try tx.claimDueActions(accountID: accountID, now: now, lane: .compose) }) else {
+        composeSendsInFlight += 1
+        defer { composeSendsInFlight -= 1 }
+        let recovers = composeSendsInFlight == 1
+        guard let due = try? await write({ tx -> [PendingAction] in
+            if recovers {
+                try tx.requeueLostSends(accountID: accountID, lane: .compose) { now.addingTimeInterval(Self.backoff(after: $0.attempts)) }
+            }
+            return try tx.claimDueActions(accountID: accountID, now: now, lane: .compose)
+        }) else {
             return 0
         }
         for row in due {
@@ -340,13 +352,18 @@ extension SyncEngine {
             }
         }
         guard let prepared = try await prepare(localDraftID) else { return try await drop(row) }
-        // A draft that never reached Gmail, or whose Gmail copy another app
-        // changed, is saved first, so a retry finds it instead of creating another.
-        let target = try await target(for: prepared.draft)
-        let draftID = if let id = target.id { id } else { try await save(prepared, into: target).id }
         // Only a request that may have reached Gmail makes a missing draft
         // count as sent. A row claimed before a quit may never have sent one.
         let requestedBefore = prepared.draft.sendRequested
+        // A draft that never reached Gmail, or whose Gmail copy another app
+        // changed, is saved first, so a retry finds it instead of creating another.
+        let target: Target
+        do {
+            target = try await self.target(for: prepared.draft, sending: true)
+        } catch ComposeError.draftGone where requestedBefore {
+            return try await finishRemoving(localDraftID, sentMessageID: nil, sent: true)
+        }
+        let draftID = if let id = target.id { id } else { try await save(prepared, into: target).id }
         try await write { tx in try tx.markUploadStarted(localDraftID: localDraftID, sending: true) }
         let sent: GmailMessage
         do {
@@ -356,6 +373,8 @@ extension SyncEngine {
             return try await finishRemoving(localDraftID, sentMessageID: nil, sent: true)
         } catch GmailError.notFound {
             throw ComposeError.draftGone
+        } catch where !requestedBefore && Self.provesUnsent(error) {
+            throw UnsentSend(error: error)
         }
         try await finishRemoving(localDraftID, sentMessageID: sent.id, sent: true)
     }
@@ -389,13 +408,16 @@ extension SyncEngine {
         var isCopy = false
     }
 
-    private func target(for draft: LocalDraft) async throws -> Target {
+    /// With `sending`, a Gmail draft that is already gone throws `draftGone`
+    /// before any send request, so no retry can take its absence for a send.
+    private func target(for draft: LocalDraft, sending: Bool = false) async throws -> Target {
         guard let id = draft.gmailDraftID else { return Target(id: nil) }
         let current: GmailDraft
         do {
             current = try await gmail.draft(id: id, format: .metadata)
         } catch GmailError.notFound {
-            // The save creates a new draft, and a send reports it gone.
+            // Sent or deleted since Tern saved it. A save makes a new draft.
+            if sending { throw ComposeError.draftGone }
             return Target(id: id)
         }
         guard let message = current.message, !Self.isOwnUpload(message, of: draft) else { return Target(id: id) }
@@ -580,9 +602,18 @@ extension SyncEngine {
         try await write { tx in try tx.deleteAction(id: id) }
     }
 
+    /// A send Gmail never ran. `finish` takes back its request in the write
+    /// that queues the retry, so a retry can't keep a request that never went out.
+    private struct UnsentSend: Error {
+        var error: any Error
+    }
+
     /// Retries what may still work, and returns the draft to editing with a
-    /// message for anything Gmail refused.
-    private func finish(_ row: PendingAction, localDraftID: String, after error: any Error) async {
+    /// message for anything Gmail refused. A row whose outcome isn't written
+    /// stays marked as going out until the next `sendDueDrafts()`.
+    private func finish(_ row: PendingAction, localDraftID: String, after failure: any Error) async {
+        let unsent = failure is UnsentSend
+        let error = (failure as? UnsentSend)?.error ?? failure
         guard let id = row.id, !(error is CancellationError) else { return }
         let now = now()
         if Self.shouldRetryDraft(error) {
@@ -591,26 +622,24 @@ extension SyncEngine {
             // Error descriptions carry no message content or addresses.
             retry.lastError = error is GmailError ? String(describing: error) : String(describing: type(of: error))
             retry.notBefore = now.addingTimeInterval(min(pow(2, Double(row.attempts)), 300))
-            _ = try? await write { [retry] tx in
+            _ = await recordOutcome { [retry] tx in
+                // Nothing went out, so the send can be cancelled while it waits to retry.
+                if unsent { try tx.withdrawSendRequest(localDraftID: localDraftID) }
                 if try tx.action(id: id) != nil { try tx.updateAction(retry) }
             }
             return
         }
         let message = Self.failureMessage(for: error, kind: row.kind)
         let forget = error as? ComposeError == .draftGone
-        do {
-            let reopened = try await write { tx -> Bool in
-                try tx.retainFailedAction(row, message: message)
-                // A save refused while a send or discard waits behind it leaves
-                // the draft to that row, which keeps its undo and reports its own outcome.
-                if row.kind == .saveDraft, try tx.localDraft(id: localDraftID)?.state != .editing { return false }
-                try tx.returnToEditing(localDraftID: localDraftID, sendError: message, forgettingGmailDraft: forget)
-                return true
-            }
-            if reopened { continuation.yield(.draftFailed(localDraftID: localDraftID, message: message)) }
-        } catch {
-            // The row stays claimed and is retried at the next start.
+        let reopened = await recordOutcome { tx -> Bool in
+            try tx.retainFailedAction(row, message: message)
+            // A save refused while a send or discard waits behind it leaves
+            // the draft to that row, which keeps its undo and reports its own outcome.
+            if row.kind == .saveDraft, try tx.localDraft(id: localDraftID)?.state != .editing { return false }
+            try tx.returnToEditing(localDraftID: localDraftID, sendError: message, forgettingGmailDraft: forget)
+            return true
         }
+        if reopened == true { continuation.yield(.draftFailed(localDraftID: localDraftID, message: message)) }
     }
 
     private static func shouldRetryDraft(_ error: any Error) -> Bool {
@@ -623,6 +652,23 @@ extension SyncEngine {
             shouldRetry(error)
         default:
             true
+        }
+    }
+
+    /// Whether `error` proves a send didn't go out: Gmail refused it before
+    /// it ran, or no connection opened. A timeout or a dropped connection
+    /// can follow a send Gmail carried out. So can `notConnectedToInternet`,
+    /// which URLSession also reports for a network lost mid-request; a Mac
+    /// offline from the start fails at the lookup or save before the send.
+    private static func provesUnsent(_ error: any Error) -> Bool {
+        switch error {
+        case GmailError.rateLimited, GmailError.unauthorized, GmailError.uploadSessionLost:
+            true
+        case GmailError.transport(let code):
+            [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost,
+             .internationalRoamingOff, .dataNotAllowed].contains(code)
+        default:
+            false
         }
     }
 

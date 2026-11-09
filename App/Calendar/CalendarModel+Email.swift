@@ -124,13 +124,18 @@ extension CalendarModel {
         for item in model.items where !item.isOutdated {
             do {
                 if let invitation = item.invitation, let match = try await emailInvitationMatch(invitation, accountID: key.accountID) {
+                    var removalNotice: String?
+                    if invitation.isCancelled {
+                        removalNotice = try await cancellationRemovalNotice(for: invitation, messageID: item.messageID,
+                            event: match.event, accountID: key.accountID, addresses: model.addresses)
+                    }
                     try validateEmailLifetime(revision, accountID: key.accountID)
                     guard sourceRevision == model.revision else { return }
                     model.markExisting(itemID: item.id, calendarID: match.calendarID, eventID: match.event.id,
                         hasNewerInvitation: Self.isNewer(invitation, than: match.event),
                         calendarAnswer: match.event.attendees?.first(where: { $0.isSelf == true })?.responseStatus.flatMap {
                             Invitation.ParticipationStatus(rawValue: $0 == "needsAction" ? "NEEDS-ACTION" : $0.uppercased())
-                        })
+                        }, removalNotice: removalNotice)
                 } else if item.invitation == nil, !item.relatedMessageIDs.isEmpty {
                     do {
                         if let match = try await relatedEmailEvent(item, key: key) {
@@ -222,16 +227,23 @@ extension CalendarModel {
             event.rawValue["guestsCanInviteOthers"] = .bool(false)
         } else { event = item.event ?? GoogleCalendarEvent(summary: item.title) }
         if event.start == nil { event.start = CalendarDateTime(date: date, timeZone: calendar.timeZone) }
-        if event.end == nil, let start = event.startDate {
-            let end = event.isAllDay ? calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400) : start.addingTimeInterval(1800)
-            event.end = CalendarDateTime(date: end, timeZone: calendar.timeZone, allDay: event.isAllDay)
-        }
+        if event.end == nil, let start = event.start { event.end = defaultEnd(after: start) }
         var draft = CalendarEditorDraft(event: event, calendarKey: owner.id, isImport: item.invitation != nil)
         draft.sourceID = key.accountID + ":" + item.id
         draft.sourceTitle = item.invitation == nil ? "From email. Review the date, time zone and duration (30 minutes when unspecified)." : "Personal copy. This does not send an invitation response."
         try validateEmailLifetime(revision, accountID: key.accountID)
         editor = draft
         app?.showCalendar()
+    }
+
+    /// The end for an email event without one: the next day when it lasts all
+    /// day, otherwise 30 minutes later. The start is read in the calendar's
+    /// zone because the end is written in it.
+    func defaultEnd(after start: CalendarDateTime) -> CalendarDateTime? {
+        guard let date = start.resolvedDate(fallbackTimeZone: calendar.timeZone) else { return nil }
+        let end = start.isAllDay ? calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86400)
+            : date.addingTimeInterval(1800)
+        return CalendarDateTime(date: end, timeZone: calendar.timeZone, allDay: start.isAllDay)
     }
 
     func recordAcceptedSuggestion(sourceID: String, event: GoogleCalendarEvent, operation: CalendarOperation) async throws {
@@ -280,6 +292,12 @@ extension CalendarModel {
               Self.isNewer(invitation, than: match.event),
               let owner = calendars.first(where: { $0.accountID == key.accountID && $0.calendarID == match.calendarID }) else {
             throw CalendarModelError.unsupported("This cancellation is older than the current calendar event or has already been applied.")
+        }
+        guard let mailbox = app?.mailbox?.account(id: key.accountID) else { throw CalendarModelError.unavailable }
+        let addresses = try await mailbox.engine.calendarReplyAddresses()
+        if let notice = try await cancellationRemovalNotice(for: invitation, messageID: item.messageID, event: match.event,
+                                                           accountID: key.accountID, addresses: addresses) {
+            throw CalendarModelError.unsupported(notice)
         }
         try validateEmailLifetime(revision, accountID: key.accountID)
         return CalendarDisplayEvent(event: match.event, accountID: key.accountID, calendarID: match.calendarID,

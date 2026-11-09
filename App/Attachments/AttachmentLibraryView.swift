@@ -2,6 +2,7 @@ import AppKit
 import MailStore
 import QuickLook
 import SwiftUI
+import SyncEngine
 
 struct AttachmentLibraryView: View {
     @Bindable var model: AttachmentLibraryModel
@@ -242,7 +243,7 @@ struct AttachmentItemMenu: View {
             }
             Button("Copy", systemImage: "doc.on.doc") { Task { await model.copyFiles(files) } }
             ShareLink(items: files.map { AttachmentFileItem(attachment: $0.attachment, mailbox: model.mailbox) },
-                      preview: { SharePreview($0.attachment.filename) })
+                      preview: { SharePreview(SyncEngine.safeFilename($0.attachment.filename)) })
             Divider()
             Button("Open Conversation in New Window", systemImage: "macwindow.badge.plus") {
                 Task { await model.openSource(item) }

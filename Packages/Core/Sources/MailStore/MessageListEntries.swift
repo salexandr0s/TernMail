@@ -25,12 +25,14 @@ public struct MessageListEntry: Sendable, Hashable {
 
 extension MailCache {
     /// Uses account-qualified conversation IDs; repeated Gmail IDs never share rows.
+    /// A query's dates count from `now` for as long as the stream runs.
     public func messageListEntries(threadsByAccount: [String: [String]], matching query: SearchQuery? = nil,
-                                   includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false) -> AsyncThrowingStream<[MessageListEntry], any Error> {
+                                   includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false,
+                                   now: Date = .now) -> AsyncThrowingStream<[MessageListEntry], any Error> {
         observe { db in
             try CacheTransaction(db: db).messageListEntries(
                 threadsByAccount: threadsByAccount, matching: query,
-                includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly
+                includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly, now: now
             )
         }
     }
@@ -38,11 +40,15 @@ extension MailCache {
 
 extension CacheTransaction {
     /// What `MailCache.messageListEntries` observes. Labels are the stored
-    /// effective labels, so a queue row changing state wakes no list.
+    /// effective labels, so a queue row changing state wakes no list. A
+    /// query's dates count from `now`, so a search's messages agree with the
+    /// conversations `searchThreads` found at the same moment.
     func messageListEntries(threadsByAccount: [String: [String]], matching query: SearchQuery? = nil,
-                            includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false) throws -> [MessageListEntry] {
+                            includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false,
+                            now: Date) throws -> [MessageListEntry] {
         var entries: [MessageListEntry] = []
         for accountID in threadsByAccount.keys.sorted() {
+            let threadIDs = Set(threadsByAccount[accountID] ?? [])
             let snoozedThreads = snoozedOnly ? try snoozeHolds(accountID: accountID) : [:]
             let messageHolds = snoozedOnly ? try messageSnoozeHolds(accountID: accountID) : []
             let snoozedMessages = Dictionary(messageHolds.map { ($0.messageID, $0.wakeAt) }, uniquingKeysWith: min)
@@ -50,25 +56,12 @@ extension CacheTransaction {
             if let query {
                 var matched = includingMessageIDs[accountID] ?? []
                 if query.runsLocally, let root = query.root {
-                    var names: [String: [String]] = [:]
-                    for label in try labels(accountID: accountID) {
-                        names[SearchCompiler.normalizedLabelName(label.name), default: []].append(label.id)
-                    }
-                    var compiler = SearchCompiler(labelIDs: names, timeZone: .current, now: .now)
-                    let predicate = compiler.sql(root)
-                    var sql = "SELECT m.id FROM message m JOIN messageText mt ON mt.accountID=m.accountID AND mt.messageID=m.id WHERE m.accountID=? AND \(predicate)"
-                    var arguments: StatementArguments = [accountID]
-                    arguments += compiler.arguments
-                    if !query.includesSpamAndTrash {
-                        sql += " AND NOT EXISTS(SELECT 1 FROM messageLabel x WHERE x.accountID=m.accountID AND x.messageID=m.id AND x.labelID IN (?,?))"
-                        arguments += [SystemLabel.spam, SystemLabel.trash]
-                    }
-                    matched.formUnion(try String.fetchSet(db, sql: sql, arguments: arguments))
+                    matched.formUnion(try localMatches(query, root: root, accountID: accountID, threadIDs: threadIDs, now: now))
                 }
                 matchingIDs = matched
             }
             let hidden = try hiddenDraftMessageIDs(accountID: accountID)
-            let fetched = try MessageListSQL.fetch(accountID: accountID, threadIDs: Set(threadsByAccount[accountID] ?? []), db: db)
+            let fetched = try MessageListSQL.fetch(accountID: accountID, threadIDs: threadIDs, db: db)
             for message in fetched.messages where !hidden.contains(message.id) {
                 guard matchingIDs?.contains(message.id) ?? true else { continue }
                 if snoozedOnly, snoozedThreads[message.threadID] == nil, snoozedMessages[message.id] == nil { continue }
@@ -81,6 +74,33 @@ extension CacheTransaction {
             if lhs.message.date != rhs.message.date { return lhs.message.date > rhs.message.date }
             return (lhs.message.accountID, lhs.message.id) < (rhs.message.accountID, rhs.message.id)
         }
+    }
+
+    /// The messages in `threadIDs` that `root` matches here, read a chunk of
+    /// conversations at a time rather than across the account. Spam and
+    /// Trash stay out unless the query names them, as in `searchThreads`.
+    private func localMatches(_ query: SearchQuery, root: SearchQuery.Node, accountID: String,
+                              threadIDs: Set<String>, now: Date) throws -> Set<String> {
+        var compiler = SearchCompiler(labelIDs: try labelIDsByName(accountID: accountID), timeZone: .current, now: now)
+        let predicate = compiler.sql(root)
+        let ids = threadIDs.sorted()
+        var matched: Set<String> = []
+        for start in stride(from: 0, to: ids.count, by: 400) {
+            let chunk = Array(ids[start..<min(start + 400, ids.count)])
+            var sql = """
+                SELECT m.id FROM message m JOIN messageText mt ON mt.accountID=m.accountID AND mt.messageID=m.id
+                WHERE m.accountID=? AND m.threadID IN (\(databaseQuestionMarks(count: chunk.count))) AND \(predicate)
+                """
+            var arguments: StatementArguments = [accountID]
+            arguments += StatementArguments(chunk)
+            arguments += compiler.arguments
+            if !query.includesSpamAndTrash {
+                sql += " AND NOT EXISTS(SELECT 1 FROM messageLabel x WHERE x.accountID=m.accountID AND x.messageID=m.id AND x.labelID IN (?,?))"
+                arguments += [SystemLabel.spam, SystemLabel.trash]
+            }
+            matched.formUnion(try String.fetchSet(db, sql: sql, arguments: arguments))
+        }
+        return matched
     }
 }
 

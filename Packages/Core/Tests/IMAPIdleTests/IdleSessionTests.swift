@@ -88,6 +88,18 @@ import Testing
         #expect(receive(&session, "A3 NO [AUTHENTICATIONFAILED] Invalid credentials (Failure)") == [.close(.authenticationFailed)])
     }
 
+    @Test func aRefusalWithoutACodeCountsAsRejectedCredentials() {
+        var session = signingIn()
+        #expect(receive(&session, "A2 NO Invalid credentials") == [.cancelTimer(.reply), .requestToken(forceRefresh: true)])
+    }
+
+    @Test(arguments: ["NO [UNAVAILABLE] Try again later", "NO [LIMIT] Too many connections", "NO [ALERT] Please try again", "BAD Command error"])
+    func aSignInRefusedForAnotherReasonReconnectsWithBackoff(_ answer: String) {
+        var session = signingIn()
+        #expect(receive(&session, "A2 " + answer)
+            == [.close(.reconnect(.init(immediately: false, forceRefresh: false, resetBackoff: false)))])
+    }
+
     @Test func changesSignalDuringIdleAndAroundItsRestart() {
         var session = idling()
         for change in ["* 11 EXISTS", "* 3 EXPUNGE", "* 5 FETCH (FLAGS (\\Seen))"] {

@@ -4,8 +4,14 @@ options:
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
+  defaultConfig: Debug
+configs:
+  Debug: debug
+  Debug-Testing: debug
+  Release: release
 configFiles:
   Debug: Config/Base.xcconfig
+  Debug-Testing: Config/Base.xcconfig
   Release: Config/Base.xcconfig
 settings:
   base:
@@ -16,9 +22,20 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     DEAD_CODE_STRIPPING: YES
+    # The app's bundle ID. ClaudeHelper gets the same value in its Info.plist and
+    # accepts XPC connections only from an app signed with this identifier.
+    TERN_APP_BUNDLE_IDENTIFIER: dev.tern.mail
   configs:
     Release:
       CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+    # Hosted and UI tests run in this configuration. It compiles the test and
+    # audit support, and its app has its own bundle ID, so it gets its own
+    # container and Keychain items. Xcode builds Swift packages with their
+    # debug settings only when the configuration name starts with Debug, and
+    # the tests' @testable imports of package modules need those settings.
+    Debug-Testing:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG TERN_TEST_SUPPORT
+      TERN_APP_BUNDLE_IDENTIFIER: dev.tern.mail.testing
 packages:
   Core:
     path: Packages/Core
@@ -31,6 +48,7 @@ targets:
     platform: macOS
     sources:
       - App
+      - Shared
     info:
       path: App/Info.plist
       properties:
@@ -93,10 +111,21 @@ targets:
         com.apple.security.files.downloads.read-write: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail
+        PRODUCT_BUNDLE_IDENTIFIER: "$(TERN_APP_BUNDLE_IDENTIFIER)"
         PRODUCT_NAME: Tern
         COMBINE_HIDPI_IMAGES: YES
+      configs:
+        # Google rejects this client ID, so the Debug-Testing app cannot sign
+        # in, and its redirect scheme differs from the one the real app
+        # registers.
+        Debug-Testing:
+          GOOGLE_CLIENT_ID_PREFIX: tern-testing-no-client
+          GOOGLE_CLIENT_ID: tern-testing-no-client.apps.googleusercontent.com
+          GOOGLE_REDIRECT_SCHEME: com.googleusercontent.apps.tern-testing-no-client
     dependencies:
+      - target: ClaudeHelper
+        embed: true
+        codeSign: true
       - package: Core
         product: GmailAPI
       - package: Core
@@ -113,6 +142,45 @@ targets:
         product: Diagnostics
       - package: AppAuth
         product: AppAuth
+  ClaudeHelper:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - ClaudeHelper
+      - Shared
+    info:
+      path: ClaudeHelper/Info.plist
+      properties:
+        TernHostBundleIdentifier: $(TERN_APP_BUNDLE_IDENTIFIER)
+        XPCService:
+          ServiceType: Application
+          JoinExistingSession: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail.ClaudeHelper
+        PRODUCT_NAME: ClaudeHelper
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_ENTITLEMENTS: ""
+    dependencies:
+      - package: Core
+        product: TernAI
+  ClaudeHelperTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ClaudeHelper
+        excludes:
+          - main.swift
+          - Info.plist
+      - Shared
+      - Tests/ClaudeHelperTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail.ClaudeHelper.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - package: Core
+        product: TernAI
   TernTests:
     type: bundle.unit-test
     platform: macOS
@@ -142,9 +210,19 @@ schemes:
     build:
       targets:
         Tern: all
+    run:
+      config: Debug
     test:
+      config: Debug-Testing
       commandLineArguments:
         --ui-audit: true
       targets:
         - TernTests
+        - ClaudeHelperTests
         - TernUITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

@@ -943,12 +943,39 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         }
         await engine.sendDueDrafts()
 
-        #expect(await gmail.draftCalls == ["create", "send D1"])
+        // The missing draft stops the send before its request.
+        #expect(await gmail.draftCalls == ["create"])
         let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
         #expect(stored.state == .editing)
         #expect(stored.gmailDraftID == nil)
         #expect(stored.sendError == "This draft is no longer available in Gmail. It may have been sent or deleted.")
         #expect(try await pendingActions(cache).isEmpty)
+    }
+
+    @Test(arguments: [GmailError.transport(.timedOut), .server(status: 503), .rateLimited])
+    func aSendWhoseDraftWasDeletedElsewhereIsNeverReportedSent(failure: GmailError) async throws {
+        let (engine, cache, gmail, clock) = try await makeEngine()
+        let draft = makeDraft()
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        await engine.sendDueDrafts()
+        await gmail.deleteDraftElsewhere("D1")
+        // Were a send request made, it would fail and be retried.
+        await gmail.failNextDraftCall("send", with: failure)
+        try await engine.sendDraft(draft.id, delay: 0)
+        await engine.sendDueDrafts()
+        clock.advance(10)
+        await engine.sendDueDrafts()
+
+        let message = try #require(ComposeError.draftGone.errorDescription)
+        let stored = try #require(try await cache.read { tx in try tx.localDraft(id: draft.id) })
+        #expect(stored.state == .editing && !stored.sendRequested)
+        #expect(stored.sendError == message)
+        #expect(try await pendingActions(cache).isEmpty)
+        await engine.stop()
+        var events: [SyncEvent] = []
+        for await event in engine.events { events.append(event) }
+        #expect(events == [.draftFailed(localDraftID: draft.id, message: message)])
     }
 
     @Test func aLostCreateResponseAdoptsTheDraftGmailMade() async throws {

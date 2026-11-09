@@ -174,6 +174,63 @@ import Testing
         #expect(try start("20260701T120000") == (try utc("2026-07-01T09:00:00Z")))
     }
 
+    /// Checks that the Pacific zone with `rule` as its daylight rule still
+    /// starts daylight time on the second Sunday of March.
+    private func expectDaylightFromTheSecondSundayOfMarch(
+        _ rule: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws {
+        let zone = pacific.map { $0 == "RRULE:FREQ=YEARLY;BYDAY=2SU;BYMONTH=3" ? "RRULE:" + rule : $0 }
+        // In 2026 that's the 8th, a week after the first Sunday.
+        for (local, offset) in [("20260305T120000", -28_800), ("20260309T120000", -25_200), ("20261215T120000", -28_800)] {
+            let start = try Invitation(data: event(["UID:u1", "DTSTART;TZID=Pacific Standard Time:" + local], timeZones: zone)).start
+            guard case .zoned(_, _, let found) = start else {
+                Issue.record("Expected a zoned time, got \(String(describing: start))", sourceLocation: sourceLocation)
+                continue
+            }
+            #expect(found == offset, "at \(local)", sourceLocation: sourceLocation)
+        }
+    }
+
+    @Test(arguments: [
+        // A COUNT too large to add to a year never ends the rule.
+        "FREQ=YEARLY;BYDAY=2SU;BYMONTH=3;COUNT=9223372036854775807",
+        // Numbers outside their ranges drop out and the rest of the rule stands.
+        "FREQ=YEARLY;BYDAY=SU;BYMONTH=3;BYMONTHDAY=8,9,10,11,12,13,14,-9223372036854775808",
+        "FREQ=YEARLY;BYDAY=-9223372036854775808SU,2SU;BYMONTH=3",
+    ])
+    func extremeRuleNumbersDontOverflow(rule: String) throws {
+        try expectDaylightFromTheSecondSundayOfMarch(rule)
+    }
+
+    @Test func longRuleListsKeepOneOfEachValidEntry() throws {
+        let months = Array(repeating: "3", count: 20_000).joined(separator: ",") + ",0,13"
+        let days = (0..<20_000).map { String(8 + $0 % 7) }.joined(separator: ",") + ",0,32,-32"
+        let rule = "FREQ=YEARLY;BYDAY=SU;BYMONTH=\(months);BYMONTHDAY=\(days)"
+
+        let parsed = try #require(YearlyRule(rule))
+
+        // Required, so a regression stops here instead of running slow lookups.
+        try #require(parsed.months == [3])
+        try #require(parsed.monthDays == [8, 9, 10, 11, 12, 13, 14])
+        try expectDaylightFromTheSecondSundayOfMarch(rule)
+    }
+
+    @Test func durationsLongerThanTheCalendarAreIgnored() throws {
+        // 16,000 parts of 999,999,999 weeks each overflow when counted in seconds.
+        let endless = "P" + String(repeating: "999999999W", count: 16_000)
+
+        let invitation = try Invitation(data: event([
+            "UID:u1", "DTSTART;TZID=Pacific Standard Time:20260701T120000", "DURATION:" + endless,
+            "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-" + endless, "END:VALARM",
+            "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M", "END:VALARM",
+        ], timeZones: pacific))
+
+        // With no usable DURATION, a timed event ends when it starts.
+        #expect(invitation.end == invitation.start)
+        #expect(invitation.alarms?.map(\.relativeSeconds) == [-900])
+    }
+
     @Test func attendeesKeepTheirStatusAndMatchAddressesIgnoringCase() throws {
         let invitation = try Invitation(data: event([
             "UID:u1",

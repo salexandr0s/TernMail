@@ -99,6 +99,82 @@ import Testing
         #expect(await gmail.changes == [archive("t1"), archive("t1")])
     }
 
+    @Test func aDraftRowWhoseOutcomeWasLostGoesAgainAfterABackoff() async throws {
+        let cache = try MailCache.inMemory()
+        let (engine, _, gmail, clock) = try await makeEngine(cache: cache, sleep: { _ in })
+        let draft = LocalDraft(accountID: account, kind: .new, content: DraftContent(),
+            rfcMessageID: "<lost-outcome@example.com>", now: baseDate)
+        try await engine.createDraft(draft)
+        try await engine.saveDraft(draft.id)
+        try await refuseFinishedRows(cache)
+        await engine.sendDueDrafts()
+        #expect(try await actions(cache).map(\.state) == [.sending])
+
+        try await allowFinishedRows(cache)
+        #expect(await engine.sendDueDrafts() == 0)
+        let row = try #require(try await actions(cache).first)
+        #expect(row.state == .queued)
+        #expect(row.notBefore == clock.now().addingTimeInterval(2))
+        clock.advance(2)
+        #expect(await engine.sendDueDrafts() == 1)
+        #expect(try await actions(cache).isEmpty)
+        // Gmail kept the first upload, so the second one updates it.
+        #expect(await gmail.draftCalls == ["create", "update D1"])
+    }
+
+    @Test(.timeLimit(.minutes(1))) func theRunningComposeLaneSendsALostDraftRowAgain() async throws {
+        let cache = try MailCache.inMemory()
+        let (engine, _, gmail, clock) = try await makeEngine(sendsAutomatically: true, cache: cache, sleep: { _ in })
+        try await withEngineStopped(engine) {
+            let draft = LocalDraft(accountID: account, kind: .new, content: DraftContent(),
+                rfcMessageID: "<lost-in-session@example.com>", now: baseDate)
+            try await engine.createDraft(draft)
+            try await refuseFinishedRows(cache)
+            try await engine.saveDraft(draft.id)
+            try await waitForSyncCondition {
+                let calls = await gmail.draftCalls
+                let inFlight = await engine.composeSendsInFlight
+                return calls == ["create"] && inFlight == 0
+            }
+            #expect(try await actions(cache).map(\.state) == [.sending])
+
+            // The lane puts the row back behind a backoff, then sends it once that ends.
+            try await allowFinishedRows(cache)
+            await engine.scheduleSending()
+            try await waitForSyncCondition { try await actions(cache).map(\.state) == [.queued] }
+            clock.advance(2)
+            await engine.scheduleSending()
+            try await waitForSyncCondition { try await actions(cache).isEmpty }
+            #expect(await gmail.draftCalls == ["create", "update D1"])
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aFailedStartupWriteIsTriedAgainBeforeSyncingBegins() async throws {
+        let clock = SchedulerClock()
+        let (engine, cache, gmail, _) = try await makeEngine(clock: clock.time, sleep: clock.sleep)
+        try await withEngineStopped(engine) {
+            try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
+            try await engine.perform(.archive, threadIDs: ["t1"])
+            // A quit left the change going out, and the write that puts it back fails.
+            try await cache.write { tx in
+                _ = try tx.claimDueActions(accountID: account, now: .distantFuture, lane: .labels)
+            }
+            try await refuseFinishedRows(cache)
+            await engine.start()
+            #expect(try await clock.parked() == [.seconds(2)])
+            clock.wake()
+            #expect(try await clock.parked() == [.seconds(4)])
+            #expect(await gmail.historyCalls == 0)
+
+            try await allowFinishedRows(cache)
+            clock.wake()
+            try await waitForSyncCondition { await gmail.historyCalls == 1 }
+            if let passes = await engine.requestedPasses { await passes.value }
+            #expect(try await clock.parked() == [SyncSchedule.activeInterval])
+            #expect(try await actions(cache).map(\.state) == [.queued])
+        }
+    }
+
     @Test func aSecondSendLeavesARowInFlightAlone() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         try await seed(cache, [("m1", "t1", [SystemLabel.inbox])], cursor: 100)
@@ -193,4 +269,23 @@ private func refuseSentRows(_ cache: MailCache) async throws {
 
 private func allowSentRows(_ cache: MailCache) async throws {
     try await cache.write { tx in try tx.db.execute(sql: "DROP TRIGGER IF EXISTS temp.refuseSentRow") }
+}
+
+/// Makes every write that removes a row or puts one back in the queue fail.
+private func refuseFinishedRows(_ cache: MailCache) async throws {
+    try await cache.write { tx in
+        try tx.db.execute(sql: """
+            CREATE TEMP TRIGGER refuseRemovedRow BEFORE DELETE ON main.pendingAction
+            BEGIN SELECT RAISE(ABORT, 'disk unavailable'); END;
+            CREATE TEMP TRIGGER refuseQueuedRow BEFORE UPDATE OF state ON main.pendingAction
+            WHEN NEW.state = '\(PendingAction.State.queued.rawValue)'
+            BEGIN SELECT RAISE(ABORT, 'disk unavailable'); END
+            """)
+    }
+}
+
+private func allowFinishedRows(_ cache: MailCache) async throws {
+    try await cache.write { tx in
+        try tx.db.execute(sql: "DROP TRIGGER IF EXISTS temp.refuseRemovedRow; DROP TRIGGER IF EXISTS temp.refuseQueuedRow")
+    }
 }

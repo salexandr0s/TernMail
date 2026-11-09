@@ -208,13 +208,11 @@ final class MailboxModel {
         )
         defaultAccount = first
         search = SearchModel(cache: cache, sources: [.init(accountID: account.id, engine: first.engine)])
-        search.onResultsChange = { [weak self] in
-            guard let self else { return }
-            if search.isActive { resetOlderConversations() }
-            observeSearchPage()
-        }
+        // The mailbox keeps its loaded pages and Gmail coverage while search
+        // runs, so Escape returns to the same list.
+        search.onResultsChange = { [weak self] in self?.observeSearchPage() }
         wire(first)
-        search.setMessageMode(!self.listPreferences.conversations)
+        followListGrouping()
     }
 
     /// Every signed-in account, the default one first.
@@ -629,7 +627,8 @@ final class MailboxModel {
         }
         guard let pager = older else { return }
         pager.next { [weak self, weak pager] page in
-            guard let self, let pager, older === pager, !search.isActive else { return }
+            // A page that lands during a search still extends the mailbox for Escape.
+            guard let self, let pager, older === pager else { return }
             threadLimit = max(threadLimit, threads.count + page.count + 1)
             // A successful page may change no rows. Read after its writes
             // before deciding whether an empty list needs another Gmail page.
@@ -690,21 +689,45 @@ final class MailboxModel {
         }
     }
 
-    /// Reply and Forward in the menu bar answer one selected conversation.
-    var canReply: Bool { selectedThreadIDs.count == 1 }
+    /// What Reply and Forward answer, which is what the reader shows: the
+    /// selected conversation, or in message mode its one selected message.
+    var replyTarget: MailLink? {
+        guard selectedThreadIDs.count == 1, let key = selectedThreadIDs.first else { return nil }
+        let conversation = MailLink(accountID: key.accountID, threadID: key.threadID)
+        // A mail link can select a conversation without one of its rows, and the reader then shows all of it.
+        guard !listPreferences.conversations, let row = selectedMessageRows.first else { return conversation }
+        guard selectedMessageRows.count == 1, row.threadKey == key, let messageID = row.messageID else { return nil }
+        return MailLink(accountID: key.accountID, threadID: key.threadID, messageID: messageID)
+    }
 
-    /// A reply to the newest message in the selected conversation that isn't a draft.
+    /// Reply and Forward in the menu bar and toolbar need one conversation or message.
+    var canReply: Bool { replyTarget != nil }
+
+    /// A reply to the target message, or to the newest message of the target
+    /// conversation. Drafts are never answered.
     func replyStart(_ kind: ReplyKind) async -> ComposeStart? {
-        guard canReply, let key = selectedThreadIDs.first else { return nil }
+        guard let target = replyTarget else { return nil }
         do {
-            for try await detail in cache.thread(accountID: key.accountID, threadID: key.threadID) {
-                let target = detail?.messages.last { !$0.labels.contains(SystemLabel.draft) }
-                return target.map { .reply(kind, messageID: $0.id, accountID: key.accountID) }
+            for try await detail in cache.thread(accountID: target.accountID, threadID: target.threadID) {
+                let answerable = detail?.messages.filter { !$0.labels.contains(SystemLabel.draft) } ?? []
+                let message = if let id = target.messageID { answerable.first { $0.id == id } } else { answerable.last }
+                return message.map { .reply(kind, messageID: $0.id, accountID: target.accountID) }
             }
         } catch {
             notice = Notice(message: "Couldn't read this conversation. Try again.", isError: true)
         }
         return nil
+    }
+
+    /// Starts Reply or Forward for `replyTarget` and returns the draft's ID.
+    /// Text selected in the reader is quoted when it comes from the target.
+    func startReply(_ kind: ReplyKind, quote: SelectedMailQuote?) async -> String? {
+        guard let target = replyTarget else { return nil }
+        if let quote, quote.belongsTo(accountID: target.accountID, threadID: target.threadID, messageID: target.messageID) {
+            return await requestReply(kind, messageID: quote.messageID, accountID: quote.accountID, selectedText: quote.text)
+        }
+        guard let start = await replyStart(kind) else { return nil }
+        return await startCompose(start)
     }
 
     /// Whether the draft's window should warn about formatting it can't keep. Asked once.
@@ -854,6 +877,19 @@ final class MailboxModel {
     ) -> Task<Void, Never>? {
         let step = UndoStep(account: owner) { try await change(owner.engine) }
         return queueUndoable(name, confirmation: confirmation, steps: [step], revert: revert, sound: sound)
+    }
+
+    /// Queues a command in each of `owners`, such as Report Spam in a
+    /// combined mailbox, with one Undo that reverts every account.
+    @discardableResult
+    func queueUndoable(
+        _ name: String,
+        confirmation: String? = nil,
+        across owners: [AccountMailbox],
+        _ change: @escaping @MainActor (AccountMailbox) async throws -> ActionReceipt?
+    ) -> Task<Void, Never>? {
+        let steps = owners.map { owner in UndoStep(account: owner) { try await change(owner) } }
+        return queueUndoable(name, confirmation: confirmation, steps: steps, revert: nil, sound: nil)
     }
 
     /// Runs the steps with Undo. Commands don't wait for earlier ones to
@@ -1048,11 +1084,11 @@ final class MailboxModel {
         if prepared.configuration == listProjectionConfiguration(mailboxID: search.isActive ? nil : selectedLabelID) {
             listProjection.store(prepared.rows, for: listProjectionKey)
         }
+        isListPresentationReady = true
         listChanged()
         let validRows = Set(listItems.map(\.id))
         let retainedRows = selectedMessageRows.intersection(validRows)
         if retainedRows != selectedMessageRows { selectedMessageRows = retainedRows }
-        isListPresentationReady = true
     }
 
     private func observeSnoozedPage(generation: UInt64) {
@@ -1102,7 +1138,8 @@ final class MailboxModel {
             return
         }
         let stream = cache.listPage(.searchResults(search.results,
-            matching: listPreferences.conversations ? nil : search.query, includingMessageIDs: search.matchingMessageIDs))
+            matching: listPreferences.conversations ? nil : search.query, includingMessageIDs: search.matchingMessageIDs,
+            now: search.startedAt))
         searchPageTask = Task { [weak self] in
             var previous: PreparedMailListPage?
             do {
@@ -1237,12 +1274,38 @@ final class MailboxModel {
         search.setSources(searchedAccounts.map { .init(accountID: $0.account.id, engine: $0.engine) })
     }
 
-    /// Keeps the selection inside the list, and tells the engine what the
-    /// list shows so expired search holds don't drop it.
+    /// The grouping decides the list's rows and the Gmail listing a search
+    /// pages through. The mailbox follows it whether or not the list is on screen.
+    private func followListGrouping() {
+        let conversations = withObservationTracking {
+            listPreferences.conversations
+        } onChange: { [weak self] in
+            // The main actor owns the preferences, so this runs on it, before
+            // the new grouping is stored. Rows chosen under one grouping aren't
+            // rows of the other. Clearing them here, not in the task, keeps
+            // rows chosen after the change.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.selectedThreadIDs = []
+                self.selectedMessageRows = []
+                Task { @MainActor [weak self] in
+                    guard let self, !self.isStopped else { return }
+                    self.followListGrouping()
+                }
+            }
+        }
+        search.setMessageMode(!conversations)
+    }
+
+    /// Keeps the selection inside the list once it shows a published page,
+    /// and tells the engine what the list shows so expired search holds
+    /// don't drop it. A search still on its way keeps the selection.
     private func listChanged() {
         let threads = listedThreads
-        let retainedThreads = selectedThreadIDs.intersection(threads.map(\.key))
-        if retainedThreads != selectedThreadIDs { selectedThreadIDs = retainedThreads }
+        if isListPresentationReady {
+            let retainedThreads = selectedThreadIDs.intersection(threads.map(\.key))
+            if retainedThreads != selectedThreadIDs { selectedThreadIDs = retainedThreads }
+        }
         let shown = Dictionary(grouping: threads, by: \.accountID)
         for account in accounts {
             account.engine.setVisibleThreads(Set(shown[account.account.id, default: []].map(\.id)))
@@ -1353,7 +1416,7 @@ final class MailboxModel {
         if !((undoManager?.isUndoing) ?? false) { undoManager?.removeAllActions(withTarget: entry) }
     }
 
-    private static func undoName(_ action: MailAction) -> String {
+    static func undoName(_ action: MailAction) -> String {
         switch action {
         case .archive: "Archive"
         case .trash: "Move to Trash"
@@ -1364,14 +1427,21 @@ final class MailboxModel {
         }
     }
 
-    /// Archive and trash move threads out of sight, so they confirm with Undo.
-    private static func confirmation(_ action: MailAction, count: Int) -> String? {
-        let subject = count == 1 ? "Conversation" : "\(count) conversations"
+    /// Archive and trash move mail out of sight, so they confirm with Undo.
+    static func confirmation(_ action: MailAction, count: Int, messages: Bool = false) -> String? {
+        let subject = mailSubject(count: count, messages: messages)
         switch action {
         case .archive: return "\(subject) archived"
         case .trash: return "\(subject) moved to Trash"
         case .markRead, .markUnread, .star, .unstar: return nil
         }
+    }
+
+    /// How a notice names the mail it changed: "Conversation", "3 conversations",
+    /// "Message" or "3 messages".
+    static func mailSubject(count: Int, messages: Bool) -> String {
+        if messages { return count == 1 ? "Message" : "\(count) messages" }
+        return count == 1 ? "Conversation" : "\(count) conversations"
     }
 }
 

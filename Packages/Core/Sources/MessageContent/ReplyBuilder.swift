@@ -144,6 +144,8 @@ public enum ReplyBuilder {
 
     /// Reply goes to Reply-To, or From when there is none. Reply all adds the
     /// other recipients. Replying to your own message goes to its recipients.
+    /// A Reply-To address that isn't in From is marked, so its token shows
+    /// where the reply goes rather than only the name the sender chose.
     static func recipients(
         _ kind: ReplyKind,
         original: OriginalMessage,
@@ -151,7 +153,11 @@ public enum ReplyBuilder {
     ) -> (to: [EmailAddress], cc: [EmailAddress]) {
         let isOwn = { (address: EmailAddress) in ownAddresses.contains(address.normalized) }
         let sentByMe = original.from.contains(where: isOwn)
-        let sender = original.replyTo.isEmpty ? original.from : original.replyTo
+        let from = Set(original.from.map(\.normalized))
+        let replyTo = original.replyTo.map { address in
+            from.contains(address.normalized) ? address : EmailAddress(name: address.name, address: address.address, origin: .replyTo)
+        }
+        let sender = replyTo.isEmpty ? original.from : replyTo
         let primary = sentByMe ? original.to : sender
         var to: [EmailAddress]
         var cc: [EmailAddress]

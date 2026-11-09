@@ -127,6 +127,29 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func typingKeepsTheListedResultsAndTheSelectionUntilEachAnswer() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.start()
+        try await waitUntil { mailbox.hasSyncedOnce && mailbox.threads.count == 2 }
+        mailbox.selectedThreadIDs = keys("t2")
+
+        // The open conversation stays selected while the first answer is on its way, and it matches.
+        mailbox.search.update("plans")
+        #expect(mailbox.selectedThreadIDs == keys("t2"))
+        try await waitUntil { mailbox.search.hasLocalAnswer && mailbox.listedThreads.map(\.id).sorted() == ["t2", "t3"] }
+        #expect(mailbox.selectedThreadIDs == keys("t2"))
+
+        // The next keystroke lists the earlier results until its own answer replaces them.
+        mailbox.search.update("plans we")
+        #expect(mailbox.listedThreads.map(\.id).sorted() == ["t2", "t3"])
+        #expect(mailbox.selectedThreadIDs == keys("t2"))
+        try await waitUntil { mailbox.search.hasLocalAnswer && mailbox.listedThreads.map(\.id) == ["t2"] }
+        #expect(mailbox.selectedThreadIDs == keys("t2"))
+        await mailbox.stop()
+    }
+
     @Test func editLabelsStartsFromTheConversationsLabelsAndMoveLeavesTheMailbox() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
@@ -159,9 +182,8 @@ import Testing
         mailbox.selectedThreadIDs = keys("t1")
         mailbox.showMoveTo()
         #expect(!mailbox.moveChoices.contains { $0.id == SystemLabel.inbox })
-        let move = mailbox.move(to: "Label_1")
+        await mailbox.move(to: "Label_1")?.value
         #expect(mailbox.selectedThreadIDs == keys("t2"))
-        await move?.value
         try await waitUntil { mailbox.threads.map(\.id) == ["t2"] }
         #expect(mailbox.notice?.message == "Conversation moved to “Hiking”")
         await mailbox.stop()
@@ -268,6 +290,42 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func oneUndoTakesReportSpamBackInEveryAccount() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.addAccount(second, gmail: AuditGmail())
+        mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+        await mailbox.start()
+        let otherT1 = ThreadKey(accountID: "second", threadID: "t1")
+        let everything = keys("t1", "t2").union([otherT1, ThreadKey(accountID: "second", threadID: "t2")])
+        try await waitUntil { mailbox.hasSyncedOnce && Set(mailbox.threads.map(\.key)) == everything }
+
+        // The notice's Undo returns both accounts' mail, not only the last one's.
+        mailbox.selectedThreadIDs = [key("t1"), otherT1]
+        await mailbox.triage.perform(.spam)?.value
+        try await waitUntil { mailbox.threads.count == 2 }
+        guard case .action(let receipt)? = mailbox.notice?.undo else {
+            Issue.record("Report Spam left no notice with Undo")
+            return
+        }
+        mailbox.undo(receipt)
+        try await waitUntil { Set(mailbox.threads.map(\.key)) == everything }
+
+        // Edit > Undo does the same in one step.
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        mailbox.undoManager = manager
+        mailbox.selectedThreadIDs = [key("t1"), otherT1]
+        await mailbox.triage.perform(.spam)?.value
+        try await waitUntil { mailbox.threads.count == 2 }
+        manager.undo()
+        #expect(!manager.canUndo)
+        try await waitUntil { Set(mailbox.threads.map(\.key)) == everything }
+        await mailbox.stop()
+    }
+
     @Test func searchKeepsEachAccountsResultsAndCoversTheAccountsInView() async throws {
         let cache = try MailCache.inMemory()
         let account = AccountRecord(id: "audit", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
@@ -287,6 +345,7 @@ import Testing
         // second account answers, its earlier results and the selection stay.
         mailbox.search.submit()
         try await waitUntil { mailbox.search.gmail?.state == .finished }
+        // A bounded window for those reads: nothing reports when both accounts have read again.
         try await Task.sleep(for: .milliseconds(200))
         #expect(mailbox.selectedThreadIDs == [otherT3])
         #expect(mailbox.listedThreads.count == 4)

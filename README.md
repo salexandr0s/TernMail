@@ -4,7 +4,7 @@
 
 <h1 align="center">Tern</h1>
 
-<p align="center">Gmail, Calendar, Tasks, and an optional ChatGPT assistant in a native Mac app.</p>
+<p align="center">Gmail, Calendar, Tasks, and an optional AI assistant in a native Mac app.</p>
 
 <p align="center">
   <a href="#build-from-source">Build from source</a> ·
@@ -16,7 +16,7 @@
 
 ![Tern in light mode, with a populated inbox, colored labels, and an open conversation](docs/screenshots/mail-light.png)
 
-Tern brings your Gmail accounts into a SwiftUI app with a conversation reader, Google Calendar, Google Tasks, and an attachment library. An optional ChatGPT assistant helps you find mail, summarize conversations, and prepare replies.
+Tern brings your Gmail accounts into a SwiftUI app with a conversation reader, Google Calendar, Google Tasks, and an attachment library. An optional assistant uses ChatGPT, OpenAI API, Claude, or DeepSeek to help you find mail, summarize conversations, and prepare replies.
 
 All screenshots show fictional demo accounts, messages, labels, events, and tasks. Assistant responses are scripted locally for the demo. [Reproduce the screenshots](docs/development.md#screenshots) from the native app.
 
@@ -29,11 +29,9 @@ All screenshots show fictional demo accounts, messages, labels, events, and task
 | Calendar & Tasks | Browse Google calendars, edit events and recurring meetings, and keep Google Tasks beside your mail. |
 | Attachments | Find files across accounts and archived mail, filter by type or label, preview with Quick Look, and open the source conversation. |
 | Assistant | Search permitted mail, summarize threads, prepare editable replies, and review suggested tasks and events before saving. |
-| Organize Mail | Review suggested labels and sender rules, with separate choices for future mail and tagging matching messages from the scan. |
+| Organize Mail | Scan up to 100,000 messages for label and rule suggestions that account for your existing labels and rules, then apply the ones you pick to Gmail. |
 
 Native menus, keyboard shortcuts, light and dark appearances, and macOS sharing keep everyday actions close at hand.
-
-[Organize Mail](docs/mail-organization.md) analyzes mail in batches, compares the findings with existing labels and rules, and rechecks the combined plan. Review each rule and its reason in Settings, with optional back-tagging of matching mail. Scans default to a limit of 5,000 messages and can include up to 100,000; smaller mailboxes use the messages available.
 
 ## A closer look
 
@@ -90,13 +88,15 @@ open Tern.xcodeproj
 
 Set `GOOGLE_CLIENT_ID_PREFIX` in `Config/Secrets.xcconfig`, select the **Tern** scheme in Xcode, and run. The app builds without an OAuth client, but Google sign-in stays unavailable until it is configured. Local settings in `Secrets.xcconfig` are ignored by Git.
 
-ChatGPT is optional and connects separately in **Settings → Assistant**. Available models and plan usage depend on the connected ChatGPT account. See the [assistant guide](docs/chatgpt-assistant.md) for access controls and setup.
+AI is optional and connects separately in **Settings → Assistant**. Choose ChatGPT sign-in, **Claude (CLI)** through your installed Claude Code, or your own OpenAI, Anthropic, or DeepSeek API key. Claude (CLI) uses the account and billing connected through the official CLI; API keys use the provider's API billing. See the [assistant guide](docs/chatgpt-assistant.md) for setup, models, and access controls.
+
+The Tern scheme also builds and embeds `ClaudeHelper.xpc` for Claude (CLI). This helper runs outside the app sandbox; Tern's main app stays sandboxed. The helper is part of the direct-distribution build, and Claude (CLI) requires the separately installed [official native Claude Code binary](https://code.claude.com/docs/en/setup#install-claude-code). Release builds require a matching Team ID signing identity for the app and helper; see the [assistant's build notes](docs/chatgpt-assistant.md#implementation-references).
 
 ## Privacy
 
-Google and ChatGPT credentials are stored in macOS Keychain. Account data, cached mail, and downloaded attachments are stored locally. Remote message images are blocked by default, and company-logo requests require an explicit choice.
+Tern stores Google, ChatGPT, and API credentials in macOS Keychain, with separate records for each API provider. Claude Code owns its own sign-in credentials; Tern does not import or store its OAuth tokens. Account data, cached mail, and downloaded attachments are stored locally. Remote message images are blocked by default, and company-logo requests require an explicit choice.
 
-Assistant mail access starts disabled. Once you enable it, relevant content is sent to OpenAI for requests, automatic conversation summaries and event interpretation, and writing-style learning when enabled. Calendar access is controlled separately. Review the [assistant's data behavior](docs/chatgpt-assistant.md#chat-controls-and-data) before connecting it.
+Assistant mail access starts disabled. Once you enable it, relevant content is sent to the selected provider for requests, automatic conversation summaries and event interpretation, and writing-style learning when enabled. Changing providers cancels active work and clears retained assistant context. Calendar access is controlled separately. Review the [assistant's data behavior](docs/chatgpt-assistant.md#chat-controls-and-data) before connecting it.
 
 ## Development
 

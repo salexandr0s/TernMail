@@ -21,6 +21,9 @@ final class AppModel {
     }
 
     private(set) var phase: Phase = .loading
+    /// How this process was launched, which decides whether the model opens
+    /// the user's data or synthetic data.
+    let launchMode: LaunchMode
     let onboarding = OnboardingState.appState()
     private(set) var isSigningIn = false
     private(set) var signInError: String?
@@ -31,6 +34,13 @@ final class AppModel {
     @ObservationIgnored private var organizationSessionsModel: MailOrganizationSessions?
     @ObservationIgnored private var calendarModel: CalendarModel?
     @ObservationIgnored private var tasksModel: GoogleTasksModel?
+    @ObservationIgnored private var followUpsModel: FollowUpsModel?
+    @ObservationIgnored private var todayModel: TodayModel?
+    @ObservationIgnored private var todayDashboardModel: TodayDashboardModel?
+    @ObservationIgnored private var automaticFollowUpsModel: AutomaticFollowUpCoordinator?
+    var meetingPreparation: MeetingPreparationModel?
+    /// Isolated launches keep follow-up preferences in memory, away from the user's defaults.
+    let followUpPreferences: FollowUpPreferences
     /// A task created from a detached reader can reveal the main window's sidebar.
     private(set) var tasksSidebarRequest: UUID?
     private(set) var accountPreferences: AccountPreferencesModel?
@@ -47,8 +57,12 @@ final class AppModel {
     var destination: WorkspaceDestination = .mail {
         didSet {
             guard destination != oldValue else { return }
+            if destination != .today {
+                todayModel?.endVisit()
+                todayDashboardModel?.stop()
+            }
             NavigationPerformance.shared.begin(.workspace, destination: destination.rawValue)
-            if destination == .calendar {
+            if destination != .mail {
                 NavigationPerformance.shared.cancel(.reader)
                 NavigationPerformance.shared.cancel(.mailbox)
             }
@@ -59,6 +73,11 @@ final class AppModel {
     /// Dock-icon click with no window open use it to show the window again.
     @ObservationIgnored var openMainWindow: (@MainActor () -> Void)? {
         didSet { CalendarNotificationRouter.shared.openMainWindow = openMainWindow }
+    }
+
+    init(launchMode: LaunchMode = .current) {
+        self.launchMode = launchMode
+        followUpPreferences = FollowUpPreferences(defaults: launchMode.isIsolated ? nil : .standard)
     }
 
     func showMainWindow() { openMainWindow?() }
@@ -79,9 +98,7 @@ final class AppModel {
 
     private var spotlight: MailSpotlightIndexer {
         if let spotlightIndexer { return spotlightIndexer }
-        let isolated = AssistantRuntimeEnvironment.isTestHost
-            || ProcessInfo.processInfo.arguments.contains("--ui-audit")
-            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar")
+        let isolated = launchMode.isIsolated
         let defaults = isolated
             ? UserDefaults(suiteName: "tern.audit.spotlight.\(UUID().uuidString)") ?? UserDefaults()
             : .standard
@@ -114,7 +131,7 @@ final class AppModel {
     }
 
     private func startCacheMaintenance() {
-        guard maintenanceTask == nil, !ProcessInfo.processInfo.arguments.contains("--ui-audit") else { return }
+        guard maintenanceTask == nil, !launchMode.isIsolated else { return }
         maintenanceTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(600)) } catch { return }
@@ -134,6 +151,8 @@ final class AppModel {
         ReaderCacheLifecycle.reset()
         ContactThumbnailCache.shared.removeAll()
         isResettingCache = true
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         await maintenance.suspend()
         defer { isResettingCache = false; maintenance.resume(); startCacheMaintenance() }
         let previousMaintenance = maintenanceTask
@@ -170,7 +189,7 @@ final class AppModel {
     private func startMailPreferences(store: AccountStore, cache: MailCache) async {
         guard accountPreferences == nil else { return }
         let defaults: UserDefaults
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+        if launchMode.isIsolated {
             defaults = UserDefaults(suiteName: "tern.audit.runtime.\(UUID().uuidString)") ?? .standard
         } else { defaults = .standard }
         let preferences = AccountPreferencesModel(store: store, defaults: defaults)
@@ -189,6 +208,15 @@ final class AppModel {
     private func bindMailNotificationRoutes() {
         MailNotificationRouter.shared.isOnScreen = { [weak self] key in self?.isConversationOnScreen(key) ?? false }
         MailNotificationRouter.shared.bind { [weak self] target in await self?.routeMailNotification(target) }
+        MailNotificationRouter.shared.bindFollowUps { [weak self] target in
+            guard let self, mailbox?.account(id: target.accountID) != nil else { return }
+            showMainWindow()
+            if let preferences = accountPreferences, !preferences.visibleAccountIDs.contains(target.accountID) {
+                preferences.selectProfile(nil)
+            }
+            destination = .followUps
+            await followUps.openNotification(accountID: target.accountID, commitmentID: target.commitmentID)
+        }
     }
 
     /// A conversation window has it open, or the mailbox shows it selected.
@@ -201,7 +229,11 @@ final class AppModel {
     private func configureMailRuntime(_ owner: AccountMailbox) {
         owner.onMailSync = { [weak self] snapshot in
             self?.spotlight.mailSynced(accountID: snapshot.accountID)
+            await self?.meetingPreparation?.process(snapshot)
             await self?.mailNotifications?.process(snapshot)
+            await self?.automaticFollowUpsModel?.process(snapshot)
+            await self?.followUpsModel?.process(snapshot)
+            await self?.todayDashboardModel?.process(snapshot)
         }
         owner.onUnreadCountChange = { [weak self] in self?.refreshMailBadges() }
         owner.activityGuard = activityGuard
@@ -234,7 +266,37 @@ final class AppModel {
         let activity: SyncActivity = isMacAsleep ? .suspended : NSApplication.shared.isActive ? .active : .inactive
         guard activity != syncActivity else { return }
         syncActivity = activity
+        syncActivityGeneration += 1
+        let generation = syncActivityGeneration
+        let expectedMailbox = mailbox
+        if activity != .active {
+            todayModel?.endVisit()
+            todayDashboardModel?.stop()
+        }
         for owner in mailbox?.accounts ?? [] { owner.setActivity(activity) }
+        if activity == .suspended {
+            meetingPreparation?.cancel()
+            automaticFollowUpsModel?.stop()
+            followUpsModel?.stop()
+        } else if let followUpsModel, !inboxUpdatesAreStopped {
+            Task {
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
+                await self.automaticFollowUpsModel?.start()
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
+                await followUpsModel.resume()
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
+                if self.syncActivity == .active, self.destination == .today {
+                    await self.todayModel?.beginVisit()
+                    await self.todayDashboardModel?.refresh()
+                }
+            }
+        }
+    }
+
+    private func canResumeFollowUps(in expectedMailbox: MailboxModel?, generation: Int) -> Bool {
+        guard let expectedMailbox else { return false }
+        return generation == syncActivityGeneration && !inboxUpdatesAreStopped
+            && syncActivity != .suspended && mailbox === expectedMailbox
     }
 
     private func schedulePreferenceReconciliation() {
@@ -256,6 +318,11 @@ final class AppModel {
             }
             await refreshInboxUpdates()
             refreshMailBadges()
+            let generation = syncActivityGeneration
+            if canResumeFollowUps(in: mailbox, generation: generation) {
+                await automaticFollowUpsModel?.start()
+                if canResumeFollowUps(in: mailbox, generation: generation) { await followUpsModel?.refresh() }
+            }
         }
     }
 
@@ -335,6 +402,37 @@ final class AppModel {
         return value
     }
 
+    var followUps: FollowUpsModel {
+        if let followUpsModel { return followUpsModel }
+        let value = FollowUpsModel(app: self)
+        followUpsModel = value
+        return value
+    }
+
+    var today: TodayModel {
+        if let todayModel { return todayModel }
+        let value = TodayModel(app: self)
+        todayModel = value
+        return value
+    }
+
+    var todayDashboard: TodayDashboardModel {
+        if let todayDashboardModel { return todayDashboardModel }
+        let value = TodayDashboardModel(app: self)
+        todayDashboardModel = value
+        return value
+    }
+
+    var automaticFollowUps: AutomaticFollowUpCoordinator {
+        if let automaticFollowUpsModel { return automaticFollowUpsModel }
+        let value = AutomaticFollowUpCoordinator(app: self, preferences: followUpPreferences, followUps: followUps)
+        automaticFollowUpsModel = value
+        followUpPreferences.onChange = { [weak self] in
+            Task { await self?.automaticFollowUpsModel?.preferencesChanged() }
+        }
+        return value
+    }
+
     func showTasks() {
         showMainWindow()
         tasksSidebarRequest = UUID()
@@ -409,6 +507,7 @@ final class AppModel {
     @ObservationIgnored private let activityGuard = SyncActivityGuard()
     /// What the user is doing, which sets how often each account checks for mail.
     private(set) var syncActivity: SyncActivity = .active
+    @ObservationIgnored private var syncActivityGeneration = 0
     @ObservationIgnored private var inboxUpdatesAreStopped = false
     @ObservationIgnored private var inboxReconciliationRevision = 0
 
@@ -480,26 +579,56 @@ final class AppModel {
     func start() async {
         observeActivity()
         spotlight.retryRemoval()
+        // Shared .eml files hold whole messages, and an earlier run may have left some.
+        await TemporaryShareFile.removeAll()
         await changeAccounts { [self] in await restoreAccounts() }
+    }
+
+    /// Why the stores didn't open, the accounts didn't restore or signing
+    /// out stopped, which sets what the failure screen offers.
+    enum LaunchFailure: Equatable {
+        /// The disk is full. Once there's space, Try Again opens the mail as it was.
+        case diskFull
+        /// The mail cache didn't open, so a new one can take its place.
+        case cache(damaged: Bool)
+        /// Another copy of Tern or another app has the mail locked. Try Again
+        /// opens it as it was once that ends, so it isn't offered a new cache.
+        case inUse
+        /// Signing out of every account stopped partway. Try Again signs out
+        /// of the accounts that are left and never restores them.
+        case signOut
+        case other
+    }
+
+    /// Set with `.failed` by a launch or a sign-out that failed.
+    private(set) var launchFailure: LaunchFailure?
+    /// A new mail cache is being started in place of one that won't open.
+    private(set) var isRecoveringCache = false
+    /// What the new mail cache kept, until the alert reporting it closes.
+    var cacheRecovery: CacheRecovery?
+    /// Why a new mail cache couldn't be started, until the alert closes.
+    var cacheRecoveryError: String?
+
+    /// An error from opening the mail cache rather than the account store.
+    private struct CacheOpenFailure: Error {
+        let error: any Error
     }
 
     private func restoreAccounts() async {
         guard phase == .loading else { return }
+        launchFailure = nil
         do {
-#if DEBUG || TERN_PERFORMANCE
-            if ProcessInfo.processInfo.arguments.contains("--ui-audit") || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") {
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+            if launchMode.isIsolated {
                 let cache = try MailCache.inMemory()
                 let accounts = try AccountStore.inMemory()
-                let arguments = ProcessInfo.processInfo.arguments
-                let onboardingAudit = arguments.contains("--ui-audit")
-                    && (arguments.contains("--ui-audit-onboarding") || arguments.contains("--ui-audit-onboarding-connected"))
-                let emptyOnboarding = onboardingAudit && !arguments.contains("--ui-audit-onboarding-connected")
-                let cachedReauthentication = arguments.contains("--ui-audit-cached-reauth")
+                let audit = launchMode.audit
+                let onboardingAudit = audit.onboarding != nil
+                let emptyOnboarding = audit.onboarding == .empty
+                let cachedReauthentication = audit.cachedReauth
                 onboarding.resolve(hasExistingAccounts: !onboardingAudit)
                 if onboardingAudit {
-                    let requested = arguments.first { $0.hasPrefix("--ui-audit-onboarding-step=") }
-                        .flatMap { OnboardingState.Step(rawValue: String($0.dropFirst("--ui-audit-onboarding-step=".count))) }
-                    onboarding.step = requested ?? (emptyOnboarding ? .welcome : .google)
+                    onboarding.step = audit.onboardingStep ?? (emptyOnboarding ? .welcome : .google)
                 }
                 let readmeDemo = ReadmeDemoFixtures.isEnabled
                 let account = AccountRecord(id: "ui-audit",
@@ -533,10 +662,10 @@ final class AppModel {
                 bindMailNotificationRoutes()
                 configureMailRuntime(mailbox.defaultAccount)
                 mailNotifications?.prepareAccount(account.id)
-                if ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar") { destination = .calendar }
+                if audit.calendar { destination = .calendar }
                 phase = .signedIn(account)
                 AccountProfileImages.shared.setAuditImage(SenderAccountLabel.auditImage, for: account.id)
-                if ProcessInfo.processInfo.arguments.contains("--ui-audit-reauth") {
+                if audit.reauth {
                     accountsNeedingSignIn.insert(second.id)
                 }
                 Task {
@@ -555,12 +684,30 @@ final class AppModel {
             }
 #endif
             let directory = try Self.dataDirectory()
+            let cacheURL = directory.appending(path: "cache.sqlite")
+            // Try Again keeps the stores an earlier attempt opened.
+            let (openAccounts, openCache) = (self.accounts, cache)
+            if openCache == nil {
+                // A Start New Mail Cache that Tern quit partway through
+                // finishes first, so its alert shows even when the open fails.
+                let resumed = try await Task.detached(priority: .userInitiated) {
+                    do {
+                        return try MailCache.finishRecovery(at: cacheURL)
+                    } catch {
+                        throw CacheOpenFailure(error: error)
+                    }
+                }.value
+                if let resumed { cacheRecovery = resumed }
+            }
             // Both stores can migrate on first launch after an update. Keep
             // SQLite setup off the main actor so the launch UI stays responsive.
             let (accounts, openedCache) = try await Task.detached(priority: .userInitiated) {
-                let accounts = try AccountStore.open(at: directory.appending(path: "config.sqlite"))
-                let cache = try MailCache.open(at: directory.appending(path: "cache.sqlite"))
-                return (accounts, cache)
+                let accounts = try openAccounts ?? AccountStore.open(at: directory.appending(path: "config.sqlite"))
+                do {
+                    return (accounts, try openCache ?? MailCache.open(at: cacheURL))
+                } catch {
+                    throw CacheOpenFailure(error: error)
+                }
             }.value
             cache = openedCache
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
@@ -592,7 +739,53 @@ final class AppModel {
             await openMailbox(for: signedIn)
             if let signInError { reportSignInError(signInError) }
         } catch {
-            phase = .failed(error.localizedDescription)
+            let cacheError = (error as? CacheOpenFailure)?.error
+            let failure = cacheError ?? error
+            launchFailure = switch CacheOpenProblem(failure) {
+            case .diskFull: .diskFull
+            case .inUse: .inUse
+            case let problem where cacheError != nil: .cache(damaged: problem == .damaged)
+            default: .other
+            }
+            phase = .failed(failure.localizedDescription)
+        }
+    }
+
+    /// Try Again on the launch failure screen: opens the stores again
+    /// without a relaunch, or finishes a sign-out that stopped.
+    func retryLaunch() async {
+        if launchFailure == .signOut, case .failed = phase {
+            await signOut()
+            return
+        }
+        await changeAccounts { [self] in
+            guard launchFailure != nil, case .failed = phase else { return }
+            phase = .loading
+            await restoreAccounts()
+        }
+    }
+
+    /// Start New Mail Cache on the launch failure screen. The cache that
+    /// won't open moves into a folder named for `date`, a new one starts with
+    /// the unsent work that could be read from it, and the mail opens.
+    func startNewMailCache(settingAsideAt date: Date) async {
+        guard !isRecoveringCache else { return }
+        isRecoveringCache = true
+        defer { isRecoveringCache = false }
+        await changeAccounts { [self] in
+            // Nothing may have the old cache open while it moves.
+            guard case .cache = launchFailure, case .failed = phase, cache == nil else { return }
+            do {
+                let url = try Self.dataDirectory().appending(path: "cache.sqlite")
+                cacheRecovery = try await Task.detached(priority: .userInitiated) {
+                    try MailCache.recover(at: url, setAsideAt: date)
+                }.value
+            } catch {
+                cacheRecoveryError = error.localizedDescription
+                return
+            }
+            phase = .loading
+            await restoreAccounts()
         }
     }
 
@@ -609,9 +802,24 @@ final class AppModel {
     }
 
     /// Adds another Google account to the window. Signing in to one that's
-    /// already added refreshes its session.
+    /// already added refreshes its session only when the new grant keeps
+    /// everything it has turned on (`addAccountReplacesSession`).
     func addAccount() async {
         await signIn(as: nil)
+    }
+
+    /// Whether Add Account may replace the session of `stored`, an account
+    /// Tern already has, with a grant of `granted`. Add Account asks only for
+    /// what a new account gets, so its grant can be narrower than the one
+    /// the account has. It has to cover every feature the account has turned
+    /// on, and the directory when the account searches it.
+    static func addAccountReplacesSession(of stored: AccountRecord, granted: [String]) -> Bool {
+        let features = AccountFeature.named(stored.enabledFeatures)
+        guard features.allSatisfy({ GoogleScopes.isCovered($0, by: granted) }) else { return false }
+        // Contacts works without the directory, which only a Workspace sign-in asks for.
+        let searchesDirectory = features.contains(.contacts)
+            && GoogleScopes.isCovered(GoogleScopes.directory, by: stored.grantedScopes)
+        return !searchesDirectory || GoogleScopes.isCovered(GoogleScopes.directory, by: granted)
     }
 
     private func signIn(as returning: AccountRecord?) async {
@@ -655,6 +863,14 @@ final class AppModel {
                 // is dropped unsaved.
                 return
             }
+            if returning == nil, let stored, !Self.addAccountReplacesSession(of: stored, granted: user.grantedScopes) {
+                // Add Account on an account Tern has. Its session stays, and
+                // the new one is dropped unsaved.
+                let needsSignIn = accountsNeedingSignIn.contains(stored.id) || sessions[stored.id]?.isSignedIn != true
+                reportSignInError("\(stored.email) is already added."
+                    + (needsSignIn ? " To renew its access, click Sign In Again." : ""))
+                return
+            }
             let session: AccountSession
             if let existing = sessions[user.id] {
                 // Clients holding the session pick up the new tokens.
@@ -691,6 +907,8 @@ final class AppModel {
             if turnedOff.contains(.contacts) { ContactThumbnailCache.shared.remove(accountID: account.id) }
             if turnedOff.contains(.calendar) { await EmailCalendarPreparation.shared.remove(accountID: account.id) }
             tasksModel?.invalidateAccount(account.id)
+            followUpsModel?.restoreAccount(account.id)
+            automaticFollowUpsModel?.restoreAccount(account.id)
             defer { if !turnedOff.isEmpty { reportTurnedOff(turnedOff, for: account) } }
             guard let mailbox else {
                 await openMailbox(for: try await accounts.accounts())
@@ -715,6 +933,11 @@ final class AppModel {
             await inboxWatchers.removeValue(forKey: account.id)?.stop()
             await refreshInboxUpdates()
             await accountPreferences?.refresh()
+            let generation = syncActivityGeneration
+            if canResumeFollowUps(in: mailbox, generation: generation) {
+                await automaticFollowUps.start()
+                if canResumeFollowUps(in: mailbox, generation: generation) { await followUps.resume() }
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -902,14 +1125,19 @@ final class AppModel {
         let signedOut = sessions
         sessions = [:]
         accountsNeedingSignIn = []
+        var revocations: [GrantRevocation] = []
+        launchFailure = nil
         do {
             for account in try await accounts.accounts() {
+                revocations += startRevokingGrants([(account, signedOut[account.id])])
                 try await removeAccountData(account, session: signedOut[account.id])
             }
             phase = .signedOut
         } catch {
+            launchFailure = .signOut
             phase = .failed(error.localizedDescription)
         }
+        await reportUnrevokedGrants(revocations)
     }
 
     /// Signs out of one account while the others stay. The last account
@@ -935,12 +1163,51 @@ final class AppModel {
         let session = sessions.removeValue(forKey: accountID)
         accountsNeedingSignIn.remove(accountID)
         phase = .signedIn(mailbox.account)
+        let revocations = startRevokingGrants([(account, session)])
+        var removalFailure: String?
         do {
             try await removeAccountData(account, session: session)
         } catch {
             // Once its record is gone, the next launch deletes what's left.
-            mailbox.notice = MailboxModel.Notice(message: "Couldn't remove all local data for \(account.email).", isError: true)
+            let message = "Couldn't remove all local data for \(account.email)."
+            mailbox.notice = MailboxModel.Notice(message: message, isError: true)
+            removalFailure = message
         }
+        await reportUnrevokedGrants(revocations, after: removalFailure)
+    }
+
+    /// A revocation under way for an account that's signing out.
+    private struct GrantRevocation {
+        let email: String
+        let request: Task<Bool, Never>
+    }
+
+    /// Starts revoking the accounts' grants. Each request keeps its own copy
+    /// of the refresh token, so removal deletes the stored one without waiting.
+    private func startRevokingGrants(_ signingOut: [(account: AccountRecord, session: AccountSession?)]) -> [GrantRevocation] {
+        guard let revocation = tokenRevocation else { return [] }
+        return signingOut.compactMap { account, session in
+            session?.startRevokingGrant(using: revocation).map { GrantRevocation(email: account.email, request: $0) }
+        }
+    }
+
+    /// Hosted tests and UI audits never send Google a revocation.
+    private var tokenRevocation: GoogleTokenRevocation? {
+        launchMode.isIsolated ? nil : GoogleTokenRevocation()
+    }
+
+    /// Waits for the revocations, which give up after their own timeout, and
+    /// says where to remove access that Google didn't confirm removing. What
+    /// this sign-out already reported stays in the message.
+    private func reportUnrevokedGrants(_ revocations: [GrantRevocation], after removalFailure: String? = nil) async {
+        var unrevoked: [String] = []
+        for revocation in revocations where !(await revocation.request.value) {
+            unrevoked.append(revocation.email)
+        }
+        guard !unrevoked.isEmpty else { return }
+        let message = "Google may still give Tern access to \(ListFormatter.localizedString(byJoining: unrevoked)). "
+            + "To remove it, go to Google Account > Security > Your connections to third-party apps & services."
+        reportSignInError([removalFailure, signInError, message].compactMap { $0 }.joined(separator: " "))
     }
 
     var canSignOut: Bool {
@@ -951,22 +1218,27 @@ final class AppModel {
     }
 
     var signOutMessage: String {
-        Self.signOutMessage(outbox: mailbox?.outbox.count ?? 0, snoozed: mailbox?.snoozed.count ?? 0)
+        Self.signOutMessage(outbox: mailbox?.outbox.count ?? 0, snoozed: mailbox?.snoozed.count ?? 0,
+                            severalAccounts: mailbox?.hasSeveralAccounts == true)
     }
 
     /// The confirmation for one of several accounts, which counts only its own items.
     func signOutMessage(for account: AccountRecord) -> String {
         let owner = mailbox?.account(id: account.id)
-        return Self.signOutMessage(outbox: owner?.outbox.count ?? 0, snoozed: owner?.snoozed.count ?? 0)
+        return Self.signOutMessage(outbox: owner?.outbox.count ?? 0, snoozed: owner?.snoozed.count ?? 0,
+                                   severalAccounts: false)
     }
 
-    private static func signOutMessage(outbox: Int, snoozed: Int) -> String {
+    private static func signOutMessage(outbox: Int, snoozed: Int, severalAccounts: Bool) -> String {
         let deletes = "Downloaded mail and pending changes will be deleted from this Mac"
-        let message = switch outbox {
+        let deletion = switch outbox {
         case 0: deletes + "."
         case 1: deletes + ", including 1 message in the Outbox."
         case let count: deletes + ", including \(count) messages in the Outbox."
         }
+        let message = deletion + (severalAccounts
+            ? " Tern will also remove its access to your Google Accounts."
+            : " Tern will also remove its access to your Google Account.")
         // Snoozes live on this Mac, so signing out ends them where they are.
         return switch snoozed {
         case 0: message
@@ -1018,7 +1290,12 @@ final class AppModel {
 
     /// Stops background work before quitting. `cancelQuit()` starts it again.
     func prepareToQuit() async {
+        meetingPreparation?.cancel()
         inboxUpdatesAreStopped = true
+        syncActivityGeneration += 1
+        todayModel?.endVisit()
+        todayDashboardModel?.stop()
+        automaticFollowUpsModel?.stop()
         await maintenanceModel?.suspend()
         maintenanceTask?.cancel()
         maintenanceTask = nil
@@ -1028,15 +1305,27 @@ final class AppModel {
         assistantModel?.connection.cancelSignIn()
         await calendarModel?.stop()
         tasksModel?.stop()
+        followUpsModel?.stop()
     }
 
     /// A user can keep Tern open after its final send attempt fails.
     func cancelQuit() async {
         inboxUpdatesAreStopped = false
+        let expectedMailbox = mailbox
+        let generation = syncActivityGeneration
         maintenanceModel?.resume()
         await refreshInboxUpdates()
         await calendarModel?.start()
         tasksModel?.resume()
+        if canResumeFollowUps(in: expectedMailbox, generation: generation) {
+            await automaticFollowUpsModel?.start()
+            if canResumeFollowUps(in: expectedMailbox, generation: generation) { await followUpsModel?.resume() }
+            if canResumeFollowUps(in: expectedMailbox, generation: generation),
+               destination == .today, NSApplication.shared.isActive {
+                await todayModel?.beginVisit()
+                if canResumeFollowUps(in: expectedMailbox, generation: generation) { await todayDashboardModel?.refresh() }
+            }
+        }
         assistantModel?.refreshAccess()
         schedulePreferenceReconciliation()
         mailURLRouter?.resume()
@@ -1100,18 +1389,18 @@ final class AppModel {
         return false
     }
 
-    /// Opens the window's mailbox with every signed-in account, starting in
-    /// the combined Inbox when there are several.
     private func mailboxService(for accountID: String) -> (any GmailService)? {
         if let session = sessions[accountID] { return GmailClient(tokens: session, gmailRequestBudget: session.gmailRequestBudget) }
-#if DEBUG || TERN_PERFORMANCE
-        if ProcessInfo.processInfo.arguments.contains("--ui-audit") {
+#if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        if launchMode.isIsolated {
             return accountID == "ui-audit-2" ? AuditGmail(.second) : AuditGmail()
         }
 #endif
         return nil
     }
 
+    /// Opens the window's mailbox with every signed-in account, starting in
+    /// the combined Inbox when there are several.
     private func openMailbox(for records: [AccountRecord]) async {
         guard let cache, let accounts, let outgoingDirectory,
               let first = records.first, let gmail = mailboxService(for: first.id)
@@ -1140,11 +1429,27 @@ final class AppModel {
         startCacheMaintenance()
         spotlight.start()
         Task { await mailbox.start() }
+        for owner in mailbox.accounts {
+            followUps.restoreAccount(owner.account.id)
+            automaticFollowUps.restoreAccount(owner.account.id)
+        }
+        let generation = syncActivityGeneration
+        if canResumeFollowUps(in: mailbox, generation: generation) {
+            await automaticFollowUps.start()
+            if canResumeFollowUps(in: mailbox, generation: generation) { await followUps.start() }
+        }
     }
 
     /// Stops the open mailbox and waits for every mailbox still stopping.
     private func closeMailbox() async {
+        meetingPreparation?.stop()
+        meetingPreparation = nil
+        syncActivityGeneration += 1
         organizationSessionsModel?.clear()
+        todayModel?.endVisit()
+        todayDashboardModel?.stop()
+        automaticFollowUpsModel?.stop()
+        followUpsModel?.stop()
         MailNotificationRouter.shared.unbind()
         mailURLRouter?.stop()
         await stopInboxUpdates()
@@ -1166,8 +1471,13 @@ final class AppModel {
     private func removeAccountData(
         _ account: AccountRecord, session: AccountSession?
     ) async throws {
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         assistantModel?.forgetAccount(account.id)
         await mailNotifications?.removeAccount(account.id)
+        // The share folder isn't sorted by account, so this clears every
+        // account's files. Share services already hold their own copies.
+        await TemporaryShareFile.removeAll()
         try await scheduleAccountRemoval(accountID: account.id, session: session)
     }
 
@@ -1193,17 +1503,18 @@ final class AppModel {
     private func cleanupCoordinator() throws -> AccountCleanupCoordinator {
         if let accountCleanup { return accountCleanup }
         guard let accounts else { throw AccountRemovalError.incomplete }
-        let isolated = AssistantRuntimeEnvironment.isTestHost
-            || ProcessInfo.processInfo.arguments.contains("--ui-audit")
-            || ProcessInfo.processInfo.arguments.contains("--ui-audit-calendar")
+        let isolated = launchMode.isIsolated
         let calendarURL = isolated ? nil : try Self.dataDirectory().appending(path: "calendar.sqlite")
         let coordinator = AccountCleanupCoordinator(store: accounts, downloadsRoot: cacheDownloadDirectory,
             outgoingRoot: outgoingDirectory, operations: .init(
                 removeAccount: { [weak self] accountID in
                     await self?.calendarModel?.removeAccount(accountID)
                     await self?.tasksModel?.removeAccount(accountID)
+                    await self?.automaticFollowUpsModel?.removeAccount(accountID)
+                    await self?.followUpsModel?.removeAccount(accountID)
                     if let calendarURL {
-                        try await AccountCleanupCoordinator.removeCalendarCache(accountID: accountID, at: calendarURL)
+                        try await AccountCleanupCoordinator.removeCalendarCache(accountID: accountID, at: calendarURL,
+                            openStore: self?.calendarModel?.store)
                     }
                     try await accounts.deleteAccount(id: accountID)
                 },
@@ -1224,6 +1535,8 @@ final class AppModel {
 
     /// File deletion runs separately using the manifest's durable draft IDs.
     private func removeCachedData(accountIDs: Set<String>) async throws {
+        meetingPreparation?.stop()
+        meetingPreparation = nil
         guard let cache else { throw AccountRemovalError.incomplete }
         for accountID in accountIDs {
             ReaderCacheLifecycle.invalidate(accountID: accountID)
