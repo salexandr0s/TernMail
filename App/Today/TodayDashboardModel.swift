@@ -84,11 +84,27 @@ final class TodayDashboardModel {
     var dayEvents: [CalendarDisplayEvent] { events(inNextDays: 1) }
     var upcomingEvents: [CalendarDisplayEvent] { events(inNextDays: 7) }
     var calendarIsStale: Bool { completedCalendarRequest == calendarRequest && (calendarSnapshot?.isStale == true || calendarError != nil) }
+    var hasLoadedCalendar: Bool { completedCalendarRequest == calendarRequest && calendarSnapshot != nil }
+    var hasAvailableCalendars: Bool { hasLoadedCalendar && (calendarSnapshot?.calendarCount ?? 0) > 0 }
+    var calendarCoverageWarning: String? {
+        guard hasLoadedCalendar, let snapshot = calendarSnapshot else { return nil }
+        var warnings: [String] = []
+        if snapshot.unavailableCount > 0 {
+            warnings.append("\(snapshot.unavailableCount) \(snapshot.unavailableCount == 1 ? "calendar is" : "calendars are") unavailable.")
+        }
+        if snapshot.omittedCount > 0 {
+            warnings.append("\(snapshot.omittedCount) additional \(snapshot.omittedCount == 1 ? "calendar was" : "calendars were") not loaded.")
+        }
+        if snapshot.isStale { warnings.append("Some events may be out of date.") }
+        return warnings.isEmpty ? nil : warnings.joined(separator: " ")
+    }
     var calendarCoverage: String {
         guard completedCalendarRequest == calendarRequest else { return "Calendar data has not loaded for this date and profile." }
         let coverage = calendarSnapshot?.coverage ?? "Calendar data is unavailable."
         return calendarError == nil ? coverage : coverage + " These events may be out of date."
     }
+    var hasLoadedUnread: Bool { unreadContext == context && unreadSnapshot != nil }
+    var hasLoadedTasks: Bool { taskContext == context }
     var unreadMessages: [TodayUnreadMessage] { unreadContext == context ? unreadSnapshot?.messages ?? [] : [] }
     var unreadTotalCount: Int? { unreadContext == context ? unreadSnapshot?.totalCount : nil }
     var unreadCoverage: String {

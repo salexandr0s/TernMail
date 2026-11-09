@@ -9,6 +9,7 @@ struct TodayView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var windowVisible = false
     @State private var snoozeRequest: TodaySnoozeRequest?
+    @State private var calendarExpanded = false
 
     private var isPresented: Bool { isActive && windowVisible }
 
@@ -16,24 +17,25 @@ struct TodayView: View {
         let now = MinuteClock.shared.now
         let projection = model.projection(now: now)
         GeometryReader { geometry in
+            let wide = geometry.size.width >= Tokens.Today.twoColumnMinWidth
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: Tokens.Space.s5) {
+                LazyVStack(alignment: .leading, spacing: Tokens.Space.s6) {
                     header
                     feedback
-                    if geometry.size.width >= Tokens.Layout.listMinWidth + Tokens.Calendar.sidebarWidth + Tokens.Space.s16 * 2 {
-                        HStack(alignment: .top, spacing: Tokens.Space.s5) {
-                            todoColumn(projection, now: now).frame(maxWidth: .infinity)
+                    if wide {
+                        HStack(alignment: .top, spacing: Tokens.Today.columnGap) {
+                            workColumn(projection, now: now).frame(maxWidth: .infinity)
                             TodayCalendarPanel(dashboard: dashboard, query: query)
-                                .frame(width: Tokens.Calendar.sidebarWidth + Tokens.Space.s8)
+                                .frame(width: Tokens.Today.calendarWidth)
                         }
                     } else {
-                        todoColumn(projection, now: now)
-                        TodayCalendarPanel(dashboard: dashboard, query: query)
+                        compactCalendar
+                        workColumn(projection, now: now)
                     }
-                    TodayUnreadPanel(dashboard: dashboard, query: query)
-                    followUps(projection, now: now)
                 }
-                .padding(Tokens.Space.s5)
+                .frame(maxWidth: Tokens.Today.contentWidth, alignment: .leading)
+                .padding(wide ? Tokens.Today.pageInset : Tokens.Today.compactInset)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
@@ -61,11 +63,12 @@ struct TodayView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
+        HStack(alignment: .center, spacing: Tokens.Space.s4) {
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text("Today").font(.largeTitle.weight(.semibold))
                 Text(MinuteClock.shared.now.formatted(date: .complete, time: .omitted))
                     .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             if model.isLoading || dashboard.calendarLoading || dashboard.unreadLoading || dashboard.tasks.isLoading {
@@ -74,41 +77,66 @@ struct TodayView: View {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.refresh(); await dashboard.refresh() }
             }
-            .labelStyle(.iconOnly).help("Refresh Today")
+            .controlSize(.regular).help("Refresh Today")
             .accessibilityIdentifier("today-refresh")
         }
     }
 
     private var query: String { model.searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    private var compactCalendar: some View {
+        DisclosureGroup(isExpanded: $calendarExpanded) {
+            TodayCalendarPanel(dashboard: dashboard, query: query)
+                .padding(.top, Tokens.Space.s3)
+        } label: {
+            HStack(spacing: Tokens.Space.s3) {
+                Label("Calendar and events", systemImage: "calendar")
+                    .font(.callout.weight(.medium))
+                Spacer(minLength: 0)
+                Text(dashboard.selectedDate.formatted(.dateTime.month(.abbreviated).day()))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityIdentifier("today-calendar-disclosure")
+    }
+
     private func isOwed(_ row: TodayRow) -> Bool {
         model.filter == .briefing && row.entry.record.status == .open && row.entry.record.direction == .owedByMe
     }
 
-    private func todoColumn(_ projection: TodayProjection, now: Date) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+    private func workColumn(_ projection: TodayProjection, now: Date) -> some View {
+        LazyVStack(alignment: .leading, spacing: Tokens.Space.s5) {
             TodayTasksPanel(dashboard: dashboard, query: query)
             let owed = projection.rows.filter(isOwed)
             if !owed.isEmpty {
-                TodayDashboardSection(title: "I owe", symbol: "person.crop.circle") {
-                    Text("Responses and actions you track in Tern.").font(.caption).foregroundStyle(.secondary)
-                    LazyVStack(spacing: Tokens.Space.s3) {
-                        ForEach(owed) { row in presentedRow(row, now: now) }
+                TodayDashboardSection(title: "I owe", symbol: "person.crop.circle", count: owed.count,
+                                      countLabel: "commitments shown") {
+                    LazyVStack(spacing: 0) {
+                        ForEach(owed) { row in
+                            presentedRow(row, now: now)
+                            if row.id != owed.last?.id { Divider() }
+                        }
                     }
                 }
                 .accessibilityIdentifier("today-owed")
             }
+            followUps(projection, now: now)
+            TodayUnreadPanel(dashboard: dashboard, query: query)
         }
     }
 
     private func followUps(_ projection: TodayProjection, now: Date) -> some View {
-        TodayDashboardSection(title: "Follow-up emails", symbol: "clock.arrow.circlepath") {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s3) { filter; Spacer(minLength: 0); coverage }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) { filter; coverage }
-            }
+        TodayDashboardSection(title: "Follow-up emails", symbol: "clock.arrow.circlepath",
+                              count: model.hasLoadedEntries ? projection.rows.filter { !isOwed($0) }.count : nil,
+                              countLabel: "follow-ups shown") {
+            filter
             if let automaticFollowUps { automaticStatus(automaticFollowUps) }
             content(projection, now: now)
+            Divider()
+            TodayCoverageNote(summary: "From synced mail and your tracked conversations.",
+                details: automaticFollowUps?.coverageMessage ?? "Automatic and manually tracked follow-ups. Mail that has not synced is not included.",
+                label: "Follow-up coverage")
+                .accessibilityIdentifier("today-coverage")
         }
         .accessibilityIdentifier("today-follow-ups")
     }
@@ -123,68 +151,49 @@ struct TodayView: View {
         .accessibilityIdentifier("today-filter")
     }
 
-    private var coverage: some View {
-        Text("Automatic and manually tracked follow-ups.")
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("today-coverage")
-    }
-
-    private func automaticStatus(_ coordinator: AutomaticFollowUpCoordinator) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Text(coordinator.coverageMessage).font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if coordinator.isChecking {
-                ProgressView("Checking synced conversations…").controlSize(.small)
-            }
-            let errors = [coordinator.errorMessage, coordinator.draftErrorMessage].compactMap { $0 }
-            if !errors.isEmpty {
-                HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                    Label(errors.joined(separator: "\n"), systemImage: "exclamationmark.circle")
-                        .font(.callout).foregroundStyle(Tokens.Status.warning)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button("Retry") {
+    @ViewBuilder private func automaticStatus(_ coordinator: AutomaticFollowUpCoordinator) -> some View {
+        let errors = [coordinator.errorMessage, coordinator.draftErrorMessage].compactMap { $0 }
+        if coordinator.isChecking || !errors.isEmpty {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                if coordinator.isChecking {
+                    TodayLoadingStatus("Checking synced conversations…")
+                }
+                if !errors.isEmpty {
+                    TodayInlineWarning(errors.joined(separator: "\n")) {
                         Task {
                             if coordinator.stopped { await coordinator.start() }
                             else { await coordinator.preferencesChanged() }
                         }
                     }
                     .disabled(coordinator.isChecking)
+                    .accessibilityIdentifier("today-automatic-follow-ups-error")
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("today-automatic-follow-ups-error")
             }
         }
     }
 
     @ViewBuilder private var feedback: some View {
         if let error = model.historyError {
-            message(error, systemImage: "clock.badge.exclamationmark", identifier: "today-history-error")
+            message(error, identifier: "today-history-error")
         }
         if let error = model.followUps.errorMessage {
-            message(error, systemImage: "exclamationmark.circle", identifier: "today-error")
+            message(error, identifier: "today-error")
         }
     }
 
-    private func message(_ text: String, systemImage: String, identifier: String) -> some View {
-        HStack(alignment: .top, spacing: Tokens.Space.s2) {
-            Label(text, systemImage: systemImage)
-                .font(.callout).foregroundStyle(Tokens.Status.warning)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button("Retry") { Task { await model.refresh() } }.disabled(model.isLoading)
+    private func message(_ text: String, identifier: String) -> some View {
+        TodayInlineWarning(text) {
+            Task { await model.refresh() }
         }
-        .padding(Tokens.Space.s4)
-        .accessibilityElement(children: .contain)
+        .disabled(model.isLoading)
         .accessibilityIdentifier(identifier)
     }
 
     @ViewBuilder private func content(_ projection: TodayProjection, now: Date) -> some View {
         if model.isLoading && !model.hasLoadedEntries {
-            ProgressView("Loading tracked work…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            TodayLoadingStatus("Loading tracked work…")
         } else if projection.rowCount == 0 {
-            TernEmptyState(title: emptyTitle, systemImage: model.filter == .snoozed ? "moon.zzz" : "sun.max",
+            TodayCompactState(title: emptyTitle, symbol: model.filter == .snoozed ? "moon.zzz" : "checklist",
                 message: emptyMessage)
                 .accessibilityIdentifier("today-empty")
                 .modifier(TodayPresentationAcknowledgement(model: model, rows: [], isActive: isPresented))
@@ -194,16 +203,25 @@ struct TodayView: View {
                     let rows = section.rows.filter { !isOwed($0) }
                     if !rows.isEmpty {
                         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            Text(section.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                                .accessibilityIdentifier("today-section-\(section.id)")
-                            LazyVStack(spacing: Tokens.Space.s3) {
-                                ForEach(rows) { row in presentedRow(row, now: now) }
+                            HStack(spacing: Tokens.Space.s2) {
+                                Text(section.title).font(.subheadline.weight(.semibold))
+                                Text(rows.count, format: .number).font(.caption.monospacedDigit())
+                            }
+                            .foregroundStyle(.secondary)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("today-section-\(section.id)")
+                            LazyVStack(spacing: 0) {
+                                ForEach(rows) { row in
+                                    presentedRow(row, now: now)
+                                    if row.id != rows.last?.id { Divider() }
+                                }
                             }
                         }
                     }
                 }
                 if projection.rows.allSatisfy(isOwed) {
-                    Text("Your tracked work appears in I owe above.").font(.callout).foregroundStyle(.secondary)
+                    TodayCompactState(title: "No other follow-ups to show", symbol: "tray",
+                        message: "Your commitments are listed in I owe above.")
                 }
             }
             .accessibilityIdentifier("today-list")

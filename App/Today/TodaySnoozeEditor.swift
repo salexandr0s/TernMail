@@ -17,28 +17,45 @@ struct TodaySnoozeEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             PopupHeader(title: "Snooze in Today", systemImage: "moon.zzz", subtitle: request.entry.record.title)
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                HStack(spacing: Tokens.Space.s2) {
-                    Button("Tomorrow") { until = FollowUpSchedule.tomorrow(from: .now) }
-                    Button("Friday") { until = FollowUpSchedule.friday(from: .now) }
+            VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Text("Bring back").font(.headline)
+                    DatePicker("Bring back", selection: $until, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
+                        .datePickerStyle(.field).labelsHidden()
+                        .accessibilityLabel("Bring back date and time")
+                        .accessibilityIdentifier("today-snooze-date")
+                    Label(timeZoneName, systemImage: "globe")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityLabel("Time zone: \(timeZoneName)")
                 }
-                .controlSize(.small)
-                DatePicker("Bring back", selection: $until, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
-                    .datePickerStyle(.field)
-                    .accessibilityIdentifier("today-snooze-date")
-                Text("This follow-up returns to Today at the chosen time. Its deadline and reminder settings stay the same; reminders pause until then.")
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Text("Quick choices").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: Tokens.Space.s2) {
+                        preset("Tomorrow", date: FollowUpSchedule.tomorrow(from: .now), identifier: "tomorrow")
+                        preset("Friday", date: FollowUpSchedule.friday(from: .now), identifier: "friday")
+                    }
+                }
+                Text("Deadlines and reminder settings stay unchanged. Reminders pause until the follow-up returns to Today.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Text("Times use \(TimeZone.current.localizedName(for: .generic, locale: .current) ?? TimeZone.current.identifier).")
-                    .font(.caption).foregroundStyle(.secondary)
                 if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.circle")
-                        .font(.callout).foregroundStyle(Tokens.Status.error).fixedSize(horizontal: false, vertical: true)
+                    Label {
+                        Text(errorMessage).foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle").foregroundStyle(Tokens.Status.error)
+                    }
+                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
             }
-            .padding(.horizontal, Tokens.Space.s5).padding(.bottom, Tokens.Space.s4).disabled(isSaving)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Tokens.Space.s5).padding(.bottom, Tokens.Space.s5).disabled(isSaving)
             PopupFooter {
-                if isSaving { ProgressView().controlSize(.small) }
+                if isSaving {
+                    ProgressView().controlSize(.small).accessibilityLabel("Saving snooze")
+                    Text("Snoozing…").font(.caption).foregroundStyle(.secondary)
+                }
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
+                    .accessibilityIdentifier("today-snooze-cancel")
                 Button("Snooze", action: save).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                     .disabled(isSaving || until <= .now)
                     .accessibilityIdentifier("today-snooze-save")
@@ -49,6 +66,28 @@ struct TodaySnoozeEditor: View {
         .interactiveDismissDisabled(isSaving)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today-snooze-editor")
+        .onChange(of: until) { _, _ in errorMessage = nil }
+    }
+
+    private var timeZoneName: String {
+        TimeZone.current.localizedName(for: .generic, locale: .current) ?? TimeZone.current.identifier
+    }
+
+    private func preset(_ title: String, date: Date, identifier: String) -> some View {
+        Button {
+            until = date
+        } label: {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text(title).font(.callout.weight(.medium))
+                Text(date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, Tokens.Space.s1)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel("\(title), \(date.formatted(date: .complete, time: .shortened))")
+        .accessibilityIdentifier("today-snooze-preset-\(identifier)")
     }
 
     private func save() {

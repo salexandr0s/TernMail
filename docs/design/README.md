@@ -10,6 +10,7 @@ Open [the searchable catalog](catalog.html) in a browser. It works offline and i
 | --- | --- |
 | [Tokens.swift](../../App/Design/Tokens.swift) | Shared scales, semantic surfaces/status, component dimensions, opacity, motion, and presentation policies |
 | [TokenRoles.swift](../../App/Design/TokenRoles.swift) | Shared text hierarchy, accent, and typography roles |
+| [TodayTokens.swift](../../App/Design/TodayTokens.swift) | Today page width, calendar rail, and responsive layout |
 | [OnboardingComponents.swift](../../App/Onboarding/OnboardingComponents.swift) | `Tokens.Onboarding` window and page metrics |
 | [Components.swift](../../App/Design/Components.swift) | Badge, avatar, empty-state, surface, outline, hover, and animation recipes |
 | [PopupComponents.swift](../../App/Design/PopupComponents.swift) | Shared sheet/popover header and footer |
@@ -39,6 +40,7 @@ The catalog lists individual source definitions and their directly observed toke
 | Calendar canvas | `CalendarTimeGrid`, `CalendarMonthGrid`, `CalendarEventChip`, `CalendarTimelineEvent`, grid views | [CalendarTimeGrid](../../App/Calendar/CalendarTimeGrid.swift); event/today/selected tints, local grid geometry |
 | Calendar editors | Event editor, sheet heading, recurrence and time-zone controls, inline errors, activity/recovery views | [CalendarEventEditor](../../App/Calendar/CalendarEventEditor.swift); calendar sheet sizes and native controls |
 | Tasks | `GoogleTasksSidebar`, `GoogleTaskRow`, `GoogleTaskEditor`, conflict review, email task actions | [GoogleTaskRow](../../App/Tasks/GoogleTaskRow.swift); completion accent, overdue status, date tiles and action targets |
+| Today | Work sections, task destinations, follow-up rows, unread mail, calendar agenda, coverage notes and snooze editor | [TodayView](../../App/Today/TodayView.swift); `Today`, native controls, visible change reasons and per-row history acknowledgement |
 | Assistant conversation | `AssistantView`, `AssistantConversationView`, `AssistantMessageView`, composer, launcher, welcome and scope notices | [AssistantView](../../App/Assistant/AssistantView.swift); `Assistant` panel, bubble, content and composer roles |
 | Assistant content | Markdown, code, table, diagram, email/task/event cards, result footer, summaries and review sheets | [AssistantResultCards](../../App/Assistant/AssistantResultCards.swift); `AssistantFormatting`, `ConversationHeader`, shared date tile |
 | Analytics | Metrics, activity chart, history, message lists, sender popover, read-receipt badge | [AnalyticsPresentation](../../App/Analytics/AnalyticsPresentation.swift); `Analytics`, teal received/indigo sent, contrast-aware panels |
@@ -75,6 +77,7 @@ Every declaration, exact expression, visibility, and observed use is in the cata
 | `AssistantFormatting` | Native reading/code fonts, block/section/list rhythm, result/code/table preview limits and diagram preview size |
 | `Compose` | 20-point gutter, assistant content width, 600-point labeled-toolbar threshold |
 | `Calendar` | Sidebar/editor/activity dimensions; event .12, all-day .18, selected .24, today .04 tints |
+| `Today` | Content width 1120, calendar rail 280, work column minimum 500; compact calendar disclosure below the header at narrow widths |
 | `CalendarDate` | Fixed white paper, black ink, red month darkened by .20; 25-point task tile |
 | `Settings` | Window/sidebar/content/editor geometry, group tint .045, row heights and .75-second live-apply delay |
 | `Analytics` | Window/popover/chart geometry, bar width ratio .7, metric minimum scale .6, received teal/sent indigo |
